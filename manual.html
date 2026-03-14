@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>予約管理マニュアル | TOKOWAKA</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@300;400&family=Cormorant+Garamond:ital,wght@0,400;1,300&display=swap" rel="stylesheet">
+<style>
+:root{
+  --teal:#2d5a5a;--teal-l:#3d7a7a;--teal-p:#e8f0f0;
+  --gold:#b8965a;--gold-l:#d4b882;--gold-p:#f2ead8;
+  --ink:#1a1814;--soft:#5a5248;--muted:#9a8e82;
+  --cream:#f5f2eb;--warm:#fdfcf8;--white:#ffffff;
+  --r:10px;--max:640px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--ink);font-size:14px;font-weight:300;line-height:1.8}
+
+/* ── HEADER ── */
+.hd{background:var(--ink);padding:16px 20px;position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between}
+.hd-logo{font-family:'Cormorant Garamond',serif;color:var(--white);font-size:16px;letter-spacing:.14em}
+.hd-logo small{display:block;font-family:'Noto Sans JP',sans-serif;font-size:8px;color:var(--gold-l);letter-spacing:.2em;margin-top:2px}
+.hd-badge{background:var(--gold);color:#fff;font-size:9px;font-weight:500;padding:4px 10px;border-radius:100px;letter-spacing:.08em}
+
+/* ── TOC ── */
+.toc{background:var(--white);margin:0;padding:20px;border-bottom:1px solid rgba(184,150,90,.2)}
+.toc-inner{max-width:var(--max);margin:0 auto}
+.toc-title{font-size:10px;color:var(--gold);letter-spacing:.2em;font-weight:500;margin-bottom:12px}
+.toc-list{display:flex;flex-direction:column;gap:2px}
+.toc-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:6px;text-decoration:none;color:var(--ink);transition:background .2s;border:1px solid transparent}
+.toc-item:hover,.toc-item:active{background:var(--teal-p);border-color:rgba(45,90,90,.15)}
+.toc-num{width:22px;height:22px;background:var(--teal);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.toc-text{font-size:13px;font-weight:400}
+
+/* ── MAIN ── */
+.main{max-width:var(--max);margin:0 auto;padding:0 0 60px}
+
+/* ── SECTION ── */
+.section{margin:0;padding:24px 16px 0}
+
+.sec-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid var(--teal)}
+.sec-num{width:36px;height:36px;background:var(--teal);color:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0}
+.sec-title{font-family:'Noto Serif JP',serif;font-size:18px;font-weight:400;color:var(--teal);letter-spacing:.04em}
+
+/* ── CARD ── */
+.card{background:var(--white);border-radius:var(--r);padding:16px;margin-bottom:12px;border:1px solid rgba(0,0,0,.06);box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.card-title{font-size:12px;font-weight:700;color:var(--teal);letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.card-title::before{content:'';width:3px;height:14px;background:var(--gold);border-radius:2px;flex-shrink:0}
+
+/* ── STEPS ── */
+.steps{display:flex;flex-direction:column;gap:8px}
+.step{display:flex;gap:12px;align-items:flex-start}
+.step-num{width:24px;height:24px;background:var(--gold);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:2px}
+.step-body{flex:1;font-size:13px;color:var(--ink);padding-top:2px}
+.step-body strong{color:var(--teal);font-weight:700}
+
+/* ── BULLETS ── */
+.bullets{display:flex;flex-direction:column;gap:6px}
+.bitem{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+.bitem::before{content:'・';color:var(--gold);flex-shrink:0;margin-top:1px}
+
+/* ── NOTE / INFO ── */
+.note{background:var(--gold-p);border-left:3px solid var(--gold);border-radius:0 6px 6px 0;padding:10px 12px;margin:10px 0;font-size:12px;color:#6b5a3e;line-height:1.7}
+.note strong{color:var(--gold);font-weight:700}
+.info{background:var(--teal-p);border-left:3px solid var(--teal);border-radius:0 6px 6px 0;padding:10px 12px;margin:10px 0;font-size:12px;color:var(--teal);line-height:1.7}
+.info strong{font-weight:700}
+.info a{color:var(--teal);font-weight:500}
+
+/* ── TABLE ── */
+.tbl{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}
+.tbl th{background:var(--teal);color:#fff;padding:8px 10px;text-align:left;font-weight:500}
+.tbl td{padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top}
+.tbl tr:nth-child(even) td{background:#f8f8f8}
+.tbl .ok{color:#2d7a3a;font-weight:700}
+.tbl .no{color:#aaa}
+.tbl .auto{color:var(--teal);font-weight:500}
+
+/* ── RULE BOX ── */
+.rule-box{background:var(--gold-p);border:1px solid rgba(184,150,90,.3);border-radius:var(--r);padding:14px 16px;margin:10px 0;text-align:center}
+.rule-formula{font-size:16px;font-weight:700;color:var(--teal);letter-spacing:.06em;margin-bottom:8px}
+.rule-eg{font-size:11px;color:var(--soft)}
+
+/* ── AUTO FLOW ── */
+.flow{display:flex;flex-direction:column;gap:0}
+.flow-item{display:flex;gap:10px;align-items:flex-start}
+.flow-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;margin-top:2px}
+.flow-icon.auto{background:var(--teal);color:#fff}
+.flow-icon.manual{background:var(--gold);color:#fff}
+.flow-content{flex:1;padding-bottom:14px;border-left:1px dashed #ddd;margin-left:14px;padding-left:14px}
+.flow-item:last-child .flow-content{border-left:none}
+.flow-label{font-size:10px;color:var(--muted);letter-spacing:.08em;margin-bottom:2px}
+.flow-text{font-size:13px;color:var(--ink)}
+
+/* ── FOOTER ── */
+.foot{background:var(--ink);padding:20px;text-align:center;margin-top:40px}
+.foot p{font-size:11px;color:rgba(255,255,255,.4);letter-spacing:.06em}
+.foot strong{color:var(--gold-l)}
+</style>
+</head>
+<body>
+
+<header class="hd">
+  <div class="hd-logo">TOKOWAKA<small>Kichijoji</small></div>
+  <div class="hd-badge">オペレーションマニュアル</div>
+</header>
+
+<!-- 目次 -->
+<div class="toc">
+  <div class="toc-inner">
+    <div class="toc-title">CONTENTS</div>
+    <div class="toc-list">
+      <a href="#s1" class="toc-item"><span class="toc-num">1</span><span class="toc-text">システム概要</span></a>
+      <a href="#s2" class="toc-item"><span class="toc-num">2</span><span class="toc-text">新規カウンセリング予約の受付</span></a>
+      <a href="#s3" class="toc-item"><span class="toc-num">3</span><span class="toc-text">通常予約の管理（手動入力）</span></a>
+      <a href="#s4" class="toc-item"><span class="toc-num">4</span><span class="toc-text">注意事項・よくある質問</span></a>
+    </div>
+  </div>
+</div>
+
+<main class="main">
+
+  <!-- ── 1. システム概要 ── -->
+  <div class="section" id="s1">
+    <div class="sec-header">
+      <div class="sec-num">1</div>
+      <div class="sec-title">システム概要</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">カレンダー構成</div>
+      <table class="tbl">
+        <tr><th>カレンダー</th><th>用途</th></tr>
+        <tr><td>【地下】TOKOWAKAキャパシティ</td><td>トレーニングルームの予約管理</td></tr>
+        <tr><td>【1階】TOKOWAKAキャパシティ</td><td>待合室・商談スペースの管理</td></tr>
+        <tr><td>〇〇（TOKOWAKA用）</td><td>各トレーナーの出勤可能時間</td></tr>
+      </table>
+    </div>
+
+    <div class="info">
+      <strong>予約サイト</strong><br>
+      <a href="https://tokowakafitness-dev.github.io/tokowaka-reservation-v2/" target="_blank">
+        https://tokowakafitness-dev.github.io/tokowaka-reservation-v2/
+      </a>
+    </div>
+  </div>
+
+  <!-- ── 2. 新規カウンセリング ── -->
+  <div class="section" id="s2">
+    <div class="sec-header">
+      <div class="sec-num">2</div>
+      <div class="sec-title">新規カウンセリング予約</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">トレーナーがやること（出勤可能枠の登録）</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">Googleカレンダーアプリを開く</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><strong>「〇〇（TOKOWAKA用）」</strong>カレンダーで予定を作成</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">タイトルを<strong>「出勤可能」</strong>と入力</div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">出勤できる開始・終了時間を設定して保存</div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:14px">
+        <strong>⏱ 反映タイミング：</strong>入力後、最大5分で予約サイトに空き枠が表示されます<br>
+        <strong>📅 表示期間：</strong>直近2週間分が表示されます。週の始めに入力する習慣をつけてください<br>
+        <strong>🔒 プライベートカレンダーは不要：</strong>TOKOWAKA用カレンダーのみ管理します
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">予約が入ったときの自動処理</div>
+      <div class="flow">
+        <div class="flow-item">
+          <div class="flow-icon auto">✅</div>
+          <div class="flow-content">
+            <div class="flow-label">自動</div>
+            <div class="flow-text">担当トレーナーのカレンダーに予約イベントが追加される</div>
+          </div>
+        </div>
+        <div class="flow-item">
+          <div class="flow-icon auto">✅</div>
+          <div class="flow-content">
+            <div class="flow-label">自動</div>
+            <div class="flow-text">【地下】【1階】両方のキャパシティにブロックが入る</div>
+          </div>
+        </div>
+        <div class="flow-item">
+          <div class="flow-icon auto">✅</div>
+          <div class="flow-content">
+            <div class="flow-label">自動</div>
+            <div class="flow-text">お客様に予約完了メールが送信される</div>
+          </div>
+        </div>
+        <div class="flow-item">
+          <div class="flow-icon auto">✅</div>
+          <div class="flow-content">
+            <div class="flow-label">自動</div>
+            <div class="flow-text">担当トレーナーに招待メールが届く（氏名・TEL・メール・備考が記載）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">予約後のトレーナー対応</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">招待メールを確認し、カレンダーへの追加を承認する</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">当日、予約時間の5分前までに店舗に入る</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">カウンセリング実施（75分・無料）</div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">終了後、入会・継続の意向を確認</div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:14px">
+        <strong>⚠️</strong> 急なキャンセル・変更が必要な場合は龍之介（中野）に連絡してください
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 3. 通常予約 ── -->
+  <div class="section" id="s3">
+    <div class="sec-header">
+      <div class="sec-num">3</div>
+      <div class="sec-title">通常予約の管理</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">カレンダーの使い分け</div>
+      <table class="tbl">
+        <tr><th>予約の種類</th><th>地下</th><th>1階</th></tr>
+        <tr><td>既存顧客のトレーニング</td><td class="ok">✓ 入力</td><td class="no">不要</td></tr>
+        <tr><td>レンタルスペース利用</td><td class="ok">✓ 入力</td><td class="no">不要</td></tr>
+        <tr><td>会議・商談</td><td class="no">不要</td><td class="ok">✓ 入力</td></tr>
+        <tr><td>イメコン・他サービス</td><td class="no">不要</td><td class="ok">✓ 入力</td></tr>
+        <tr><td>新規カウンセリング</td><td class="auto">自動</td><td class="auto">自動</td></tr>
+      </table>
+      <div class="note">
+        <strong>ポイント：</strong>カレンダーへの入力タイトルは何でも構いません。入力された時間帯は全て予約枠としてブロックされます
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">予約の命名規則</div>
+      <div class="rule-box">
+        <div class="rule-formula">内容 _ 担当者名 _ 顧客名</div>
+        <div class="rule-eg">例：トレーニング_中野_山田様</div>
+      </div>
+      <div class="bullets" style="margin-top:12px">
+        <div class="bitem">トレーニング_中野_山田様</div>
+        <div class="bitem">レンタル_沖_田中様</div>
+        <div class="bitem">会議_中野_（相手先名）</div>
+        <div class="bitem">イメコン_鈴木_佐藤様</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">なぜ命名規則が必要か</div>
+      <div class="bullets">
+        <div class="bitem">毎月の予約データをスプレッドシートに集計するため</div>
+        <div class="bitem">担当者ごとの件数・時間を自動集計するため</div>
+        <div class="bitem">給与・報酬の計算根拠にするため</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">給与計算の流れ</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">毎月末に管理者（中野）がカレンダーの予約データをスプレッドシートに集計</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">命名規則の「担当者名」をもとにトレーナーごとの担当件数・時間を集計</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">報酬計算（月8回コース：¥10,900/回）を実施</div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">集計結果をもとに各トレーナーに報酬を支払い</div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:14px">
+        <strong>⚠️</strong> 命名規則に従って入力されていないと集計ができません。必ず規則通りに入力してください
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 4. 注意事項 ── -->
+  <div class="section" id="s4">
+    <div class="sec-header">
+      <div class="sec-num">4</div>
+      <div class="sec-title">注意事項・よくある質問</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">出勤可能を入れ忘れた場合</div>
+      <div class="info">その時間帯は予約サイトに表示されないだけです。誤った予約は入りません。気づいたタイミングで入力してください。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">急に出勤できなくなった場合</div>
+      <div class="info">「出勤可能」の予定を削除してください。<br>すでに予約が入っている場合は<strong>龍之介（中野）に連絡</strong>してください。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">予約が重複してしまった場合</div>
+      <div class="info">システム上は二重予約を防止していますが、手動入力とシステム予約が重なる可能性があります。<strong>龍之介（中野）に連絡</strong>してください。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">プライバシーについて</div>
+      <div class="info">「〇〇（TOKOWAKA用）」専用カレンダーのみTOKOWAKAアカウントに共有しています。プライベートの予定は一切外部から見えません。</div>
+    </div>
+  </div>
+
+</main>
+
+<footer class="foot">
+  <p>不明点は <strong>龍之介（中野）</strong> までご連絡ください</p>
+  <p style="margin-top:6px"><strong style="color:var(--gold-l)">📞 090-8178-9781</strong></p>
+  <p style="margin-top:12px;font-size:10px">TOKOWAKA 吉祥寺　© 2026</p>
+</footer>
+
+</body>
+</html>
