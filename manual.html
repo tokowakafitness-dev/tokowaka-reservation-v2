@@ -104,8 +104,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
       <a href="#s1" class="toc-item"><span class="toc-num">1</span><span class="toc-text">システム概要</span></a>
       <a href="#s2" class="toc-item"><span class="toc-num">2</span><span class="toc-text">新規カウンセリング予約の受付</span></a>
       <a href="#s3" class="toc-item"><span class="toc-num">3</span><span class="toc-text">通常予約の管理（手動入力）</span></a>
-      <a href="#s4" class="toc-item"><span class="toc-num">4</span><span class="toc-text">関係者招待のオペレーション</span></a>
-      <a href="#s5" class="toc-item"><span class="toc-num">5</span><span class="toc-text">注意事項・よくある質問</span></a>
+      <a href="#s5" class="toc-item"><span class="toc-num">4</span><span class="toc-text">注意事項・よくある質問</span></a>
     </div>
   </div>
 </div>
@@ -151,7 +150,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
         <div class="step"><div class="step-num">4</div><div class="step-body">出勤できる開始・終了時間を設定して保存</div></div>
       </div>
       <div class="note" style="margin-top:14px">
-        <strong>⏱ 反映タイミング：</strong>入力後、最大5分で予約サイトに空き枠が表示されます（ここのタイムラグは改善予定です）<br>
+        <strong>⏱ 反映タイミング：</strong>入力後、最大5分で予約サイトに空き枠が表示されます<br>
         <strong>📅 表示期間：</strong>直近2週間分が表示されます。週の始めに入力する習慣をつけてください<br>
         <strong>🔒 プライベートカレンダーは不要：</strong>TOKOWAKA用カレンダーのみ管理します
       </div>
@@ -264,68 +263,10 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
     </div>
   </div>
 
-  <!-- 4. 関係者招待 -->
-  <div class="section" id="s4">
-    <div class="sec-header">
-      <div class="sec-num">4</div>
-      <div class="sec-title">関係者招待のオペレーション</div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">なぜ招待が必要か</div>
-      <div class="merit-grid">
-        <div class="merit-item"><div class="merit-icon">🏠</div><div class="merit-text">1階・地下それぞれの使用状況が全員に見える</div></div>
-        <div class="merit-item"><div class="merit-icon">⚠️</div><div class="merit-text">予約の重複・衝突リスクを事前に防げる</div></div>
-        <div class="merit-item"><div class="merit-icon">📅</div><div class="merit-text">誰がいつ予定が入っているか一目でわかる</div></div>
-        <div class="merit-item"><div class="merit-icon">🔄</div><div class="merit-text">定例会議など繰り返し予定の共有が楽になる</div></div>
-      </div>
-      <div class="info" style="margin-top:10px">
-        例：1階で定例会議が入っていれば、その時間帯は自動的に1階がブロックされ、新規カウンセリング予約が入らなくなります。地下は影響なし。
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">招待の手順（Googleカレンダー）</div>
-      <div class="steps">
-        <div class="step"><div class="step-num">1</div><div class="step-body">該当するキャパシティカレンダーに予定を作成<br><span style="font-size:11px;color:var(--muted)">例：1階の会議 →【1階】TOKOWAKAキャパシティに作成</span></div></div>
-        <div class="step"><div class="step-num">2</div><div class="step-body">予定の編集画面で<strong>「ゲストを追加」</strong>をタップ</div></div>
-        <div class="step"><div class="step-num">3</div><div class="step-body">参加するスタッフのメールアドレスを入力して追加</div></div>
-        <div class="step"><div class="step-num">4</div><div class="step-body">命名規則に沿ってタイトルを入力して保存</div></div>
-        <div class="step"><div class="step-num">5</div><div class="step-body">招待されたスタッフはメールまたはカレンダーアプリから承認する</div></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">招待すべき場面の目安</div>
-      <table class="tbl">
-        <tr><th>予約の種類</th><th>招待対象</th></tr>
-        <tr><td>定例会議・ミーティング</td><td>参加する全スタッフ</td></tr>
-        <tr><td>商談・外部打ち合わせ</td><td>担当スタッフ</td></tr>
-        <tr><td>イメコン・他サービス</td><td>担当スタッフ</td></tr>
-        <tr><td>既存顧客トレーニング</td><td>担当トレーナー</td></tr>
-      </table>
-      <div class="note" style="margin-top:10px">
-        <strong>ポイント：</strong>新規カウンセリングは自動で招待メールが送られます。手動招待は不要です
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">定例予定は繰り返し設定を活用する</div>
-      <div class="bullets">
-        <div class="bitem">予定編集画面で「繰り返さない」→「毎週」などに変更できます</div>
-        <div class="bitem">一度設定すれば毎週自動でカレンダーにブロックが入ります</div>
-        <div class="bitem">変更・削除は「この予定のみ」または「以降の予定すべて」から選択できます</div>
-      </div>
-      <div class="info" style="margin-top:10px">
-        例：毎週月曜10:00〜12:00の定例会議を繰り返し設定すると、その時間帯は常に1階がブロックされた状態になります
-      </div>
-    </div>
-  </div>
-
   <!-- 5. 注意事項 -->
   <div class="section" id="s5">
     <div class="sec-header">
-      <div class="sec-num">5</div>
+      <div class="sec-num">4</div>
       <div class="sec-title">注意事項・よくある質問</div>
     </div>
 
