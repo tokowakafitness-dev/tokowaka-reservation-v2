@@ -121,15 +121,17 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .sc-change{font-size:11px;color:var(--soft);border:1px solid var(--bd);border-radius:100px;padding:6px 12px;flex-shrink:0;transition:all .2s}
 .sc-change:hover{border-color:var(--gold);color:var(--gold)}
 
-.fcard{background:#fff;border:1px solid #e0e0e0;border-radius:var(--r);padding:20px;box-shadow:0 1px 6px rgba(0,0,0,.04)}
-.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.fcard{background:#fff;border:1px solid #e8e8e8;border-radius:var(--r);padding:20px;box-shadow:0 1px 6px rgba(0,0,0,.04)}
+.fgrid{display:flex;flex-direction:column;gap:20px}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .fd{display:flex;flex-direction:column;gap:6px}
-.fd.full{grid-column:1/-1}
-.fd label{font-size:9px;color:var(--gold);letter-spacing:.18em;font-weight:500;text-transform:uppercase}
-.fd input,.fd textarea{background:var(--cream);border:1px solid #ddd;border-radius:6px;padding:11px 13px;color:var(--ink);font-size:16px;font-family:'Noto Sans JP',sans-serif;outline:none;-webkit-appearance:none;transition:border-color .2s;width:100%;min-height:46px;font-weight:300}
-.fd input:focus,.fd textarea:focus{border-color:var(--slot-ok-text);background:#fff;box-shadow:0 0 0 3px rgba(28,107,181,.08)}
-.fd input::placeholder,.fd textarea::placeholder{color:rgba(0,0,0,.22)}
-.fd textarea{min-height:76px;resize:none;line-height:1.75;font-size:14px}
+.fd.full{width:100%}
+.fd label{font-size:13px;color:var(--ink);font-weight:400;font-family:'Noto Sans JP',sans-serif}
+.fd label .req{color:#c0392b;font-size:12px;margin-left:4px}
+.fd input,.fd textarea{background:#fff;border:1px solid #ddd;border-radius:10px;padding:13px 16px;color:var(--ink);font-size:16px;font-family:'Noto Sans JP',sans-serif;outline:none;-webkit-appearance:none;transition:border-color .2s;width:100%;min-height:50px;font-weight:300;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.fd input:focus,.fd textarea:focus{border-color:#aaa;background:#fff}
+.fd input::placeholder,.fd textarea::placeholder{color:rgba(0,0,0,.18)}
+.fd textarea{min-height:80px;resize:none;line-height:1.75;font-size:14px}
 .note-hint{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.6}
 
 .err{background:rgba(180,60,60,.06);border:1px solid rgba(180,60,60,.2);border-radius:6px;padding:10px 13px;color:#8b3030;font-size:12px;margin-top:12px;display:none}
@@ -244,10 +246,12 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 
     <div class="fcard">
       <div class="fgrid">
-        <div class="fd"><label>お名前</label><input type="text" id="fN" placeholder="山田 太郎" autocomplete="name"></div>
-        <div class="fd"><label>ふりがな</label><input type="text" id="fK" placeholder="やまだ たろう" autocomplete="off"></div>
-        <div class="fd full"><label>メールアドレス</label><input type="email" id="fE" placeholder="example@email.com" inputmode="email" autocomplete="email"></div>
-        <div class="fd full"><label>電話番号</label><input type="tel" id="fP" placeholder="090-0000-0000" inputmode="tel" autocomplete="tel"></div>
+        <div class="frow">
+          <div class="fd"><label>姓<span class="req">（必須）</span></label><input type="text" id="fLastName" placeholder="" autocomplete="family-name"></div>
+          <div class="fd"><label>名<span class="req">（必須）</span></label><input type="text" id="fFirstName" placeholder="" autocomplete="given-name"></div>
+        </div>
+        <div class="fd full"><label>メールアドレス<span class="req">（必須）</span></label><input type="email" id="fE" placeholder="" inputmode="email" autocomplete="email"></div>
+        <div class="fd full"><label>電話番号<span class="req">（必須）</span></label><input type="tel" id="fP" placeholder="" inputmode="tel" autocomplete="tel"></div>
         <div class="fd full">
           <label>備考（任意）</label>
           <textarea id="fM" placeholder="例：ダイエット目的 / 腰痛があります / 担当トレーナーのご希望など"></textarea>
@@ -255,7 +259,7 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
         </div>
       </div>
       <div class="err" id="err"></div>
-      <button class="sbtn" id="sbtn" onclick="doSubmit()">予約を確定する</button>
+      <button class="sbtn" id="sbtn" onclick="doSubmit()">予約確認</button>
     </div>
   </div>
 
@@ -384,6 +388,7 @@ function renderGrid() {
   var dates  = getWeekDates(weekOffset);
   var today  = new Date(); today.setHours(0,0,0,0);
   var now    = new Date();
+  var cutoff = new Date(now.getTime() + 2 * 60 * 60 * 1000); // 2時間後
 
   // 週タイトル
   var f = dates[0], l = dates[6];
@@ -431,7 +436,7 @@ function renderGrid() {
     for (var di2 = 0; di2 < dates.length; di2++) {
       var dt = new Date(dates[di2]);
       dt.setHours(parseInt(time.split(':')[0]), parseInt(time.split(':')[1]), 0, 0);
-      if (dt > now) { rowFuture = true; break; }
+      if (dt > cutoff) { rowFuture = true; break; }
     }
     if (!rowFuture) continue;
     hasAny = true;
@@ -442,7 +447,7 @@ function renderGrid() {
       var ds   = fmtDate(d2);
       var dt2  = new Date(d2);
       dt2.setHours(parseInt(time.split(':')[0]), parseInt(time.split(':')[1]), 0, 0);
-      var past = dt2 <= now;
+      var past = dt2 <= cutoff;
       tbody += '<td class="slot-cell">';
       if (past) {
         tbody += '<div class="slot-block empty"></div>';
@@ -514,17 +519,24 @@ function clearSlot() {
 
 // ── 予約送信 ──
 function doSubmit() {
-  var name  = document.getElementById('fN').value.trim();
-  var kana  = document.getElementById('fK').value.trim();
+  var lastName  = document.getElementById('fLastName').value.trim();
+  var firstName = document.getElementById('fFirstName').value.trim();
+  var name  = lastName + ' ' + firstName;
+  var kana  = '';
   var email = document.getElementById('fE').value.trim();
   var phone = document.getElementById('fP').value.trim();
   var note  = document.getElementById('fM').value.trim();
   var eb    = document.getElementById('err');
 
-  if (!name||!email||!phone) { eb.textContent='お名前・メールアドレス・電話番号は必須です。'; eb.style.display='block'; return; }
+  if (!lastName||!firstName||!email||!phone) { eb.textContent='姓・名・メールアドレス・電話番号は必須です。'; eb.style.display='block'; return; }
   if (!selSlot) { eb.textContent='日時を選択してください。'; eb.style.display='block'; return; }
-  eb.style.display = 'none';
 
+  // 当日2時間前チェック
+  var slotStart = new Date(selSlot.startISO);
+  var twoHoursLater = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  if (slotStart < twoHoursLater) { eb.textContent='当日のご予約は2時間前までとなります。別の日時をお選びください。'; eb.style.display='block'; return; }
+
+  eb.style.display = 'none';
   var btn = document.getElementById('sbtn'); btn.disabled=true; btn.textContent='送信中...';
 
   gasCall('makeReservation',
