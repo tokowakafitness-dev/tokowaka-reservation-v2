@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>初期設定マニュアル | TOKOWAKA</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@300;400&family=Cormorant+Garamond:ital,wght@0,400;1,300&display=swap" rel="stylesheet">
+<style>
+:root{
+  --teal:#2d5a5a;--teal-l:#3d7a7a;--teal-p:#e8f0f0;
+  --gold:#b8965a;--gold-l:#d4b882;--gold-p:#f2ead8;
+  --ink:#1a1814;--soft:#5a5248;--muted:#9a8e82;
+  --cream:#f5f2eb;--white:#ffffff;--r:10px;--max:640px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--ink);font-size:14px;font-weight:300;line-height:1.8}
+
+.hd{background:var(--ink);padding:16px 20px;position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between}
+.hd-logo{font-family:'Cormorant Garamond',serif;color:var(--white);font-size:16px;letter-spacing:.14em}
+.hd-logo small{display:block;font-family:'Noto Sans JP',sans-serif;font-size:8px;color:var(--gold-l);letter-spacing:.2em;margin-top:2px}
+.hd-badge{background:var(--gold);color:#fff;font-size:9px;font-weight:500;padding:4px 10px;border-radius:100px;letter-spacing:.08em}
+
+.toc{background:var(--white);padding:20px;border-bottom:1px solid rgba(184,150,90,.2)}
+.toc-inner{max-width:var(--max);margin:0 auto}
+.toc-title{font-size:10px;color:var(--gold);letter-spacing:.2em;font-weight:500;margin-bottom:10px}
+.toc-list{display:flex;flex-direction:column;gap:2px}
+.toc-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:6px;text-decoration:none;color:var(--ink);transition:background .2s}
+.toc-item:active{background:var(--teal-p)}
+.toc-num{width:22px;height:22px;background:var(--teal);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.toc-text{font-size:13px}
+
+.main{max-width:var(--max);margin:0 auto;padding:0 0 80px}
+.section{padding:24px 16px 0}
+.sec-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid var(--teal)}
+.sec-num{width:36px;height:36px;background:var(--teal);color:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0}
+.sec-title{font-family:'Noto Serif JP',serif;font-size:18px;font-weight:400;color:var(--teal)}
+
+.card{background:var(--white);border-radius:var(--r);padding:16px;margin-bottom:12px;border:1px solid rgba(0,0,0,.06);box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.card-title{font-size:12px;font-weight:700;color:var(--teal);letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.card-title::before{content:'';width:3px;height:14px;background:var(--gold);border-radius:2px;flex-shrink:0}
+
+.steps{display:flex;flex-direction:column;gap:10px}
+.step{display:flex;gap:12px;align-items:flex-start}
+.step-num{width:26px;height:26px;background:var(--gold);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:2px}
+.step-body{flex:1;font-size:13px;color:var(--ink);line-height:1.7}
+.step-body strong{color:var(--teal);font-weight:700}
+.step-body .sub{font-size:11px;color:var(--muted);display:block;margin-top:4px}
+.step-body .sub a{color:var(--teal)}
+
+.note{background:var(--gold-p);border-left:3px solid var(--gold);border-radius:0 6px 6px 0;padding:10px 12px;margin:10px 0;font-size:12px;color:#6b5a3e;line-height:1.7}
+.note strong{color:var(--gold);font-weight:700}
+.info{background:var(--teal-p);border-left:3px solid var(--teal);border-radius:0 6px 6px 0;padding:10px 12px;margin:10px 0;font-size:12px;color:var(--teal);line-height:1.7}
+.info strong{font-weight:700}
+.info a{color:var(--teal)}
+
+/* 前提説明カード */
+.premise{background:var(--ink);border-radius:var(--r);padding:18px;margin-bottom:12px}
+.premise-title{font-size:10px;color:var(--gold-l);letter-spacing:.14em;font-weight:500;margin-bottom:14px}
+.premise-rows{display:flex;flex-direction:column;gap:12px}
+.premise-row{display:flex;gap:12px;align-items:flex-start}
+.premise-icon{width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.premise-body{flex:1}
+.premise-label{font-size:9px;color:var(--gold-l);letter-spacing:.12em;font-weight:500;margin-bottom:3px}
+.premise-text{font-size:13px;color:rgba(255,255,255,.8);line-height:1.6}
+
+/* UI mock */
+.ui-mock{background:#f0f0f0;border-radius:8px;padding:12px;margin:8px 0;border:1px solid #ddd}
+.ui-mock-label{font-size:9px;color:#888;letter-spacing:.1em;margin-bottom:6px;font-weight:500}
+.ui-input{background:#fff;border:1.5px solid var(--teal);border-radius:5px;padding:8px 12px;font-size:13px;color:var(--ink);margin-bottom:4px}
+.ui-select{background:#fff;border:1px solid #ddd;border-radius:5px;padding:8px 12px;font-size:12px;color:var(--ink);display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+.ui-select-val{color:var(--teal);font-weight:500}
+
+/* ID表示 */
+.id-box{background:var(--ink);border-radius:6px;padding:10px 14px;margin:8px 0}
+.id-label{font-size:9px;color:rgba(255,255,255,.4);letter-spacing:.1em;margin-bottom:4px}
+.id-text{font-family:'Courier New',monospace;font-size:11px;color:var(--gold-l);word-break:break-all;line-height:1.6}
+
+/* チェックリスト */
+.checklist{display:flex;flex-direction:column;gap:8px}
+.check-item{display:flex;gap:10px;align-items:center;padding:10px 12px;background:var(--teal-p);border-radius:8px;border:1px solid rgba(45,90,90,.15)}
+.check-box{width:20px;height:20px;border:2px solid var(--teal);border-radius:4px;flex-shrink:0}
+.check-text{font-size:13px;color:var(--teal)}
+
+/* 完了バナー */
+.done-banner{background:var(--teal);border-radius:var(--r);padding:20px;text-align:center;color:#fff;margin-bottom:12px}
+.done-icon{font-size:36px;margin-bottom:8px}
+.done-title{font-family:'Noto Serif JP',serif;font-size:18px;font-weight:300;margin-bottom:6px}
+.done-sub{font-size:12px;opacity:.7;line-height:1.7}
+
+/* プログレス */
+.progress{background:var(--white);padding:16px 20px;border-bottom:1px solid rgba(184,150,90,.2)}
+.progress-inner{max-width:var(--max);margin:0 auto}
+.progress-label{font-size:10px;color:var(--gold);letter-spacing:.2em;font-weight:500;margin-bottom:10px}
+.ps-wrap{display:flex;align-items:center}
+.ps{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px}
+.ps-dot{width:24px;height:24px;border-radius:50%;background:#e0e0e0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#999}
+.ps-dot.active{background:var(--gold);color:#fff}
+.ps-line{flex:1;height:2px;background:#e0e0e0;margin-bottom:20px}
+.ps-text{font-size:9px;color:var(--muted);text-align:center;line-height:1.3}
+.ps-text.active{color:var(--teal);font-weight:500}
+
+.foot{background:var(--ink);padding:20px;text-align:center;margin-top:40px}
+.foot p{font-size:11px;color:rgba(255,255,255,.4)}
+</style>
+</head>
+<body>
+
+<header class="hd">
+  <div class="hd-logo">TOKOWAKA<small>Kichijoji</small></div>
+  <div class="hd-badge">初期設定マニュアル</div>
+</header>
+
+<div class="toc">
+  <div class="toc-inner">
+    <div class="toc-title">CONTENTS</div>
+    <div class="toc-list">
+      <a href="#s0" class="toc-item"><span class="toc-num">0</span><span class="toc-text">はじめに：なぜこの設定が必要か</span></a>
+      <a href="#s1" class="toc-item"><span class="toc-num">1</span><span class="toc-text">カレンダーを新規作成する</span></a>
+      <a href="#s2" class="toc-item"><span class="toc-num">2</span><span class="toc-text">TOKOWAKAに共有する</span></a>
+      <a href="#s3" class="toc-item"><span class="toc-num">3</span><span class="toc-text">カレンダーIDを送る</span></a>
+      <a href="#s4" class="toc-item"><span class="toc-num">4</span><span class="toc-text">動作確認</span></a>
+    </div>
+  </div>
+</div>
+
+<div class="progress">
+  <div class="progress-inner">
+    <div class="progress-label">SETUP STEPS</div>
+    <div class="ps-wrap">
+      <div class="ps"><div class="ps-dot active">1</div><div class="ps-text active">作成</div></div>
+      <div class="ps-line"></div>
+      <div class="ps"><div class="ps-dot">2</div><div class="ps-text">共有</div></div>
+      <div class="ps-line"></div>
+      <div class="ps"><div class="ps-dot">3</div><div class="ps-text">ID送付</div></div>
+      <div class="ps-line"></div>
+      <div class="ps"><div class="ps-dot">4</div><div class="ps-text">確認</div></div>
+    </div>
+  </div>
+</div>
+
+<main class="main">
+
+  <!-- 0. はじめに -->
+  <div class="section" id="s0">
+    <div class="sec-header">
+      <div class="sec-num">0</div>
+      <div class="sec-title">はじめに</div>
+    </div>
+
+    <div class="premise">
+      <div class="premise-title">なぜこの設定が必要か</div>
+      <div class="premise-rows">
+        <div class="premise-row">
+          <div class="premise-icon">📅</div>
+          <div class="premise-body">
+            <div class="premise-label">目的</div>
+            <div class="premise-text">自分の日常カレンダーと一緒に、出勤管理ができるようにするためです。普段使っているGoogleカレンダーの中で、TOKOWAKAの業務スケジュールも一括管理できます。</div>
+          </div>
+        </div>
+        <div class="premise-row">
+          <div class="premise-icon">🔒</div>
+          <div class="premise-body">
+            <div class="premise-label">プライバシーの保護</div>
+            <div class="premise-text">ただし、プライベートの予定はTOKOWAKAには見せたくないはずです。そのため、プライベートのGoogleカレンダー内に「TOKOWAKA専用のサブカレンダー」を新しく作成します。このサブカレンダーだけをTOKOWAKAと共有することで、プライベートな予定は一切外部から見えない状態になります。</div>
+          </div>
+        </div>
+        <div class="premise-row">
+          <div class="premise-icon">✅</div>
+          <div class="premise-body">
+            <div class="premise-label">設定後にやること</div>
+            <div class="premise-text">設定が完了したら、あとは出勤できる日時に「出勤可能」と入力するだけ。予約システムと自動で連携されます。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>⏱ 所要時間：</strong>約10〜15分で完了します
+    </div>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="section" id="s1">
+    <div class="sec-header">
+      <div class="sec-num">1</div>
+      <div class="sec-title">カレンダーを新規作成する</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">作成するカレンダーの名前</div>
+      <div class="ui-mock">
+        <div class="ui-mock-label">カレンダー名を入力</div>
+        <div class="ui-input">自分の名前（TOKOWAKA用）</div>
+        <div style="font-size:11px;color:#888;margin-top:4px">例：中野 龍之介（TOKOWAKA用）</div>
+      </div>
+      <div class="note">
+        <strong>ポイント：</strong>「氏名（TOKOWAKA用）」の形式で統一してください。自分のGoogleカレンダー上でプライベートと業務を区別しやすくなります。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">手順</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            スマホのブラウザで Googleカレンダーを開く
+            <span class="sub">
+              <a href="https://calendar.google.com" target="_blank">https://calendar.google.com</a><br>
+              📖 <a href="https://www.g-workspace.jp/googleworkspace-reference/calendar/subcalendar/" target="_blank">カレンダー追加の参考手順はこちら →</a>
+            </span>
+          </div>
+        </div>
+        <div class="step"><div class="step-num">2</div><div class="step-body">左上の <strong>「≡」メニュー</strong> をタップ</div></div>
+        <div class="step"><div class="step-num">3</div><div class="step-body"><strong>「設定」</strong> をタップ</div></div>
+        <div class="step"><div class="step-num">4</div><div class="step-body"><strong>「カレンダーを追加」→「新しいカレンダーを作成」</strong> をタップ</div></div>
+        <div class="step"><div class="step-num">5</div><div class="step-body">名前に <strong>「自分の名前（TOKOWAKA用）」</strong> と入力</div></div>
+        <div class="step"><div class="step-num">6</div><div class="step-body"><strong>「カレンダーを作成」</strong> をタップ</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="section" id="s2">
+    <div class="sec-header">
+      <div class="sec-num">2</div>
+      <div class="sec-title">TOKOWAKAに共有する</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">共有先メールアドレス・権限</div>
+      <div class="ui-mock">
+        <div class="ui-mock-label">ユーザーを追加</div>
+        <div class="ui-input">tokowaka.fitness@gmail.com</div>
+        <div class="ui-select">
+          <span>権限</span>
+          <span class="ui-select-val">予定の詳細を表示 ▼</span>
+        </div>
+      </div>
+      <div class="note">
+        <strong>⚠️ 権限は必ず「予定の詳細を表示」を選択してください。</strong><br>これより低い権限だとシステムが正しく動作しません。「予定の変更」より低く、「空き情報のみ」より高い権限です。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">手順</div>
+      <div class="steps">
+        <div class="step"><div class="step-num">1</div><div class="step-body">カレンダー一覧から <strong>「自分の名前（TOKOWAKA用）」</strong> をタップ</div></div>
+        <div class="step"><div class="step-num">2</div><div class="step-body"><strong>「設定と共有」</strong> をタップ</div></div>
+        <div class="step"><div class="step-num">3</div><div class="step-body"><strong>「特定のユーザーと共有」→「ユーザーを追加」</strong> をタップ</div></div>
+        <div class="step"><div class="step-num">4</div><div class="step-body"><strong>tokowaka.fitness@gmail.com</strong> を入力</div></div>
+        <div class="step"><div class="step-num">5</div><div class="step-body">権限を <strong>「予定の詳細を表示」</strong> に設定</div></div>
+        <div class="step"><div class="step-num">6</div><div class="step-body"><strong>「送信」</strong> をタップ</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="section" id="s3">
+    <div class="sec-header">
+      <div class="sec-num">3</div>
+      <div class="sec-title">カレンダーIDを龍之介に送る</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">カレンダーIDとは</div>
+      <div class="info">
+        カレンダーIDとは、作成したカレンダーを予約システムに登録するための識別コードです。このIDをシステムに登録することで、あなたの「出勤可能」入力が予約サイトに反映されるようになります。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">手順</div>
+      <div class="steps">
+        <div class="step"><div class="step-num">1</div><div class="step-body">STEP 2の「設定と共有」画面のまま、下にスクロール</div></div>
+        <div class="step"><div class="step-num">2</div><div class="step-body"><strong>「カレンダーの統合」</strong> セクションを探す</div></div>
+        <div class="step"><div class="step-num">3</div><div class="step-body">以下の形式のIDをコピーして龍之介（中野）にLINEで送る</div></div>
+      </div>
+      <div class="id-box">
+        <div class="id-label">カレンダーID（例）</div>
+        <div class="id-text">xxxxxxxxxxxxxxxxxxxxxxxx@group.calendar.google.com</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="section" id="s4">
+    <div class="sec-header">
+      <div class="sec-num">4</div>
+      <div class="sec-title">動作確認をする</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">確認手順</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <strong>「自分の名前（TOKOWAKA用）」</strong>カレンダーに「出勤可能」の予定を1件入れる
+            <span class="sub">例：明日の10:00〜18:00 / タイトル：出勤可能</span>
+          </div>
+        </div>
+        <div class="step"><div class="step-num">2</div><div class="step-body">龍之介（中野）に「出勤可能を入れました」と連絡する</div></div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            5分後に予約サイトを開いて、入力した時間帯に「○」が表示されることを確認する
+            <span class="sub"><a href="https://tokowakafitness-dev.github.io/tokowaka-reservation-v2/" target="_blank">予約サイトを開く →</a></span>
+          </div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:10px">
+        <strong>反映タイミング：</strong>最大5分かかります。すぐ反映されない場合は少し待ってから再読み込みしてください。
+      </div>
+    </div>
+
+    <div class="done-banner">
+      <div class="done-icon">🎉</div>
+      <div class="done-title">設定完了！</div>
+      <div class="done-sub">あとは出勤できる日時に「出勤可能」と入力するだけです。<br>予約が入ったら自動でお知らせが届きます。</div>
+    </div>
+  </div>
+
+  <!-- チェックリスト -->
+  <div class="section">
+    <div class="sec-header">
+      <div class="sec-num" style="background:var(--gold)">✓</div>
+      <div class="sec-title">完了チェックリスト</div>
+    </div>
+    <div class="card">
+      <div class="checklist">
+        <div class="check-item"><div class="check-box"></div><div class="check-text">「自分の名前（TOKOWAKA用）」カレンダーを作成した</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-text">tokowaka.fitness@gmail.com に「予定の詳細を表示」で共有した</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-text">カレンダーIDを龍之介（中野）に送った</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-text">「出勤可能」を入れて予約サイトに反映されることを確認した</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日常運用メモ -->
+  <div class="section">
+    <div class="card" style="background:var(--ink);border-color:transparent">
+      <div style="font-size:10px;color:var(--gold-l);letter-spacing:.14em;margin-bottom:10px;font-weight:500">DAILY OPERATION — 設定後の日常運用</div>
+      <div style="font-family:'Noto Serif JP',serif;font-size:16px;color:#fff;font-weight:300;margin-bottom:12px;line-height:1.6">やることは<br>「出勤可能を入力する」だけ</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;gap:10px;font-size:12px;color:rgba(255,255,255,.7);align-items:flex-start">
+          <span style="color:var(--gold-l);flex-shrink:0;font-weight:700">①</span>
+          <span>週の始めに出勤できる日時を「出勤可能」として入力する</span>
+        </div>
+        <div style="display:flex;gap:10px;font-size:12px;color:rgba(255,255,255,.7);align-items:flex-start">
+          <span style="color:var(--gold-l);flex-shrink:0;font-weight:700">②</span>
+          <span>予約が入ったら招待メールが届くので承認する</span>
+        </div>
+        <div style="display:flex;gap:10px;font-size:12px;color:rgba(255,255,255,.7);align-items:flex-start">
+          <span style="color:var(--gold-l);flex-shrink:0;font-weight:700">③</span>
+          <span>変更・キャンセルが必要なら龍之介（中野）に連絡する</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer class="foot">
+  <p>設定でわからないことは <strong style="color:var(--gold-l)">龍之介（中野）</strong> までご連絡ください　📞 090-8178-9781</p>
+  <p style="margin-top:6px;font-size:10px">TOKOWAKA 吉祥寺　© 2026</p>
+</footer>
+
+</body>
+</html>

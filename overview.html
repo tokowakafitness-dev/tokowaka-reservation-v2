@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>システム構成図 | TOKOWAKA</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@300;400&family=Cormorant+Garamond:ital,wght@0,400;1,300&display=swap" rel="stylesheet">
+<style>
+:root{
+  --teal:#2d5a5a;--teal-l:#3d7a7a;--teal-p:#e8f0f0;
+  --gold:#b8965a;--gold-l:#d4b882;--gold-p:#f2ead8;
+  --ink:#1a1814;--soft:#5a5248;--muted:#9a8e82;
+  --cream:#f5f2eb;--white:#ffffff;--r:10px;--max:680px;
+  --red:#c0392b;--green:#2d7a3a;--blue:#2a4a8a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--ink);font-size:14px;font-weight:300;line-height:1.8}
+
+.hd{background:var(--ink);padding:16px 20px;position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between}
+.hd-logo{font-family:'Cormorant Garamond',serif;color:var(--white);font-size:16px;letter-spacing:.14em}
+.hd-logo small{display:block;font-family:'Noto Sans JP',sans-serif;font-size:8px;color:var(--gold-l);letter-spacing:.2em;margin-top:2px}
+.hd-badge{background:rgba(184,150,90,.2);color:var(--gold-l);font-size:9px;font-weight:500;padding:4px 10px;border-radius:100px;letter-spacing:.08em;border:1px solid rgba(184,150,90,.3)}
+
+.toc{background:var(--white);padding:16px 20px;border-bottom:1px solid rgba(184,150,90,.2)}
+.toc-inner{max-width:var(--max);margin:0 auto;display:flex;flex-wrap:wrap;gap:6px}
+.toc-item{font-size:11px;color:var(--teal);text-decoration:none;padding:4px 10px;background:var(--teal-p);border-radius:100px;border:1px solid rgba(45,90,90,.15)}
+
+.main{max-width:var(--max);margin:0 auto;padding:16px 16px 80px}
+
+/* セクション */
+.sec{margin-bottom:28px}
+.sec-label{font-size:9px;font-weight:700;letter-spacing:.2em;color:var(--gold);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.sec-label::after{content:'';flex:1;height:1px;background:rgba(184,150,90,.2)}
+.sec-title{font-family:'Noto Serif JP',serif;font-size:17px;font-weight:400;color:var(--teal);margin-bottom:14px}
+
+.card{background:var(--white);border-radius:var(--r);padding:14px;margin-bottom:10px;border:1px solid rgba(0,0,0,.06);box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.card-label{font-size:10px;font-weight:700;color:var(--teal);letter-spacing:.1em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.card-label::before{content:'';width:3px;height:12px;background:var(--gold);border-radius:2px;flex-shrink:0}
+
+/* アーキテクチャ図 */
+.arch{display:flex;flex-direction:column;gap:2px}
+.arch-node{border-radius:8px;padding:10px 14px;border:1.5px solid}
+.arch-node.user{background:#e8f4fd;border-color:#9dc8e8}
+.arch-node.site{background:var(--teal-p);border-color:var(--teal)}
+.arch-node.ss{background:#f0f7e8;border-color:#7ab356}
+.arch-node.gas{background:var(--gold-p);border-color:var(--gold)}
+.arch-node.cal{background:#f5f5f5;border-color:#bbb}
+.arch-node-title{font-size:10px;font-weight:700;letter-spacing:.1em;margin-bottom:4px}
+.arch-node.user .arch-node-title{color:#1a5276}
+.arch-node.site .arch-node-title{color:var(--teal)}
+.arch-node.ss .arch-node-title{color:#2d6a1f}
+.arch-node.gas .arch-node-title{color:#7a5010}
+.arch-node.cal .arch-node-title{color:#444}
+.arch-node-body{font-size:11px;color:var(--soft)}
+.arch-arrow{display:flex;align-items:center;gap:8px;padding:3px 8px}
+.arch-arrow-line{flex:1;height:1px;background:#ccc}
+.arch-arrow-text{font-size:10px;color:var(--muted);white-space:nowrap}
+.arch-arrow-icon{color:var(--muted);font-size:14px;flex-shrink:0}
+
+/* カレンダー構成 */
+.cal-grid{display:flex;flex-direction:column;gap:6px}
+.cal-row{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;border:1px solid rgba(0,0,0,.07)}
+.cal-row.b1{background:#eef8ee}
+.cal-row.f1{background:#eef0f8}
+.cal-row.trainer{background:var(--gold-p)}
+.cal-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0;margin-top:5px}
+.cal-dot.b1{background:var(--green)}
+.cal-dot.f1{background:var(--blue)}
+.cal-dot.trainer{background:var(--gold)}
+.cal-name{font-size:12px;font-weight:500;margin-bottom:2px}
+.cal-desc{font-size:11px;color:var(--soft);line-height:1.6}
+.cal-id{font-family:'Courier New',monospace;font-size:10px;color:var(--muted);margin-top:3px;word-break:break-all}
+
+/* 条件ロジック */
+.logic{background:var(--ink);border-radius:var(--r);padding:14px}
+.logic-title{font-size:9px;color:var(--gold-l);letter-spacing:.14em;margin-bottom:10px}
+.logic-rows{display:flex;flex-direction:column;gap:6px}
+.logic-row{display:flex;align-items:center;gap:10px}
+.logic-icon{width:26px;height:26px;border-radius:6px;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.logic-text{font-size:12px;color:rgba(255,255,255,.8)}
+.logic-and{font-size:9px;color:var(--gold);font-weight:700;letter-spacing:.1em;padding-left:36px}
+
+/* フロー */
+.flow{display:flex;flex-direction:column}
+.flow-row{display:flex;gap:10px;align-items:flex-start}
+.flow-left{display:flex;flex-direction:column;align-items:center;width:30px;flex-shrink:0}
+.flow-icon{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.flow-icon.auto{background:var(--teal);color:#fff}
+.flow-icon.trainer{background:var(--gold);color:#fff}
+.flow-icon.customer{background:var(--blue);color:#fff}
+.flow-icon.admin{background:var(--ink);color:var(--gold-l)}
+.flow-line{width:2px;background:#e8e8e8;flex:1;min-height:10px;margin:3px 0}
+.flow-body{flex:1;padding-bottom:12px}
+.flow-row:last-child .flow-body{padding-bottom:0}
+.flow-tag{font-size:9px;font-weight:700;letter-spacing:.1em;padding:2px 7px;border-radius:100px;display:inline-block;margin-bottom:3px}
+.flow-tag.auto{background:var(--teal-p);color:var(--teal)}
+.flow-tag.trainer{background:var(--gold-p);color:#7a5010}
+.flow-tag.customer{background:#e8eef8;color:var(--blue)}
+.flow-tag.admin{background:#f0f0f0;color:#333}
+.flow-text{font-size:12px;color:var(--ink);line-height:1.6}
+
+/* トリガー一覧 */
+.trigger-list{display:flex;flex-direction:column;gap:6px}
+.trigger-row{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;background:#f8f8f8;border-radius:6px;border:1px solid #eee}
+.trigger-time{font-size:11px;font-weight:700;color:var(--teal);flex-shrink:0;min-width:80px}
+.trigger-text{font-size:12px;color:var(--soft)}
+
+/* URL一覧 */
+.url-list{display:flex;flex-direction:column;gap:6px}
+.url-row{padding:8px 12px;background:var(--ink);border-radius:6px}
+.url-label{font-size:9px;color:rgba(255,255,255,.4);letter-spacing:.1em;margin-bottom:3px}
+.url-val{font-family:'Courier New',monospace;font-size:11px;color:var(--gold-l);word-break:break-all}
+
+/* 残課題 */
+.todo-list{display:flex;flex-direction:column;gap:6px}
+.todo-row{display:flex;gap:8px;align-items:flex-start;padding:8px 12px;border-radius:6px}
+.todo-row.high{background:#fef5f5;border:1px solid #f5c6c6}
+.todo-row.mid{background:#fffbf0;border:1px solid #f5e6b0}
+.todo-row.low{background:#f0f8f0;border:1px solid #b0d8b0}
+.todo-pri{font-size:9px;font-weight:700;flex-shrink:0;padding:2px 7px;border-radius:100px;margin-top:1px}
+.todo-pri.high{background:#f5c6c6;color:var(--red)}
+.todo-pri.mid{background:#f5e6b0;color:#8a6010}
+.todo-pri.low{background:#b0d8b0;color:var(--green)}
+.todo-text{font-size:12px;color:var(--ink);line-height:1.6}
+
+.note{background:var(--gold-p);border-left:3px solid var(--gold);border-radius:0 6px 6px 0;padding:10px 12px;margin:10px 0;font-size:12px;color:#6b5a3e;line-height:1.7}
+.note strong{color:var(--gold)}
+.info{background:var(--teal-p);border-left:3px solid var(--teal);border-radius:0 6px 6px 0;padding:10px 12px;margin:10px 0;font-size:12px;color:var(--teal);line-height:1.7}
+
+.foot{background:var(--ink);padding:20px;text-align:center;margin-top:20px}
+.foot p{font-size:10px;color:rgba(255,255,255,.3)}
+</style>
+</head>
+<body>
+
+<header class="hd">
+  <div class="hd-logo">TOKOWAKA<small>Admin</small></div>
+  <div class="hd-badge">管理者用 システム構成図</div>
+</header>
+
+<div class="toc">
+  <div class="toc-inner">
+    <a href="#arch" class="toc-item">アーキテクチャ</a>
+    <a href="#cal" class="toc-item">カレンダー構成</a>
+    <a href="#logic" class="toc-item">予約ロジック</a>
+    <a href="#flow" class="toc-item">処理フロー</a>
+    <a href="#trigger" class="toc-item">自動実行</a>
+    <a href="#urls" class="toc-item">URL一覧</a>
+    <a href="#todo" class="toc-item">残課題</a>
+  </div>
+</div>
+
+<main class="main">
+
+  <!-- アーキテクチャ -->
+  <div class="sec" id="arch">
+    <div class="sec-label">SYSTEM ARCHITECTURE</div>
+    <div class="sec-title">技術構成</div>
+    <div class="card">
+      <div class="arch">
+        <div class="arch-node user">
+          <div class="arch-node-title">👤 お客様（ブラウザ）</div>
+          <div class="arch-node-body">スマホ・PCで予約サイトにアクセス</div>
+        </div>
+        <div class="arch-arrow">
+          <div class="arch-arrow-line"></div>
+          <div class="arch-arrow-text">① 空き枠CSVを取得（0.1秒）</div>
+          <div class="arch-arrow-line"></div>
+        </div>
+        <div class="arch-node ss">
+          <div class="arch-node-title">📊 Googleスプレッドシート（中間DB）</div>
+          <div class="arch-node-body">空き枠データをCSV形式で公開。GASが5分ごとに更新。予約サイトはここから直接読み込むため高速。</div>
+        </div>
+        <div class="arch-arrow">
+          <div class="arch-arrow-line"></div>
+          <div class="arch-arrow-text">② 予約確定リクエスト（予約時のみ）</div>
+          <div class="arch-arrow-line"></div>
+        </div>
+        <div class="arch-node site">
+          <div class="arch-node-title">🌐 予約サイト（GitHub Pages）</div>
+          <div class="arch-node-body">tokowaka-reservation-v2リポジトリ。静的HTML/JS。</div>
+        </div>
+        <div class="arch-arrow">
+          <div class="arch-arrow-line"></div>
+          <div class="arch-arrow-text">③ カレンダー読み書き・メール送信</div>
+          <div class="arch-arrow-line"></div>
+        </div>
+        <div class="arch-node gas">
+          <div class="arch-node-title">⚙️ Google Apps Script（GAS）</div>
+          <div class="arch-node-body">tokowaka.fitness@gmail.comで管理。空き枠計算・予約確定・スプレッドシート更新・メール送信を担当。</div>
+        </div>
+        <div class="arch-arrow">
+          <div class="arch-arrow-line"></div>
+          <div class="arch-arrow-text">④ イベント読み取り・予約書き込み</div>
+          <div class="arch-arrow-line"></div>
+        </div>
+        <div class="arch-node cal">
+          <div class="arch-node-title">📅 Googleカレンダー × 5</div>
+          <div class="arch-node-body">地下キャパシティ・1階キャパシティ・トレーナー用×3</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- カレンダー構成 -->
+  <div class="sec" id="cal">
+    <div class="sec-label">CALENDAR STRUCTURE</div>
+    <div class="sec-title">カレンダー構成とID</div>
+    <div class="card">
+      <div class="cal-grid">
+        <div class="cal-row b1">
+          <div class="cal-dot b1"></div>
+          <div>
+            <div class="cal-name">【地下】TOKOWAKAキャパシティ</div>
+            <div class="cal-desc">トレーニングルーム。全イベントをブロック対象に。予約確定時に自動書き込み。</div>
+            <div class="cal-id">8b94ca044fc753d8be315cdbb318ae52f9aae985a518d0a852aa9e111aca403a@group.calendar.google.com</div>
+          </div>
+        </div>
+        <div class="cal-row f1">
+          <div class="cal-dot f1"></div>
+          <div>
+            <div class="cal-name">【1階】TOKOWAKAキャパシティ</div>
+            <div class="cal-desc">待合室・商談スペース。全イベントをブロック対象に。予約確定時に自動書き込み。</div>
+            <div class="cal-id">c9ba13caaee9973847a6768762582f1fc8e540aa74f648289d6e525eaae3612f@group.calendar.google.com</div>
+          </div>
+        </div>
+        <div class="cal-row trainer">
+          <div class="cal-dot trainer"></div>
+          <div>
+            <div class="cal-name">中野 龍之介（TOKOWAKA用）</div>
+            <div class="cal-desc">「出勤可能」タイトルのイベントのみ予約枠として認識。「予定の詳細を表示」権限で共有済み。</div>
+            <div class="cal-id">75199d0479652a61f08e044d8fab405a5e125640fcea65bdbf0fa62b8ef2a819@group.calendar.google.com</div>
+          </div>
+        </div>
+        <div class="cal-row trainer">
+          <div class="cal-dot trainer"></div>
+          <div>
+            <div class="cal-name">鈴木 神海感留（TOKOWAKA用）</div>
+            <div class="cal-desc">共有承認待ち（2026/03/14時点）</div>
+            <div class="cal-id">4a3cfdf07eff0e3abe3b8dc32748eaa2f269ca91d0cacd45265df3e1a1f19e4a@group.calendar.google.com</div>
+          </div>
+        </div>
+        <div class="cal-row trainer">
+          <div class="cal-dot trainer"></div>
+          <div>
+            <div class="cal-name">沖 孟（TOKOWAKA用）</div>
+            <div class="cal-desc">接続済み。出勤可能入力待ち。</div>
+            <div class="cal-id">8549b7e79a39bf109f41a0ae75c275257ca8ae000566efb839ec89d44974a358@group.calendar.google.com</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 予約ロジック -->
+  <div class="sec" id="logic">
+    <div class="sec-label">RESERVATION LOGIC</div>
+    <div class="sec-title">予約成立の条件</div>
+    <div class="card">
+      <div class="logic">
+        <div class="logic-title">3条件のAND判定</div>
+        <div class="logic-rows">
+          <div class="logic-row"><div class="logic-icon">🏋️</div><div class="logic-text">【地下】キャパシティカレンダーにイベントがない</div></div>
+          <div class="logic-and">AND</div>
+          <div class="logic-row"><div class="logic-icon">🪑</div><div class="logic-text">【1階】キャパシティカレンダーにイベントがない</div></div>
+          <div class="logic-and">AND</div>
+          <div class="logic-row"><div class="logic-icon">👤</div><div class="logic-text">トレーナーのTOKOWAKA用カレンダーに「出勤可能」がある かつ 予約済みでない</div></div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:10px">
+        <strong>担当割当の優先順位：</strong>中野 → 鈴木 → 沖（複数が出勤可能な場合）
+      </div>
+      <div class="info">
+        <strong>「出勤可能」の判定キーワード：</strong>出勤可能 / 出勤 / シフト / available<br>
+        <strong>「予約済み」の判定：</strong>タイトルが「[RESERVED]」または「✅」で始まるイベント
+      </div>
+    </div>
+  </div>
+
+  <!-- 処理フロー -->
+  <div class="sec" id="flow">
+    <div class="sec-label">PROCESS FLOW</div>
+    <div class="sec-title">予約確定後の処理フロー</div>
+    <div class="card">
+      <div class="flow">
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon customer">👤</div><div class="flow-line"></div></div>
+          <div class="flow-body"><span class="flow-tag customer">お客様</span><div class="flow-text">予約フォーム送信（氏名・メール・電話番号・備考）</div></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon auto">⚙️</div><div class="flow-line"></div></div>
+          <div class="flow-body"><span class="flow-tag auto">GAS</span><div class="flow-text">二重予約チェック（LockServiceで排他制御）</div></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon auto">⚙️</div><div class="flow-line"></div></div>
+          <div class="flow-body"><span class="flow-tag auto">GAS</span><div class="flow-text">地下・1階キャパシティに[RESERVED]イベント作成</div></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon auto">⚙️</div><div class="flow-line"></div></div>
+          <div class="flow-body"><span class="flow-tag auto">GAS</span><div class="flow-text">担当トレーナーのTOKOWAKA用カレンダーに✅イベント作成</div></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon auto">⚙️</div><div class="flow-line"></div></div>
+          <div class="flow-body"><span class="flow-tag auto">GAS</span><div class="flow-text">getDefaultCalendar()でお客様・担当トレーナーに招待メール送信</div></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon auto">⚙️</div><div class="flow-line"></div></div>
+          <div class="flow-body"><span class="flow-tag auto">GAS</span><div class="flow-text">お客様に予約完了メール送信（GmailApp）</div></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon auto">⚙️</div><div class="flow-line"></div></div>
+          <div class="flow-body"><span class="flow-tag auto">GAS</span><div class="flow-text">invalidateCache() → buildAndCacheSlots() → スプレッドシート即時更新</div></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-left"><div class="flow-icon trainer">🏋️</div></div>
+          <div class="flow-body"><span class="flow-tag trainer">トレーナー</span><div class="flow-text">招待メール承認 → 当日来店・カウンセリング実施</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 自動実行トリガー -->
+  <div class="sec" id="trigger">
+    <div class="sec-label">SCHEDULED TRIGGERS</div>
+    <div class="sec-title">自動実行トリガー</div>
+    <div class="card">
+      <div class="trigger-list">
+        <div class="trigger-row">
+          <div class="trigger-time">5分ごと</div>
+          <div class="trigger-text">warmupCache() → buildAvailableSlots() → スプレッドシート更新</div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:10px">
+        <strong>トリガー変更方法：</strong>GASエディタで setupTriggers() を実行。既存トリガーを全削除して再設定します。
+      </div>
+    </div>
+  </div>
+
+  <!-- URL一覧 -->
+  <div class="sec" id="urls">
+    <div class="sec-label">URLS & IDs</div>
+    <div class="sec-title">URL・ID一覧</div>
+    <div class="card">
+      <div class="url-list">
+        <div class="url-row">
+          <div class="url-label">予約サイト（本番）</div>
+          <div class="url-val">https://tokowakafitness-dev.github.io/tokowaka-reservation-v2/</div>
+        </div>
+        <div class="url-row">
+          <div class="url-label">GAS デプロイURL（v2）</div>
+          <div class="url-val">https://script.google.com/macros/s/AKfycbwYUUyKs0Ycm2sNzPaCRvgFOFbQs8gWmNI3gUMATg5zdxN8G1Su6DLz0Qp-fTgyzv1G6w/exec</div>
+        </div>
+        <div class="url-row">
+          <div class="url-label">スプレッドシート（中間DB v2）</div>
+          <div class="url-val">https://docs.google.com/spreadsheets/d/1X3I2Q2ICd02yC8kxuEYKlbTGTWyoKIvsv87NL2bYol0/</div>
+        </div>
+        <div class="url-row">
+          <div class="url-label">GitHubリポジトリ</div>
+          <div class="url-val">https://github.com/tokowakafitness-dev/tokowaka-reservation-v2</div>
+        </div>
+        <div class="url-row">
+          <div class="url-label">TOWAKAサイト（LP）</div>
+          <div class="url-val">https://tokowakafitness-dev.github.io/tokowaka/</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 残課題 -->
+  <div class="sec" id="todo">
+    <div class="sec-label">REMAINING TASKS</div>
+    <div class="sec-title">残課題・今後の対応</div>
+    <div class="card">
+      <div class="todo-list">
+        <div class="todo-row high">
+          <div class="todo-pri high">急ぎ</div>
+          <div class="todo-text">鈴木 神海感留のカレンダー共有承認を確認</div>
+        </div>
+        <div class="todo-row high">
+          <div class="todo-pri high">急ぎ</div>
+          <div class="todo-text">parkfitの既存予約50件以上を地下キャパシティに移行（GAS一括移行関数が必要）</div>
+        </div>
+        <div class="todo-row mid">
+          <div class="todo-pri mid">中期</div>
+          <div class="todo-text">Vercel移行 + 独自ドメイン取得</div>
+        </div>
+        <div class="todo-row mid">
+          <div class="todo-pri mid">中期</div>
+          <div class="todo-text">招待メール送信先をメインカレンダーから専用カレンダーに変更</div>
+        </div>
+        <div class="todo-row mid">
+          <div class="todo-pri mid">中期</div>
+          <div class="todo-text">月次集計スプレッドシートの自動化（給与計算）</div>
+        </div>
+        <div class="todo-row low">
+          <div class="todo-pri low">将来</div>
+          <div class="todo-text">Googleカレンダーのプッシュ通知実装（変更の即時反映）</div>
+        </div>
+        <div class="todo-row low">
+          <div class="todo-pri low">将来</div>
+          <div class="todo-text">TOKOWAKAサイト本体のNext.js + microCMS移行</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer class="foot">
+  <p>TOKOWAKA 吉祥寺　管理者用ドキュメント　© 2026</p>
+</footer>
+
+</body>
+</html>
