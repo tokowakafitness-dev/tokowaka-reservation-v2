@@ -141,6 +141,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
 
     <div class="card">
       <div class="card-title">スペースは2部屋に分かれる</div>
+      <div style="font-size:13px;color:var(--soft);margin-bottom:10px;line-height:1.7">それぞれの部屋の予約状況を管理するために、Googleカレンダーも2つ用意しています。部屋ごとのカレンダーに予定を入力することで、各スペースの空き状況が管理されます。</div>
       <div class="room-grid">
         <div class="room-card b1">
           <div class="room-icon">🏋️</div>
@@ -150,6 +151,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
             <div class="room-use">継続セッション</div>
             <div class="room-use">レンタル利用</div>
           </div>
+          <div style="margin-top:8px;font-size:10px;color:#2d6a1f;background:rgba(45,106,31,.1);border-radius:4px;padding:4px 6px;line-height:1.5">📅 【地下】TOKOWAKAキャパシティ</div>
         </div>
         <div class="room-card f1">
           <div class="room-icon">🪑</div>
@@ -159,6 +161,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
             <div class="room-use">会議・商談</div>
             <div class="room-use">イメコン・他サービス</div>
           </div>
+          <div style="margin-top:8px;font-size:10px;color:#2a4a8a;background:rgba(42,74,138,.1);border-radius:4px;padding:4px 6px;line-height:1.5">📅 【1階】TOKOWAKAキャパシティ</div>
         </div>
       </div>
       <div class="note">
@@ -181,13 +184,16 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
     <div class="card">
       <div class="card-title">仕組み</div>
       <div class="info">
-        お客様が予約サイトから空き枠を選んで送信すると、システムが自動でカレンダーへの記録・メール送信・枠のブロックを行います。<strong>トレーナーが手動でやることはありません。</strong><br><br>
+        新規カウンセリング予約は、<strong>TOKOWAKAのホームページからカレンダー形式</strong>で受け付けています。お客様が空き枠を選んで送信すると、システムが自動でカレンダーへの記録・メール送信・枠のブロックを行います。<strong>トレーナーが手動でやることはありません。</strong><br><br>
         <strong>予約サイト：</strong><a href="https://tokowakafitness-dev.github.io/tokowaka-reservation-v2/" target="_blank">https://tokowakafitness-dev.github.io/tokowaka-reservation-v2/</a>
       </div>
     </div>
 
     <div class="card">
       <div class="card-title">トレーナーがやること（毎週）</div>
+      <div class="info" style="margin-bottom:12px">
+        予約可能な枠を正しく反映するために、各トレーナーは自身の<strong>TOKOWAKA用カレンダー</strong>を用いてシフト登録を行います。
+      </div>
       <div class="steps">
         <div class="step"><div class="step-num">1</div><div class="step-body">Googleカレンダーの <strong>「自分の名前（TOKOWAKA用）」</strong> カレンダーを開く</div></div>
         <div class="step"><div class="step-num">2</div><div class="step-body">出勤できる日時に予定を作成し、タイトルを <strong>「出勤可能」</strong> と入力して保存</div></div>
