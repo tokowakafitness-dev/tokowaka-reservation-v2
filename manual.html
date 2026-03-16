@@ -164,21 +164,11 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
       <div class="note">
         <strong>重要：</strong>新規カウンセリングは地下・1階の<strong>両方</strong>を使います。どちらかが埋まっていると予約が入りません。それ以外の予約は、使う部屋のカレンダーだけに入力します。
       </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">トレーナーに関係する部分</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--gold);font-weight:700;flex-shrink:0;font-size:16px">①</span>
-          <div style="font-size:13px;line-height:1.6"><strong style="color:var(--teal)">TOKOWAKA用カレンダーに「出勤可能」を入力する</strong><br>入力した時間帯だけが予約サイトに空き枠として表示されます</div>
-        </div>
-        <div style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--gold);font-weight:700;flex-shrink:0;font-size:16px">②</span>
-          <div style="font-size:13px;line-height:1.6"><strong style="color:var(--teal)">予約が入ったら招待メールを承認する</strong><br>それ以外の処理は全て自動</div>
-        </div>
+      <div class="info" style="margin-top:8px">
+        予約の内容・用途によって、どのスペースを使うかが決まります。詳しくは「2. 通常予約の管理」のカレンダーの使い分け表を参照してください。
       </div>
     </div>
+
   </div>
 
   <!-- 1. 新規カウンセリング -->
@@ -235,6 +225,36 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
       <div class="card-title">仕組み</div>
       <div class="info">
         継続セッション・レンタル・会議などは、Googleカレンダーに手動で予定を入力します。入力した時間帯は自動的に予約枠としてブロックされます。予約の命名規則に従って入力してください。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">どのカレンダーに入力するか</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            龍之介（中野）から<strong>プライベートのメールアドレス宛</strong>に、以下2つのカレンダーの招待が届きます
+            <span style="display:block;margin-top:8px;padding:8px 12px;background:var(--teal-p);border-radius:6px;font-size:12px;color:var(--teal)">
+              🏋️ <strong>【地下】TOKOWAKAキャパシティ</strong>（予定の変更権限）<br>
+              🪑 <strong>【1階】TOKOWAKAキャパシティ</strong>（予定の変更権限）
+            </span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">届いた招待を<strong>承認</strong>してください。承認するとGoogleカレンダーにこの2つのカレンダーが追加されます</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            予約を入れる際は、使う部屋のカレンダーを選んで予定を作成してください
+            <span style="display:block;margin-top:6px;font-size:12px;color:var(--soft)">地下を使う → 【地下】TOKOWAKAキャパシティに入力<br>1階を使う → 【1階】TOKOWAKAキャパシティに入力</span>
+          </div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:12px">
+        <strong>⚠️ 注意：</strong>自分が入れた予定以外は変更・削除しないようにしてください
       </div>
     </div>
 
