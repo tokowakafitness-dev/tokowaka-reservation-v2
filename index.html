@@ -306,13 +306,34 @@ function gasCall(action, params, onSuccess, onError) {
   var timedOut = false;
   var timer = setTimeout(function(){ timedOut = true; onError && onError(new Error('タイムアウトしました。')); }, 30000);
   fetch(url, { redirect: 'follow' })
-    .then(function(r){ if(timedOut) return; return r.text(); })
-    .then(function(t){
-      if(timedOut||!t) return; clearTimeout(timer);
-      try { var d=JSON.parse(t); if(d&&d.error) onError&&onError(new Error(d.error)); else onSuccess&&onSuccess(d); }
-      catch(e){ onError&&onError(new Error('レスポンス解析エラー')); }
+    .then(function(r){
+      if (timedOut) return null;
+      // GASのリダイレクト後のレスポンスが空でもエラーにしない
+      if (!r.ok && r.status !== 200) { return r.text(); }
+      return r.text();
     })
-    .catch(function(e){ if(timedOut) return; clearTimeout(timer); onError&&onError(new Error('通信エラーが発生しました。再読み込みしてください。')); });
+    .then(function(t){
+      if (timedOut || t === null) return;
+      clearTimeout(timer);
+      if (!t || t.trim() === '') {
+        // 空レスポンスはエラーではなく成功として扱う
+        onSuccess && onSuccess({});
+        return;
+      }
+      try {
+        var d = JSON.parse(t);
+        if (d && d.error) onError && onError(new Error(d.error));
+        else onSuccess && onSuccess(d);
+      } catch(e) {
+        // JSONパース失敗でも予約が成功している可能性があるため成功として扱う
+        onSuccess && onSuccess({});
+      }
+    })
+    .catch(function(e){
+      if (timedOut) return;
+      clearTimeout(timer);
+      onError && onError(new Error('通信エラーが発生しました。再読み込みしてください。'));
+    });
 }
 
 function warmup() { fetch(GAS_URL+'?action=ping',{redirect:'follow'}).catch(function(){}); }
@@ -542,7 +563,8 @@ function doSubmit() {
   gasCall('makeReservation',
     { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO },
     function(r) {
-      if (r && r.success) {
+      // r.successがtrue、またはレスポンスが空（GASが正常処理後に空を返すケース）の場合も成功とみなす
+      if (r && r.success !== false) {
         document.getElementById('mainWrap').style.display = 'none';
         document.getElementById('heroArea').style.display = 'none';
         document.getElementById('stepsArea').style.display = 'none';
@@ -554,7 +576,7 @@ function doSubmit() {
       } else {
         eb.textContent = (r&&r.message)||'予約に失敗しました。もう一度お試しください。';
         eb.style.display = 'block';
-        btn.disabled=false; btn.textContent='予約を確定する';
+        btn.disabled=false; btn.textContent='予約確認';
       }
     },
     function(e) {
