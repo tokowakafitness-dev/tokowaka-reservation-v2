@@ -573,6 +573,10 @@ function doSubmit() {
         document.getElementById('doneWrap').classList.add('on');
         setStep(3);
         window.scrollTo({top:0,behavior:'smooth'});
+
+        // GA4 CVイベント
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({ event: 'reservation_complete' });
       } else {
         eb.textContent = (r&&r.message)||'予約に失敗しました。もう一度お試しください。';
         eb.style.display = 'block';
