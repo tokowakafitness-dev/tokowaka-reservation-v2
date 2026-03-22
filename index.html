@@ -560,8 +560,19 @@ function doSubmit() {
   eb.style.display = 'none';
   var btn = document.getElementById('sbtn'); btn.disabled=true; btn.textContent='送信中...';
 
+  // UTMパラメータを取得
+  var utmParams = (function(){
+    var p = new URLSearchParams(window.location.search);
+    return {
+      utm_source:   p.get('utm_source')   || 'direct',
+      utm_medium:   p.get('utm_medium')   || 'none',
+      utm_campaign: p.get('utm_campaign') || 'none'
+    };
+  })();
+
   gasCall('makeReservation',
-    { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO },
+    { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO, utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign },
+
     function(r) {
       // r.successがtrue、またはレスポンスが空（GASが正常処理後に空を返すケース）の場合も成功とみなす
       if (r && r.success !== false) {
