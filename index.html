@@ -1,6 +1,13 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<!-- Google Tag Manager -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-WRJSW496');</script>
+<!-- End Google Tag Manager -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>無料カウンセリング予約 | TOKOWAKA 吉祥寺</title>
@@ -59,7 +66,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
 .sec-step{font-family:'Cormorant Garamond',serif;font-style:italic;font-size:10px;letter-spacing:.18em;color:var(--gold);display:block;margin-bottom:3px}
 .sec-ttl{font-family:'Noto Serif JP',serif;font-weight:300;font-size:clamp(17px,4vw,20px);color:var(--ink);letter-spacing:.04em;margin-bottom:14px}
 
-/* ── 週ナビ（写真スタイル） ── */
+/* ── 週ナビ ── */
 .cal-wrap{background:#fff;border:1px solid #e0e0e0;border-radius:var(--r);overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,.06)}
 .week-nav{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #e8e8e8}
 .week-btn{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--slot-ok-text);font-weight:400;padding:4px 8px;border-radius:4px;transition:background .15s;min-height:36px}
@@ -71,8 +78,6 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
 .grid-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .grid-scroll::-webkit-scrollbar{display:none}
 table.cal{border-collapse:collapse;width:100%;min-width:340px}
-
-/* 日付ヘッダー */
 table.cal thead th{background:#fff;position:sticky;top:56px;z-index:10}
 .th-empty{width:48px;min-width:48px;border-right:1px solid #e8e8e8}
 .th-day{text-align:center;padding:10px 4px 8px;border-right:1px solid #e8e8e8;min-width:52px;cursor:default}
@@ -82,17 +87,11 @@ table.cal thead th{background:#fff;position:sticky;top:56px;z-index:10}
 .th-day.is-today .th-day-num{color:var(--slot-ok-text)}
 .th-day.is-today .th-day-dow{color:var(--slot-ok-text)}
 thead tr{border-bottom:2px solid #e0e0e0}
-
-/* 時間ラベル */
 .td-time{font-size:11px;color:var(--ink);font-weight:400;text-align:right;padding:0 8px 0 4px;border-right:1px solid #e8e8e8;white-space:nowrap;vertical-align:middle;background:#fff}
 .td-time.minor{font-size:10px;color:var(--muted);font-weight:300}
-
-/* スロットセル */
 table.cal tbody tr{border-bottom:1px solid #f0f0f0}
 table.cal tbody td.slot-cell{padding:3px 3px;text-align:center;border-right:1px solid #e8e8e8;vertical-align:middle}
 table.cal tbody td.slot-cell:last-child{border-right:none}
-
-/* スロットブロック */
 .slot-block{width:100%;min-height:40px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;transition:all .15s;touch-action:manipulation}
 .slot-block.ok{background:var(--slot-ok-bg);border:1.5px solid var(--slot-ok-bd);color:var(--slot-ok-text);cursor:pointer}
 .slot-block.ok:hover,.slot-block.ok:active{background:#e8f0fb;transform:scale(1.05)}
@@ -100,7 +99,7 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .slot-block.ng{background:var(--slot-ng-bg);border:1.5px solid #e0e0e0;color:var(--slot-ng-text);cursor:default}
 .slot-block.empty{background:transparent;border:none}
 
-/* ── 選択バナー（スロット選択後） ── */
+/* ── 選択バナー ── */
 .sel-banner{background:var(--slot-ok-text);color:#fff;padding:12px var(--pad);display:none;align-items:center;justify-content:space-between;gap:10px;position:sticky;bottom:0;z-index:100;box-shadow:0 -2px 12px rgba(0,0,0,.15)}
 .sel-banner.on{display:flex}
 .sel-banner-info{flex:1}
@@ -112,7 +111,6 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 /* ── フォームセクション ── */
 .form-section{padding:24px var(--pad) 0;display:none}
 .form-section.on{display:block}
-
 .sel-confirm{background:var(--gold-p);border:1px solid var(--bd);border-radius:var(--r);padding:13px 16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .sc-info{flex:1}
 .sc-label{font-size:9px;color:var(--gold);letter-spacing:.18em;font-weight:500;display:block;margin-bottom:3px}
@@ -120,7 +118,6 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .sc-sub{font-size:11px;color:var(--soft);margin-top:2px}
 .sc-change{font-size:11px;color:var(--soft);border:1px solid var(--bd);border-radius:100px;padding:6px 12px;flex-shrink:0;transition:all .2s}
 .sc-change:hover{border-color:var(--gold);color:var(--gold)}
-
 .fcard{background:#fff;border:1px solid #e8e8e8;border-radius:var(--r);padding:20px;box-shadow:0 1px 6px rgba(0,0,0,.04)}
 .fgrid{display:flex;flex-direction:column;gap:20px}
 .frow{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -133,7 +130,6 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .fd input::placeholder,.fd textarea::placeholder{color:rgba(0,0,0,.18)}
 .fd textarea{min-height:80px;resize:none;line-height:1.75;font-size:14px}
 .note-hint{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.6}
-
 .err{background:rgba(180,60,60,.06);border:1px solid rgba(180,60,60,.2);border-radius:6px;padding:10px 13px;color:#8b3030;font-size:12px;margin-top:12px;display:none}
 .sbtn{margin-top:16px;width:100%;padding:16px;background:var(--gold);color:#fff;border:none;border-radius:var(--r);font-size:12px;font-weight:500;letter-spacing:.14em;transition:all .2s;min-height:52px;-webkit-appearance:none}
 .sbtn:active,.sbtn:hover{background:var(--gold-l)}
@@ -156,7 +152,6 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .foot{background:var(--ink);padding:20px var(--pad);text-align:center;margin-top:40px}
 .foot-logo{font-family:'Cormorant Garamond',serif;font-size:14px;color:rgba(255,255,255,.3);letter-spacing:.14em}
 .foot-copy{font-size:8px;color:rgba(255,255,255,.14);margin-top:6px;letter-spacing:.06em}
-
 .loading{text-align:center;padding:32px 0;color:var(--muted);font-size:12px}
 
 @media(max-width:400px){
@@ -169,6 +164,10 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 </style>
 </head>
 <body>
+<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-WRJSW496"
+height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
 
 <!-- HEADER -->
 <header class="hd">
@@ -202,15 +201,12 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
   <div class="cal-section">
     <span class="sec-step">Step 01</span>
     <div class="sec-ttl">日時を選ぶ</div>
-
     <div class="cal-wrap">
-      <!-- 週ナビ -->
       <div class="week-nav">
         <button class="week-btn" id="prevWeekBtn" onclick="shiftWeek(-1)" disabled>‹ 前の一週間</button>
         <div class="week-title" id="weekTitle">読み込み中...</div>
         <button class="week-btn" id="nextWeekBtn" onclick="shiftWeek(1)">次の一週間 ›</button>
       </div>
-      <!-- グリッド -->
       <div class="grid-scroll">
         <table class="cal" id="calTable">
           <thead><tr><th class="th-empty"></th></tr></thead>
@@ -220,7 +216,7 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
     </div>
   </div>
 
-  <!-- 選択バナー（スロット選択後に表示） -->
+  <!-- 選択バナー -->
   <div class="sel-banner" id="selBanner">
     <div class="sel-banner-info">
       <span class="sel-banner-label">選択中の日時</span>
@@ -233,8 +229,6 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
   <div class="form-section" id="formSection">
     <span class="sec-step">Step 02</span>
     <div class="sec-ttl" style="margin-bottom:14px">お客様情報を入力</div>
-
-    <!-- 選択内容確認 -->
     <div class="sel-confirm">
       <div class="sc-info">
         <span class="sc-label">Selected</span>
@@ -243,7 +237,6 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
       </div>
       <button class="sc-change" onclick="clearSlot()">変更</button>
     </div>
-
     <div class="fcard">
       <div class="fgrid">
         <div class="frow">
@@ -277,7 +270,7 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
   </div>
   <div class="done-note">
     ご予約の変更・キャンセルはお電話にてお受けします。<br>
-    📞 090-8178-9781（8:00〜23:00）
+    070-3549-8168（8:00〜23:00）
   </div>
 </div>
 
@@ -308,7 +301,6 @@ function gasCall(action, params, onSuccess, onError) {
   fetch(url, { redirect: 'follow' })
     .then(function(r){
       if (timedOut) return null;
-      // GASのリダイレクト後のレスポンスが空でもエラーにしない
       if (!r.ok && r.status !== 200) { return r.text(); }
       return r.text();
     })
@@ -316,7 +308,6 @@ function gasCall(action, params, onSuccess, onError) {
       if (timedOut || t === null) return;
       clearTimeout(timer);
       if (!t || t.trim() === '') {
-        // 空レスポンスはエラーではなく成功として扱う
         onSuccess && onSuccess({});
         return;
       }
@@ -325,7 +316,6 @@ function gasCall(action, params, onSuccess, onError) {
         if (d && d.error) onError && onError(new Error(d.error));
         else onSuccess && onSuccess(d);
       } catch(e) {
-        // JSONパース失敗でも予約が成功している可能性があるため成功として扱う
         onSuccess && onSuccess({});
       }
     })
@@ -345,8 +335,6 @@ window.addEventListener('load', function() {
 
 function loadSlots() {
   document.querySelector('#calTable tbody').innerHTML = '<tr><td colspan="8"><div class="loading">空き枠を取得しています...</div></td></tr>';
-
-  // スプレッドシートからCSVで高速取得
   fetch(SS_URL, { cache: 'no-store' })
     .then(function(r){ return r.text(); })
     .then(function(csv){
@@ -354,7 +342,6 @@ function loadSlots() {
       renderGrid();
     })
     .catch(function(){
-      // フォールバック：GASから直接取得
       gasCall('getSlots', null,
         function(data){ allSlots = data||[]; renderGrid(); },
         function(e){
@@ -366,11 +353,9 @@ function loadSlots() {
     });
 }
 
-// スプレッドシートCSVをパース
 function parseSlotCsv(csv) {
   var lines = csv.trim().split('\n');
   if (lines.length < 2) return [];
-  // ヘッダー行をスキップ（1行目）
   var slots = [];
   for (var i = 1; i < lines.length; i++) {
     var cols = lines[i].split(',').map(function(c){ return c.replace(/^"|"$/g,'').trim(); });
@@ -389,7 +374,6 @@ function parseSlotCsv(csv) {
   return slots;
 }
 
-// ── 直近7日間（今日から） ──
 function getWeekDates(offset) {
   var today = new Date(); today.setHours(0,0,0,0);
   var start = new Date(today); start.setDate(today.getDate() + offset * 7);
@@ -404,28 +388,24 @@ function getWeekDates(offset) {
 function fmtDate(d){ return d.getFullYear()+'/'+(d.getMonth()+1<10?'0':'')+(d.getMonth()+1)+'/'+(d.getDate()<10?'0':'')+d.getDate(); }
 function pad2(n){ return n<10?'0'+n:''+n; }
 
-// ── グリッド描画 ──
 function renderGrid() {
   var dates  = getWeekDates(weekOffset);
   var today  = new Date(); today.setHours(0,0,0,0);
   var now    = new Date();
-  var cutoff = new Date(now.getTime() + 2 * 60 * 60 * 1000); // 2時間後
+  var cutoff = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-  // 週タイトル
   var f = dates[0], l = dates[6];
   var titleStr = f.getFullYear() + '年' + (f.getMonth()+1) + '月';
   if (f.getMonth() !== l.getMonth()) titleStr += ' 〜 ' + (l.getMonth()+1) + '月';
   document.getElementById('weekTitle').textContent = titleStr;
   document.getElementById('prevWeekBtn').disabled = (weekOffset <= 0);
 
-  // slotMap
   var slotMap = {};
   for (var i = 0; i < allSlots.length; i++) {
     var sl = allSlots[i];
     slotMap[sl.date+'|'+sl.startTime] = sl;
   }
 
-  // thead
   var thead = '<tr><th class="th-empty"></th>';
   for (var di = 0; di < dates.length; di++) {
     var d   = dates[di];
@@ -436,7 +416,6 @@ function renderGrid() {
   thead += '</tr>';
   document.querySelector('#calTable thead').innerHTML = thead;
 
-  // 時間リスト
   var times = [];
   for (var hh = H_START; hh < H_END; hh++) {
     for (var mm = 0; mm < 60; mm += INTERVAL) {
@@ -449,10 +428,8 @@ function renderGrid() {
   var hasAny = false;
 
   for (var ti = 0; ti < times.length; ti++) {
-    var time  = times[ti];
-    var isMinor = (parseInt(time.split(':')[1]) !== 0); // 30分刻みの:30は小さく
-
-    // 未来の行のみ表示
+    var time    = times[ti];
+    var isMinor = (parseInt(time.split(':')[1]) !== 0);
     var rowFuture = false;
     for (var di2 = 0; di2 < dates.length; di2++) {
       var dt = new Date(dates[di2]);
@@ -502,33 +479,22 @@ function getIdx(sl) {
   return 0;
 }
 
-// ── スロット選択 ──
 function pickSlot(idx) {
   selSlot = allSlots[idx];
   renderGrid();
-
   var d = selSlot;
   var mainTxt = d.date+'（'+d.dayOfWeek+'）　'+d.startTime+' 〜 '+d.endTime;
   document.getElementById('selBannerMain').textContent = mainTxt;
   document.getElementById('scMain').textContent = mainTxt;
-
-  // バナー表示
-  var banner = document.getElementById('selBanner');
-  banner.classList.add('on');
-
-  // フォームセクション表示
+  document.getElementById('selBanner').classList.add('on');
   document.getElementById('formSection').classList.add('on');
-
   setStep(2);
 }
 
-// フォームにスクロール
 function scrollToForm() {
-  var form = document.getElementById('formSection');
-  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('formSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// 日時変更
 function clearSlot() {
   selSlot = null;
   document.getElementById('selBanner').classList.remove('on');
@@ -538,7 +504,6 @@ function clearSlot() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ── 予約送信 ──
 function doSubmit() {
   var lastName  = document.getElementById('fLastName').value.trim();
   var firstName = document.getElementById('fFirstName').value.trim();
@@ -552,7 +517,6 @@ function doSubmit() {
   if (!lastName||!firstName||!email||!phone) { eb.textContent='姓・名・メールアドレス・電話番号は必須です。'; eb.style.display='block'; return; }
   if (!selSlot) { eb.textContent='日時を選択してください。'; eb.style.display='block'; return; }
 
-  // 当日2時間前チェック
   var slotStart = new Date(selSlot.startISO);
   var twoHoursLater = new Date(Date.now() + 2 * 60 * 60 * 1000);
   if (slotStart < twoHoursLater) { eb.textContent='当日のご予約は2時間前までとなります。別の日時をお選びください。'; eb.style.display='block'; return; }
@@ -560,7 +524,6 @@ function doSubmit() {
   eb.style.display = 'none';
   var btn = document.getElementById('sbtn'); btn.disabled=true; btn.textContent='送信中...';
 
-  // UTMパラメータを取得
   var utmParams = (function(){
     var p = new URLSearchParams(window.location.search);
     return {
@@ -572,9 +535,7 @@ function doSubmit() {
 
   gasCall('makeReservation',
     { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO, utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign },
-
     function(r) {
-      // r.successがtrue、またはレスポンスが空（GASが正常処理後に空を返すケース）の場合も成功とみなす
       if (r && r.success !== false) {
         document.getElementById('mainWrap').style.display = 'none';
         document.getElementById('heroArea').style.display = 'none';
@@ -585,9 +546,10 @@ function doSubmit() {
         setStep(3);
         window.scrollTo({top:0,behavior:'smooth'});
 
-        // GA4 CVイベント
+        // GA4 CVイベント発火
         window.dataLayer = window.dataLayer || [];
         window.dataLayer.push({ event: 'reservation_complete' });
+
       } else {
         eb.textContent = (r&&r.message)||'予約に失敗しました。もう一度お試しください。';
         eb.style.display = 'block';
@@ -596,7 +558,7 @@ function doSubmit() {
     },
     function(e) {
       eb.textContent = e.message; eb.style.display='block';
-      btn.disabled=false; btn.textContent='予約を確定する';
+      btn.disabled=false; btn.textContent='予約確認';
     }
   );
 }
