@@ -296,7 +296,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 </footer>
 
 <script>
-var GAS_URL  = 'https://script.google.com/macros/s/AKfycbwYUUyKs0Ycm2sNzPaCRvgFOFbQs8gWmNI3gUMATg5zdxN8G1Su6DLz0Qp-fTgyzv1G6w/exec';
+var GAS_URL  = 'https://script.google.com/macros/s/AKfycbxx1XyQ19uIEL-zEREUtJo8sNoic_Ft7VoQ0_9PTbIZpunmxALzgY22Ryf3Y8rCRQOaNQ/exec';
 var SS_ID    = '1X3I2Q2ICd02yC8kxuEYKlbTGTWyoKIvsv87NL2bYol0';
 var SS_URL   = 'https://docs.google.com/spreadsheets/d/'+SS_ID+'/gviz/tq?tqx=out:csv&sheet=slots';
 var DAY      = ['日','月','火','水','木','金','土'];
@@ -309,7 +309,10 @@ var weekOffset = 0;
 // ── インアプリブラウザ判定 ──
 function isInAppBrowser() {
   var ua = navigator.userAgent || '';
-  return /Instagram|FBAN|FBAV|Line\/|Twitter|Snapchat/i.test(ua);
+  var result = /Instagram|FBAN|FBAV|Line\/|Twitter|Snapchat/i.test(ua);
+  console.log('[TOKOWAKA] UA:', ua);
+  console.log('[TOKOWAKA] isInApp:', result);
+  return result;
 }
 
 // ── JSONP呼び出し（インアプリブラウザ用）──
