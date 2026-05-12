@@ -133,6 +133,13 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .foot-logo{font-family:'Cormorant Garamond',serif;font-size:14px;color:rgba(255,255,255,.3);letter-spacing:.14em}
 .foot-copy{font-size:8px;color:rgba(255,255,255,.14);margin-top:6px;letter-spacing:.06em}
 .loading{text-align:center;padding:32px 0;color:var(--muted);font-size:12px}
+/* ── 送信中オーバーレイ ── */
+.submitting-overlay{display:none;position:fixed;inset:0;background:rgba(26,24,20,.85);z-index:999;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.submitting-overlay.on{display:flex}
+.submitting-spinner{width:44px;height:44px;border:3px solid rgba(184,150,90,.2);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.submitting-text{font-family:'Noto Serif JP',serif;font-weight:300;font-size:16px;color:#fff;letter-spacing:.06em}
+.submitting-sub{font-size:11px;color:rgba(255,255,255,.4);letter-spacing:.04em}
 @media(max-width:400px){
   :root{--pad:12px}
   .th-day{min-width:44px}
@@ -244,6 +251,12 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   </div>
 </div>
 
+<div class="submitting-overlay" id="submittingOverlay">
+  <div class="submitting-spinner"></div>
+  <div class="submitting-text">予約を処理しています</div>
+  <div class="submitting-sub">そのままお待ちください。通常15秒ほどかかります。</div>
+</div>
+
 <footer class="foot">
   <div class="foot-logo">TOKOWAKA</div>
   <div class="foot-copy">© 2026 TOKOWAKA 吉祥寺. All rights reserved.</div>
@@ -252,7 +265,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <script>
 var TRAINER_ID   = 'C';
 var TRAINER_NAME = '沖 孟';
-var GAS_URL  = 'https://script.google.com/macros/s/AKfycbwYUUyKs0Ycm2sNzPaCRvgFOFbQs8gWmNI3gUMATg5zdxN8G1Su6DLz0Qp-fTgyzv1G6w/exec';
+var GAS_URL  = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 var SS_ID    = '1X3I2Q2ICd02yC8kxuEYKlbTGTWyoKIvsv87NL2bYol0';
 var SS_URL   = 'https://docs.google.com/spreadsheets/d/' + SS_ID + '/gviz/tq?tqx=out:csv&sheet=slots_oki';
 var DAY      = ['日','月','火','水','木','金','土'];
@@ -437,6 +450,7 @@ function doSubmit() {
   if (slotStart < twoHoursLater) { eb.textContent='当日のご予約は2時間前までとなります。別の日時をお選びください。'; eb.style.display='block'; return; }
   eb.style.display = 'none';
   var btn = document.getElementById('sbtn'); btn.disabled=true; btn.textContent='送信中...';
+  document.getElementById('submittingOverlay').classList.add('on');
   var utmParams = (function(){
     var p = new URLSearchParams(window.location.search);
     return { utm_source: p.get('utm_source')||'direct', utm_medium: p.get('utm_medium')||'none', utm_campaign: p.get('utm_campaign')||'none' };
@@ -447,6 +461,7 @@ function doSubmit() {
       trainerId:TRAINER_ID,
       utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign },
     function(r) {
+      document.getElementById('submittingOverlay').classList.remove('on');
       if (r && r.success !== false) {
         document.getElementById('mainWrap').style.display = 'none';
         document.getElementById('heroArea').style.display = 'none';
@@ -465,7 +480,7 @@ function doSubmit() {
         btn.disabled=false; btn.textContent='予約確認';
       }
     },
-    function(e) { eb.textContent = e.message; eb.style.display='block'; btn.disabled=false; btn.textContent='予約確認'; }
+    function(e) { document.getElementById('submittingOverlay').classList.remove('on'); eb.textContent = e.message; eb.style.display='block'; btn.disabled=false; btn.textContent='予約確認'; }
   );
 }
 
