@@ -153,6 +153,8 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .foot-logo{font-family:'Cormorant Garamond',serif;font-size:14px;color:rgba(255,255,255,.3);letter-spacing:.14em}
 .foot-copy{font-size:8px;color:rgba(255,255,255,.14);margin-top:6px;letter-spacing:.06em}
 .loading{text-align:center;padding:32px 0;color:var(--muted);font-size:12px}
+.stale-notice{display:none;margin:0 0 12px;padding:12px 14px;background:#fff8e1;border:1px solid #f5c542;border-radius:var(--r);font-size:12px;color:#7a5f00;line-height:1.7}
+.stale-notice.on{display:block}
 
 /* ── 送信中オーバーレイ ── */
 .submitting-overlay{display:none;position:fixed;inset:0;background:rgba(26,24,20,.85);z-index:999;flex-direction:column;align-items:center;justify-content:center;gap:16px}
@@ -209,6 +211,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   <div class="cal-section">
     <span class="sec-step">Step 01</span>
     <div class="sec-ttl">日時を選ぶ</div>
+    <div id="staleNotice" class="stale-notice"></div>
     <div class="cal-wrap">
       <div class="week-nav">
         <button class="week-btn" id="prevWeekBtn" onclick="shiftWeek(-1)" disabled>‹ 前の一週間</button>
@@ -467,6 +470,7 @@ function renderGrid() {
   if (f.getMonth() !== l.getMonth()) titleStr += ' 〜 ' + (l.getMonth()+1) + '月';
   document.getElementById('weekTitle').textContent = titleStr;
   document.getElementById('prevWeekBtn').disabled = (weekOffset <= 0);
+  document.getElementById('nextWeekBtn').disabled = (weekOffset >= 3);
 
   var slotMap = {};
   for (var i = 0; i < allSlots.length; i++) {
@@ -539,6 +543,7 @@ function renderGrid() {
 function shiftWeek(dir) {
   weekOffset += dir;
   if (weekOffset < 0) weekOffset = 0;
+  if (weekOffset > 3) weekOffset = 3;
   renderGrid();
 }
 
@@ -621,9 +626,16 @@ function doSubmit() {
         window.dataLayer.push({ event: 'reservation_complete' });
 
       } else {
-        eb.textContent = (r&&r.message)||'予約に失敗しました。もう一度お試しください。';
-        eb.style.display = 'block';
         btn.disabled=false; btn.textContent='予約確認';
+        var msg = (r&&r.message)||'予約に失敗しました。もう一度お試しください。';
+        if (msg.indexOf('すでに予約') !== -1 || msg.indexOf('対応できるトレーナー') !== -1) {
+          clearSlot();
+          showStaleNotice('この時間帯はすでに予約が入りました。空き状況を更新しましたので、別の日時をお選びください。');
+          loadSlots();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          eb.textContent = msg; eb.style.display = 'block';
+        }
       }
     },
     function(e) {
@@ -632,6 +644,13 @@ function doSubmit() {
       btn.disabled=false; btn.textContent='予約確認';
     }
   );
+}
+
+function showStaleNotice(msg) {
+  var el = document.getElementById('staleNotice');
+  el.textContent = msg;
+  el.classList.add('on');
+  setTimeout(function(){ el.classList.remove('on'); }, 8000);
 }
 
 function setStep(n) {
