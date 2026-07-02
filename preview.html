@@ -43,7 +43,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
 .hero h1{font-family:'Shippori Mincho','Noto Serif JP',serif;font-weight:500;font-size:clamp(18px,4.5vw,24px);line-height:1.5;letter-spacing:.05em;color:#fff;margin-bottom:6px}
 .hero h1 em{font-style:normal;color:var(--gold-l)}
 .rule{width:20px;height:1px;background:var(--gold);margin:8px 0}
-.hero p{font-size:11px;font-weight:300;color:rgba(255,255,255,.4);line-height:1.9}
+.hero p{font-size:13px;font-weight:300;color:rgba(255,255,255,.72);line-height:1.85}
 
 /* ── STEPS ── */
 .steps-outer{background:var(--cream);border-bottom:1px solid var(--bd)}
@@ -109,7 +109,7 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .sel-banner-btn:active{opacity:.8}
 
 /* ── フォームセクション ── */
-.form-section{padding:24px var(--pad) 0;display:none}
+.form-section{padding:24px var(--pad) 0;display:none;scroll-margin-top:64px}
 .form-section.on{display:block}
 .sel-confirm{background:#fff;border:1px solid var(--bd);border-left:3px solid var(--gold);border-radius:var(--r);padding:13px 16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 2px 12px rgba(27,42,71,.06)}
 .sc-info{flex:1}
@@ -562,6 +562,7 @@ function pickSlot(idx) {
   document.getElementById('selBanner').classList.add('on');
   document.getElementById('formSection').classList.add('on');
   setStep(2);
+  setTimeout(scrollToForm, 120);
 }
 
 function scrollToForm() {
