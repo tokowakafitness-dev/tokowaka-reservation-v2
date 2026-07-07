@@ -13,10 +13,10 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 <title>無料カウンセリング予約 | TOKOWAKA 吉祥寺</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@200;300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@200;300;400&family=Shippori+Mincho:wght@500;600&display=swap" rel="stylesheet">
 <style>
 :root{
-  --ink:#1a1814;--soft:#3a3228;--muted:#9a8e82;
+  --ink:#1b2a47;--soft:#4a5468;--muted:#9a8e82;
   --cream:#f5f2eb;--warm:#fdfcf8;
   --gold:#b8965a;--gold-l:#d4b882;--gold-p:#f2ead8;
   --teal:#2d5a5a;--teal-p:#e8f0f0;
@@ -30,9 +30,9 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--warm);color:var(--in
 button{font-family:inherit;cursor:pointer;border:none;background:none}
 
 /* ── HEADER ── */
-.hd{position:sticky;top:0;z-index:200;background:rgba(26,24,20,.97);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--bd);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 var(--pad)}
-.logo{font-family:'Cormorant Garamond',serif;font-weight:400;letter-spacing:.14em;color:#fff;font-size:16px;line-height:1;text-decoration:none}
-.logo small{font-family:'Noto Sans JP',sans-serif;font-size:7px;font-weight:300;letter-spacing:.26em;color:var(--gold-l);display:block;margin-top:3px;text-transform:uppercase}
+.hd{position:sticky;top:0;z-index:200;background:rgba(27,42,71,.97);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--bd);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 var(--pad)}
+.logo{font-family:'Cormorant Garamond',serif;font-weight:500;letter-spacing:.16em;color:#fff;font-size:20px;line-height:1;text-decoration:none}
+.logo small{font-family:'Noto Sans JP',sans-serif;font-size:8px;font-weight:400;letter-spacing:.26em;color:var(--gold-l);display:block;margin-top:4px;text-transform:uppercase}
 .badge{background:var(--gold);color:#fff;font-family:'Noto Sans JP',sans-serif;font-size:9px;font-weight:500;letter-spacing:.1em;padding:5px 12px;border-radius:100px;white-space:nowrap}
 
 /* ── HERO ── */
@@ -40,10 +40,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
 .hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 55% 46% at 80% 30%,rgba(45,90,90,.15),transparent 60%);pointer-events:none}
 .hero-inner{position:relative;max-width:var(--max);margin:0 auto}
 .eyebrow{font-family:'Cormorant Garamond',serif;font-style:italic;font-size:11px;letter-spacing:.18em;color:var(--gold-l);display:block;margin-bottom:6px}
-.hero h1{font-family:'Noto Serif JP',serif;font-weight:200;font-size:clamp(18px,4.5vw,24px);line-height:1.5;letter-spacing:.05em;color:#fff;margin-bottom:6px}
+.hero h1{font-family:'Shippori Mincho','Noto Serif JP',serif;font-weight:500;font-size:clamp(18px,4.5vw,24px);line-height:1.5;letter-spacing:.05em;color:#fff;margin-bottom:6px}
 .hero h1 em{font-style:normal;color:var(--gold-l)}
 .rule{width:20px;height:1px;background:var(--gold);margin:8px 0}
-.hero p{font-size:11px;font-weight:300;color:rgba(255,255,255,.4);line-height:1.9}
+.hero p{font-size:13px;font-weight:300;color:rgba(255,255,255,.72);line-height:1.85}
 
 /* ── STEPS ── */
 .steps-outer{background:var(--cream);border-bottom:1px solid var(--bd)}
@@ -64,7 +64,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
 /* ── CALENDAR SECTION ── */
 .cal-section{padding:20px var(--pad) 0}
 .sec-step{font-family:'Cormorant Garamond',serif;font-style:italic;font-size:10px;letter-spacing:.18em;color:var(--gold);display:block;margin-bottom:3px}
-.sec-ttl{font-family:'Noto Serif JP',serif;font-weight:300;font-size:clamp(17px,4vw,20px);color:var(--ink);letter-spacing:.04em;margin-bottom:14px}
+.sec-ttl{font-family:'Shippori Mincho','Noto Serif JP',serif;font-weight:500;font-size:clamp(17px,4vw,20px);color:var(--ink);letter-spacing:.04em;margin-bottom:14px}
 
 /* ── 週ナビ ── */
 .cal-wrap{background:#fff;border:1px solid #e0e0e0;border-radius:var(--r);overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,.06)}
@@ -109,12 +109,12 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .sel-banner-btn:active{opacity:.8}
 
 /* ── フォームセクション ── */
-.form-section{padding:24px var(--pad) 0;display:none}
+.form-section{padding:24px var(--pad) 0;display:none;scroll-margin-top:64px}
 .form-section.on{display:block}
-.sel-confirm{background:var(--gold-p);border:1px solid var(--bd);border-radius:var(--r);padding:13px 16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sel-confirm{background:#fff;border:1px solid var(--bd);border-left:3px solid var(--gold);border-radius:var(--r);padding:13px 16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 2px 12px rgba(27,42,71,.06)}
 .sc-info{flex:1}
 .sc-label{font-size:9px;color:var(--gold);letter-spacing:.18em;font-weight:500;display:block;margin-bottom:3px}
-.sc-main{font-family:'Noto Serif JP',serif;font-size:15px;color:var(--ink)}
+.sc-main{font-family:'Shippori Mincho','Noto Serif JP',serif;font-weight:500;font-size:15px;color:var(--ink)}
 .sc-sub{font-size:11px;color:var(--soft);margin-top:2px}
 .sc-change{font-size:11px;color:var(--soft);border:1px solid var(--bd);border-radius:100px;padding:6px 12px;flex-shrink:0;transition:all .2s}
 .sc-change:hover{border-color:var(--gold);color:var(--gold)}
@@ -145,7 +145,7 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .dr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid rgba(0,0,0,.06);font-size:13px}
 .dr:last-child{border-bottom:none}
 .dk{color:var(--soft);flex-shrink:0;font-size:10px;letter-spacing:.08em}
-.dv{font-weight:500;text-align:right;color:var(--ink);font-family:'Noto Serif JP',serif}
+.dv{font-weight:500;text-align:right;color:var(--ink);font-family:'Shippori Mincho','Noto Serif JP',serif}
 .done-note{max-width:380px;margin:0 auto;background:var(--teal-p);border:1px solid rgba(45,90,90,.16);border-radius:var(--r);padding:13px 15px;font-size:11px;color:var(--teal);line-height:1.9}
 
 /* ── FOOTER ── */
@@ -161,7 +161,7 @@ table.cal tbody td.slot-cell:last-child{border-right:none}
 .submitting-overlay.on{display:flex}
 .submitting-spinner{width:44px;height:44px;border:3px solid rgba(184,150,90,.2);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.submitting-text{font-family:'Noto Serif JP',serif;font-weight:300;font-size:16px;color:#fff;letter-spacing:.06em}
+.submitting-text{font-family:'Shippori Mincho','Noto Serif JP',serif;font-weight:500;font-size:16px;color:#fff;letter-spacing:.06em}
 .submitting-sub{font-size:11px;color:rgba(255,255,255,.4);letter-spacing:.04em}
 
 @media(max-width:400px){
@@ -562,6 +562,7 @@ function pickSlot(idx) {
   document.getElementById('selBanner').classList.add('on');
   document.getElementById('formSection').classList.add('on');
   setStep(2);
+  setTimeout(scrollToForm, 120);
 }
 
 function scrollToForm() {
