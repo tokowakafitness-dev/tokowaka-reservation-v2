@@ -475,9 +475,12 @@ function doSubmit() {
         document.getElementById('doneWrap').classList.add('on');
         setStep(3);
         window.scrollTo({top:0,behavior:'smooth'});
-        // GA4 CVイベント発火（トレーナー情報付き）
-        window.dataLayer = window.dataLayer || [];
-        window.dataLayer.push({ event: 'reservation_complete', trainer_id: TRAINER_ID, trainer_name: TRAINER_NAME });
+        // GA4 CVイベント発火（トレーナー情報付き・重複防止）
+        if (!sessionStorage.getItem('cv_tracked')) {
+          sessionStorage.setItem('cv_tracked', '1');
+          window.dataLayer = window.dataLayer || [];
+          window.dataLayer.push({ event: 'reservation_complete', trainer_id: TRAINER_ID, trainer_name: TRAINER_NAME });
+        }
       } else {
         btn.disabled=false; btn.textContent='予約確認';
         var msg = (r&&r.message)||'予約に失敗しました。もう一度お試しください。';

@@ -621,9 +621,12 @@ function doSubmit() {
         setStep(3);
         window.scrollTo({top:0,behavior:'smooth'});
 
-        // GA4 CVイベント発火
-        window.dataLayer = window.dataLayer || [];
-        window.dataLayer.push({ event: 'reservation_complete' });
+        // GA4 CVイベント発火（重複防止）
+        if (!sessionStorage.getItem('cv_tracked')) {
+          sessionStorage.setItem('cv_tracked', '1');
+          window.dataLayer = window.dataLayer || [];
+          window.dataLayer.push({ event: 'reservation_complete' });
+        }
 
       } else {
         btn.disabled=false; btn.textContent='予約確認';
