@@ -99,6 +99,15 @@
     <button id="doneClose" class="btn">閉じる</button>
   </div>
 
+  <!-- トレーナーID表示（?whoami=1 で開く） -->
+  <div id="s-whoami" class="screen" hidden>
+    <div class="card">
+      <div class="big">トレーナー登録用ID</div>
+      <p class="muted">以下のIDをオーナーにお送りください（予約通知の宛先設定に使います）。</p>
+      <p id="whoamiId" style="font-size:13px;word-break:break-all;background:#f5f5f5;padding:12px;border-radius:8px;"></p>
+    </div>
+  </div>
+
   <!-- エラー -->
   <div id="s-error" class="screen" hidden>
     <div class="card">
@@ -126,6 +135,7 @@
   }
   function showError(msg){ document.getElementById('errMsg').textContent = msg; show('s-error'); }
   function dbg(msg){ var el = document.getElementById('loadMsg'); if (el) el.textContent = msg; }
+  function showWhoami(w){ document.getElementById('whoamiId').textContent = (w && w.lineUserId) ? w.lineUserId : '取得できませんでした'; show('s-whoami'); }
 
   // GAS呼び出し（JSONP・idToken必須）
   function api(params){
@@ -154,6 +164,7 @@
       if (!liff.isLoggedIn()) { dbg('ログインへ移動…'); liff.login(); return; }
       idToken = liff.getIDToken();
       if (!idToken) { showError('IDトークンが取得できません。LIFFのScopeで openid が有効か確認してください。'); return; }
+      if (location.href.indexOf('whoami') >= 0) { dbg('ID取得中…'); return api({ action:'line_whoami' }).then(showWhoami); }
       dbg('会員状態を照会中…');
       return api({ action:'line_getMemberStatus' });
     }).then(function(res){
@@ -192,6 +203,28 @@
       });
       show('s-trainer');
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+
+  // ---- マイ予約一覧 ----
+  document.getElementById('toMyRes').onclick = function(){ loadMyReservations(); };
+  document.getElementById('myResBack').onclick = function(){ show('s-trainer'); };
+  function loadMyReservations(){
+    show('s-loading'); dbg('予約を取得中…');
+    api({ action:'line_getMyReservations' }).then(function(res){
+      if (!res.success) { showError('予約の取得に失敗しました。'); return; }
+      var box = document.getElementById('myResList'); box.innerHTML = '';
+      if (!res.reservations || !res.reservations.length) {
+        box.innerHTML = '<div class="card"><p class="muted">現在、ご予約はありません。</p></div>';
+      } else {
+        res.reservations.forEach(function(r){
+          var d = document.createElement('div');
+          d.className = 'card';
+          d.innerHTML = '<div class="big">' + r.dateLabel + '</div><p class="muted">担当：' + r.trainerName + '<br>場所：TOKOWAKA 吉祥寺</p>';
+          box.appendChild(d);
+        });
+      }
+      show('s-myres');
+    }).catch(function(e){ showError('通信に失敗しました：' + e); });
   }
 
   // ---- 空き枠取得 ----
