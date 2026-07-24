@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>TOKOWAKA予約</title>
+<!--
+  LINE予約 LIFF画面（GitHub Pagesホスト版）
+  ・GAS HtmlServiceはバナー＋googleusercontent.comドメインでliff.initが停止するため、GitHub Pagesでホストする。
+  ・GASとの通信は既存の体験予約と同じ JSONP(doGet+callback) で行う（CORS回避）。
+  ・LIFF_ID / GAS_URL は機密ではないので直書き。
+-->
+<style>
+  :root { --pri:#1a1a1a; --acc:#c8a25a; --line:#e5e5e5; --ok:#2e7d32; --bg:#fafafa; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font-family:-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; color:var(--pri); background:var(--bg); }
+  #app { max-width:480px; margin:0 auto; min-height:100vh; }
+  header { padding:14px 16px; background:#fff; border-bottom:1px solid var(--line); font-weight:700; font-size:15px; }
+  .screen { padding:16px; }
+  .muted { color:#888; font-size:13px; }
+  .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; background:var(--pri); color:#fff; font-size:15px; font-weight:600; margin-top:12px; cursor:pointer; }
+  .btn:disabled { opacity:.5; }
+  .btn-outline { background:#fff; color:var(--pri); border:1px solid var(--line); }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:12px; }
+  .trainer { display:flex; align-items:center; justify-content:space-between; padding:16px; background:#fff; border:1px solid var(--line); border-radius:12px; margin-bottom:10px; cursor:pointer; }
+  .trainer:active { background:#f0f0f0; }
+  .code-input { width:100%; padding:14px; font-size:22px; letter-spacing:8px; text-align:center; border:1px solid var(--line); border-radius:10px; }
+  .weekbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .weekbar button { border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 12px; font-size:14px; }
+  table.grid { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; }
+  table.grid th, table.grid td { border:1px solid var(--line); text-align:center; padding:0; height:26px; }
+  table.grid th { background:#f5f5f5; font-weight:600; padding:3px 0; }
+  table.grid td.h { background:#f5f5f5; font-weight:600; width:34px; }
+  .cell-open { background:#fff; color:var(--acc); font-weight:700; cursor:pointer; }
+  .cell-open:active { background:#faf3e2; }
+  .cell-none { background:#fafafa; color:#ddd; }
+  .err { color:#c62828; font-size:13px; margin-top:8px; }
+  .big { font-size:18px; font-weight:700; margin:4px 0; }
+  .done-icon { font-size:48px; text-align:center; margin:12px 0; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>TOKOWAKA 吉祥寺｜予約</header>
+
+  <div id="s-loading" class="screen"><p class="muted" id="loadMsg">起動中…</p></div>
+
+  <!-- 会員登録 -->
+  <div id="s-register" class="screen" hidden>
+    <div class="card">
+      <div class="big">会員登録</div>
+      <p class="muted">契約時にお渡しした認証番号を入力してください（初回のみ）。</p>
+      <input id="codeInput" class="code-input" type="tel" inputmode="numeric" maxlength="6" placeholder="______">
+      <div id="registerErr" class="err" hidden></div>
+      <button id="registerBtn" class="btn">会員登録する</button>
+    </div>
+    <p class="muted">※認証番号が分からない場合は担当トレーナーへご連絡ください。</p>
+  </div>
+
+  <!-- トレーナー選択 -->
+  <div id="s-trainer" class="screen" hidden>
+    <p class="muted">担当トレーナーを選んでください。</p>
+    <div id="trainerList"></div>
+  </div>
+
+  <!-- 週グリッド -->
+  <div id="s-week" class="screen" hidden>
+    <div class="weekbar">
+      <button id="prevWeek">‹ 前の週</button>
+      <span id="weekLabel" style="font-size:13px;font-weight:600;"></span>
+      <button id="nextWeek">次の週 ›</button>
+    </div>
+    <div id="gridWrap"></div>
+    <p class="muted" style="margin-top:8px;">○ をタップすると予約確認へ進みます。</p>
+    <button id="backToTrainer" class="btn btn-outline">トレーナーを選び直す</button>
+  </div>
+
+  <!-- 確認 -->
+  <div id="s-confirm" class="screen" hidden>
+    <div class="card">
+      <div class="big">この内容で予約しますか？</div>
+      <p>担当：<span id="cfTrainer"></span></p>
+      <p>日時：<span id="cfDatetime"></span></p>
+    </div>
+    <div id="confirmErr" class="err" hidden></div>
+    <button id="confirmBtn" class="btn">予約を確定する</button>
+    <button id="confirmCancel" class="btn btn-outline">戻る</button>
+  </div>
+
+  <!-- 完了 -->
+  <div id="s-done" class="screen" hidden>
+    <div class="done-icon">✅</div>
+    <div class="card" style="text-align:center;">
+      <div class="big">ご予約を承りました</div>
+      <p id="doneDetail" class="muted"></p>
+      <p class="muted">前日にリマインドをお送りします。キャンセルは前日17時まで無料です。</p>
+    </div>
+    <button id="doneClose" class="btn">閉じる</button>
+  </div>
+
+  <!-- エラー -->
+  <div id="s-error" class="screen" hidden>
+    <div class="card">
+      <div class="big">エラー</div>
+      <p id="errMsg" class="muted"></p>
+    </div>
+  </div>
+</div>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+  // ▼ 環境値（機密ではない）
+  var LIFF_ID = '2010827953-QgBQFzh9';
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
+
+  var BUSINESS_START = 8, BUSINESS_END = 23;
+  var idToken = '';
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{} };
+  var _seq = 0;
+
+  function show(id){
+    ['s-loading','s-register','s-trainer','s-week','s-confirm','s-done','s-error'].forEach(function(s){
+      document.getElementById(s).hidden = (s !== id);
+    });
+  }
+  function showError(msg){ document.getElementById('errMsg').textContent = msg; show('s-error'); }
+  function dbg(msg){ var el = document.getElementById('loadMsg'); if (el) el.textContent = msg; }
+
+  // GAS呼び出し（JSONP・idToken必須）
+  function api(params){
+    params.idToken = idToken;
+    return new Promise(function(resolve, reject){
+      var cb = 'jcb_' + (++_seq) + '_' + Date.now();
+      var s = document.createElement('script');
+      var timer = setTimeout(function(){ cleanup(); reject('サーバー応答がタイムアウトしました'); }, 20000);
+      function cleanup(){ clearTimeout(timer); try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
+      window[cb] = function(data){ cleanup(); resolve(data); };
+      var qs = Object.keys(params).map(function(k){ return encodeURIComponent(k) + '=' + encodeURIComponent(params[k] == null ? '' : params[k]); }).join('&');
+      s.src = GAS_URL + '?' + qs + '&callback=' + cb;
+      s.onerror = function(){ cleanup(); reject('サーバーへの接続に失敗しました'); };
+      document.head.appendChild(s);
+    });
+  }
+
+  // ---- 起動 ----
+  function boot(){
+    dbg('起動 / LIFF_ID=' + (LIFF_ID ? 'あり' : 'なし'));
+    if (!LIFF_ID) { showError('LIFF IDが未設定です。'); return; }
+    if (!window.liff) { showError('LIFF SDKが読み込めていません（ネットワーク）。'); return; }
+    dbg('LIFF初期化中…');
+    liff.init({ liffId: LIFF_ID }).then(function(){
+      dbg('ログイン確認中…');
+      if (!liff.isLoggedIn()) { dbg('ログインへ移動…'); liff.login(); return; }
+      idToken = liff.getIDToken();
+      if (!idToken) { showError('IDトークンが取得できません。LIFFのScopeで openid が有効か確認してください。'); return; }
+      dbg('会員状態を照会中…');
+      return api({ action:'line_getMemberStatus' });
+    }).then(function(res){
+      if (!res) return;
+      if (res.success && res.verified) { loadTrainers(); }
+      else if (res.success) { show('s-register'); }
+      else { showError('会員状態の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); }
+    }).catch(function(e){ showError('初期化に失敗しました：' + (e && e.message ? e.message : e)); });
+  }
+
+  // ---- 会員登録 ----
+  document.getElementById('registerBtn').onclick = function(){
+    var code = document.getElementById('codeInput').value.trim();
+    var errEl = document.getElementById('registerErr'); errEl.hidden = true;
+    if (!/^[0-9]{4,6}$/.test(code)) { errEl.textContent='認証番号（数字）を入力してください。'; errEl.hidden=false; return; }
+    var btn = this; btn.disabled = true; btn.textContent='確認中…';
+    api({ action:'line_verifyMembership', code: code }).then(function(res){
+      btn.disabled=false; btn.textContent='会員登録する';
+      if (res.success && res.verified) { loadTrainers(); }
+      else { errEl.textContent = res.message || '認証番号が正しくありません。'; errEl.hidden=false; }
+    }).catch(function(e){ btn.disabled=false; btn.textContent='会員登録する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
+  };
+
+  // ---- トレーナー選択 ----
+  function loadTrainers(){
+    show('s-loading'); dbg('トレーナー取得中…');
+    api({ action:'line_getTrainers' }).then(function(res){
+      if (!res.success) { showError('トレーナー情報の取得に失敗しました。'); return; }
+      var box = document.getElementById('trainerList'); box.innerHTML = '';
+      res.trainers.forEach(function(t){
+        var d = document.createElement('div');
+        d.className = 'trainer';
+        d.innerHTML = '<span>'+ t.name +'</span><span style="color:#c8a25a;">選ぶ ›</span>';
+        d.onclick = function(){ state.trainerId=t.id; state.trainerName=t.name; state.weekOffset=0; loadSlots(); };
+        box.appendChild(d);
+      });
+      show('s-trainer');
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+
+  // ---- 空き枠取得 ----
+  function loadSlots(){
+    show('s-loading'); dbg('空き枠を取得中…');
+    api({ action:'line_getTrainerSlots', trainerId: state.trainerId }).then(function(res){
+      if (!res.success) { showError('空き枠の取得に失敗しました。'); return; }
+      state.slots = res.slots || [];
+      renderWeek();
+      show('s-week');
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+
+  function fmtDate(d){
+    var y=d.getFullYear(), m=('0'+(d.getMonth()+1)).slice(-2), day=('0'+d.getDate()).slice(-2);
+    return y+'/'+m+'/'+day;
+  }
+
+  function renderWeek(){
+    var base = new Date(); base.setHours(0,0,0,0);
+    base.setDate(base.getDate() + state.weekOffset*7);
+    var days = [];
+    for (var i=0;i<7;i++){ var d=new Date(base); d.setDate(base.getDate()+i); days.push(d); }
+    var dowJa=['日','月','火','水','木','金','土'];
+    document.getElementById('weekLabel').textContent =
+      (days[0].getMonth()+1)+'/'+days[0].getDate()+' 〜 '+(days[6].getMonth()+1)+'/'+days[6].getDate();
+
+    var index = {};
+    state.slots.forEach(function(s){
+      var h = parseInt((s.startTime||'0:0').split(':')[0], 10);
+      var key = s.date + '#' + h;
+      if (!index[key]) index[key] = s;
+    });
+
+    var html = '<table class="grid"><thead><tr><th></th>';
+    days.forEach(function(d){ html += '<th>'+ (d.getMonth()+1)+'/'+d.getDate()+'<br>'+dowJa[d.getDay()] +'</th>'; });
+    html += '</tr></thead><tbody>';
+    for (var h=BUSINESS_START; h<BUSINESS_END; h++){
+      html += '<tr><td class="h">'+h+'</td>';
+      days.forEach(function(d){
+        var key = fmtDate(d) + '#' + h;
+        html += index[key] ? '<td class="cell-open" data-key="'+key+'">○</td>' : '<td class="cell-none">·</td>';
+      });
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    var wrap = document.getElementById('gridWrap'); wrap.innerHTML = html;
+    state._index = index;
+    Array.prototype.forEach.call(wrap.querySelectorAll('.cell-open'), function(td){
+      td.onclick = function(){ var slot = state._index[td.getAttribute('data-key')]; if (slot) openConfirm(slot); };
+    });
+  }
+
+  document.getElementById('prevWeek').onclick = function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } };
+  document.getElementById('nextWeek').onclick = function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } };
+  document.getElementById('backToTrainer').onclick = function(){ show('s-trainer'); };
+
+  // ---- 確認 ----
+  function openConfirm(slot){
+    state.selected = slot;
+    document.getElementById('cfTrainer').textContent = state.trainerName;
+    var dt = new Date(slot.startISO);
+    var dowJa=['日','月','火','水','木','金','土'];
+    document.getElementById('cfDatetime').textContent =
+      (dt.getMonth()+1)+'月'+dt.getDate()+'日('+dowJa[dt.getDay()]+') '+slot.startTime+'〜'+slot.endTime;
+    document.getElementById('confirmErr').hidden = true;
+    show('s-confirm');
+  }
+  document.getElementById('confirmCancel').onclick = function(){ show('s-week'); };
+  document.getElementById('confirmBtn').onclick = function(){
+    var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
+    btn.disabled = true; btn.textContent='処理中…';
+    api({ action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO })
+      .then(function(res){
+        btn.disabled=false; btn.textContent='予約を確定する';
+        if (res.success) {
+          var s = state.selected;
+          document.getElementById('doneDetail').textContent = state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime;
+          show('s-done');
+        } else {
+          errEl.textContent = res.message || 'この時間は予約できませんでした。別の枠をお選びください。';
+          errEl.hidden = false;
+        }
+      }).catch(function(e){ btn.disabled=false; btn.textContent='予約を確定する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
+  };
+
+  document.getElementById('doneClose').onclick = function(){ if (window.liff && liff.closeWindow) liff.closeWindow(); };
+
+  boot();
+</script>
+</body>
+</html>
