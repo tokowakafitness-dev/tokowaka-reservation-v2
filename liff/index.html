@@ -4,12 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>TOKOWAKA予約</title>
-<!--
-  LINE予約 LIFF画面（GitHub Pagesホスト版）
-  ・GAS HtmlServiceはバナー＋googleusercontent.comドメインでliff.initが停止するため、GitHub Pagesでホストする。
-  ・GASとの通信は既存の体験予約と同じ JSONP(doGet+callback) で行う（CORS回避）。
-  ・LIFF_ID / GAS_URL は機密ではないので直書き。
--->
 <style>
   :root { --pri:#1a1a1a; --acc:#c8a25a; --line:#e5e5e5; --ok:#2e7d32; --bg:#fafafa; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -46,7 +40,6 @@
 
   <div id="s-loading" class="screen"><p class="muted" id="loadMsg">起動中…</p></div>
 
-  <!-- 会員登録 -->
   <div id="s-register" class="screen" hidden>
     <div class="card">
       <div class="big">会員登録</div>
@@ -58,13 +51,18 @@
     <p class="muted">※認証番号が分からない場合は担当トレーナーへご連絡ください。</p>
   </div>
 
-  <!-- トレーナー選択 -->
   <div id="s-trainer" class="screen" hidden>
-    <p class="muted">担当トレーナーを選んでください。</p>
+    <button id="toMyRes" class="btn btn-outline" style="margin-top:0;">予約を確認する</button>
+    <p class="muted" style="margin-top:18px;">新しく予約する担当トレーナーを選んでください。</p>
     <div id="trainerList"></div>
   </div>
 
-  <!-- 週グリッド -->
+  <div id="s-myres" class="screen" hidden>
+    <div class="big" style="margin-bottom:12px;">あなたの予約</div>
+    <div id="myResList"></div>
+    <button id="myResBack" class="btn btn-outline">戻る</button>
+  </div>
+
   <div id="s-week" class="screen" hidden>
     <div class="weekbar">
       <button id="prevWeek">‹ 前の週</button>
@@ -76,7 +74,6 @@
     <button id="backToTrainer" class="btn btn-outline">トレーナーを選び直す</button>
   </div>
 
-  <!-- 確認 -->
   <div id="s-confirm" class="screen" hidden>
     <div class="card">
       <div class="big">この内容で予約しますか？</div>
@@ -88,7 +85,6 @@
     <button id="confirmCancel" class="btn btn-outline">戻る</button>
   </div>
 
-  <!-- 完了 -->
   <div id="s-done" class="screen" hidden>
     <div class="done-icon">✅</div>
     <div class="card" style="text-align:center;">
@@ -99,7 +95,6 @@
     <button id="doneClose" class="btn">閉じる</button>
   </div>
 
-  <!-- トレーナーID表示（?whoami=1 で開く） -->
   <div id="s-whoami" class="screen" hidden>
     <div class="card">
       <div class="big">トレーナー登録用ID</div>
@@ -108,7 +103,6 @@
     </div>
   </div>
 
-  <!-- エラー -->
   <div id="s-error" class="screen" hidden>
     <div class="card">
       <div class="big">エラー</div>
@@ -119,7 +113,6 @@
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
-  // ▼ 環境値（機密ではない）
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -128,20 +121,19 @@
   var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{} };
   var _seq = 0;
 
+  var SCREENS = ['s-loading','s-register','s-trainer','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
   function show(id){
-    ['s-loading','s-register','s-trainer','s-week','s-confirm','s-done','s-error'].forEach(function(s){
-      document.getElementById(s).hidden = (s !== id);
-    });
+    SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
   }
-  function showError(msg){ document.getElementById('errMsg').textContent = msg; show('s-error'); }
+  function showError(msg){ var el = document.getElementById('errMsg'); if (el) el.textContent = msg; show('s-error'); }
   function dbg(msg){ var el = document.getElementById('loadMsg'); if (el) el.textContent = msg; }
-  function showWhoami(w){ document.getElementById('whoamiId').textContent = (w && w.lineUserId) ? w.lineUserId : '取得できませんでした'; show('s-whoami'); }
+  function showWhoami(w){ var el = document.getElementById('whoamiId'); if (el) el.textContent = (w && w.lineUserId) ? w.lineUserId : '取得できませんでした'; show('s-whoami'); }
+  function on(id, fn){ var el = document.getElementById(id); if (el) el.onclick = fn; }
 
-  // GAS呼び出し（JSONP・idToken必須）
   function api(params){
     params.idToken = idToken;
     return new Promise(function(resolve, reject){
-      var cb = 'jcb_' + (++_seq) + '_' + Date.now();
+      var cb = 'jcb_' + (++_seq) + '_' + new Date().getTime();
       var s = document.createElement('script');
       var timer = setTimeout(function(){ cleanup(); reject('サーバー応答がタイムアウトしました'); }, 20000);
       function cleanup(){ clearTimeout(timer); try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
@@ -153,30 +145,32 @@
     });
   }
 
-  // ---- 起動 ----
   function boot(){
-    dbg('起動 / LIFF_ID=' + (LIFF_ID ? 'あり' : 'なし'));
-    if (!LIFF_ID) { showError('LIFF IDが未設定です。'); return; }
-    if (!window.liff) { showError('LIFF SDKが読み込めていません（ネットワーク）。'); return; }
-    dbg('LIFF初期化中…');
-    liff.init({ liffId: LIFF_ID }).then(function(){
-      dbg('ログイン確認中…');
-      if (!liff.isLoggedIn()) { dbg('ログインへ移動…'); liff.login(); return; }
-      idToken = liff.getIDToken();
-      if (!idToken) { showError('IDトークンが取得できません。LIFFのScopeで openid が有効か確認してください。'); return; }
-      if (location.href.indexOf('whoami') >= 0) { dbg('ID取得中…'); return api({ action:'line_whoami' }).then(showWhoami); }
-      dbg('会員状態を照会中…');
-      return api({ action:'line_getMemberStatus' });
-    }).then(function(res){
-      if (!res) return;
-      if (res.success && res.verified) { loadTrainers(); }
-      else if (res.success) { show('s-register'); }
-      else { showError('会員状態の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); }
-    }).catch(function(e){ showError('初期化に失敗しました：' + (e && e.message ? e.message : e)); });
+    try {
+      dbg('起動 / LIFF_ID=' + (LIFF_ID ? 'あり' : 'なし'));
+      if (!LIFF_ID) { showError('LIFF IDが未設定です。'); return; }
+      if (!window.liff) { showError('LIFF SDKが読み込めていません（ネットワーク）。'); return; }
+      dbg('LIFF初期化中…');
+      liff.init({ liffId: LIFF_ID }).then(function(){
+        dbg('ログイン確認中…');
+        if (!liff.isLoggedIn()) { dbg('ログインへ移動…'); liff.login(); return; }
+        idToken = liff.getIDToken();
+        if (!idToken) { showError('IDトークンが取得できません。LIFFのScopeで openid が有効か確認してください。'); return; }
+        if (location.href.indexOf('whoami') >= 0) { dbg('ID取得中…'); return api({ action:'line_whoami' }).then(showWhoami); }
+        dbg('会員状態を照会中…');
+        return api({ action:'line_getMemberStatus' });
+      }).then(function(res){
+        if (!res) return;
+        if (res.success && res.verified) { loadTrainers(); }
+        else if (res.success) { show('s-register'); }
+        else { showError('会員状態の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); }
+      }).catch(function(e){ showError('初期化に失敗しました：' + (e && e.message ? e.message : e)); });
+    } catch (err) {
+      showError('起動エラー：' + (err && err.message ? err.message : err));
+    }
   }
 
-  // ---- 会員登録 ----
-  document.getElementById('registerBtn').onclick = function(){
+  on('registerBtn', function(){
     var code = document.getElementById('codeInput').value.trim();
     var errEl = document.getElementById('registerErr'); errEl.hidden = true;
     if (!/^[0-9]{4,6}$/.test(code)) { errEl.textContent='認証番号（数字）を入力してください。'; errEl.hidden=false; return; }
@@ -186,9 +180,8 @@
       if (res.success && res.verified) { loadTrainers(); }
       else { errEl.textContent = res.message || '認証番号が正しくありません。'; errEl.hidden=false; }
     }).catch(function(e){ btn.disabled=false; btn.textContent='会員登録する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
-  };
+  });
 
-  // ---- トレーナー選択 ----
   function loadTrainers(){
     show('s-loading'); dbg('トレーナー取得中…');
     api({ action:'line_getTrainers' }).then(function(res){
@@ -205,9 +198,8 @@
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
 
-  // ---- マイ予約一覧 ----
-  document.getElementById('toMyRes').onclick = function(){ loadMyReservations(); };
-  document.getElementById('myResBack').onclick = function(){ show('s-trainer'); };
+  on('toMyRes', function(){ loadMyReservations(); });
+  on('myResBack', function(){ show('s-trainer'); });
   function loadMyReservations(){
     show('s-loading'); dbg('予約を取得中…');
     api({ action:'line_getMyReservations' }).then(function(res){
@@ -227,7 +219,6 @@
     }).catch(function(e){ showError('通信に失敗しました：' + e); });
   }
 
-  // ---- 空き枠取得 ----
   function loadSlots(){
     show('s-loading'); dbg('空き枠を取得中…');
     api({ action:'line_getTrainerSlots', trainerId: state.trainerId }).then(function(res){
@@ -278,11 +269,10 @@
     });
   }
 
-  document.getElementById('prevWeek').onclick = function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } };
-  document.getElementById('nextWeek').onclick = function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } };
-  document.getElementById('backToTrainer').onclick = function(){ show('s-trainer'); };
+  on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
+  on('nextWeek', function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } });
+  on('backToTrainer', function(){ show('s-trainer'); });
 
-  // ---- 確認 ----
   function openConfirm(slot){
     state.selected = slot;
     document.getElementById('cfTrainer').textContent = state.trainerName;
@@ -293,8 +283,8 @@
     document.getElementById('confirmErr').hidden = true;
     show('s-confirm');
   }
-  document.getElementById('confirmCancel').onclick = function(){ show('s-week'); };
-  document.getElementById('confirmBtn').onclick = function(){
+  on('confirmCancel', function(){ show('s-week'); });
+  on('confirmBtn', function(){
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
     btn.disabled = true; btn.textContent='処理中…';
     api({ action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO })
@@ -309,9 +299,9 @@
           errEl.hidden = false;
         }
       }).catch(function(e){ btn.disabled=false; btn.textContent='予約を確定する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
-  };
+  });
 
-  document.getElementById('doneClose').onclick = function(){ if (window.liff && liff.closeWindow) liff.closeWindow(); };
+  on('doneClose', function(){ if (window.liff && liff.closeWindow) liff.closeWindow(); });
 
   boot();
 </script>
