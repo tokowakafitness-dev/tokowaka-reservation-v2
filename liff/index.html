@@ -130,7 +130,7 @@
   function showWhoami(w){ var el = document.getElementById('whoamiId'); if (el) el.textContent = (w && w.lineUserId) ? w.lineUserId : '取得できませんでした'; show('s-whoami'); }
   function on(id, fn){ var el = document.getElementById(id); if (el) el.onclick = fn; }
 
-  function api(params){
+  function _rawApi(params){
     params.idToken = idToken;
     return new Promise(function(resolve, reject){
       var cb = 'jcb_' + (++_seq) + '_' + new Date().getTime();
@@ -142,6 +142,27 @@
       s.src = GAS_URL + '?' + qs + '&callback=' + cb;
       s.onerror = function(){ cleanup(); reject('サーバーへの接続に失敗しました'); };
       document.head.appendChild(s);
+    });
+  }
+
+  // ID Token失効(UNAUTHORIZED)を自動回復：まず getIDToken() で取り直して1回リトライ、
+  // それでもダメなら1回だけリロードして liff.init を再実行（無限ループは sessionStorage で防止）。
+  function api(params){
+    return _rawApi(params).then(function(res){
+      if (res && res.code === 'UNAUTHORIZED') {
+        var fresh = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : '';
+        if (fresh && fresh !== idToken) {
+          idToken = fresh;
+          return _rawApi(params);            // 新しいID Tokenで1回だけ再試行
+        }
+        if (!sessionStorage.getItem('_reauthTried')) {
+          sessionStorage.setItem('_reauthTried', '1');
+          dbg('セッションを更新しています…');
+          location.reload();                 // liff.init を再実行して新ID Tokenを取得
+          return new Promise(function(){});  // リロード中は解決しない
+        }
+      }
+      return res;
     });
   }
 
@@ -161,6 +182,7 @@
         return api({ action:'line_getMemberStatus' });
       }).then(function(res){
         if (!res) return;
+        if (res.success) { try { sessionStorage.removeItem('_reauthTried'); } catch(e){} }
         if (res.success && res.verified) { loadTrainers(); }
         else if (res.success) { show('s-register'); }
         else { showError('会員状態の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); }
@@ -203,7 +225,7 @@
   function loadMyReservations(){
     show('s-loading'); dbg('予約を取得中…');
     api({ action:'line_getMyReservations' }).then(function(res){
-      if (!res.success) { showError('予約の取得に失敗しました。'); return; }
+      if (!res.success) { showError('予約の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); return; }
       var box = document.getElementById('myResList'); box.innerHTML = '';
       if (!res.reservations || !res.reservations.length) {
         box.innerHTML = '<div class="card"><p class="muted">現在、ご予約はありません。</p></div>';
