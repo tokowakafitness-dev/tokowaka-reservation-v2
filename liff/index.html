@@ -29,11 +29,10 @@
   .cell-open:active { background:#faf3e2; }
   .cell-none { background:#fafafa; color:#ddd; }
   .err { color:#c62828; font-size:13px; margin-top:8px; }
-  .home-hero { display:flex; align-items:baseline; gap:9px; margin-top:15px; padding-top:15px; border-top:1px solid var(--line); }
-  .home-hero .hk { font-size:13px; color:#888; }
-  .home-hero .hv { font-size:15px; font-weight:700; }
-  .home-hero .hv b { color:var(--acc); font-size:28px; margin-right:2px; }
-  .home-sub { margin-top:10px; font-size:12.5px; color:#888; letter-spacing:.02em; }
+  .home-row { display:flex; align-items:baseline; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+  .home-row .k { font-size:13px; color:#888; min-width:5.5em; }
+  .home-row .v { font-size:14px; font-weight:700; color:var(--pri); }
+  .home-row .v b { color:var(--acc); font-size:20px; margin-right:1px; }
   .big { font-size:18px; font-weight:700; margin:4px 0; }
   .done-icon { font-size:48px; text-align:center; margin:12px 0; }
   [hidden] { display:none !important; }
@@ -246,13 +245,13 @@
       el.innerHTML = '<p class="muted" style="margin-top:12px;">現在ご予約いただけない契約状態です。店舗にお問い合わせください。</p>';
     } else if (h.type === 'ticket') {
       el.innerHTML =
-        '<div class="home-hero"><span class="hk">チケット残り</span><span class="hv"><b>' + h.remaining + '</b> 回</span></div>' +
-        (h.expire ? '<div class="home-sub">有効期限　' + h.expire + '</div>' : '');
+        '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.remaining + '</b> 回</span></div>' +
+        (h.expire ? '<div class="home-row"><span class="k">有効期限</span><span class="v" style="font-size:14px;">' + h.expire + '</span></div>' : '');
     } else if (h.type === 'monthly') {
       var left = (h.remaining !== null) ? h.remaining : Math.max(0, h.quota - h.thisMonth);
       el.innerHTML =
-        '<div class="home-hero"><span class="hk">今月の残り</span><span class="hv"><b>' + left + '</b> 回</span></div>' +
-        '<div class="home-sub">今月 ' + h.thisMonth + ' 回ご予約　/　月' + h.quota + '回コース</div>';
+        '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + left + '</b> 回</span></div>' +
+        '<div class="home-row"><span class="k">今月のご予約</span><span class="v" style="font-size:14px;">' + h.thisMonth + ' 回 ／ 月' + h.quota + '回</span></div>';
     } else {
       el.innerHTML = '<p class="muted" style="margin-top:12px;">ご予約はこちらから承ります。</p>';
     }
