@@ -29,6 +29,10 @@
   .cell-open:active { background:#faf3e2; }
   .cell-none { background:#fafafa; color:#ddd; }
   .err { color:#c62828; font-size:13px; margin-top:8px; }
+  .home-row { display:flex; justify-content:space-between; align-items:baseline; padding:10px 0 0; margin-top:12px; border-top:1px solid var(--line); }
+  .home-row .k { font-size:13px; color:#888; }
+  .home-row .v { font-size:15px; font-weight:700; }
+  .home-row .v b { color:var(--acc); font-size:20px; margin-right:1px; }
   .big { font-size:18px; font-weight:700; margin:4px 0; }
   .done-icon { font-size:48px; text-align:center; margin:12px 0; }
   [hidden] { display:none !important; }
@@ -51,9 +55,18 @@
     <p class="muted">※認証番号が分からない場合は担当トレーナーへご連絡ください。</p>
   </div>
 
+  <div id="s-home" class="screen" hidden>
+    <div class="card">
+      <div class="big" id="homeName">様</div>
+      <div id="homeInfo"></div>
+    </div>
+    <button id="homeReserve" class="btn">予約する</button>
+    <button id="homeMyRes" class="btn btn-outline">予約を確認する</button>
+  </div>
+
   <div id="s-trainer" class="screen" hidden>
-    <button id="toMyRes" class="btn btn-outline" style="margin-top:0;">予約を確認する</button>
-    <p class="muted" style="margin-top:18px;">新しく予約する担当トレーナーを選んでください。</p>
+    <button id="toHome" class="btn btn-outline" style="margin-top:0;">← ホームに戻る</button>
+    <p class="muted" style="margin-top:18px;">担当トレーナーを選んでください。</p>
     <div id="trainerList"></div>
   </div>
 
@@ -121,7 +134,7 @@
   var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'' };
   var _seq = 0;
 
-  var SCREENS = ['s-loading','s-register','s-trainer','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
+  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
   function show(id){
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
   }
@@ -183,7 +196,7 @@
       }).then(function(res){
         if (!res) return;
         if (res.success) { try { sessionStorage.removeItem('_reauthTried'); } catch(e){} }
-        if (res.success && res.verified) { loadTrainers(); }
+        if (res.success && res.verified) { renderHome(res); }
         else if (res.success) { show('s-register'); }
         else { showError('会員状態の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); }
       }).catch(function(e){ showError('初期化に失敗しました：' + (e && e.message ? e.message : e)); });
@@ -220,8 +233,30 @@
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
 
-  on('toMyRes', function(){ loadMyReservations(); });
-  on('myResBack', function(){ show('s-trainer'); });
+  on('toHome', function(){ show('s-home'); });
+  on('homeReserve', function(){ loadTrainers(); });
+  on('homeMyRes', function(){ loadMyReservations(); });
+  on('myResBack', function(){ show('s-home'); });
+  function renderHome(res){
+    document.getElementById('homeName').textContent = (res.name || '会員') + ' 様';
+    var h = res.home || { type:null };
+    var el = document.getElementById('homeInfo');
+    if (h.type && h.active === false) {
+      el.innerHTML = '<p class="muted" style="margin-top:10px;">現在ご予約いただけない契約状態です。店舗にお問い合わせください。</p>';
+    } else if (h.type === 'ticket') {
+      el.innerHTML =
+        '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.remaining + '</b> 回</span></div>' +
+        (h.expire ? '<div class="home-row"><span class="k">有効期限</span><span class="v">' + h.expire + '</span></div>' : '');
+    } else if (h.type === 'monthly') {
+      el.innerHTML =
+        '<div class="home-row"><span class="k">今月のご予約</span><span class="v"><b>' + h.thisMonth + '</b> 回 ／ 月' + h.quota + '回</span></div>' +
+        (h.remaining !== null ? '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + h.remaining + '</b> 回</span></div>' : '');
+    } else {
+      el.innerHTML = '<p class="muted" style="margin-top:10px;">ご予約はこちらから承ります。</p>';
+    }
+    show('s-home');
+  }
+
   function loadMyReservations(){
     show('s-loading'); dbg('予約を取得中…');
     api({ action:'line_getMyReservations' }).then(function(res){
