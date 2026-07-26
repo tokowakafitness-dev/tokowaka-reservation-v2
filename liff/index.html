@@ -118,7 +118,7 @@
 
   var BUSINESS_START = 8, BUSINESS_END = 23;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{} };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'' };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-trainer','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -236,6 +236,12 @@
           var note = r.freeCancel ? '前日17時まで無料でキャンセルできます' : '本日以降のため、キャンセルは1回分の消化になります';
           d.innerHTML = '<div class="big">' + r.dateLabel + '</div><p class="muted">担当：' + r.trainerName + '<br>場所：TOKOWAKA 吉祥寺</p>'
             + '<p class="muted" style="font-size:12px;margin-top:4px;">' + note + '</p>';
+          var chg = document.createElement('button');
+          chg.className = 'btn btn-outline';
+          chg.style.marginTop = '8px';
+          chg.textContent = '時間を変更する';
+          chg.onclick = function(){ startChange(r); };
+          d.appendChild(chg);
           var btn = document.createElement('button');
           btn.className = 'btn btn-outline';
           btn.style.marginTop = '8px';
@@ -247,6 +253,17 @@
       }
       show('s-myres');
     }).catch(function(e){ showError('通信に失敗しました：' + e); });
+  }
+
+  function startChange(r){
+    var note = r.freeCancel ? '' : '\n本日以降のため、変更時に1回分の消化となります。';
+    if (!window.confirm(r.dateLabel + ' の予約時間を変更します。\n次の画面で新しい時間を選んでください。' + note)) return;
+    state.changeMode = true;
+    state.changeReservationId = r.reservationId;
+    state.trainerId = r.trainerId;
+    state.trainerName = r.trainerName;
+    state.weekOffset = 0;
+    loadSlots();                 // 同トレーナーの週グリッドへ（新しい時間を選ぶ）
   }
 
   function cancelReservation(r){
@@ -313,7 +330,7 @@
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
   on('nextWeek', function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } });
-  on('backToTrainer', function(){ show('s-trainer'); });
+  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; show('s-trainer'); });
 
   function openConfirm(slot){
     state.selected = slot;
@@ -329,12 +346,16 @@
   on('confirmBtn', function(){
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
     btn.disabled = true; btn.textContent='処理中…';
-    api({ action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO })
+    var req = state.changeMode
+      ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
+      : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
+    api(req)
       .then(function(res){
         btn.disabled=false; btn.textContent='予約を確定する';
         if (res.success) {
           var s = state.selected;
-          document.getElementById('doneDetail').textContent = state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime;
+          document.getElementById('doneDetail').textContent = state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime + (state.changeMode ? '（変更）' : '');
+          state.changeMode = false; state.changeReservationId = '';
           show('s-done');
         } else {
           errEl.textContent = res.message || 'この時間は予約できませんでした。別の枠をお選びください。';
