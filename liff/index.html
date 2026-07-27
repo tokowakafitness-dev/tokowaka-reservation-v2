@@ -265,9 +265,10 @@
         (h.expire ? '<div class="home-row"><span class="k">有効期限</span><span class="v" style="font-size:14px;">' + h.expire + '</span></div>' : '');
     } else if (h.type === 'monthly') {
       var left = (h.remaining !== null) ? h.remaining : Math.max(0, h.quota - h.thisMonth);
+      var quotaText = h.thisMonth + ' 回 ／ 月' + h.quota + '回' + (h.carryover ? '＋繰越' + h.carryover + '回' : '');
       el.innerHTML =
         '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + left + '</b> 回</span></div>' +
-        '<div class="home-row"><span class="k">今月のご予約</span><span class="v" style="font-size:14px;">' + h.thisMonth + ' 回 ／ 月' + h.quota + '回</span></div>';
+        '<div class="home-row"><span class="k">今月のご予約</span><span class="v" style="font-size:14px;">' + quotaText + '</span></div>';
     } else {
       el.innerHTML = '<p class="muted" style="margin-top:12px;">ご予約はこちらから承ります。</p>';
     }
