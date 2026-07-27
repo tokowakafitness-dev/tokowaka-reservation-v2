@@ -196,7 +196,13 @@
         if (!idToken) { showError('IDトークンが取得できません。LIFFのScopeで openid が有効か確認してください。'); return; }
         try { if (location.href.indexOf('whoami') >= 0) sessionStorage.setItem('_whoami','1'); } catch(e){}
         var _isWhoami = false; try { _isWhoami = (location.href.indexOf('whoami')>=0) || (sessionStorage.getItem('_whoami')==='1'); } catch(e){ _isWhoami = location.href.indexOf('whoami')>=0; }
-        if (_isWhoami) { try{ sessionStorage.removeItem('_whoami'); }catch(e){} dbg('ID取得中…'); return api({ action:'line_whoami' }).then(showWhoami); }
+        if (_isWhoami) {
+          try{ sessionStorage.removeItem('_whoami'); }catch(e){}
+          dbg('ID取得中…');
+          // LIFF SDKから直接userId取得（バックエンド検証を通さない＝確実）
+          if (liff.getProfile) { return liff.getProfile().then(function(p){ showWhoami({ lineUserId: p.userId }); }).catch(function(e){ showWhoami({}); }); }
+          return api({ action:'line_whoami' }).then(showWhoami);
+        }
         dbg('会員状態を照会中…');
         return api({ action:'line_getMemberStatus' });
       }).then(function(res){
