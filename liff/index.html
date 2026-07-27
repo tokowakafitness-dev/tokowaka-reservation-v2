@@ -135,7 +135,7 @@
 
   var BUSINESS_START = 8, BUSINESS_END = 23;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'' };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', transferMode:false };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -194,7 +194,9 @@
         if (!liff.isLoggedIn()) { dbg('ログインへ移動…'); liff.login(); return; }
         idToken = liff.getIDToken();
         if (!idToken) { showError('IDトークンが取得できません。LIFFのScopeで openid が有効か確認してください。'); return; }
-        if (location.href.indexOf('whoami') >= 0) { dbg('ID取得中…'); return api({ action:'line_whoami' }).then(showWhoami); }
+        try { if (location.href.indexOf('whoami') >= 0) sessionStorage.setItem('_whoami','1'); } catch(e){}
+        var _isWhoami = false; try { _isWhoami = (location.href.indexOf('whoami')>=0) || (sessionStorage.getItem('_whoami')==='1'); } catch(e){ _isWhoami = location.href.indexOf('whoami')>=0; }
+        if (_isWhoami) { try{ sessionStorage.removeItem('_whoami'); }catch(e){} dbg('ID取得中…'); return api({ action:'line_whoami' }).then(showWhoami); }
         dbg('会員状態を照会中…');
         return api({ action:'line_getMemberStatus' });
       }).then(function(res){
@@ -314,8 +316,24 @@
     show('s-loading'); dbg('キャンセル処理中…');
     api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
       if (!res || !res.success) { showError('キャンセルに失敗しました（コード：' + ((res && res.code) || '不明') + '）。'); return; }
+      if (res.penalty) {
+        // 当日キャンセル＝1回消化。振替セッション（+5,500円）を案内。
+        if (window.confirm('当日キャンセルのため1回分を消化しました。\n\n振替セッション（追加5,500円）をお申し込みになりますか？\n（次の画面で日時を選べます）')) {
+          startTransfer(r);
+          return;
+        }
+      }
       loadMyReservations();
     }).catch(function(e){ showError('通信に失敗しました：' + e); });
+  }
+
+  function startTransfer(r){
+    state.transferMode = true;
+    state.changeMode = false; state.changeReservationId = '';
+    state.trainerId = r.trainerId;
+    state.trainerName = r.trainerName;
+    state.weekOffset = 0;
+    loadSlots();                 // 同トレーナーの週グリッドで振替枠を選ぶ（残数は消化せず5,500円）
   }
 
   function loadSlots(){
@@ -370,7 +388,7 @@
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
   on('nextWeek', function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } });
-  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; show('s-trainer'); });
+  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; show('s-trainer'); });
 
   function openConfirm(slot){
     state.selected = slot;
@@ -386,16 +404,18 @@
   on('confirmBtn', function(){
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
     btn.disabled = true; btn.textContent='処理中…';
-    var req = state.changeMode
-      ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
-      : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
+    var req = state.transferMode
+      ? { action:'line_makeTransferReservation', trainerId: state.trainerId, startISO: state.selected.startISO }
+      : state.changeMode
+        ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
+        : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
     api(req)
       .then(function(res){
         btn.disabled=false; btn.textContent='予約を確定する';
         if (res.success) {
           var s = state.selected;
-          document.getElementById('doneDetail').textContent = state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime + (state.changeMode ? '（変更）' : '');
-          state.changeMode = false; state.changeReservationId = '';
+          document.getElementById('doneDetail').textContent = state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime + (state.transferMode ? '（振替・5,500円）' : state.changeMode ? '（変更）' : '');
+          state.changeMode = false; state.changeReservationId = ''; state.transferMode = false;
           show('s-done');
         } else {
           errEl.textContent = res.message || 'この時間は予約できませんでした。別の枠をお選びください。';
