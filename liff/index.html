@@ -33,6 +33,10 @@
   .cell-open:active { background:#eef1f6; }
   .cell-none { background:#fff; color:#ccc; }
   .err { color:#c62828; font-size:13px; margin-top:8px; }
+  .sect-h { font-family:'Shippori Mincho',serif; font-size:14px; color:var(--navy); font-weight:600; margin:18px 4px 8px; letter-spacing:.04em; }
+  .hist { padding:12px 16px; }
+  .hist-date { font-weight:600; font-size:14px; color:var(--ink); }
+  .hlabel { display:inline-block; font-size:11px; padding:2px 8px; border-radius:3px; background:#efe9dc; color:var(--navy); }
   .home-row { display:flex; align-items:baseline; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
   .home-row .k { font-size:13px; color:#888; min-width:5.5em; }
   .home-row .v { font-size:14px; font-weight:700; color:var(--pri); }
@@ -275,8 +279,10 @@
     api({ action:'line_getMyReservations' }).then(function(res){
       if (!res.success) { showError('予約の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); return; }
       var box = document.getElementById('myResList'); box.innerHTML = '';
+      // ── 今後のご予約 ──
+      var h1 = document.createElement('div'); h1.className = 'sect-h'; h1.textContent = '今後のご予約'; box.appendChild(h1);
       if (!res.reservations || !res.reservations.length) {
-        box.innerHTML = '<div class="card"><p class="muted">現在、ご予約はありません。</p></div>';
+        var e1 = document.createElement('div'); e1.className = 'card'; e1.innerHTML = '<p class="muted">今後のご予約はありません。</p>'; box.appendChild(e1);
       } else {
         res.reservations.forEach(function(r){
           var d = document.createElement('div');
@@ -299,6 +305,15 @@
           btn.onclick = function(){ cancelReservation(r); };
           d.appendChild(btn);
           box.appendChild(d);
+        });
+      }
+      // ── これまでの記録（実施済み・当日キャンセル消化）──
+      if (res.history && res.history.length) {
+        var h2 = document.createElement('div'); h2.className = 'sect-h'; h2.textContent = 'これまでの記録'; box.appendChild(h2);
+        res.history.forEach(function(r){
+          var hd = document.createElement('div'); hd.className = 'card hist';
+          hd.innerHTML = '<div class="hist-date">' + r.dateLabel + '</div><p class="muted" style="margin-top:4px;">担当：' + r.trainerName + '　<span class="hlabel">' + r.statusLabel + '</span></p>';
+          box.appendChild(hd);
         });
       }
       show('s-myres');
