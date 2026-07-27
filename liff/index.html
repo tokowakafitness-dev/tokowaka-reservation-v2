@@ -284,12 +284,14 @@
           var note = r.freeCancel ? '前日17時まで無料でキャンセルできます' : '本日以降のため、キャンセルは1回分の消化になります';
           d.innerHTML = '<div class="big">' + r.dateLabel + '</div><p class="muted">担当：' + r.trainerName + '<br>場所：TOKOWAKA 吉祥寺</p>'
             + '<p class="muted" style="font-size:12px;margin-top:4px;">' + note + '</p>';
-          var chg = document.createElement('button');
-          chg.className = 'btn btn-outline';
-          chg.style.marginTop = '8px';
-          chg.textContent = '時間を変更する';
-          chg.onclick = function(){ startChange(r); };
-          d.appendChild(chg);
+          if (r.freeCancel) {   // 前日17時まで＝無料で時間変更可。当日はキャンセル→振替に統一。
+            var chg = document.createElement('button');
+            chg.className = 'btn btn-outline';
+            chg.style.marginTop = '8px';
+            chg.textContent = '時間を変更する';
+            chg.onclick = function(){ startChange(r); };
+            d.appendChild(chg);
+          }
           var btn = document.createElement('button');
           btn.className = 'btn btn-outline';
           btn.style.marginTop = '8px';
