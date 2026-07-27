@@ -288,7 +288,10 @@
           var d = document.createElement('div');
           d.className = 'card';
           var note = r.freeCancel ? '前日17時まで無料でキャンセルできます' : '本日以降のため、キャンセルは1回分の消化になります';
-          d.innerHTML = '<div class="big">' + r.dateLabel + '</div><p class="muted">担当：' + r.trainerName + '<br>場所：TOKOWAKA 吉祥寺</p>'
+          var typeLabel = r.transfer
+            ? '<span class="hlabel" style="background:#efe9dc;">振替（+5,500円・残数消化なし）</span>'
+            : '<span class="hlabel" style="background:#eef1f6;">通常（1回消化）</span>';
+          d.innerHTML = '<div class="big">' + r.dateLabel + '</div><div style="margin:6px 0 2px;">' + typeLabel + '</div><p class="muted">担当：' + r.trainerName + '<br>場所：TOKOWAKA 吉祥寺</p>'
             + '<p class="muted" style="font-size:12px;margin-top:4px;">' + note + '</p>';
           if (r.freeCancel) {   // 前日17時まで＝無料で時間変更可。当日はキャンセル→振替に統一。
             var chg = document.createElement('button');
