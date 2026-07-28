@@ -124,6 +124,13 @@
     </div>
   </div>
 
+  <div id="s-tadmin" class="screen" hidden>
+    <div class="big" style="margin-bottom:4px;">担当予約の管理</div>
+    <p class="muted" id="tadminName" style="margin-bottom:14px;"></p>
+    <div id="tadminList"></div>
+    <button id="tadminReload" class="btn btn-outline">更新</button>
+  </div>
+
   <div id="s-error" class="screen" hidden>
     <div class="card">
       <div class="big">エラー</div>
@@ -142,7 +149,7 @@
   var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', transferMode:false };
   var _seq = 0;
 
-  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
+  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
   function show(id){
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
   }
@@ -212,7 +219,8 @@
       }).then(function(res){
         if (!res) return;
         if (res.success) { try { sessionStorage.removeItem('_reauthTried'); } catch(e){} }
-        if (res.success && res.verified) { renderHome(res); }
+        if (res.success && res.role === 'trainer') { renderTrainerAdmin(res); }
+        else if (res.success && res.verified) { renderHome(res); }
         else if (res.success) { show('s-register'); }
         else { showError('会員状態の取得に失敗しました（コード：' + (res.code || '不明') + '）。'); }
       }).catch(function(e){ showError('初期化に失敗しました：' + (e && e.message ? e.message : e)); });
@@ -253,6 +261,59 @@
   on('homeReserve', function(){ loadTrainers(); });
   on('homeMyRes', function(){ loadMyReservations(); });
   on('myResBack', function(){ show('s-home'); });
+
+  // ===== トレーナー管理ページ（Google直接編集の代替・状態乖離の防止） =====
+  function renderTrainerAdmin(res){
+    state.trainerId = res.trainerId || '';
+    state.trainerName = res.trainerName || '';
+    document.getElementById('tadminName').textContent = (res.trainerName || 'トレーナー') + ' 様｜担当の今後のご予約';
+    loadTrainerReservations();
+  }
+  function loadTrainerReservations(){
+    show('s-loading'); dbg('担当予約を取得中…');
+    api({ action:'line_getTrainerReservations' }).then(function(res){
+      if (!res || !res.success) { showError('担当予約の取得に失敗しました（' + ((res&&res.code)||'不明') + '）。'); return; }
+      var box = document.getElementById('tadminList'); box.innerHTML = '';
+      if (!res.reservations || !res.reservations.length) {
+        box.innerHTML = '<p class="muted">今後のご予約はありません。</p>';
+      } else {
+        res.reservations.forEach(function(r){
+          var d = document.createElement('div'); d.className = 'card';
+          d.innerHTML = '<div><b>' + r.dateLabel + '</b>' + (r.transfer ? '　<span style="color:var(--acc);">振替</span>' : '') + '</div>' +
+                        '<div class="muted">' + r.customerName + ' 様</div>';
+          var btns = document.createElement('div'); btns.style.cssText = 'margin-top:10px;display:flex;gap:8px;';
+          if (r.freeCancel) {
+            var chg = document.createElement('button'); chg.className='btn btn-outline'; chg.style.margin='0'; chg.textContent='時間を変更';
+            chg.onclick = function(){ startTrainerChange(r); };
+            btns.appendChild(chg);
+          }
+          var cxl = document.createElement('button'); cxl.className='btn btn-outline'; cxl.style.margin='0'; cxl.textContent='キャンセル';
+          cxl.onclick = function(){ trainerCancel(r); };
+          btns.appendChild(cxl);
+          d.appendChild(btns);
+          box.appendChild(d);
+        });
+      }
+      show('s-tadmin');
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  on('tadminReload', function(){ loadTrainerReservations(); });
+  function trainerCancel(r){
+    if (!window.confirm(r.customerName + '様の予約（' + r.dateLabel + '）を取り消します。よろしいですか？')) return;
+    api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
+      if (res && res.success) { window.alert('取り消しました。お客様に通知が届きます。'); loadTrainerReservations(); }
+      else { showError('キャンセルに失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  function startTrainerChange(r){
+    state.changeMode = true;
+    state.changeReservationId = r.reservationId;
+    state.transferMode = false;
+    state._fromTrainerAdmin = true;    // 完了・戻り先を担当予約一覧に
+    state.weekOffset = 0;
+    loadSlots();                        // 担当トレーナー(state.trainerId)の週グリッドへ
+  }
+
   function renderHome(res){
     document.getElementById('homeName').textContent = (res.name || '会員') + ' 様';
     var h = res.home || { type:null };
@@ -415,7 +476,7 @@
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
   on('nextWeek', function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } });
-  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; show('s-trainer'); });
+  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
 
   function openConfirm(slot){
     state.selected = slot;
@@ -451,7 +512,7 @@
       }).catch(function(e){ btn.disabled=false; btn.textContent='予約を確定する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
   });
 
-  on('doneClose', function(){ if (window.liff && liff.closeWindow) liff.closeWindow(); });
+  on('doneClose', function(){ if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } if (window.liff && liff.closeWindow) liff.closeWindow(); });
 
   boot();
 </script>
