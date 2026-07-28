@@ -146,7 +146,7 @@
 
   var BUSINESS_START = 8, BUSINESS_END = 23;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', transferMode:false };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[] };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -300,7 +300,9 @@
     var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
-    (state._trainerResv || []).filter(function(r){ return r.customerName === name; }).forEach(function(r){
+    var _list = (state._trainerResv || []).filter(function(r){ return r.customerName === name; });
+    var _cId = _list.length ? _list[0].customerId : '';
+    _list.forEach(function(r){
       var d = document.createElement('div'); d.className = 'card';
       d.innerHTML = '<div><b>' + r.dateLabel + '</b>' + (r.transfer ? '　<span style="color:var(--acc);">振替</span>' : '') + '</div>';
       var btns = document.createElement('div'); btns.style.cssText = 'margin-top:10px;display:flex;gap:8px;';
@@ -315,6 +317,21 @@
       d.appendChild(btns);
       box.appendChild(d);
     });
+    if (_cId) {
+      var add = document.createElement('button'); add.className = 'btn'; add.textContent = '＋ この方の予約を代行';
+      add.onclick = function(){ startProxyReservation(_cId, name); };
+      box.appendChild(add);
+    }
+  }
+  // 予約の代行（トレーナーが顧客の代わりに新規予約）— 担当トレーナーの週グリッドへ
+  function startProxyReservation(customerId, name){
+    state.proxyMode = true;
+    state.proxyCustomerId = customerId;
+    state.proxyCustomerName = name;
+    state.changeMode = false; state.transferMode = false;
+    state._fromTrainerAdmin = true;
+    state.weekOffset = 0;
+    loadSlots();
   }
   on('tadminReload', function(){ loadTrainerReservations(); });
   function trainerCancel(r){
@@ -495,7 +512,7 @@
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
   on('nextWeek', function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } });
-  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
+  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
 
   function openConfirm(slot){
     state.selected = slot;
@@ -511,18 +528,20 @@
   on('confirmBtn', function(){
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
     btn.disabled = true; btn.textContent='処理中…';
-    var req = state.transferMode
-      ? { action:'line_makeTransferReservation', trainerId: state.trainerId, startISO: state.selected.startISO }
-      : state.changeMode
-        ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
-        : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
+    var req = state.proxyMode
+      ? { action:'line_makeReservationLineProxy', customerId: state.proxyCustomerId, trainerId: state.trainerId, startISO: state.selected.startISO }
+      : state.transferMode
+        ? { action:'line_makeTransferReservation', trainerId: state.trainerId, startISO: state.selected.startISO }
+        : state.changeMode
+          ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
+          : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
     api(req)
       .then(function(res){
         btn.disabled=false; btn.textContent='予約を確定する';
         if (res.success) {
           var s = state.selected;
-          document.getElementById('doneDetail').textContent = state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime + (state.transferMode ? '（振替・5,500円）' : state.changeMode ? '（変更）' : '');
-          state.changeMode = false; state.changeReservationId = ''; state.transferMode = false;
+          document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + ' 様／' : '') + state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime + (state.transferMode ? '（振替・5,500円）' : state.changeMode ? '（変更）' : state.proxyMode ? '（代行予約）' : '');
+          state.changeMode = false; state.changeReservationId = ''; state.transferMode = false; state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = '';
           show('s-done');
         } else {
           errEl.textContent = res.message || 'この時間は予約できませんでした。別の枠をお選びください。';
