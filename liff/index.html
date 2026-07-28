@@ -273,29 +273,48 @@
     show('s-loading'); dbg('担当予約を取得中…');
     api({ action:'line_getTrainerReservations' }).then(function(res){
       if (!res || !res.success) { showError('担当予約の取得に失敗しました（' + ((res&&res.code)||'不明') + '）。'); return; }
-      var box = document.getElementById('tadminList'); box.innerHTML = '';
-      if (!res.reservations || !res.reservations.length) {
-        box.innerHTML = '<p class="muted">今後のご予約はありません。</p>';
-      } else {
-        res.reservations.forEach(function(r){
-          var d = document.createElement('div'); d.className = 'card';
-          d.innerHTML = '<div><b>' + r.dateLabel + '</b>' + (r.transfer ? '　<span style="color:var(--acc);">振替</span>' : '') + '</div>' +
-                        '<div class="muted">' + r.customerName + ' 様</div>';
-          var btns = document.createElement('div'); btns.style.cssText = 'margin-top:10px;display:flex;gap:8px;';
-          if (r.freeCancel) {
-            var chg = document.createElement('button'); chg.className='btn btn-outline'; chg.style.margin='0'; chg.textContent='時間を変更';
-            chg.onclick = function(){ startTrainerChange(r); };
-            btns.appendChild(chg);
-          }
-          var cxl = document.createElement('button'); cxl.className='btn btn-outline'; cxl.style.margin='0'; cxl.textContent='キャンセル';
-          cxl.onclick = function(){ trainerCancel(r); };
-          btns.appendChild(cxl);
-          d.appendChild(btns);
-          box.appendChild(d);
-        });
-      }
-      show('s-tadmin');
+      state._trainerResv = res.reservations || [];
+      renderCustomerList();
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  // 顧客名リスト（変更・取消の代行は顧客単位で発生するため、まず顧客を選ぶ）
+  function renderCustomerList(){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜顧客を選んで予約を変更・取消';
+    var resv = state._trainerResv || [];
+    if (!resv.length) { box.innerHTML = '<p class="muted">今後のご予約はありません。</p>'; show('s-tadmin'); return; }
+    var order = [], byCust = {};
+    resv.forEach(function(r){ if (!byCust[r.customerName]) { byCust[r.customerName] = []; order.push(r.customerName); } byCust[r.customerName].push(r); });
+    order.forEach(function(name){
+      var d = document.createElement('div'); d.className = 'card'; d.style.cursor = 'pointer';
+      d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><b>' + name + ' 様</b><span class="muted">' + byCust[name].length + '件 ›</span></div>';
+      d.onclick = function(){ renderCustomerDetail(name); };
+      box.appendChild(d);
+    });
+    show('s-tadmin');
+  }
+  // 選んだ顧客の予約（変更・キャンセル）
+  function renderCustomerDetail(name){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = name + ' 様のご予約';
+    var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
+    back.onclick = function(){ renderCustomerList(); };
+    box.appendChild(back);
+    (state._trainerResv || []).filter(function(r){ return r.customerName === name; }).forEach(function(r){
+      var d = document.createElement('div'); d.className = 'card';
+      d.innerHTML = '<div><b>' + r.dateLabel + '</b>' + (r.transfer ? '　<span style="color:var(--acc);">振替</span>' : '') + '</div>';
+      var btns = document.createElement('div'); btns.style.cssText = 'margin-top:10px;display:flex;gap:8px;';
+      if (r.freeCancel) {
+        var chg = document.createElement('button'); chg.className = 'btn btn-outline'; chg.style.margin = '0'; chg.textContent = '時間を変更';
+        chg.onclick = function(){ startTrainerChange(r); };
+        btns.appendChild(chg);
+      }
+      var cxl = document.createElement('button'); cxl.className = 'btn btn-outline'; cxl.style.margin = '0'; cxl.textContent = 'キャンセル';
+      cxl.onclick = function(){ trainerCancel(r); };
+      btns.appendChild(cxl);
+      d.appendChild(btns);
+      box.appendChild(d);
+    });
   }
   on('tadminReload', function(){ loadTrainerReservations(); });
   function trainerCancel(r){
