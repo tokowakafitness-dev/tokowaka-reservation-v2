@@ -496,8 +496,9 @@
     state.slots.forEach(function(s){
       var h = parseInt((s.startTime||'0:0').split(':')[0], 10);
       var key = s.date + '#' + h;
-      if (!index[key]) index[key] = s;
+      (index[key] = index[key] || []).push(s);   // 同じ時間帯に複数枠（15分刻み）を保持
     });
+    Object.keys(index).forEach(function(k){ index[k].sort(function(a,b){ return a.startISO < b.startISO ? -1 : 1; }); });
 
     var html = '<table class="grid"><thead><tr><th></th>';
     days.forEach(function(d){ html += '<th>'+ (d.getMonth()+1)+'/'+d.getDate()+'<br>'+dowJa[d.getDay()] +'</th>'; });
@@ -514,13 +515,36 @@
     var wrap = document.getElementById('gridWrap'); wrap.innerHTML = html;
     state._index = index;
     Array.prototype.forEach.call(wrap.querySelectorAll('.cell-open'), function(td){
-      td.onclick = function(){ var slot = state._index[td.getAttribute('data-key')]; if (slot) openConfirm(slot); };
+      td.onclick = function(){
+        var slots = state._index[td.getAttribute('data-key')];
+        if (!slots || !slots.length) return;
+        if (slots.length === 1) { openConfirm(slots[0]); return; }   // 毎時（9月〜）＝1枠→即確認
+        chooseStartTime(slots);   // 15分刻み（8月）＝複数枠→開始時刻を選ばせる
+      };
     });
   }
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
   on('nextWeek', function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } });
   on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
+
+  // 15分刻みの日：同じ時間帯に複数の開始時刻がある→選ばせる
+  function chooseStartTime(slots){
+    var old = document.getElementById('startPicker'); if (old) old.remove();
+    var wrap = document.getElementById('gridWrap');
+    var box = document.createElement('div'); box.id = 'startPicker';
+    box.style.cssText = 'margin:12px 0;padding:12px;background:#fff;border:1px solid var(--acc);border-radius:8px;';
+    box.innerHTML = '<div style="margin-bottom:8px;font-weight:600;">開始時刻をお選びください</div>';
+    slots.forEach(function(s){
+      var b = document.createElement('button'); b.className = 'btn btn-outline';
+      b.style.cssText = 'margin:4px;display:inline-block;width:auto;padding:8px 14px;';
+      b.textContent = s.startTime + '〜' + s.endTime;
+      b.onclick = function(){ box.remove(); openConfirm(s); };
+      box.appendChild(b);
+    });
+    wrap.parentNode.insertBefore(box, wrap);
+    if (box.scrollIntoView) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 
   function openConfirm(slot){
     state.selected = slot;
