@@ -55,12 +55,16 @@
   <div id="s-register" class="screen" hidden>
     <div class="card">
       <div class="big">会員登録</div>
-      <p class="muted">契約時にお渡しした認証番号を入力してください（初回のみ）。</p>
-      <input id="codeInput" class="code-input" type="tel" inputmode="numeric" maxlength="6" placeholder="______">
+      <p class="muted">ご契約時の情報で登録します。すべての項目をご入力ください。</p>
+      <input id="regName" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" placeholder="お名前（契約時のお名前）">
+      <input id="regPhone" type="tel" inputmode="tel" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" placeholder="電話番号（ハイフンなし）">
+      <input id="regEmail" type="email" inputmode="email" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" placeholder="メールアドレス">
+      <input id="regBirthday" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" placeholder="生年月日（例：1990/01/01）">
+      <textarea id="regGoal" rows="3" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" placeholder="トレーニングの目標・ご要望"></textarea>
       <div id="registerErr" class="err" hidden></div>
-      <button id="registerBtn" class="btn">会員登録する</button>
+      <button id="registerBtn" class="btn">登録する</button>
     </div>
-    <p class="muted">※認証番号が分からない場合は担当トレーナーへご連絡ください。</p>
+    <p class="muted">※ご契約情報と一致しない場合は担当トレーナーへご連絡ください。</p>
   </div>
 
   <div id="s-home" class="screen" hidden>
@@ -230,15 +234,19 @@
   }
 
   on('registerBtn', function(){
-    var code = document.getElementById('codeInput').value.trim();
+    var name = document.getElementById('regName').value.trim();
+    var phone = document.getElementById('regPhone').value.trim();
+    var email = document.getElementById('regEmail').value.trim();
+    var birthday = document.getElementById('regBirthday').value.trim();
+    var goal = document.getElementById('regGoal').value.trim();
     var errEl = document.getElementById('registerErr'); errEl.hidden = true;
-    if (!/^[0-9]{4,6}$/.test(code)) { errEl.textContent='認証番号（数字）を入力してください。'; errEl.hidden=false; return; }
-    var btn = this; btn.disabled = true; btn.textContent='確認中…';
-    api({ action:'line_verifyMembership', code: code }).then(function(res){
-      btn.disabled=false; btn.textContent='会員登録する';
-      if (res.success && res.verified) { loadTrainers(); }
-      else { errEl.textContent = res.message || '認証番号が正しくありません。'; errEl.hidden=false; }
-    }).catch(function(e){ btn.disabled=false; btn.textContent='会員登録する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
+    if (!name || !phone || !email || !birthday || !goal) { errEl.textContent='すべての項目をご入力ください。'; errEl.hidden=false; return; }
+    var btn = this; btn.disabled = true; btn.textContent='登録中…';
+    api({ action:'line_selfRegister', name:name, phone:phone, email:email, birthday:birthday, goal:goal }).then(function(res){
+      btn.disabled=false; btn.textContent='登録する';
+      if (res.success && res.verified) { api({ action:'line_getMemberStatus' }).then(function(r){ if (r && r.success && r.verified) renderHome(r); else show('s-home'); }); }
+      else { errEl.textContent = res.message || 'ご登録できませんでした。担当トレーナーへご連絡ください。'; errEl.hidden=false; }
+    }).catch(function(e){ btn.disabled=false; btn.textContent='登録する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
   });
 
   function loadTrainers(){
