@@ -370,6 +370,21 @@
       var add = document.createElement('button'); add.className = 'btn'; add.textContent = '＋ この方の予約を代行';
       add.onclick = function(){ startProxyReservation(_cId, name); };
       box.appendChild(add);
+      // チケット補充（枚数を選ぶと有効期限は今日＋⌈枚数/2⌉ヶ月で自動計算）
+      var rw = document.createElement('div'); rw.style.cssText = 'margin-top:10px;display:flex;gap:8px;align-items:center;';
+      var tsel = document.createElement('select'); tsel.style.cssText = 'padding:9px;flex:0 0 auto;';
+      tsel.innerHTML = [4,6,8,10,12].map(function(n){ return '<option value="'+n+'">'+n+'回</option>'; }).join('');
+      var tbtn = document.createElement('button'); tbtn.className = 'btn btn-outline'; tbtn.style.cssText = 'margin:0;flex:1;';
+      tbtn.textContent = 'チケット補充';
+      tbtn.onclick = function(){
+        if (!window.confirm(name + ' 様にチケット' + tsel.value + '回を補充します。よろしいですか？')) return;
+        api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value }).then(function(res){
+          if (res && res.success) { window.alert('チケット' + res.tickets + '回を補充しました（有効期限 ' + res.expire + '）。'); }
+          else { showError('補充に失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
+        }).catch(function(e){ showError('通信に失敗しました：'+e); });
+      };
+      rw.appendChild(tsel); rw.appendChild(tbtn);
+      box.appendChild(rw);
     }
   }
   // 予約の代行（トレーナーが顧客の代わりに新規予約）— 担当トレーナーの週グリッドへ
