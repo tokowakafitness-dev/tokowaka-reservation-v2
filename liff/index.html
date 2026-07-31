@@ -290,13 +290,54 @@
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜顧客を選んで予約を変更・取消';
     var resv = state._trainerResv || [];
-    if (!resv.length) { box.innerHTML = '<p class="muted">今後のご予約はありません。</p>'; show('s-tadmin'); return; }
-    var order = [], byCust = {};
-    resv.forEach(function(r){ if (!byCust[r.customerName]) { byCust[r.customerName] = []; order.push(r.customerName); } byCust[r.customerName].push(r); });
-    order.forEach(function(name){
-      var d = document.createElement('div'); d.className = 'card'; d.style.cursor = 'pointer';
-      d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><b>' + name + ' 様</b><span class="muted">' + byCust[name].length + '件 ›</span></div>';
-      d.onclick = function(){ renderCustomerDetail(name); };
+    if (!resv.length) {
+      box.innerHTML = '<p class="muted">今後のご予約はありません。</p>';
+    } else {
+      var order = [], byCust = {};
+      resv.forEach(function(r){ if (!byCust[r.customerName]) { byCust[r.customerName] = []; order.push(r.customerName); } byCust[r.customerName].push(r); });
+      order.forEach(function(name){
+        var d = document.createElement('div'); d.className = 'card'; d.style.cursor = 'pointer';
+        d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><b>' + name + ' 様</b><span class="muted">' + byCust[name].length + '件 ›</span></div>';
+        d.onclick = function(){ renderCustomerDetail(name); };
+        box.appendChild(d);
+      });
+    }
+    var unlink = document.createElement('button'); unlink.className = 'btn btn-outline'; unlink.textContent = '未紐付け予約を紐付ける';
+    unlink.onclick = function(){ loadUnlinked(); };
+    box.appendChild(unlink);
+    show('s-tadmin');
+  }
+  // 未紐付け予約（同期でカレンダーから拾ったが会員未特定）を会員に紐付ける
+  function loadUnlinked(){
+    show('s-loading'); dbg('未紐付け予約を取得中…');
+    api({ action:'line_getUnlinked' }).then(function(res){
+      if (!res || !res.success) { showError('未紐付けの取得に失敗しました（' + ((res&&res.code)||'不明') + '）。'); return; }
+      state._members = res.members || [];
+      renderUnlinked(res.unlinked || []);
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  function renderUnlinked(list){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = '未紐付け予約の紐付け';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る';
+    back.onclick = function(){ renderCustomerList(); };
+    box.appendChild(back);
+    if (!list.length) { var p=document.createElement('p'); p.className='muted'; p.textContent='未紐付けの予約はありません。'; box.appendChild(p); show('s-tadmin'); return; }
+    var members = state._members || [];
+    list.forEach(function(u){
+      var d = document.createElement('div'); d.className='card';
+      d.innerHTML = '<div><b>' + u.dateLabel + '</b>（' + u.kind + '）</div><div class="muted">カレンダー名：' + u.customerName + '／担当：' + u.trainerName + '</div>';
+      var sel = document.createElement('select'); sel.style.cssText='width:100%;padding:9px;margin:8px 0;box-sizing:border-box;';
+      sel.innerHTML = '<option value="">会員を選択…</option>' + members.map(function(m){ return '<option value="'+m.customerId+'">'+m.name+'</option>'; }).join('');
+      var b = document.createElement('button'); b.className='btn'; b.style.margin='0'; b.textContent='この会員に紐付け';
+      b.onclick = function(){
+        if (!sel.value) { window.alert('会員を選択してください。'); return; }
+        api({ action:'line_linkUnlinked', resId:u.resId, customerId:sel.value }).then(function(res){
+          if (res && res.success) { window.alert('紐付けました。お客様のマイ予約に反映されます。'); loadUnlinked(); }
+          else { showError('紐付けに失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
+        }).catch(function(e){ showError('通信に失敗しました：'+e); });
+      };
+      d.appendChild(sel); d.appendChild(b);
       box.appendChild(d);
     });
     show('s-tadmin');
