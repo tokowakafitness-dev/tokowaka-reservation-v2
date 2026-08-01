@@ -150,7 +150,7 @@
 
   var BUSINESS_START = 7, BUSINESS_END = 24;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[] };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[] };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -258,7 +258,7 @@
         var d = document.createElement('div');
         d.className = 'trainer';
         d.innerHTML = '<span>'+ t.name +'</span><span style="color:#c8a25a;">選ぶ ›</span>';
-        d.onclick = function(){ state.trainerId=t.id; state.trainerName=t.name; state.weekOffset=0; loadSlots(); };
+        d.onclick = function(){ state.trainerId=t.id; state.trainerName=t.name; state.weekOffset=0; state.changeMode=false; state.transferMode=false; state.excludeStartISO=''; loadSlots(); };
         box.appendChild(d);
       });
       show('s-trainer');
@@ -408,6 +408,7 @@
   function startTrainerChange(r){
     state.changeMode = true;
     state.changeReservationId = r.reservationId;
+    state.excludeStartISO = r.startISO || '';   // 代行変更時も旧予定を空き枠から除外（問題2）
     state.transferMode = false;
     state._fromTrainerAdmin = true;    // 完了・戻り先を担当予約一覧に
     state.weekOffset = 0;
@@ -490,6 +491,7 @@
     if (!window.confirm(r.dateLabel + ' の予約時間を変更します。\n次の画面で新しい時間を選んでください。' + note)) return;
     state.changeMode = true;
     state.changeReservationId = r.reservationId;
+    state.excludeStartISO = r.startISO || '';   // 自分の旧予定を空き枠から除外（問題2）
     state.trainerId = r.trainerId;
     state.trainerName = r.trainerName;
     state.weekOffset = 0;
@@ -518,6 +520,7 @@
   function startTransfer(r){
     state.transferMode = true;
     state.changeMode = false; state.changeReservationId = '';
+    state.excludeStartISO = r.startISO || '';   // キャンセルした元予定を振替枠の空き判定から除外（問題2）
     state.trainerId = r.trainerId;
     state.trainerName = r.trainerName;
     state.weekOffset = 0;
@@ -526,7 +529,7 @@
 
   function loadSlots(){
     show('s-loading'); dbg('空き枠を取得中…');
-    api({ action:'line_getTrainerSlots', trainerId: state.trainerId }).then(function(res){
+    api({ action:'line_getTrainerSlots', trainerId: state.trainerId, excludeStartISO: state.excludeStartISO || '' }).then(function(res){
       if (!res.success) { showError('空き枠の取得に失敗しました。'); return; }
       state.slots = res.slots || [];
       renderWeek();
