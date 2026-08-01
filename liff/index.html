@@ -426,6 +426,12 @@
     var el = document.getElementById('homeInfo');
     if (h.type && h.active === false) {
       el.innerHTML = '<p class="muted" style="margin-top:12px;">現在ご予約いただけない契約状態です。店舗にお問い合わせください。</p>';
+    } else if (h.type === 'both') {
+      var mLeft = (h.monthlyRemaining !== null && h.monthlyRemaining !== undefined) ? h.monthlyRemaining : Math.max(0, h.quota - h.thisMonth);
+      el.innerHTML =
+        '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + mLeft + '</b> 回</span></div>' +
+        '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.ticketRemaining + '</b> 枚</span></div>' +
+        (h.ticketExpire ? '<div class="home-row"><span class="k">チケット期限</span><span class="v" style="font-size:14px;">' + h.ticketExpire + '</span></div>' : '');
     } else if (h.type === 'ticket') {
       el.innerHTML =
         '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.remaining + '</b> 回</span></div>' +
