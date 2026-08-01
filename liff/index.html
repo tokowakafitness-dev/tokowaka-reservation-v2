@@ -150,7 +150,7 @@
 
   var BUSINESS_START = 7, BUSINESS_END = 24;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[] };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[] };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -254,10 +254,14 @@
     api({ action:'line_getTrainers' }).then(function(res){
       if (!res.success) { showError('トレーナー情報の取得に失敗しました。'); return; }
       var box = document.getElementById('trainerList'); box.innerHTML = '';
-      res.trainers.forEach(function(t){
+      var trainers = res.trainers.slice();
+      var defId = state.defaultTrainerId || '';
+      if (defId) trainers.sort(function(a,b){ return (b.id===defId?1:0) - (a.id===defId?1:0); });   // 担当を先頭に
+      trainers.forEach(function(t){
         var d = document.createElement('div');
         d.className = 'trainer';
-        d.innerHTML = '<span>'+ t.name +'</span><span style="color:#c8a25a;">選ぶ ›</span>';
+        var isDefault = (defId && t.id === defId);
+        d.innerHTML = '<span>'+ t.name + (isDefault ? ' <span style="font-size:12px;color:#c8a25a;">担当</span>' : '') +'</span><span style="color:#c8a25a;">選ぶ ›</span>';
         d.onclick = function(){ state.trainerId=t.id; state.trainerName=t.name; state.weekOffset=0; state.changeMode=false; state.transferMode=false; state.excludeStartISO=''; loadSlots(); };
         box.appendChild(d);
       });
@@ -417,6 +421,7 @@
 
   function renderHome(res){
     document.getElementById('homeName').textContent = (res.name || '会員') + ' 様';
+    state.defaultTrainerId = res.defaultTrainerId || '';   // デフォルト担当（予約画面で先頭表示・変更可）
     var h = res.home || { type:null };
     var el = document.getElementById('homeInfo');
     if (h.type && h.active === false) {
