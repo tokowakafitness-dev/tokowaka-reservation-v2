@@ -510,9 +510,15 @@
   }
 
   function cancelReservation(r){
-    var msg = r.freeCancel
-      ? r.dateLabel + ' のご予約をキャンセルします。よろしいですか？\n（前日17時まで無料です）'
-      : r.dateLabel + ' のご予約をキャンセルします。\n本日以降のため、1回分の消化となります。よろしいですか？';
+    var msg;
+    if (r.freeCancel) {
+      msg = r.dateLabel + ' のご予約をキャンセルします。よろしいですか？\n（前日17時まで無料です）';
+    } else if (r.transfer) {
+      // 振替セッションの当日キャンセルは、確認の時点で「再申込不可」を明示する。
+      msg = r.dateLabel + ' の振替セッションをキャンセルします。\n本日以降のため1回分の消化となり、振替の再申し込みはできません。\nよろしいですか？';
+    } else {
+      msg = r.dateLabel + ' のご予約をキャンセルします。\n本日以降のため、1回分の消化となります。よろしいですか？';
+    }
     if (!window.confirm(msg)) return;
     show('s-loading'); dbg('キャンセル処理中…');
     api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
@@ -524,8 +530,6 @@
           startTransfer(r);
           return;
         }
-      } else if (res.penalty && r.transfer) {
-        window.alert('振替セッションを当日キャンセルしたため、1回分の消化となりました。（振替の再申し込みはできません）');
       }
       loadMyReservations();
     }).catch(function(e){ showError('通信に失敗しました：' + e); });
