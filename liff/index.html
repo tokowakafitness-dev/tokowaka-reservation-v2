@@ -517,12 +517,15 @@
     show('s-loading'); dbg('キャンセル処理中…');
     api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
       if (!res || !res.success) { showError('キャンセルに失敗しました（コード：' + ((res && res.code) || '不明') + '）。'); return; }
-      if (res.penalty) {
+      if (res.penalty && !r.transfer) {
         // 当日キャンセル＝1回消化。振替セッション（+5,500円）を案内。
+        // ★振替セッション自身のキャンセルでは案内しない（振替の振替＝再振替を防ぐ。バックエンドでも同ガード）。
         if (window.confirm('当日キャンセルのため1回分を消化しました。\n\n振替セッション（追加5,500円）をお申し込みになりますか？\n（次の画面で日時を選べます）')) {
           startTransfer(r);
           return;
         }
+      } else if (res.penalty && r.transfer) {
+        window.alert('振替セッションを当日キャンセルしたため、1回分の消化となりました。（振替の再申し込みはできません）');
       }
       loadMyReservations();
     }).catch(function(e){ showError('通信に失敗しました：' + e); });
