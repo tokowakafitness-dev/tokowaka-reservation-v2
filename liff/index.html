@@ -117,7 +117,7 @@
       <p id="doneDetail" class="muted"></p>
       <p class="muted">前日にリマインドをお送りします。キャンセルは前日17時まで無料です。</p>
     </div>
-    <button id="doneClose" class="btn">閉じる</button>
+    <button id="doneClose" class="btn">ホームに戻る</button>
   </div>
 
   <div id="s-whoami" class="screen" hidden>
@@ -448,6 +448,16 @@
     show('s-home');
   }
 
+  // 予約/キャンセル完了後にアプリを閉じず、残数を再取得してホームへ戻す（連続予約対応）。
+  function loadHome(){
+    state.transferMode = false; state.changeMode = false; state.changeReservationId = '';
+    state.proxyMode = false; state.excludeStartISO = '';   // 次の予約が素の状態で始まるようフラグをリセット
+    show('s-loading'); dbg('ホームを更新中…');
+    api({ action:'line_getMemberStatus' }).then(function(res){
+      if (res && res.success && res.verified) renderHome(res); else show('s-home');
+    }).catch(function(){ show('s-home'); });
+  }
+
   function loadMyReservations(){
     show('s-loading'); dbg('予約を取得中…');
     api({ action:'line_getMyReservations' }).then(function(res){
@@ -659,7 +669,7 @@
       }).catch(function(e){ btn.disabled=false; btn.textContent='予約を確定する'; errEl.textContent='通信に失敗しました：'+e; errEl.hidden=false; });
   });
 
-  on('doneClose', function(){ if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } if (window.liff && liff.closeWindow) liff.closeWindow(); });
+  on('doneClose', function(){ if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } loadHome(); });   // アプリを閉じず残数更新してホームへ（連続予約対応）
 
   boot();
 </script>
