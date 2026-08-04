@@ -286,6 +286,7 @@
     api({ action:'line_getTrainerReservations' }).then(function(res){
       if (!res || !res.success) { showError('担当予約の取得に失敗しました（' + ((res&&res.code)||'不明') + '）。'); return; }
       state._trainerResv = res.reservations || [];
+      state._trainerCustomers = res.customers || [];   // 担当顧客（予約の有無に関係なく）
       renderCustomerList();
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
@@ -293,16 +294,20 @@
   function renderCustomerList(){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜顧客を選んで予約を変更・取消';
-    var resv = state._trainerResv || [];
-    if (!resv.length) {
-      box.innerHTML = '<p class="muted">今後のご予約はありません。</p>';
+    var resv = state._trainerResv || [], custs = state._trainerCustomers || [];
+    // 予約件数を customerId で集計
+    var cntById = {}; resv.forEach(function(r){ cntById[r.customerId] = (cntById[r.customerId]||0)+1; });
+    // 担当顧客（予約0でも表示）＋予約はあるが担当リスト外の顧客も統合（取りこぼし防止）
+    var list = [], seen = {};
+    custs.forEach(function(c){ if (c.customerId && !seen[c.customerId]) { seen[c.customerId]=true; list.push({ customerId:c.customerId, name:c.name, count: cntById[c.customerId]||0 }); } });
+    resv.forEach(function(r){ if (r.customerId && !seen[r.customerId]) { seen[r.customerId]=true; list.push({ customerId:r.customerId, name:r.customerName, count: cntById[r.customerId]||0 }); } });
+    if (!list.length) {
+      box.innerHTML = '<p class="muted">担当のお客様がまだ登録されていません。</p>';
     } else {
-      var order = [], byCust = {};
-      resv.forEach(function(r){ if (!byCust[r.customerName]) { byCust[r.customerName] = []; order.push(r.customerName); } byCust[r.customerName].push(r); });
-      order.forEach(function(name){
+      list.forEach(function(c){
         var d = document.createElement('div'); d.className = 'card'; d.style.cursor = 'pointer';
-        d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><b>' + name + ' 様</b><span class="muted">' + byCust[name].length + '件 ›</span></div>';
-        d.onclick = function(){ renderCustomerDetail(name); };
+        d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><b>' + c.name + ' 様</b><span class="muted">' + (c.count ? c.count+'件 ›' : '予約なし ›') + '</span></div>';
+        d.onclick = function(){ renderCustomerDetail(c.customerId, c.name); };
         box.appendChild(d);
       });
     }
@@ -347,14 +352,15 @@
     show('s-tadmin');
   }
   // 選んだ顧客の予約（変更・キャンセル）
-  function renderCustomerDetail(name){
+  function renderCustomerDetail(customerId, name){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = name + ' 様のご予約';
     var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
-    var _list = (state._trainerResv || []).filter(function(r){ return r.customerName === name; });
-    var _cId = _list.length ? _list[0].customerId : '';
+    var _list = (state._trainerResv || []).filter(function(r){ return r.customerId === customerId; });
+    var _cId = customerId;   // 予約が無くても顧客IDが確定＝代行/チケット補充が可能
+    if (!_list.length) { var none = document.createElement('p'); none.className = 'muted'; none.textContent = '今後のご予約はありません。'; box.appendChild(none); }
     _list.forEach(function(r){
       var d = document.createElement('div'); d.className = 'card';
       d.innerHTML = '<div><b>' + r.dateLabel + '</b>' + (r.transfer ? '　<span style="color:var(--acc);">振替</span>' : '') + '</div>';
