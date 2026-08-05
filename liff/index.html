@@ -362,8 +362,8 @@
     var homeCard = document.createElement('div'); homeCard.className = 'card'; homeCard.innerHTML = '<span class="muted">残数を取得中…</span>';
     box.appendChild(homeCard);
     api({ action:'line_getCustomerHome', customerId: customerId }).then(function(res){
-      homeCard.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : '<span class="muted">残数情報を取得できませんでした。</span>';
-    }).catch(function(){ homeCard.innerHTML = '<span class="muted">残数情報の取得に失敗しました。</span>'; });
+      homeCard.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : ('<span class="muted">残数情報を取得できませんでした（' + ((res && res.code) || '通信') + '）。</span>');
+    }).catch(function(e){ homeCard.innerHTML = '<span class="muted">残数情報の取得に失敗しました：' + e + '</span>'; });
     var _list = (state._trainerResv || []).filter(function(r){ return r.customerId === customerId; });
     var _cId = customerId;   // 予約が無くても顧客IDが確定＝代行/チケット補充が可能
     if (!_list.length) { var none = document.createElement('p'); none.className = 'muted'; none.textContent = '今後のご予約はありません。'; box.appendChild(none); }
