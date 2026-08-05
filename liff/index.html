@@ -454,7 +454,19 @@
   function renderHome(res){
     document.getElementById('homeName').textContent = (res.name || '会員') + ' 様';
     state.defaultTrainerId = res.defaultTrainerId || '';   // デフォルト担当（予約画面で先頭表示・変更可）
-    document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true);
+    var reserveBtn = document.getElementById('homeReserve');
+    if (res.onboarding) {   // オンボード期間：残数を出さず「9/1開始」案内。予約ボタンは隠す（予約はまだ不可）。
+      document.getElementById('homeInfo').innerHTML =
+        '<div class="home-row" style="display:block;line-height:1.7;">'
+        + '<b>ご登録ありがとうございます。</b><br>'
+        + '<span class="muted">9月1日（月）から、こちらのLINEでご予約・残数確認をご利用いただけます。</span><br>'
+        + '<span class="muted">それまでは、これまでどおり担当トレーナーへご予約ください。</span>'
+        + '</div>';
+      if (reserveBtn) reserveBtn.style.display = 'none';
+    } else {
+      document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true);
+      if (reserveBtn) reserveBtn.style.display = '';
+    }
     show('s-home');
   }
 
