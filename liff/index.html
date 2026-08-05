@@ -358,6 +358,12 @@
     var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
+    // お客様の残数（トレーナーが確認できるよう表示）— 選択時に取得
+    var homeCard = document.createElement('div'); homeCard.className = 'card'; homeCard.innerHTML = '<span class="muted">残数を取得中…</span>';
+    box.appendChild(homeCard);
+    api({ action:'line_getCustomerHome', customerId: customerId }).then(function(res){
+      homeCard.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : '<span class="muted">残数情報を取得できませんでした。</span>';
+    }).catch(function(){ homeCard.innerHTML = '<span class="muted">残数情報の取得に失敗しました。</span>'; });
     var _list = (state._trainerResv || []).filter(function(r){ return r.customerId === customerId; });
     var _cId = customerId;   // 予約が無くても顧客IDが確定＝代行/チケット補充が可能
     if (!_list.length) { var none = document.createElement('p'); none.className = 'muted'; none.textContent = '今後のご予約はありません。'; box.appendChild(none); }
@@ -425,32 +431,30 @@
     loadSlots();                        // 担当トレーナー(state.trainerId)の週グリッドへ
   }
 
+  // 残数(home)のHTML（会員ホーム・トレーナーの顧客詳細で共用）。detailed=trueで月額の「今月のご予約」明細も出す。
+  function homeInfoHtml(h, detailed){
+    h = h || { type:null };
+    if (h.type && h.active === false) return '<p class="muted">現在ご予約いただけない契約状態です。店舗にお問い合わせください。</p>';
+    if (h.type === 'both') {
+      var mLeft = (h.monthlyRemaining !== null && h.monthlyRemaining !== undefined) ? h.monthlyRemaining : Math.max(0, h.quota - h.thisMonth);
+      return '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + mLeft + '</b> 回</span></div>' +
+        '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.ticketRemaining + '</b> 枚</span></div>' +
+        (h.ticketExpire ? '<div class="home-row"><span class="k">チケット期限</span><span class="v" style="font-size:14px;">' + h.ticketExpire + '</span></div>' : '');
+    }
+    if (h.type === 'ticket') return '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.remaining + '</b> 回</span></div>' +
+      (h.expire ? '<div class="home-row"><span class="k">有効期限</span><span class="v" style="font-size:14px;">' + h.expire + '</span></div>' : '');
+    if (h.type === 'monthly') {
+      var left = (h.remaining !== null) ? h.remaining : Math.max(0, h.quota - h.thisMonth);
+      var s = '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + left + '</b> 回</span></div>';
+      if (detailed) s += '<div class="home-row"><span class="k">今月のご予約</span><span class="v" style="font-size:14px;">' + (h.thisMonth + ' 回 ／ 月' + h.quota + '回' + (h.carryover ? '＋繰越' + h.carryover + '回' : '')) + '</span></div>';
+      return s;
+    }
+    return detailed ? '<p class="muted" style="margin-top:12px;">ご予約はこちらから承ります。</p>' : '<p class="muted">残数情報がありません。</p>';
+  }
   function renderHome(res){
     document.getElementById('homeName').textContent = (res.name || '会員') + ' 様';
     state.defaultTrainerId = res.defaultTrainerId || '';   // デフォルト担当（予約画面で先頭表示・変更可）
-    var h = res.home || { type:null };
-    var el = document.getElementById('homeInfo');
-    if (h.type && h.active === false) {
-      el.innerHTML = '<p class="muted" style="margin-top:12px;">現在ご予約いただけない契約状態です。店舗にお問い合わせください。</p>';
-    } else if (h.type === 'both') {
-      var mLeft = (h.monthlyRemaining !== null && h.monthlyRemaining !== undefined) ? h.monthlyRemaining : Math.max(0, h.quota - h.thisMonth);
-      el.innerHTML =
-        '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + mLeft + '</b> 回</span></div>' +
-        '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.ticketRemaining + '</b> 枚</span></div>' +
-        (h.ticketExpire ? '<div class="home-row"><span class="k">チケット期限</span><span class="v" style="font-size:14px;">' + h.ticketExpire + '</span></div>' : '');
-    } else if (h.type === 'ticket') {
-      el.innerHTML =
-        '<div class="home-row"><span class="k">チケット残り</span><span class="v"><b>' + h.remaining + '</b> 回</span></div>' +
-        (h.expire ? '<div class="home-row"><span class="k">有効期限</span><span class="v" style="font-size:14px;">' + h.expire + '</span></div>' : '');
-    } else if (h.type === 'monthly') {
-      var left = (h.remaining !== null) ? h.remaining : Math.max(0, h.quota - h.thisMonth);
-      var quotaText = h.thisMonth + ' 回 ／ 月' + h.quota + '回' + (h.carryover ? '＋繰越' + h.carryover + '回' : '');
-      el.innerHTML =
-        '<div class="home-row"><span class="k">今月の残り</span><span class="v"><b>' + left + '</b> 回</span></div>' +
-        '<div class="home-row"><span class="k">今月のご予約</span><span class="v" style="font-size:14px;">' + quotaText + '</span></div>';
-    } else {
-      el.innerHTML = '<p class="muted" style="margin-top:12px;">ご予約はこちらから承ります。</p>';
-    }
+    document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true);
     show('s-home');
   }
 
