@@ -386,32 +386,39 @@
       var add = document.createElement('button'); add.className = 'btn'; add.textContent = '＋ この方の予約を代行';
       add.onclick = function(){ startProxyReservation(_cId, name); };
       box.appendChild(add);
-      // チケット補充（枚数を選ぶと有効期限は今日＋⌈枚数/2⌉ヶ月で自動計算）
-      var rw = document.createElement('div'); rw.style.cssText = 'margin-top:10px;display:flex;gap:8px;align-items:center;';
-      var tsel = document.createElement('select'); tsel.style.cssText = 'padding:9px;flex:0 0 auto;';
-      tsel.innerHTML = [4,6,8,10,12].map(function(n){ return '<option value="'+n+'">'+n+'回</option>'; }).join('');
-      var tbtn = document.createElement('button'); tbtn.className = 'btn btn-outline'; tbtn.style.cssText = 'margin:0;flex:1;';
+      // チケット補充（枚数1〜／単価はトレーナー入力・必須／有効期限は任意＝空なら今日＋⌈枚数/2⌉ヶ月・購入パックごと独立）
+      var rw = document.createElement('div'); rw.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+      var tsel = document.createElement('select'); tsel.style.cssText = 'padding:9px;';
+      tsel.innerHTML = [1,2,3,4,5,6,7,8,9,10,11,12].map(function(n){ return '<option value="'+n+'"'+(n===4?' selected':'')+'>'+n+'回</option>'; }).join('');
+      var pinp = document.createElement('input'); pinp.type = 'number'; pinp.min = '0'; pinp.inputMode = 'numeric'; pinp.placeholder = '単価(円)'; pinp.style.cssText = 'padding:9px;width:104px;';
+      var einp = document.createElement('input'); einp.type = 'date'; einp.title = '有効期限(任意)'; einp.style.cssText = 'padding:9px;';
+      var tbtn = document.createElement('button'); tbtn.className = 'btn btn-outline'; tbtn.style.cssText = 'margin:0;flex:1;min-width:120px;';
       tbtn.textContent = 'チケット補充';
       tbtn.onclick = function(){
-        if (!window.confirm(name + ' 様にチケット' + tsel.value + '回を補充します。よろしいですか？')) return;
-        api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value }).then(function(res){
-          if (res && res.success) { window.alert('チケット' + res.tickets + '回を補充しました（有効期限 ' + res.expire + '）。'); }
+        var price = Number(pinp.value);
+        if (!(price > 0)) { window.alert('チケット単価を入力してください。'); return; }
+        if (!window.confirm(name + ' 様にチケット' + tsel.value + '回（単価' + price + '円）を補充します。よろしいですか？')) return;
+        var expireISO = einp.value ? String(einp.value).replace(/-/g, '/') : '';   // yyyy-mm-dd → yyyy/mm/dd（backendのdate解析向け）
+        api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value, unitPrice:price, expireISO:expireISO }).then(function(res){
+          if (res && res.success) { window.alert('チケット' + res.tickets + '回を補充しました（単価' + price + '円・有効期限 ' + res.expire + '）。'); }
           else { showError('補充に失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
         }).catch(function(e){ showError('通信に失敗しました：'+e); });
       };
-      rw.appendChild(tsel); rw.appendChild(tbtn);
+      rw.appendChild(tsel); rw.appendChild(pinp); rw.appendChild(einp); rw.appendChild(tbtn);
       box.appendChild(rw);
     }
   }
-  // 予約の代行（トレーナーが顧客の代わりに新規予約）— 担当トレーナーの週グリッドへ
-  function startProxyReservation(customerId, name){
+  // 予約の代行（トレーナーが顧客の代わりに新規予約）— まずトレーナー選択（#4：担当を選べる。鈴木が沖担当で代行等）→週グリッド
+  function startProxyReservation(customerId, name, defaultTrainerId){
     state.proxyMode = true;
     state.proxyCustomerId = customerId;
     state.proxyCustomerName = name;
     state.changeMode = false; state.transferMode = false;
+    state.excludeStartISO = '';
     state._fromTrainerAdmin = true;
     state.weekOffset = 0;
-    loadSlots();
+    state.defaultTrainerId = defaultTrainerId || state.defaultTrainerId || '';   // 顧客の担当を先頭表示（変更可）
+    loadTrainers();   // トレーナー選択画面へ（カードのonclickがtrainerId確定→loadSlots・proxyMode保持）
   }
   on('tadminReload', function(){ loadTrainerReservations(); });
   function trainerCancel(r){
