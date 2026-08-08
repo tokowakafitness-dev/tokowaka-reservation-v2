@@ -150,7 +150,7 @@
 
   var BUSINESS_START = 7, BUSINESS_END = 24;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1 };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1 };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -479,6 +479,7 @@
       if (reserveBtn) reserveBtn.style.display = 'none';
     } else {
       state.transferCredits = res.transferCredits || null;   // #9：予約画面の①通常/②振替分岐に使う
+      state.isPair = !!res.isPair;   // ペア会員＝予約時に来店人数を選ぶ
       var tcHtml = (res.transferCredits && res.transferCredits.available > 0)
         ? '<div class="home-row"><span class="k">振替可能</span><span class="v"><b>' + res.transferCredits.available + '</b> 回' + (res.transferCredits.nextExpireLabel ? '（' + res.transferCredits.nextExpireLabel + 'まで）' : '') + '</span></div>' : '';
       document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true) + tcHtml;
@@ -676,7 +677,7 @@
 
   function openConfirm(slot){
     state.selected = slot;
-    state.useTransfer = false; state.repeatCount = 1;   // 確定画面を開くたびに素の状態へ
+    state.useTransfer = false; state.repeatCount = 1; state.attendeeCount = (state.isPair ? 2 : 1);   // ペアは既定2名・毎回リセット
     document.getElementById('cfTrainer').textContent = state.trainerName;
     var dt = new Date(slot.startISO);
     var dowJa=['日','月','火','水','木','金','土'];
@@ -693,6 +694,15 @@
     host.innerHTML='';
     var isPlain = !state.proxyMode && !state.changeMode && !state.transferMode;
     if (!isPlain) return;
+    // ペア会員：来店人数（2名＝2消化／1名＝1消化＋差額）を選ぶ
+    if (state.isPair){
+      var pr=document.createElement('div'); pr.style.cssText='margin-bottom:8px;padding:8px 10px;background:#f0f4fa;border-radius:8px;';
+      pr.innerHTML='<div style="font-weight:600;margin-bottom:4px;">ご来店人数</div>'
+        +'<label style="display:inline-block;margin-right:14px;"><input type="radio" name="cfAtt" value="2" checked> 2名（お二人）</label>'
+        +'<label style="display:inline-block;"><input type="radio" name="cfAtt" value="1"> 1名（差額をご請求）</label>';
+      pr.addEventListener('change', function(){ var c=document.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='1') ? 1 : 2; });
+      host.appendChild(pr);
+    }
     // #9：有効な振替券があるときだけ ①通常/②振替 を選べる（既定=通常）
     if (state.transferCredits && state.transferCredits.available > 0){
       var tc=document.createElement('div'); tc.style.cssText='margin-bottom:8px;padding:8px 10px;background:#faf7f0;border-radius:8px;';
@@ -702,7 +712,8 @@
       tc.addEventListener('change', function(){ var c=document.querySelector('input[name=cfPay]:checked'); state.useTransfer = !!(c && c.value==='transfer'); var rs=document.getElementById('cfRepeatWrap'); if (rs) rs.style.display = state.useTransfer ? 'none' : 'flex'; if (state.useTransfer) state.repeatCount=1; });
       host.appendChild(tc);
     }
-    // #6：繰り返し（振替選択時は非表示。残数不足の回は自動スキップ）
+    // #6：繰り返し（振替選択時は非表示・ペア会員は人数選択を使うため非表示。残数不足の回は自動スキップ）
+    if (state.isPair) return;
     var rc=document.createElement('div'); rc.id='cfRepeatWrap'; rc.style.cssText='display:flex;gap:8px;align-items:center;';
     var lbl=document.createElement('span'); lbl.textContent='繰り返し'; lbl.className='muted';
     var sel=document.createElement('select'); sel.style.cssText='padding:8px;';
@@ -724,7 +735,7 @@
           ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
           : _isRecurring
             ? { action:'line_makeRecurringReservation', trainerId: state.trainerId, startISO: state.selected.startISO, repeatCount: state.repeatCount }
-            : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
+            : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO, attendeeCount: state.attendeeCount };
     api(req)
       .then(function(res){
         btn.disabled=false; btn.textContent='予約を確定する';
