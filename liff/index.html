@@ -394,18 +394,28 @@
       var einp = document.createElement('input'); einp.type = 'date'; einp.title = '有効期限(任意)'; einp.style.cssText = 'padding:9px;';
       var tbtn = document.createElement('button'); tbtn.className = 'btn btn-outline'; tbtn.style.cssText = 'margin:0;flex:1;min-width:120px;';
       tbtn.textContent = 'チケット補充';
+      // ペアチケット：チェックで通常単価欄を出す（1名来店の差額算定用）。qtyは回数×2の人数回でbackendが積む。
+      var prow = document.createElement('div'); prow.style.cssText = 'width:100%;display:flex;gap:8px;align-items:center;';
+      var pchk = document.createElement('input'); pchk.type = 'checkbox'; pchk.id = 'refillPair';
+      var plab = document.createElement('label'); plab.htmlFor = 'refillPair'; plab.textContent = 'ペアチケット'; plab.className = 'muted';
+      var ninp = document.createElement('input'); ninp.type = 'number'; ninp.min = '0'; ninp.placeholder = '通常単価(円)'; ninp.style.cssText = 'padding:9px;width:120px;display:none;';
+      pchk.addEventListener('change', function(){ ninp.style.display = pchk.checked ? '' : 'none'; pinp.placeholder = pchk.checked ? 'ペア単価(円)' : '単価(円)'; });
+      prow.appendChild(pchk); prow.appendChild(plab); prow.appendChild(ninp);
       tbtn.onclick = function(){
         var price = Number(pinp.value);
-        if (!(price > 0)) { window.alert('チケット単価を入力してください。'); return; }
-        if (!window.confirm(name + ' 様にチケット' + tsel.value + '回（単価' + price + '円）を補充します。よろしいですか？')) return;
-        var expireISO = einp.value ? String(einp.value).replace(/-/g, '/') : '';   // yyyy-mm-dd → yyyy/mm/dd（backendのdate解析向け）
-        api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value, unitPrice:price, expireISO:expireISO }).then(function(res){
-          if (res && res.success) { window.alert('チケット' + res.tickets + '回を補充しました（単価' + price + '円・有効期限 ' + res.expire + '）。'); }
+        var isPair = pchk.checked, normalPrice = Number(ninp.value);
+        if (!(price > 0)) { window.alert((isPair ? 'ペア単価' : 'チケット単価') + 'を入力してください。'); return; }
+        if (isPair && !(normalPrice > 0)) { window.alert('通常単価（1名来店の差額算定用）を入力してください。'); return; }
+        var label = isPair ? ('ペアチケット' + tsel.value + '回（' + (tsel.value*2) + '人数回・ペア単価' + price + '円）') : ('チケット' + tsel.value + '回（単価' + price + '円）');
+        if (!window.confirm(name + ' 様に' + label + 'を補充します。よろしいですか？')) return;
+        var expireISO = einp.value ? String(einp.value).replace(/-/g, '/') : '';
+        api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value, unitPrice:price, expireISO:expireISO, pair:isPair, normalUnitPrice:(isPair?normalPrice:'') }).then(function(res){
+          if (res && res.success) { window.alert((res.pair ? 'ペアチケット' : 'チケット') + res.tickets + (res.pair ? '人数回' : '回') + 'を補充しました（有効期限 ' + res.expire + '）。'); }
           else { showError('補充に失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
         }).catch(function(e){ showError('通信に失敗しました：'+e); });
       };
       rw.appendChild(tsel); rw.appendChild(pinp); rw.appendChild(einp); rw.appendChild(tbtn);
-      box.appendChild(rw);
+      box.appendChild(rw); box.appendChild(prow);
     }
   }
   // 予約の代行（トレーナーが顧客の代わりに新規予約）— まずトレーナー選択（#4：担当を選べる。鈴木が沖担当で代行等）→週グリッド
