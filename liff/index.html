@@ -150,7 +150,7 @@
 
   var BUSINESS_START = 7, BUSINESS_END = 24;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[] };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1 };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -471,7 +471,10 @@
         + '</div>';
       if (reserveBtn) reserveBtn.style.display = 'none';
     } else {
-      document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true);
+      state.transferCredits = res.transferCredits || null;   // #9：予約画面の①通常/②振替分岐に使う
+      var tcHtml = (res.transferCredits && res.transferCredits.available > 0)
+        ? '<div class="home-row"><span class="k">振替可能</span><span class="v"><b>' + res.transferCredits.available + '</b> 回' + (res.transferCredits.nextExpireLabel ? '（' + res.transferCredits.nextExpireLabel + 'まで）' : '') + '</span></div>' : '';
+      document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true) + tcHtml;
       if (reserveBtn) reserveBtn.style.display = '';
     }
     show('s-home');
@@ -666,32 +669,66 @@
 
   function openConfirm(slot){
     state.selected = slot;
+    state.useTransfer = false; state.repeatCount = 1;   // 確定画面を開くたびに素の状態へ
     document.getElementById('cfTrainer').textContent = state.trainerName;
     var dt = new Date(slot.startISO);
     var dowJa=['日','月','火','水','木','金','土'];
     document.getElementById('cfDatetime').textContent =
       (dt.getMonth()+1)+'月'+dt.getDate()+'日('+dowJa[dt.getDay()]+') '+slot.startTime+'〜'+slot.endTime;
+    buildConfirmOptions();
     document.getElementById('confirmErr').hidden = true;
     show('s-confirm');
+  }
+  // #9 振替券の選択・#6 繰り返し を確定画面に動的描画（通常の会員予約フローのみ）
+  function buildConfirmOptions(){
+    var host = document.getElementById('cfOptions');
+    if (!host) { host = document.createElement('div'); host.id='cfOptions'; host.style.cssText='margin-top:10px;'; var dtEl=document.getElementById('cfDatetime'); dtEl.parentNode.appendChild(host); }
+    host.innerHTML='';
+    var isPlain = !state.proxyMode && !state.changeMode && !state.transferMode;
+    if (!isPlain) return;
+    // #9：有効な振替券があるときだけ ①通常/②振替 を選べる（既定=通常）
+    if (state.transferCredits && state.transferCredits.available > 0){
+      var tc=document.createElement('div'); tc.style.cssText='margin-bottom:8px;padding:8px 10px;background:#faf7f0;border-radius:8px;';
+      tc.innerHTML='<div style="font-weight:600;margin-bottom:4px;">お支払い方法</div>'
+        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="normal" checked> 通常予約（残数を1回消化）</label>'
+        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="transfer"> 振替で予約（残数を使わない・5,500円）<span class="muted" style="font-size:12px;">振替可能 '+state.transferCredits.available+'回'+(state.transferCredits.nextExpireLabel?'（'+state.transferCredits.nextExpireLabel+'まで）':'')+'</span></label>';
+      tc.addEventListener('change', function(){ var c=document.querySelector('input[name=cfPay]:checked'); state.useTransfer = !!(c && c.value==='transfer'); var rs=document.getElementById('cfRepeatWrap'); if (rs) rs.style.display = state.useTransfer ? 'none' : 'flex'; if (state.useTransfer) state.repeatCount=1; });
+      host.appendChild(tc);
+    }
+    // #6：繰り返し（振替選択時は非表示。残数不足の回は自動スキップ）
+    var rc=document.createElement('div'); rc.id='cfRepeatWrap'; rc.style.cssText='display:flex;gap:8px;align-items:center;';
+    var lbl=document.createElement('span'); lbl.textContent='繰り返し'; lbl.className='muted';
+    var sel=document.createElement('select'); sel.style.cssText='padding:8px;';
+    sel.innerHTML='<option value="1">なし（1回）</option>'+[2,3,4,5,6,7,8].map(function(n){return '<option value="'+n+'">毎週'+n+'回</option>';}).join('');
+    sel.addEventListener('change', function(){ state.repeatCount=Number(sel.value)||1; });
+    rc.appendChild(lbl); rc.appendChild(sel); host.appendChild(rc);
   }
   on('confirmCancel', function(){ show('s-week'); });
   on('confirmBtn', function(){
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
     btn.disabled = true; btn.textContent='処理中…';
+    var _isTransfer = state.transferMode || state.useTransfer;   // #9：既存の振替フロー or 確定画面で②振替を選択
+    var _isRecurring = !state.proxyMode && !state.changeMode && !_isTransfer && Number(state.repeatCount) > 1;   // #6
     var req = state.proxyMode
       ? { action:'line_makeReservationLineProxy', customerId: state.proxyCustomerId, trainerId: state.trainerId, startISO: state.selected.startISO }
-      : state.transferMode
+      : _isTransfer
         ? { action:'line_makeTransferReservation', trainerId: state.trainerId, startISO: state.selected.startISO }
         : state.changeMode
           ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
-          : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
+          : _isRecurring
+            ? { action:'line_makeRecurringReservation', trainerId: state.trainerId, startISO: state.selected.startISO, repeatCount: state.repeatCount }
+            : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO };
     api(req)
       .then(function(res){
         btn.disabled=false; btn.textContent='予約を確定する';
         if (res.success) {
           var s = state.selected;
-          document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + ' 様／' : '') + state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime + (state.transferMode ? '（振替・5,500円）' : state.changeMode ? '（変更）' : state.proxyMode ? '（代行予約）' : '');
-          state.changeMode = false; state.changeReservationId = ''; state.transferMode = false; state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = '';
+          if (_isRecurring) {   // #6：作成件数・スキップ件数を表示
+            document.getElementById('doneDetail').textContent = state.trainerName + '／' + s.date + ' ' + s.startTime + '〜 を毎週 ' + res.createdCount + ' 件予約しました' + (res.skippedCount ? '（' + res.skippedCount + ' 件は空き/残数の都合でスキップ）' : '');
+          } else {
+            document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + ' 様／' : '') + state.trainerName + '／' + s.date + ' ' + s.startTime + '〜' + s.endTime + (_isTransfer ? '（振替・5,500円）' : state.changeMode ? '（変更）' : state.proxyMode ? '（代行予約）' : '');
+          }
+          state.changeMode = false; state.changeReservationId = ''; state.transferMode = false; state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = ''; state.useTransfer = false; state.repeatCount = 1;
           show('s-done');
         } else {
           errEl.textContent = res.message || 'この時間は予約できませんでした。別の枠をお選びください。';
