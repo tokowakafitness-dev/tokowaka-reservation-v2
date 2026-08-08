@@ -406,6 +406,7 @@
         var isPair = pchk.checked, normalPrice = Number(ninp.value);
         if (!(price > 0)) { window.alert((isPair ? 'ペア単価' : 'チケット単価') + 'を入力してください。'); return; }
         if (isPair && !(normalPrice > 0)) { window.alert('通常単価（1名来店の差額算定用）を入力してください。'); return; }
+        if (isPair && !(normalPrice >= price)) { window.alert('通常単価はペア単価（1名あたり）以上で入力してください。'); return; }   // 差額が負＝1名来店が割安になる矛盾
         var label = isPair ? ('ペアチケット' + tsel.value + '回（' + (tsel.value*2) + '人数回・ペア単価' + price + '円）') : ('チケット' + tsel.value + '回（単価' + price + '円）');
         if (!window.confirm(name + ' 様に' + label + 'を補充します。よろしいですか？')) return;
         var expireISO = einp.value ? String(einp.value).replace(/-/g, '/') : '';
