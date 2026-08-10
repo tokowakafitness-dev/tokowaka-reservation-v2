@@ -150,7 +150,7 @@
 
   var BUSINESS_START = 7, BUSINESS_END = 24;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1 };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1, hasNormalRoute:false, pairRemaining:0, pairPackMax:0, pairExpire:'', packKind:'normal' };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -490,7 +490,11 @@
       if (reserveBtn) reserveBtn.style.display = 'none';
     } else {
       state.transferCredits = res.transferCredits || null;   // #9：予約画面の①通常/②振替分岐に使う
-      state.isPair = !!res.isPair;   // ペア会員＝予約時に来店人数を選ぶ
+      state.isPair = !!res.isPair;                              // ペアチケットの残がある＝予約時に来店人数を選ぶ
+      state.hasNormalRoute = !!res.hasNormalRoute;              // 月額/通常チケットも残っている＝消化先を選べる
+      state.pairRemaining = Number(res.pairRemaining || 0);
+      state.pairPackMax = Number(res.pairPackMax || 0);         // 単一チケットの最大残（2名来店の可否目安）
+      state.pairExpire = '';   // 確定画面では対象日基準の期限(line_getBookingOptions)で上書きする
       var tcHtml = (res.transferCredits && res.transferCredits.available > 0)
         ? '<div class="home-row"><span class="k">振替可能</span><span class="v"><b>' + res.transferCredits.available + '</b> 回' + (res.transferCredits.nextExpireLabel ? '（' + res.transferCredits.nextExpireLabel + 'まで）' : '') + '</span></div>' : '';
       document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true) + tcHtml;
@@ -688,7 +692,42 @@
 
   function openConfirm(slot){
     state.selected = slot;
-    state.useTransfer = false; state.repeatCount = 1; state.attendeeCount = (state.isPair ? 2 : 1);   // ペアは既定2名・毎回リセット
+    state.useTransfer = false; state.repeatCount = 1;
+    // 消化先の既定：通常経路（月額・通常チケット）が残っていればそちら。ペアチケットしか無い会員だけペア既定。
+    //   ※ホームの残数は「本日基準」。既定値のまま送るとサーバの対象日判定を上書きして
+    //     「本日は通常が残っているが予約日には失効」等で不要に予約不能になるため、
+    //     会員が明示的に選んだときだけ packKind を送る（packKindExplicit）。
+    state.packKind = 'normal';
+    state.packKindExplicit = false;
+    // 選択肢は「予約対象日時」基準でサーバから取り直す（ホームの当日基準の残数で未来予約を縛らない）。
+    //   応答が返るまで選択UIは出さず、最後のリクエストの応答だけを採用する（顧客/日時の切替競合を防ぐ）。
+    state.optReady = false; state.optError = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
+    setConfirmEnabled();   // 取得できるまで確定させない（既定1名のまま送られるのを防ぐ）
+    var _seq = (state._optSeq = (state._optSeq || 0) + 1);
+    var _optReq = { action:'line_getBookingOptions', startISO: slot.startISO };
+    if (state.proxyMode) _optReq.customerId = state.proxyCustomerId;
+    api(_optReq).then(function(r){
+      if (_seq !== state._optSeq) return;   // 古い応答は捨てる
+      if (r && r.success) {
+        state.pairRemaining = Number(r.pairRemaining || 0);
+        state.pairPackMax = Number(r.pairPackMax || 0);
+        state.hasNormalRoute = !!r.hasNormalRoute;
+        state.pairExpire = String(r.pairExpire || '');   // 対象日に有効なpackの期限（当日基準の期限を出さない）
+        state.isPair = state.pairRemaining > 0;
+        state.packKind = (state.isPair && !state.hasNormalRoute) ? 'pair' : 'normal';
+        state.attendeeCount = (!state.proxyMode && state.packKind === 'pair' && state.pairPackMax >= 2) ? 2 : 1;
+        state.optReady = true; state.optError = '';
+      } else {
+        // 取得できないまま人数を推測して予約しない（fail-closed）
+        state.optError = (r && r.message) || 'ご利用チケットを確認できませんでした。';
+      }
+      buildConfirmOptions(); setConfirmEnabled();
+    }).catch(function(){
+      if (_seq !== state._optSeq) return;
+      state.optError = '通信に失敗しました。'; buildConfirmOptions(); setConfirmEnabled();
+    });
+    // 代行は既定1名（月額会員の通常予約が大半なので、2名はトレーナーの明示選択に限る）
+    state.attendeeCount = state.proxyMode ? 1 : ((state.packKind === 'pair' && state.pairPackMax >= 2) ? 2 : 1);   // 毎回リセット
     document.getElementById('cfTrainer').textContent = state.trainerName;
     var dt = new Date(slot.startISO);
     var dowJa=['日','月','火','水','木','金','土'];
@@ -698,20 +737,62 @@
     document.getElementById('confirmErr').hidden = true;
     show('s-confirm');
   }
+  // 選択肢が対象日基準で確定するまで／確定できなかった場合は「予約を確定する」を押させない
+  function setConfirmEnabled(){
+    var b = document.getElementById('confirmBtn'); if (!b) return;
+    b.disabled = !(state.optReady && !state.optError);
+  }
   // #9 振替券の選択・#6 繰り返し を確定画面に動的描画（通常の会員予約フローのみ）
   function buildConfirmOptions(){
     var host = document.getElementById('cfOptions');
     if (!host) { host = document.createElement('div'); host.id='cfOptions'; host.style.cssText='margin-top:10px;'; var dtEl=document.getElementById('cfDatetime'); dtEl.parentNode.appendChild(host); }
     host.innerHTML='';
+    // 選択肢の取得中/失敗時は何も描かない（当日基準の古い値や既定値で予約させない）
+    if (state.optError) {
+      host.innerHTML = '<div class="err">' + state.optError + '</div>';
+      var rb = document.createElement('button'); rb.className='btn btn-outline'; rb.textContent='再試行';
+      rb.onclick = function(){ openConfirm(state.selected); };
+      host.appendChild(rb); return;
+    }
+    if (!state.optReady) { host.innerHTML = '<span class="muted">ご利用チケットを確認中…</span>'; return; }
+    // 代行：ペアチケットを持つ顧客は来店人数を必ず指定させる（1名固定で作ると2名来店が過少計上になる）。
+    //   消化先(packKind)は送らずサーバの対象日判定に委ねる＝2名なら自動でペア、1名は通常経路優先。
+    if (state.proxyMode && state.pairRemaining > 0){
+      var px=document.createElement('div'); px.style.cssText='margin-bottom:8px;padding:8px 10px;background:#f0f4fa;border-radius:8px;';
+      var _pcan2 = state.pairPackMax >= 2;
+      px.innerHTML='<div style="font-weight:600;margin-bottom:4px;">ご来店人数（ペアチケット保有）</div>'
+        +'<label style="display:inline-block;margin-right:14px;"><input type="radio" name="cfAtt" value="1"'+(state.attendeeCount===2?'':' checked')+'> 1名</label>'
+        +(_pcan2 ? '<label style="display:inline-block;"><input type="radio" name="cfAtt" value="2"'+(state.attendeeCount===2?' checked':'')+'> 2名（ペアで消化）</label>' : '<span class="muted" style="font-size:12px;">残りが1人数回のため1名のみ</span>');
+      px.addEventListener('change', function(){ var c=document.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='2') ? 2 : 1; });
+      host.appendChild(px);
+    }
     var isPlain = !state.proxyMode && !state.changeMode && !state.transferMode;
     if (!isPlain) return;
-    // ペア会員：来店人数（2名＝2消化／1名＝1消化＋差額）を選ぶ
-    if (state.isPair){
+    // ペアチケットと通常経路（月額/通常チケット）を両方持つ会員は、どちらを使うか選ぶ。
+    //   選ばせないと常に通常が先に減り、ペアチケットが期限切れになりうるため。
+    if (state.isPair && state.hasNormalRoute){
+      var pk=document.createElement('div'); pk.style.cssText='margin-bottom:8px;padding:8px 10px;background:#f0f4fa;border-radius:8px;';
+      pk.innerHTML='<div style="font-weight:600;margin-bottom:4px;">使用するチケット</div>'
+        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfKind" value="normal"'+(state.packKind==='pair'?'':' checked')+'> 通常（月額・通常チケット）</label>'
+        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfKind" value="pair"'+(state.packKind==='pair'?' checked':'')+'> ペアチケット <span class="muted" style="font-size:12px;">残'+state.pairRemaining+'人数回'+(state.pairExpire?'（'+state.pairExpire+'まで）':'')+'</span></label>';
+      pk.addEventListener('change', function(){
+        var c=document.querySelector('input[name=cfKind]:checked');
+        state.packKind = (c && c.value==='pair') ? 'pair' : 'normal';
+        state.packKindExplicit = true;   // 会員が選んだ＝サーバの自動判定より優先させる
+        state.attendeeCount = (state.packKind==='pair' && state.pairPackMax>=2) ? 2 : 1;
+        buildConfirmOptions();   // 人数選択・繰り返しの出し分けを作り直す
+      });
+      host.appendChild(pk);
+    }
+    // ペアチケットを使うときだけ来店人数（2名＝2消化／1名＝1消化＋差額）を選ぶ
+    if (state.packKind === 'pair'){
       var pr=document.createElement('div'); pr.style.cssText='margin-bottom:8px;padding:8px 10px;background:#f0f4fa;border-radius:8px;';
+      var _can2 = state.pairPackMax >= 2;   // 同一チケットに2人数回の空きが必要（1回ずつ別チケットには分割しない）
       pr.innerHTML='<div style="font-weight:600;margin-bottom:4px;">ご来店人数</div>'
-        +'<label style="display:inline-block;margin-right:14px;"><input type="radio" name="cfAtt" value="2" checked> 2名（お二人）</label>'
-        +'<label style="display:inline-block;"><input type="radio" name="cfAtt" value="1"> 1名（差額をご請求）</label>';
-      pr.addEventListener('change', function(){ var c=document.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='1') ? 1 : 2; });
+        +(_can2 ? '<label style="display:inline-block;margin-right:14px;"><input type="radio" name="cfAtt" value="2"'+(state.attendeeCount===2?' checked':'')+'> 2名（お二人）</label>' : '')
+        +'<label style="display:inline-block;"><input type="radio" name="cfAtt" value="1"'+(state.attendeeCount===2?'':' checked')+'> 1名（差額をご請求）</label>'
+        +(_can2 ? '' : '<div class="muted" style="font-size:12px;margin-top:4px;">残りが1人数回のため1名でのご利用となります。</div>');
+      pr.addEventListener('change', function(){ var c=document.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='2') ? 2 : 1; });
       host.appendChild(pr);
     }
     // #9：有効な振替券があるときだけ ①通常/②振替 を選べる（既定=通常）
@@ -723,8 +804,8 @@
       tc.addEventListener('change', function(){ var c=document.querySelector('input[name=cfPay]:checked'); state.useTransfer = !!(c && c.value==='transfer'); var rs=document.getElementById('cfRepeatWrap'); if (rs) rs.style.display = state.useTransfer ? 'none' : 'flex'; if (state.useTransfer) state.repeatCount=1; });
       host.appendChild(tc);
     }
-    // #6：繰り返し（振替選択時は非表示・ペア会員は人数選択を使うため非表示。残数不足の回は自動スキップ）
-    if (state.isPair) return;
+    // #6：繰り返し（振替選択時は非表示・ペアチケット利用時は人数を回ごとに選ぶ必要があるため非表示。残数不足の回は自動スキップ）
+    if (state.packKind === 'pair') return;
     var rc=document.createElement('div'); rc.id='cfRepeatWrap'; rc.style.cssText='display:flex;gap:8px;align-items:center;';
     var lbl=document.createElement('span'); lbl.textContent='繰り返し'; lbl.className='muted';
     var sel=document.createElement('select'); sel.style.cssText='padding:8px;';
@@ -734,19 +815,22 @@
   }
   on('confirmCancel', function(){ show('s-week'); });
   on('confirmBtn', function(){
+    if (!state.optReady || state.optError) return;   // 二重防御：選択肢が確定していない状態では送らない
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
     btn.disabled = true; btn.textContent='処理中…';
     var _isTransfer = state.transferMode || state.useTransfer;   // #9：既存の振替フロー or 確定画面で②振替を選択
     var _isRecurring = !state.proxyMode && !state.changeMode && !_isTransfer && Number(state.repeatCount) > 1;   // #6
     var req = state.proxyMode
-      ? { action:'line_makeReservationLineProxy', customerId: state.proxyCustomerId, trainerId: state.trainerId, startISO: state.selected.startISO }
+      // 代行は来店人数のみ送り、消化先(packKind)はサーバの対象日判定に委ねる（2名なら自動でペア）
+      ? { action:'line_makeReservationLineProxy', customerId: state.proxyCustomerId, trainerId: state.trainerId, startISO: state.selected.startISO, attendeeCount: state.attendeeCount }
       : _isTransfer
         ? { action:'line_makeTransferReservation', trainerId: state.trainerId, startISO: state.selected.startISO }
         : state.changeMode
           ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
           : _isRecurring
             ? { action:'line_makeRecurringReservation', trainerId: state.trainerId, startISO: state.selected.startISO, repeatCount: state.repeatCount }
-            : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO, attendeeCount: state.attendeeCount };
+            // packKind は会員が明示的に選んだときだけ送る（未選択なら対象日基準のサーバ自動判定に任せる）
+            : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO, attendeeCount: state.attendeeCount, packKind: (state.packKindExplicit ? state.packKind : '') };
     api(req)
       .then(function(res){
         btn.disabled=false; btn.textContent='予約を確定する';
