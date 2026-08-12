@@ -604,12 +604,13 @@ function doSubmit() {
     return {
       utm_source:   p.get('utm_source')   || 'direct',
       utm_medium:   p.get('utm_medium')   || 'none',
-      utm_campaign: p.get('utm_campaign') || 'none'
+      utm_campaign: p.get('utm_campaign') || 'none',
+      dg:           p.get('dg')           || ''
     };
   })();
 
   gasCall('makeReservation',
-    { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO, utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign },
+    { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO, utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign, diagId:utmParams.dg },
     function(r) {
       document.getElementById('submittingOverlay').classList.remove('on');
       if (r && r.success !== false) {
