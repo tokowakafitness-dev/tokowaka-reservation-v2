@@ -312,14 +312,74 @@
       confirm_cancel_penalty:'取消您 {date} 的预约？\n当天及以后将消耗一次。是否继续？',
       confirm_transfer_offer:'当天取消已消耗一次。\n\n是否申请改期课程（额外5,500日元）？\n（可在下一屏选择时间）',
       dow:['周日','周一','周二','周三','周四','周五','周六'], date_md:'{m}/{d}', date_full:'{m}月{d}日({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
+    },
+    'zh-Hant': {
+      header:'TOKOWAKA 吉祥寺｜預約', loading:'載入中…', booting:'啟動中…',
+      reg_title:'會員註冊', reg_desc:'請使用簽約時的資料進行註冊。請填寫所有欄位。',
+      reg_ph_name:'姓名（簽約時的姓名）', reg_ph_phone:'電話號碼（不含連字號）', reg_ph_email:'電子郵件',
+      reg_ph_birthday:'出生日期（例：1990/01/01）', reg_ph_goal:'訓練目標・需求',
+      reg_submit:'註冊', reg_submitting:'註冊中…', reg_note:'※如與簽約資料不符，請聯繫您的教練。',
+      reg_all_fields:'請填寫所有欄位。', reg_fail:'無法完成註冊。請聯繫您的教練。',
+      home_reserve:'預約', home_myres:'查看我的預約', name_suffix:'', member_fallback:'會員',
+      home_onboard_thanks:'感謝您的註冊。',
+      home_onboard_1:'9月1日（週一）起，您可在此LINE進行預約與查看剩餘次數。',
+      home_onboard_2:'在此之前，請照常聯繫您的教練進行預約。',
+      home_month_left:'本月剩餘', home_ticket_left:'剩餘堂數', ticket_breakdown:'堂數明細',
+      unit_times:'次', unit_sheets:'張', expiry_ticket:'堂票有效期限', expiry_valid:'有效期限',
+      no_expiry:'無期限', until:'前', transfer_avail:'可改期', this_month_bookings:'本月預約',
+      month_quota:'每月{q}次', plus_carry:' + 結轉{c}次', inactive_contract:'目前合約狀態無法預約。請與門市聯繫。',
+      no_balance:'目前沒有剩餘次數資訊。', book_here:'可在此進行預約。',
+      trainer_prompt:'請選擇您的教練。', back_home:'← 返回首頁', trainer_badge:'專屬', trainer_choose:'選擇 ›',
+      myres_title:'我的預約', back:'返回', sect_upcoming:'即將到來的預約', sect_history:'歷史紀錄',
+      no_upcoming:'目前沒有即將到來的預約。',
+      note_free_cancel:'可於前一天17點前免費取消', note_penalty:'當天及之後取消將消耗一次',
+      type_transfer:'改期（+5,500日圓・不消耗次數）', type_ticket:'堂票（消耗1次）', type_normal:'一般（消耗1次）',
+      trainer_colon:'教練：', location_label:'地點：', location_name:'TOKOWAKA 吉祥寺',
+      change_time:'變更時間', cancel_this:'取消此預約',
+      week_prev:'‹ 上一週', week_next:'下一週 ›', week_hint:'點擊 ○ 即可進入預約確認。', week_reselect:'重新選擇教練',
+      choose_start:'請選擇開始時間',
+      cf_title:'確認此預約？', cf_trainer_label:'教練：', cf_datetime_label:'時間：',
+      cf_submit:'確認預約', cf_submitting:'處理中…', cf_checking:'正在確認您的堂票…', retry:'重試',
+      cf_attendee:'到店人數', cf_attendee_pair_hdr:'到店人數（持雙人堂票）',
+      att_1:'1人', att_2:'2人', att_2_pair:'2人（依雙人消耗）', att_1_diff:'1人（收取差額）',
+      att_only1:'因僅剩1人次，僅限1人使用。', att_only1_short:'僅剩1人次，限1人',
+      cf_which_ticket:'使用的堂票', ticket_normal:'一般（月費・一般堂票）', ticket_pair:'雙人堂票',
+      pair_remaining:'剩{n}人次', cf_payment:'付款方式',
+      pay_normal:'一般預約（消耗1次）', pay_transfer:'改期預約（不消耗次數・5,500日圓）',
+      repeat_label:'重複', repeat_none:'無（1次）', repeat_weekly:'每週×{n}',
+      done_title:'預約已確認', done_note:'我們將於前一天發送提醒。前一天17點前可免費取消。', done_close:'返回首頁',
+      done_recurring:'已預約 {trainer} / {date} {time}〜 每週，共{created}次', done_recurring_skip:'（{skipped}次因名額／次數不足已跳過）',
+      done_tag_transfer:'（改期・5,500日圓）', done_tag_change:'（變更）', done_tag_proxy:'（代預約）', done_cust_sep:' ／ ', done_sep:'／',
+      until_wrap:'（{e}前）', month_detail:'{used} 次 ／ {quota}{carry}', pack_line:'{n}張（{e}前）',
+      err_title:'錯誤', err_member_status:'取得會員狀態失敗（代碼：{code}）。',
+      err_init:'初始化失敗：{msg}', err_trainers:'取得教練資訊失敗。',
+      err_slots:'取得可預約時段失敗。', err_myres:'取得預約失敗（代碼：{code}）。',
+      err_cancel:'取消失敗（代碼：{code}）。', comm_fail:'連線失敗：{msg}',
+      book_fail:'此時間無法預約。請選擇其他時段。', opt_fail:'無法確認您的堂票。',
+      confirm_change:'變更您 {date} 的預約時間。\n請於下一個畫面選擇新的時間。{note}',
+      confirm_change_penalty:'\n當天及之後變更將消耗一次。',
+      confirm_cancel_free:'取消您 {date} 的預約？\n（前一天17點前免費）',
+      confirm_cancel_transfer:'取消您 {date} 的改期課程？\n當天及之後將消耗一次，且無法再次申請改期。\n是否繼續？',
+      confirm_cancel_penalty:'取消您 {date} 的預約？\n當天及之後將消耗一次。是否繼續？',
+      confirm_transfer_offer:'當天取消已消耗一次。\n\n是否申請改期課程（額外5,500日圓）？\n（可於下一個畫面選擇時間）',
+      dow:['週日','週一','週二','週三','週四','週五','週六'], date_md:'{m}/{d}', date_full:'{m}月{d}日({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
     }
   };
   var EN_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  var LANGS = ['ja','en','zh'];
-  function _pickLang(code){ code = String(code || '').toLowerCase(); if (code.indexOf('zh') === 0) return 'zh'; if (code.indexOf('en') === 0) return 'en'; return 'ja'; }
+  var LANGS = ['ja','en','zh','zh-Hant'];
+  // 中国語は簡/繁を自動判定（トグルは1つのまま）。検出した変種を zhVariant に保持し、ZHタップ時に使う。
+  var zhVariant = 'zh';
+  function _pickLang(code){
+    code = String(code || '').toLowerCase();
+    if (code.indexOf('zh') === 0) return /hant|-tw|-hk|-mo|_tw|_hk|_mo|traditional/.test(code) ? 'zh-Hant' : 'zh';
+    if (code.indexOf('en') === 0) return 'en';
+    return 'ja';
+  }
   var LANG = (function(){
-    try { var s = localStorage.getItem('tkw_lang'); if (LANGS.indexOf(s) >= 0) return s; } catch(e){}
-    return _pickLang(navigator.language || navigator.userLanguage || '');
+    try { var s = localStorage.getItem('tkw_lang'); if (LANGS.indexOf(s) >= 0) { if (s === 'zh' || s === 'zh-Hant') zhVariant = s; return s; } } catch(e){}
+    var p = _pickLang(navigator.language || navigator.userLanguage || '');
+    if (p === 'zh' || p === 'zh-Hant') zhVariant = p;
+    return p;
   })();
   function _langOverridden(){ try { return LANGS.indexOf(localStorage.getItem('tkw_lang')) >= 0; } catch(e){ return false; } }
   function t(key, vars){
@@ -344,11 +404,13 @@
     var phs = document.querySelectorAll('[data-i18n-ph]');
     Array.prototype.forEach.call(phs, function(el){ el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph'))); });
     var tg = document.getElementById('langToggle');
-    if (tg) Array.prototype.forEach.call(tg.querySelectorAll('[data-lang]'), function(el){ el.className = (el.getAttribute('data-lang') === LANG) ? 'lang-on' : 'lang-off'; });
+    // ZHボタンは簡体(zh)・繁体(zh-Hant)のどちらでも点灯（トグルは3つのまま）。
+    if (tg) Array.prototype.forEach.call(tg.querySelectorAll('[data-lang]'), function(el){ var dl = el.getAttribute('data-lang'); var on = (dl === LANG) || (dl === 'zh' && LANG === 'zh-Hant'); el.className = on ? 'lang-on' : 'lang-off'; });
   }
   // 言語切替：保存→静的再描画→現在の動的画面を再描画→サーバへ保存（通知言語の同期）
   function setLang(l){
     if (LANGS.indexOf(l) < 0) return;
+    if (l === 'zh' || l === 'zh-Hant') zhVariant = l;   // 手動で選ばれた中国語変種を記憶
     LANG = l; try { localStorage.setItem('tkw_lang', l); } catch(e){}
     applyI18n();
     if (typeof state !== 'undefined' && state._repaint) { try { state._repaint(); } catch(e){} }
@@ -421,6 +483,7 @@
           if (!_langOverridden()) {
             var _ll = ''; try { _ll = (liff.getAppLanguage && liff.getAppLanguage()) || (liff.getLanguage && liff.getLanguage()) || ''; } catch(e){}
             var _nl = _ll ? _pickLang(_ll) : LANG;
+            if (_nl === 'zh' || _nl === 'zh-Hant') zhVariant = _nl;   // LINEアプリ言語から簡/繁を確定
             if (_nl !== LANG) { LANG = _nl; applyI18n(); }
           }
           api({ action:'line_setLang', lang: LANG });   // 登録済みなら通知言語を保存（未登録はサーバ側で無視／登録時に確定）
@@ -1088,7 +1151,8 @@
   (function(){
     applyI18n();
     var tg = document.getElementById('langToggle');
-    if (tg) Array.prototype.forEach.call(tg.querySelectorAll('[data-lang]'), function(el){ el.onclick = function(){ setLang(el.getAttribute('data-lang')); }; });
+    // ZHボタンは検出済みの中国語変種（簡=zh／繁=zh-Hant）を選ぶ。手動の簡繁切替は設けない（自動判定）。
+    if (tg) Array.prototype.forEach.call(tg.querySelectorAll('[data-lang]'), function(el){ el.onclick = function(){ var dl = el.getAttribute('data-lang'); setLang(dl === 'zh' ? zhVariant : dl); }; });
   })();
 
   boot();
