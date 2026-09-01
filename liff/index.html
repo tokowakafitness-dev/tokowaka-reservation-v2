@@ -399,19 +399,24 @@
       var pchk = document.createElement('input'); pchk.type = 'checkbox'; pchk.id = 'refillPair';
       var plab = document.createElement('label'); plab.htmlFor = 'refillPair'; plab.textContent = 'ペアチケット'; plab.className = 'muted';
       var ninp = document.createElement('input'); ninp.type = 'number'; ninp.min = '0'; ninp.placeholder = '通常単価(円)'; ninp.style.cssText = 'padding:9px;width:120px;display:none;';
+      // レンタル(0円)：チェックで単価0固定・入力不可に（レンタルは売上count×2000で別計上・チケット単価0）
+      var rchk = document.createElement('input'); rchk.type = 'checkbox'; rchk.id = 'refillRental';
+      var rlab = document.createElement('label'); rlab.htmlFor = 'refillRental'; rlab.textContent = 'レンタル(0円)'; rlab.className = 'muted';
       pchk.addEventListener('change', function(){ ninp.style.display = pchk.checked ? '' : 'none'; pinp.placeholder = pchk.checked ? 'ペア単価(円)' : '単価(円)'; });
-      prow.appendChild(pchk); prow.appendChild(plab); prow.appendChild(ninp);
+      rchk.addEventListener('change', function(){ if (rchk.checked) { pinp.value = '0'; pinp.disabled = true; pchk.checked = false; pchk.disabled = true; ninp.style.display = 'none'; } else { pinp.disabled = false; pinp.value = ''; pchk.disabled = false; } });
+      prow.appendChild(pchk); prow.appendChild(plab); prow.appendChild(ninp); prow.appendChild(rchk); prow.appendChild(rlab);
       tbtn.onclick = function(){
-        var price = Number(pinp.value);
-        var isPair = pchk.checked, normalPrice = Number(ninp.value);
+        var isRental = rchk.checked;
+        var price = isRental ? 0 : Number(pinp.value);
+        var isPair = pchk.checked && !isRental, normalPrice = Number(ninp.value);
         if (isPair && !(price > 0)) { window.alert('ペア単価を入力してください。'); return; }
-        if (!isPair && (pinp.value === '' || isNaN(price) || price < 0)) { window.alert('チケット単価を入力してください（0円はレンタル会員のみ）。'); return; }   // 0円はレンタルのみ・可否はサーバが最終判定
+        if (!isPair && !isRental && (pinp.value === '' || isNaN(price) || price < 0)) { window.alert('チケット単価を入力してください（0円はレンタルの場合「レンタル(0円)」にチェック）。'); return; }
         if (isPair && !(normalPrice > 0)) { window.alert('通常単価（1名来店の差額算定用）を入力してください。'); return; }
         if (isPair && !(normalPrice >= price)) { window.alert('通常単価はペア単価（1名あたり）以上で入力してください。'); return; }   // 差額が負＝1名来店が割安になる矛盾
-        var label = isPair ? ('ペアチケット' + tsel.value + '回（' + (tsel.value*2) + '人数回・ペア単価' + price + '円）') : ('チケット' + tsel.value + '回（単価' + price + '円）');
+        var label = isRental ? ('レンタルチケット' + tsel.value + '回（0円）') : (isPair ? ('ペアチケット' + tsel.value + '回（' + (tsel.value*2) + '人数回・ペア単価' + price + '円）') : ('チケット' + tsel.value + '回（単価' + price + '円）'));
         if (!window.confirm(name + ' 様に' + label + 'を補充します。よろしいですか？')) return;
         var expireISO = einp.value ? String(einp.value).replace(/-/g, '/') : '';
-        api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value, unitPrice:price, expireISO:expireISO, pair:isPair, normalUnitPrice:(isPair?normalPrice:'') }).then(function(res){
+        api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value, unitPrice:price, expireISO:expireISO, pair:isPair, normalUnitPrice:(isPair?normalPrice:''), rental:isRental }).then(function(res){
           if (res && res.success) { window.alert((res.pair ? 'ペアチケット' : 'チケット') + res.tickets + (res.pair ? '人数回' : '回') + 'を補充しました（有効期限 ' + res.expire + '）。'); }
           else { showError('補充に失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
         }).catch(function(e){ showError('通信に失敗しました：'+e); });
