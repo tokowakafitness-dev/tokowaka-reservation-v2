@@ -55,7 +55,7 @@
 <div id="app">
   <header>
     <span data-i18n="header">TOKOWAKA 吉祥寺｜予約</span>
-    <span id="langToggle" class="lang-toggle"><span data-lang="ja" class="lang-on">JA</span><span data-lang="en" class="lang-off">EN</span></span>
+    <span id="langToggle" class="lang-toggle"><span data-lang="ja" class="lang-on">JA</span><span data-lang="en" class="lang-off">EN</span><span data-lang="zh" class="lang-off">ZH</span></span>
   </header>
 
   <div id="s-loading" class="screen"><p class="muted" id="loadMsg" data-i18n="booting">起動中…</p></div>
@@ -196,7 +196,8 @@
       repeat_label:'繰り返し', repeat_none:'なし（1回）', repeat_weekly:'毎週{n}回',
       done_title:'ご予約を承りました', done_note:'前日にリマインドをお送りします。キャンセルは前日17時まで無料です。', done_close:'ホームに戻る',
       done_recurring:'{trainer}／{date} {time}〜 を毎週 {created} 件予約しました', done_recurring_skip:'（{skipped} 件は空き/残数の都合でスキップ）',
-      done_tag_transfer:'（振替・5,500円）', done_tag_change:'（変更）', done_tag_proxy:'（代行予約）', done_cust_sep:' 様／',
+      done_tag_transfer:'（振替・5,500円）', done_tag_change:'（変更）', done_tag_proxy:'（代行予約）', done_cust_sep:' 様／', done_sep:'／',
+      until_wrap:'（{e}まで）', month_detail:'{used} 回 ／ {quota}{carry}', pack_line:'{n}枚（{e}まで）',
       err_title:'エラー', err_member_status:'会員状態の取得に失敗しました（コード：{code}）。',
       err_init:'初期化に失敗しました：{msg}', err_trainers:'トレーナー情報の取得に失敗しました。',
       err_slots:'空き枠の取得に失敗しました。', err_myres:'予約の取得に失敗しました（コード：{code}）。',
@@ -246,7 +247,8 @@
       repeat_label:'Repeat', repeat_none:'None (once)', repeat_weekly:'Weekly ×{n}',
       done_title:'Your booking is confirmed', done_note:'We will send a reminder the day before. Free cancellation until 17:00 the day before.', done_close:'Back to home',
       done_recurring:'Booked {trainer} / {date} {time}〜 weekly, {created} sessions', done_recurring_skip:' ({skipped} skipped due to availability/balance)',
-      done_tag_transfer:' (Transfer · ¥5,500)', done_tag_change:' (Changed)', done_tag_proxy:' (Booked by trainer)', done_cust_sep:' / ',
+      done_tag_transfer:' (Transfer · ¥5,500)', done_tag_change:' (Changed)', done_tag_proxy:' (Booked by trainer)', done_cust_sep:' / ', done_sep:' / ',
+      until_wrap:' (until {e})', month_detail:'{used} / {quota}{carry}', pack_line:'{n} (until {e})',
       err_title:'Error', err_member_status:'Failed to get member status (code: {code}).',
       err_init:'Initialization failed: {msg}', err_trainers:'Failed to get trainer information.',
       err_slots:'Failed to get available slots.', err_myres:'Failed to get bookings (code: {code}).',
@@ -259,15 +261,67 @@
       confirm_cancel_penalty:'Cancel your booking on {date}?\nFrom today onward this counts as one used session. Proceed?',
       confirm_transfer_offer:'Same-day cancellation used one session.\n\nWould you like to apply for a transfer session (extra ¥5,500)?\n(You can choose a date/time on the next screen)',
       dow:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], date_md:'{m}/{d}', date_full:'{mon} {d} ({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
+    },
+    zh: {
+      header:'TOKOWAKA 吉祥寺｜预约', loading:'加载中…', booting:'启动中…',
+      reg_title:'会员注册', reg_desc:'请使用签约时的信息进行注册。请填写所有项目。',
+      reg_ph_name:'姓名（签约时的姓名）', reg_ph_phone:'电话号码（不含连字符）', reg_ph_email:'电子邮箱',
+      reg_ph_birthday:'出生日期（例：1990/01/01）', reg_ph_goal:'训练目标・需求',
+      reg_submit:'注册', reg_submitting:'注册中…', reg_note:'※如与签约信息不一致，请联系您的教练。',
+      reg_all_fields:'请填写所有项目。', reg_fail:'无法完成注册。请联系您的教练。',
+      home_reserve:'预约', home_myres:'查看我的预约', name_suffix:'', member_fallback:'会员',
+      home_onboard_thanks:'感谢您的注册。',
+      home_onboard_1:'9月1日（周一）起，您可在此LINE进行预约和查看剩余次数。',
+      home_onboard_2:'在此之前，请照常联系您的教练进行预约。',
+      home_month_left:'本月剩余', home_ticket_left:'剩余次卡', ticket_breakdown:'次卡明细',
+      unit_times:'次', unit_sheets:'张', expiry_ticket:'次卡有效期', expiry_valid:'有效期',
+      no_expiry:'无期限', until:'前', transfer_avail:'可改期', this_month_bookings:'本月预约',
+      month_quota:'每月{q}次', plus_carry:' + 结转{c}次', inactive_contract:'当前合约状态无法预约。请与门店联系。',
+      no_balance:'暂无剩余次数信息。', book_here:'可在此进行预约。',
+      trainer_prompt:'请选择您的教练。', back_home:'← 返回首页', trainer_badge:'专属', trainer_choose:'选择 ›',
+      myres_title:'我的预约', back:'返回', sect_upcoming:'即将到来的预约', sect_history:'历史记录',
+      no_upcoming:'暂无即将到来的预约。',
+      note_free_cancel:'可在前一天17点前免费取消', note_penalty:'当天及以后取消将消耗一次',
+      type_transfer:'改期（+5,500日元・不消耗次数）', type_ticket:'次卡（消耗1次）', type_normal:'常规（消耗1次）',
+      trainer_colon:'教练：', location_label:'地点：', location_name:'TOKOWAKA 吉祥寺',
+      change_time:'更改时间', cancel_this:'取消此预约',
+      week_prev:'‹ 上一周', week_next:'下一周 ›', week_hint:'点击 ○ 即可进入预约确认。', week_reselect:'重新选择教练',
+      choose_start:'请选择开始时间',
+      cf_title:'确认此预约？', cf_trainer_label:'教练：', cf_datetime_label:'时间：',
+      cf_submit:'确认预约', cf_submitting:'处理中…', cf_checking:'正在确认您的次卡…', retry:'重试',
+      cf_attendee:'到店人数', cf_attendee_pair_hdr:'到店人数（持双人次卡）',
+      att_1:'1人', att_2:'2人', att_2_pair:'2人（按双人消耗）', att_1_diff:'1人（收取差额）',
+      att_only1:'因仅剩1人次，仅限1人使用。', att_only1_short:'仅剩1人次，限1人',
+      cf_which_ticket:'使用的次卡', ticket_normal:'常规（月卡・普通次卡）', ticket_pair:'双人次卡',
+      pair_remaining:'剩{n}人次', cf_payment:'支付方式',
+      pay_normal:'常规预约（消耗1次）', pay_transfer:'改期预约（不消耗次数・5,500日元）',
+      repeat_label:'重复', repeat_none:'无（1次）', repeat_weekly:'每周×{n}',
+      done_title:'预约已确认', done_note:'我们将在前一天发送提醒。前一天17点前可免费取消。', done_close:'返回首页',
+      done_recurring:'已预约 {trainer} / {date} {time}〜 每周，共{created}次', done_recurring_skip:'（{skipped}次因空位/次数不足已跳过）',
+      done_tag_transfer:'（改期・5,500日元）', done_tag_change:'（更改）', done_tag_proxy:'（代预约）', done_cust_sep:' ／ ', done_sep:'／',
+      until_wrap:'（{e}前）', month_detail:'{used} 次 ／ {quota}{carry}', pack_line:'{n}张（{e}前）',
+      err_title:'错误', err_member_status:'获取会员状态失败（代码：{code}）。',
+      err_init:'初始化失败：{msg}', err_trainers:'获取教练信息失败。',
+      err_slots:'获取可预约时段失败。', err_myres:'获取预约失败（代码：{code}）。',
+      err_cancel:'取消失败（代码：{code}）。', comm_fail:'通信失败：{msg}',
+      book_fail:'该时间无法预约。请选择其他时段。', opt_fail:'无法确认您的次卡。',
+      confirm_change:'更改您 {date} 的预约时间。\n请在下一屏选择新的时间。{note}',
+      confirm_change_penalty:'\n当天及以后更改将消耗一次。',
+      confirm_cancel_free:'取消您 {date} 的预约？\n（前一天17点前免费）',
+      confirm_cancel_transfer:'取消您 {date} 的改期课程？\n当天及以后将消耗一次，且无法再次申请改期。\n是否继续？',
+      confirm_cancel_penalty:'取消您 {date} 的预约？\n当天及以后将消耗一次。是否继续？',
+      confirm_transfer_offer:'当天取消已消耗一次。\n\n是否申请改期课程（额外5,500日元）？\n（可在下一屏选择时间）',
+      dow:['周日','周一','周二','周三','周四','周五','周六'], date_md:'{m}/{d}', date_full:'{m}月{d}日({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
     }
   };
   var EN_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var LANGS = ['ja','en','zh'];
+  function _pickLang(code){ code = String(code || '').toLowerCase(); if (code.indexOf('zh') === 0) return 'zh'; if (code.indexOf('en') === 0) return 'en'; return 'ja'; }
   var LANG = (function(){
-    try { var s = localStorage.getItem('tkw_lang'); if (s === 'en' || s === 'ja') return s; } catch(e){}
-    var n = (navigator.language || navigator.userLanguage || '').toLowerCase();
-    return n.indexOf('en') === 0 ? 'en' : 'ja';
+    try { var s = localStorage.getItem('tkw_lang'); if (LANGS.indexOf(s) >= 0) return s; } catch(e){}
+    return _pickLang(navigator.language || navigator.userLanguage || '');
   })();
-  function _langOverridden(){ try { var s = localStorage.getItem('tkw_lang'); return s === 'en' || s === 'ja'; } catch(e){ return false; } }
+  function _langOverridden(){ try { return LANGS.indexOf(localStorage.getItem('tkw_lang')) >= 0; } catch(e){ return false; } }
   function t(key, vars){
     var d = I18N[LANG] || I18N.ja; var s = (d[key] != null) ? d[key] : (I18N.ja[key] != null ? I18N.ja[key] : key);
     if (typeof s === 'string' && vars) s = s.replace(/\{(\w+)\}/g, function(_, k){ return (vars[k] != null) ? vars[k] : ''; });
@@ -290,13 +344,11 @@
     var phs = document.querySelectorAll('[data-i18n-ph]');
     Array.prototype.forEach.call(phs, function(el){ el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph'))); });
     var tg = document.getElementById('langToggle');
-    if (tg) { var ja = tg.querySelector('[data-lang="ja"]'), en = tg.querySelector('[data-lang="en"]');
-      if (ja) ja.className = (LANG === 'ja') ? 'lang-on' : 'lang-off';
-      if (en) en.className = (LANG === 'en') ? 'lang-on' : 'lang-off'; }
+    if (tg) Array.prototype.forEach.call(tg.querySelectorAll('[data-lang]'), function(el){ el.className = (el.getAttribute('data-lang') === LANG) ? 'lang-on' : 'lang-off'; });
   }
   // 言語切替：保存→静的再描画→現在の動的画面を再描画→サーバへ保存（通知言語の同期）
   function setLang(l){
-    if (l !== 'en' && l !== 'ja') return;
+    if (LANGS.indexOf(l) < 0) return;
     LANG = l; try { localStorage.setItem('tkw_lang', l); } catch(e){}
     applyI18n();
     if (typeof state !== 'undefined' && state._repaint) { try { state._repaint(); } catch(e){} }
@@ -368,8 +420,7 @@
         try {
           if (!_langOverridden()) {
             var _ll = ''; try { _ll = (liff.getAppLanguage && liff.getAppLanguage()) || (liff.getLanguage && liff.getLanguage()) || ''; } catch(e){}
-            _ll = String(_ll).toLowerCase();
-            var _nl = _ll.indexOf('en') === 0 ? 'en' : (_ll ? 'ja' : LANG);
+            var _nl = _ll ? _pickLang(_ll) : LANG;
             if (_nl !== LANG) { LANG = _nl; applyI18n(); }
           }
           api({ action:'line_setLang', lang: LANG });   // 登録済みなら通知言語を保存（未登録はサーバ側で無視／登録時に確定）
@@ -625,7 +676,7 @@
   function homeInfoHtml(h, detailed){
     h = h || { type:null };
     // #3：チケット期限行。pack が2つ以上ならpack別内訳（3枚(12/31まで) ／ 5枚(3/31まで)）、1つ以下は単一期限。
-    function packLine(n, exp){ var e = exp || t('no_expiry'); return (LANG === 'en') ? (n + ' (until ' + e + ')') : (n + '枚（' + e + 'まで）'); }
+    function packLine(n, exp){ return t('pack_line', { n: n, e: (exp || t('no_expiry')) }); }
     function ticketExpireLine(single){
       var ps = h.ticketPacks || [];
       if (ps.length > 1) return '<div class="home-row"><span class="k">' + t('ticket_breakdown') + '</span><span class="v" style="font-size:13px;line-height:1.6;">'
@@ -645,9 +696,7 @@
       var left = (h.remaining !== null) ? h.remaining : Math.max(0, h.quota - h.thisMonth);
       var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b>' + left + '</b> ' + t('unit_times') + '</span></div>';
       if (detailed) { var carry = h.carryover ? t('plus_carry', { c: h.carryover }) : '';
-        s += '<div class="home-row"><span class="k">' + t('this_month_bookings') + '</span><span class="v" style="font-size:14px;">' + (LANG === 'en'
-          ? (h.thisMonth + ' / ' + t('month_quota', { q: h.quota }) + carry)
-          : (h.thisMonth + ' 回 ／ ' + t('month_quota', { q: h.quota }) + carry)) + '</span></div>'; }
+        s += '<div class="home-row"><span class="k">' + t('this_month_bookings') + '</span><span class="v" style="font-size:14px;">' + t('month_detail', { used: h.thisMonth, quota: t('month_quota', { q: h.quota }), carry: carry }) + '</span></div>'; }
       return s;
     }
     return detailed ? '<p class="muted" style="margin-top:12px;">' + t('book_here') + '</p>' : '<p class="muted">' + t('no_balance') + '</p>';
@@ -673,7 +722,7 @@
       state.pairPackMax = Number(res.pairPackMax || 0);         // 単一チケットの最大残（2名来店の可否目安）
       state.pairExpire = '';   // 確定画面では対象日基準の期限(line_getBookingOptions)で上書きする
       var _tcExp = res.transferCredits && res.transferCredits.nextExpireLabel;
-      var _tcExpHtml = _tcExp ? (LANG === 'en' ? (' (until ' + res.transferCredits.nextExpireLabel + ')') : ('（' + res.transferCredits.nextExpireLabel + 'まで）')) : '';
+      var _tcExpHtml = _tcExp ? t('until_wrap', { e: res.transferCredits.nextExpireLabel }) : '';
       var tcHtml = (res.transferCredits && res.transferCredits.available > 0)
         ? '<div class="home-row"><span class="k">' + t('transfer_avail') + '</span><span class="v"><b>' + res.transferCredits.available + '</b> ' + t('unit_times') + _tcExpHtml + '</span></div>' : '';
       document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true) + tcHtml;
@@ -951,7 +1000,7 @@
     //   選ばせないと常に通常が先に減り、ペアチケットが期限切れになりうるため。
     if (state.isPair && state.hasNormalRoute){
       var pk=document.createElement('div'); pk.style.cssText='margin-bottom:8px;padding:8px 10px;background:#f0f4fa;border-radius:8px;';
-      var _pkExp = state.pairExpire ? (LANG==='en' ? (' (until '+state.pairExpire+')') : ('（'+state.pairExpire+'まで）')) : '';
+      var _pkExp = state.pairExpire ? t('until_wrap',{e:state.pairExpire}) : '';
       pk.innerHTML='<div style="font-weight:600;margin-bottom:4px;">'+t('cf_which_ticket')+'</div>'
         +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfKind" value="normal"'+(state.packKind==='pair'?'':' checked')+'> '+t('ticket_normal')+'</label>'
         +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfKind" value="pair"'+(state.packKind==='pair'?' checked':'')+'> '+t('ticket_pair')+' <span class="muted" style="font-size:12px;">'+t('pair_remaining',{n:state.pairRemaining})+_pkExp+'</span></label>';
@@ -978,10 +1027,10 @@
     // #9：有効な振替券があるときだけ ①通常/②振替 を選べる（既定=通常）
     if (state.transferCredits && state.transferCredits.available > 0){
       var tc=document.createElement('div'); tc.style.cssText='margin-bottom:8px;padding:8px 10px;background:#faf7f0;border-radius:8px;';
-      var _tcE = state.transferCredits.nextExpireLabel ? (LANG==='en' ? (' (until '+state.transferCredits.nextExpireLabel+')') : ('（'+state.transferCredits.nextExpireLabel+'まで）')) : '';
+      var _tcE = state.transferCredits.nextExpireLabel ? t('until_wrap',{e:state.transferCredits.nextExpireLabel}) : '';
       tc.innerHTML='<div style="font-weight:600;margin-bottom:4px;">'+t('cf_payment')+'</div>'
         +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="normal" checked> '+t('pay_normal')+'</label>'
-        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="transfer"> '+t('pay_transfer')+'<span class="muted" style="font-size:12px;"> '+t('transfer_avail')+' '+state.transferCredits.available+(LANG==='en'?'':'回')+_tcE+'</span></label>';
+        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="transfer"> '+t('pay_transfer')+'<span class="muted" style="font-size:12px;"> '+t('transfer_avail')+' '+state.transferCredits.available+' '+t('unit_times')+_tcE+'</span></label>';
       tc.addEventListener('change', function(){ var c=document.querySelector('input[name=cfPay]:checked'); state.useTransfer = !!(c && c.value==='transfer'); var rs=document.getElementById('cfRepeatWrap'); if (rs) rs.style.display = state.useTransfer ? 'none' : 'flex'; if (state.useTransfer) state.repeatCount=1; });
       host.appendChild(tc);
     }
@@ -1021,7 +1070,7 @@
             document.getElementById('doneDetail').textContent = t('done_recurring', { trainer: state.trainerName, date: s.date, time: s.startTime, created: res.createdCount }) + (res.skippedCount ? t('done_recurring_skip', { skipped: res.skippedCount }) : '');
           } else {
             var tag = _isTransfer ? t('done_tag_transfer') : state.changeMode ? t('done_tag_change') : state.proxyMode ? t('done_tag_proxy') : '';
-            document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + t('done_cust_sep') : '') + state.trainerName + (LANG==='en'?' / ':'／') + s.date + ' ' + s.startTime + '〜' + s.endTime + tag;
+            document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + t('done_cust_sep') : '') + state.trainerName + t('done_sep') + s.date + ' ' + s.startTime + '〜' + s.endTime + tag;
           }
           state.changeMode = false; state.changeReservationId = ''; state.transferMode = false; state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = ''; state.useTransfer = false; state.repeatCount = 1;
           state._repaint = null;   // 完了画面は静的（data-i18n）で再描画不要
