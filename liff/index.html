@@ -631,6 +631,18 @@
     });
     show('s-tadmin');
   }
+  // 顧客の残数カードを最新化（詳細画面の初回表示・チケット補充後に共用）。
+  //   競合対策：最後のリクエストの応答だけを反映（連続補充・顧客切替で古い応答が勝たない）。
+  //   ソフト更新（api再取得→当該カードのみ差し替え）でLIFF再initや画面全体の再構築を避ける。
+  function refreshCustomerHome(customerId, cardEl){
+    if (!cardEl) return;
+    var _seq = (state._custHomeSeq = (state._custHomeSeq || 0) + 1);
+    cardEl.innerHTML = '<span class="muted">残数を取得中…</span>';
+    api({ action:'line_getCustomerHome', customerId: customerId }).then(function(res){
+      if (_seq !== state._custHomeSeq) return;   // 古い応答は捨てる
+      cardEl.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : ('<span class="muted">残数情報を取得できませんでした（' + ((res && res.code) || '通信') + '）。</span>');
+    }).catch(function(e){ if (_seq !== state._custHomeSeq) return; cardEl.innerHTML = '<span class="muted">残数情報の取得に失敗しました：' + e + '</span>'; });
+  }
   // 選んだ顧客の予約（変更・キャンセル）
   function renderCustomerDetail(customerId, name){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
@@ -638,12 +650,10 @@
     var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
-    // お客様の残数（トレーナーが確認できるよう表示）— 選択時に取得
-    var homeCard = document.createElement('div'); homeCard.className = 'card'; homeCard.innerHTML = '<span class="muted">残数を取得中…</span>';
+    // お客様の残数（トレーナーが確認できるよう表示）— 選択時に取得。チケット補充後も同関数で最新化。
+    var homeCard = document.createElement('div'); homeCard.className = 'card';
     box.appendChild(homeCard);
-    api({ action:'line_getCustomerHome', customerId: customerId }).then(function(res){
-      homeCard.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : ('<span class="muted">残数情報を取得できませんでした（' + ((res && res.code) || '通信') + '）。</span>');
-    }).catch(function(e){ homeCard.innerHTML = '<span class="muted">残数情報の取得に失敗しました：' + e + '</span>'; });
+    refreshCustomerHome(customerId, homeCard);
     var _list = (state._trainerResv || []).filter(function(r){ return r.customerId === customerId; });
     var _cId = customerId;   // 予約が無くても顧客IDが確定＝代行/チケット補充が可能
     if (!_list.length) { var none = document.createElement('p'); none.className = 'muted'; none.textContent = '今後のご予約はありません。'; box.appendChild(none); }
@@ -697,7 +707,7 @@
         if (!window.confirm(name + ' 様に' + label + 'を補充します。よろしいですか？')) return;
         var expireISO = einp.value ? String(einp.value).replace(/-/g, '/') : '';
         api({ action:'line_addTicketRefill', customerId:_cId, tickets:tsel.value, unitPrice:price, expireISO:expireISO, pair:isPair, normalUnitPrice:(isPair?normalPrice:''), rental:isRental }).then(function(res){
-          if (res && res.success) { window.alert((res.pair ? 'ペアチケット' : 'チケット') + res.tickets + (res.pair ? '人数回' : '回') + 'を補充しました（有効期限 ' + res.expire + '）。'); }
+          if (res && res.success) { window.alert((res.pair ? 'ペアチケット' : 'チケット') + res.tickets + (res.pair ? '人数回' : '回') + 'を補充しました（有効期限 ' + res.expire + '）。'); refreshCustomerHome(_cId, homeCard); }
           else { showError('補充に失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
         }).catch(function(e){ showError('通信に失敗しました：'+e); });
       };
