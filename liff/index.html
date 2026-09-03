@@ -82,14 +82,6 @@
     </div>
     <button id="homeReserve" class="btn" data-i18n="home_reserve">予約する</button>
     <button id="homeMyRes" class="btn btn-outline" data-i18n="home_myres">予約を確認する</button>
-    <button id="homeRecurring" class="btn btn-outline" data-i18n="home_recurring">固定枠の自動予約</button>
-  </div>
-
-  <div id="s-recurring" class="screen" hidden>
-    <div class="big" data-i18n="recur_title">固定枠の自動予約</div>
-    <p class="muted" data-i18n="recur_desc">毎月25日に翌月分を自動で予約します。</p>
-    <div id="recurList"></div>
-    <button id="recurBack" class="btn btn-outline" data-i18n="recur_back">← ホームに戻る</button>
   </div>
 
   <div id="s-trainer" class="screen" hidden>
@@ -454,7 +446,7 @@
   var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1, hasNormalRoute:false, pairRemaining:0, pairPackMax:0, pairExpire:'', packKind:'normal' };
   var _seq = 0;
 
-  var SCREENS = ['s-loading','s-register','s-home','s-recurring','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
+  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
   function show(id){
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
   }
@@ -584,8 +576,6 @@
   on('toHome', function(){ show('s-home'); });
   on('homeReserve', function(){ loadTrainers(); });
   on('homeMyRes', function(){ loadMyReservations(); });
-  on('homeRecurring', function(){ show('s-recurring'); renderRecurring(); });
-  on('recurBack', function(){ show('s-home'); });
   on('myResBack', function(){ show('s-home'); });
 
   // ===== トレーナー管理ページ（Google直接編集の代替・状態乖離の防止） =====
@@ -892,14 +882,12 @@
     for (var i=0;i<trainers.length;i++){ if (String(trainers[i].id) === String(id)) return trainers[i].name; }
     return id;
   }
-  // container に「一覧＋追加フォーム」を描画。mode='self'（会員本人）/'trainer'（担当代行）。
+  // container に「一覧＋追加フォーム」を描画。固定枠はトレーナー/オーナー限定（顧客の自己操作なし）。トレーナーの顧客詳細から呼ぶ。
   function _buildRecurSection(container, mode, customerId, defaultTrainerId){
     if (!container) return;
     container.innerHTML = '<span class="muted">' + t('loading') + '</span>';
     _recurTrainers(function(trainers){
-      var listReq = (mode === 'trainer')
-        ? { action:'line_listRecurringPatternsByTrainer', customerId: customerId }
-        : { action:'line_listRecurringPatterns' };
+      var listReq = { action:'line_listRecurringPatternsByTrainer', customerId: customerId };   // 固定枠はトレーナー限定
       api(listReq).then(function(res){
         var patterns = (res && res.success && res.patterns) ? res.patterns : [];
         container.innerHTML = '';
@@ -935,9 +923,7 @@
         var addBtn = document.createElement('button'); addBtn.className = 'btn'; addBtn.textContent = t('recur_add');
         addBtn.onclick = function(){
           if (wsel.value === '' || tsel.value === '' || trsel.value === '') { window.alert(t('recur_pick_all')); return; }
-          var addReq = (mode === 'trainer')
-            ? { action:'line_addRecurringPatternByTrainer', customerId: customerId, weekday: wsel.value, time: tsel.value, trainerId: trsel.value }
-            : { action:'line_addRecurringPattern', weekday: wsel.value, time: tsel.value, trainerId: trsel.value };
+          var addReq = { action:'line_addRecurringPatternByTrainer', customerId: customerId, weekday: wsel.value, time: tsel.value, trainerId: trsel.value };   // 固定枠はトレーナー限定
           api(addReq).then(function(r){
             if (r && r.success) { window.alert(t('recur_added')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
             else { showError(t('recur_add_fail', { code: (r && r.code) || '?' })); }
@@ -947,11 +933,6 @@
         container.appendChild(form);
       }).catch(function(e){ container.innerHTML = ''; var er = document.createElement('p'); er.className = 'err'; er.textContent = t('comm_fail', { msg: e }); container.appendChild(er); });
     });
-  }
-  // 会員本人の固定枠画面
-  function renderRecurring(){
-    state._repaint = renderRecurring;   // 言語切替で再描画
-    _buildRecurSection(document.getElementById('recurList'), 'self', '', state.defaultTrainerId || '');
   }
 
   function loadMyReservations(){
