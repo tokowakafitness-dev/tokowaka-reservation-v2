@@ -998,7 +998,12 @@
   }
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
-  on('nextWeek', function(){ if(state.weekOffset<3){ state.weekOffset++; renderWeek(); } });
+  on('nextWeek', function(){
+    var _n=new Date(); _n.setHours(0,0,0,0);
+    var _horizon=new Date(_n.getFullYear(), _n.getMonth()+2, 0);   // 来月末（9月→10/31・10月→11/30…）
+    var _max=Math.floor((_horizon.getTime()-_n.getTime())/(7*86400000));   // 来月末を含む週まで週送り可
+    if(state.weekOffset < Math.max(3, _max)){ state.weekOffset++; renderWeek(); }
+  });
   on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
 
   // 15分刻みの日：同じ時間帯に複数の開始時刻がある→選ばせる
