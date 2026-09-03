@@ -82,6 +82,14 @@
     </div>
     <button id="homeReserve" class="btn" data-i18n="home_reserve">予約する</button>
     <button id="homeMyRes" class="btn btn-outline" data-i18n="home_myres">予約を確認する</button>
+    <button id="homeRecurring" class="btn btn-outline" data-i18n="home_recurring">固定枠の自動予約</button>
+  </div>
+
+  <div id="s-recurring" class="screen" hidden>
+    <div class="big" data-i18n="recur_title">固定枠の自動予約</div>
+    <p class="muted" data-i18n="recur_desc">毎月25日に翌月分を自動で予約します。</p>
+    <div id="recurList"></div>
+    <button id="recurBack" class="btn btn-outline" data-i18n="recur_back">← ホームに戻る</button>
   </div>
 
   <div id="s-trainer" class="screen" hidden>
@@ -162,6 +170,11 @@
   var I18N = {
     ja: {
       header:'TOKOWAKA 吉祥寺｜予約', loading:'読み込み中…', booting:'起動中…',
+      home_recurring:'固定枠の自動予約', recur_title:'固定枠の自動予約', recur_desc:'毎月25日に翌月分を自動で予約します。',
+      recur_every:'毎週{dow} {time}', recur_add:'追加する', recur_weekday:'曜日', recur_time:'時刻', recur_trainer:'担当',
+      recur_none:'登録された固定枠はありません。', recur_delete:'削除', recur_added:'固定枠を登録しました。毎月25日に翌月分を自動予約します。',
+      recur_add_fail:'登録できませんでした（{code}）。', recur_delete_confirm:'この固定枠を削除しますか？', recur_deleted:'削除しました。',
+      recur_pick_all:'曜日・時刻・担当をお選びください。', recur_back:'← ホームに戻る',
       reg_title:'会員登録', reg_desc:'ご契約時の情報で登録します。すべての項目をご入力ください。',
       reg_ph_name:'お名前（契約時のお名前）', reg_ph_phone:'電話番号（ハイフンなし）', reg_ph_email:'メールアドレス',
       reg_ph_birthday:'生年月日（例：1990/01/01）', reg_ph_goal:'トレーニングの目標・ご要望',
@@ -214,6 +227,11 @@
     },
     en: {
       header:'TOKOWAKA Kichijoji | Booking', loading:'Loading…', booting:'Starting…',
+      home_recurring:'Recurring auto-booking', recur_title:'Recurring auto-booking', recur_desc:"We auto-book next month's sessions on the 25th each month.",
+      recur_every:'Every {dow} {time}', recur_add:'Add', recur_weekday:'Day', recur_time:'Time', recur_trainer:'Trainer',
+      recur_none:'No recurring slots yet.', recur_delete:'Delete', recur_added:"Registered. We'll auto-book next month on the 25th.",
+      recur_add_fail:'Could not register ({code}).', recur_delete_confirm:'Delete this recurring slot?', recur_deleted:'Deleted.',
+      recur_pick_all:'Please choose day, time and trainer.', recur_back:'← Back to home',
       reg_title:'Member Registration', reg_desc:'Register with the details from your contract. Please fill in all fields.',
       reg_ph_name:'Name (as on your contract)', reg_ph_phone:'Phone number (no hyphens)', reg_ph_email:'Email address',
       reg_ph_birthday:'Date of birth (e.g. 1990/01/01)', reg_ph_goal:'Your training goals / requests',
@@ -266,6 +284,11 @@
     },
     zh: {
       header:'TOKOWAKA 吉祥寺｜预约', loading:'加载中…', booting:'启动中…',
+      home_recurring:'固定预约', recur_title:'固定预约', recur_desc:'每月25日自动预约下月课程。',
+      recur_every:'每周{dow} {time}', recur_add:'添加', recur_weekday:'星期', recur_time:'时间', recur_trainer:'教练',
+      recur_none:'尚无固定预约。', recur_delete:'删除', recur_added:'已登记。每月25日自动预约下月。',
+      recur_add_fail:'无法登记（{code}）。', recur_delete_confirm:'要删除此固定预约吗？', recur_deleted:'已删除。',
+      recur_pick_all:'请选择星期、时间和教练。', recur_back:'← 返回首页',
       reg_title:'会员注册', reg_desc:'请使用签约时的信息进行注册。请填写所有项目。',
       reg_ph_name:'姓名（签约时的姓名）', reg_ph_phone:'电话号码（不含连字符）', reg_ph_email:'电子邮箱',
       reg_ph_birthday:'出生日期（例：1990/01/01）', reg_ph_goal:'训练目标・需求',
@@ -318,6 +341,11 @@
     },
     'zh-Hant': {
       header:'TOKOWAKA 吉祥寺｜預約', loading:'載入中…', booting:'啟動中…',
+      home_recurring:'固定預約', recur_title:'固定預約', recur_desc:'每月25日自動預約下月課程。',
+      recur_every:'每週{dow} {time}', recur_add:'新增', recur_weekday:'星期', recur_time:'時間', recur_trainer:'教練',
+      recur_none:'尚無固定預約。', recur_delete:'刪除', recur_added:'已登記。每月25日自動預約下月。',
+      recur_add_fail:'無法登記（{code}）。', recur_delete_confirm:'要刪除此固定預約嗎？', recur_deleted:'已刪除。',
+      recur_pick_all:'請選擇星期、時間和教練。', recur_back:'← 返回首頁',
       reg_title:'會員註冊', reg_desc:'請使用簽約時的資料進行註冊。請填寫所有欄位。',
       reg_ph_name:'姓名（簽約時的姓名）', reg_ph_phone:'電話號碼（不含連字號）', reg_ph_email:'電子郵件',
       reg_ph_birthday:'出生日期（例：1990/01/01）', reg_ph_goal:'訓練目標・需求',
@@ -426,7 +454,7 @@
   var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1, hasNormalRoute:false, pairRemaining:0, pairPackMax:0, pairExpire:'', packKind:'normal' };
   var _seq = 0;
 
-  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
+  var SCREENS = ['s-loading','s-register','s-home','s-recurring','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
   function show(id){
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
   }
@@ -556,6 +584,8 @@
   on('toHome', function(){ show('s-home'); });
   on('homeReserve', function(){ loadTrainers(); });
   on('homeMyRes', function(){ loadMyReservations(); });
+  on('homeRecurring', function(){ show('s-recurring'); renderRecurring(); });
+  on('recurBack', function(){ show('s-home'); });
   on('myResBack', function(){ show('s-home'); });
 
   // ===== トレーナー管理ページ（Google直接編集の代替・状態乖離の防止） =====
@@ -717,6 +747,14 @@
       };
       rw.appendChild(tsel); rw.appendChild(pinp); rw.appendChild(einp); rw.appendChild(tbtn);
       box.appendChild(rw); box.appendChild(prow);
+      // 固定枠の自動予約（担当代行・毎月25日に翌月分を自動予約）
+      var recurH = document.createElement('div'); recurH.className = 'sect-h'; recurH.textContent = t('recur_title'); box.appendChild(recurH);
+      var recurDesc = document.createElement('p'); recurDesc.className = 'muted'; recurDesc.textContent = t('recur_desc'); box.appendChild(recurDesc);
+      var recurBox = document.createElement('div'); box.appendChild(recurBox);
+      var defTr = state.trainerId || '';   // 顧客の担当を既定に（既存予約から取れればそれを優先）
+      var _cr = (state._trainerResv || []).filter(function(r){ return r.customerId === _cId && r.trainerId; });
+      if (_cr.length) defTr = _cr[0].trainerId;
+      _buildRecurSection(recurBox, 'trainer', _cId, defTr);
     }
   }
   // 予約の代行（トレーナーが顧客の代わりに新規予約）— まずトレーナー選択（#4：担当を選べる。鈴木が沖担当で代行等）→週グリッド
@@ -839,6 +877,81 @@
     api({ action:'line_getMemberStatus' }).then(function(res){
       if (res && res.success && res.verified) renderHome(res); else show('s-home');
     }).catch(function(){ show('s-home'); });
+  }
+
+  // ===== 固定枠の自動予約（毎月25日に翌月分を自動予約）=====
+  // トレーナー一覧を取得（会員/担当で共用・stateにキャッシュ）
+  function _recurTrainers(cb){
+    if (state._recurTrainers) { cb(state._recurTrainers); return; }
+    api({ action:'line_getTrainers' }).then(function(res){
+      state._recurTrainers = (res && res.success && res.trainers) ? res.trainers : [];
+      cb(state._recurTrainers);
+    }).catch(function(){ cb(state._recurTrainers || []); });
+  }
+  function _recurTrainerName(trainers, id){
+    for (var i=0;i<trainers.length;i++){ if (String(trainers[i].id) === String(id)) return trainers[i].name; }
+    return id;
+  }
+  // container に「一覧＋追加フォーム」を描画。mode='self'（会員本人）/'trainer'（担当代行）。
+  function _buildRecurSection(container, mode, customerId, defaultTrainerId){
+    if (!container) return;
+    container.innerHTML = '<span class="muted">' + t('loading') + '</span>';
+    _recurTrainers(function(trainers){
+      var listReq = (mode === 'trainer')
+        ? { action:'line_listRecurringPatternsByTrainer', customerId: customerId }
+        : { action:'line_listRecurringPatterns' };
+      api(listReq).then(function(res){
+        var patterns = (res && res.success && res.patterns) ? res.patterns : [];
+        container.innerHTML = '';
+        // 一覧
+        if (!patterns.length) {
+          var none = document.createElement('p'); none.className = 'muted'; none.textContent = t('recur_none'); container.appendChild(none);
+        } else {
+          patterns.forEach(function(p){
+            var c = document.createElement('div'); c.className = 'card';
+            var label = t('recur_every', { dow: dow(Number(p.weekday)), time: p.time }) + '（' + _recurTrainerName(trainers, p.trainerId) + '）';
+            c.innerHTML = '<div>' + label + '</div>';
+            var del = document.createElement('button'); del.className = 'btn btn-outline'; del.style.marginTop = '8px'; del.textContent = t('recur_delete');
+            del.onclick = function(){
+              if (!window.confirm(t('recur_delete_confirm'))) return;
+              api({ action:'line_deleteRecurringPattern', patternId: p.patternId }).then(function(r){
+                if (r && r.success) { window.alert(t('recur_deleted')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
+                else { showError(t('err_cancel', { code: (r && r.code) || '?' })); }
+              }).catch(function(e){ showError(t('comm_fail', { msg: e })); });
+            };
+            c.appendChild(del); container.appendChild(c);
+          });
+        }
+        // 追加フォーム（曜日・時刻・担当）
+        var form = document.createElement('div'); form.className = 'card';
+        var wsel = document.createElement('select'); wsel.style.cssText = 'width:100%;padding:9px;margin:6px 0;box-sizing:border-box;';
+        wsel.innerHTML = '<option value="">' + t('recur_weekday') + '</option>' + [0,1,2,3,4,5,6].map(function(i){ return '<option value="' + i + '">' + dow(i) + '</option>'; }).join('');
+        var tsel = document.createElement('select'); tsel.style.cssText = 'width:100%;padding:9px;margin:6px 0;box-sizing:border-box;';
+        var topts = '<option value="">' + t('recur_time') + '</option>';
+        for (var hh = 7; hh <= 23; hh++){ var hs = ('0' + hh).slice(-2) + ':00'; topts += '<option value="' + hs + '">' + hs + '</option>'; }
+        tsel.innerHTML = topts;
+        var trsel = document.createElement('select'); trsel.style.cssText = 'width:100%;padding:9px;margin:6px 0;box-sizing:border-box;';
+        trsel.innerHTML = '<option value="">' + t('recur_trainer') + '</option>' + trainers.map(function(tr){ return '<option value="' + tr.id + '"' + ((defaultTrainerId && String(tr.id) === String(defaultTrainerId)) ? ' selected' : '') + '>' + tr.name + '</option>'; }).join('');
+        var addBtn = document.createElement('button'); addBtn.className = 'btn'; addBtn.textContent = t('recur_add');
+        addBtn.onclick = function(){
+          if (wsel.value === '' || tsel.value === '' || trsel.value === '') { window.alert(t('recur_pick_all')); return; }
+          var addReq = (mode === 'trainer')
+            ? { action:'line_addRecurringPatternByTrainer', customerId: customerId, weekday: wsel.value, time: tsel.value, trainerId: trsel.value }
+            : { action:'line_addRecurringPattern', weekday: wsel.value, time: tsel.value, trainerId: trsel.value };
+          api(addReq).then(function(r){
+            if (r && r.success) { window.alert(t('recur_added')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
+            else { showError(t('recur_add_fail', { code: (r && r.code) || '?' })); }
+          }).catch(function(e){ showError(t('comm_fail', { msg: e })); });
+        };
+        form.appendChild(wsel); form.appendChild(tsel); form.appendChild(trsel); form.appendChild(addBtn);
+        container.appendChild(form);
+      }).catch(function(e){ container.innerHTML = ''; var er = document.createElement('p'); er.className = 'err'; er.textContent = t('comm_fail', { msg: e }); container.appendChild(er); });
+    });
+  }
+  // 会員本人の固定枠画面
+  function renderRecurring(){
+    state._repaint = renderRecurring;   // 言語切替で再描画
+    _buildRecurSection(document.getElementById('recurList'), 'self', '', state.defaultTrainerId || '');
   }
 
   function loadMyReservations(){
