@@ -31,6 +31,7 @@
   table.grid td.h { background:#f5f5f5; font-weight:600; width:34px; }
   .cell-open { background:#fff; color:var(--navy); font-weight:700; font-size:13px; cursor:pointer; }
   .cell-open:active { background:#eef1f6; }
+  .cell-sel { background:var(--navy,#1f2a44)!important; color:#fff!important; font-weight:700; }
   .cell-none { background:#fff; color:#ccc; }
   .err { color:#c62828; font-size:13px; margin-top:8px; }
   .sect-h { font-family:'Shippori Mincho',serif; font-size:14px; color:var(--navy); font-weight:600; margin:18px 4px 8px; letter-spacing:.04em; }
@@ -102,8 +103,14 @@
       <span id="weekLabel" style="font-size:13px;font-weight:600;"></span>
       <button id="nextWeek" data-i18n="week_next">次の週 ›</button>
     </div>
+    <button id="batchToggle" class="btn btn-outline" style="margin:6px 0;" data-i18n="batch_start">まとめて予約する</button>
+    <div id="batchBar" style="display:none;position:sticky;top:0;z-index:5;background:var(--navy,#1f2a44);color:#fff;padding:10px;border-radius:8px;margin-bottom:8px;">
+      <div id="batchCount" style="font-weight:700;margin-bottom:6px;"></div>
+      <button id="batchGo" class="btn" style="margin:0;">まとめて予約する</button>
+      <button id="batchClear" class="btn btn-outline" style="margin:6px 0 0;background:transparent;color:#fff;border-color:#fff;" data-i18n="batch_clear">選択をクリア</button>
+    </div>
     <div id="gridWrap"></div>
-    <p class="muted" style="margin-top:8px;" data-i18n="week_hint">○ をタップすると予約確認へ進みます。</p>
+    <p class="muted" style="margin-top:8px;" id="weekHint" data-i18n="week_hint">○ をタップすると予約確認へ進みます。</p>
     <button id="backToTrainer" class="btn btn-outline" data-i18n="week_reselect">トレーナーを選び直す</button>
   </div>
 
@@ -162,6 +169,10 @@
   var I18N = {
     ja: {
       header:'TOKOWAKA 吉祥寺｜予約', loading:'読み込み中…', booting:'起動中…',
+      batch_start:'まとめて予約する', batch_cancel:'まとめて予約をやめる', batch_hint:'予約したい枠をタップして選び、下の「まとめて予約」を押してください。',
+      batch_count:'選択中 {n}件', batch_go:'まとめて予約する（{n}件）', batch_clear:'選択をクリア',
+      batch_confirm:'{n}件をまとめて予約します。よろしいですか？', batch_done:'{n}件のご予約を承りました。',
+      batch_done_skip:'（{m}件は空き・残数の都合でお取りできませんでした。別の時間をお選びください）', batch_fail:'まとめて予約に失敗しました（{code}）。',
       home_recurring:'固定枠の自動予約', recur_title:'固定枠の自動予約', recur_desc:'毎月25日に翌月分を自動で予約します。',
       recur_every:'毎週{dow} {time}', recur_add:'追加する', recur_weekday:'曜日', recur_time:'時刻', recur_trainer:'担当',
       recur_none:'登録された固定枠はありません。', recur_delete:'削除', recur_added:'固定枠を登録しました。毎月25日に翌月分を自動予約します。',
@@ -219,6 +230,10 @@
     },
     en: {
       header:'TOKOWAKA Kichijoji | Booking', loading:'Loading…', booting:'Starting…',
+      batch_start:'Book multiple', batch_cancel:'Cancel multi-booking', batch_hint:'Tap the slots you want, then press "Book selected".',
+      batch_count:'{n} selected', batch_go:'Book selected ({n})', batch_clear:'Clear selection',
+      batch_confirm:'Book {n} sessions together. Proceed?', batch_done:'{n} booking(s) confirmed.',
+      batch_done_skip:'({m} could not be booked due to availability/remaining. Please pick another time.)', batch_fail:'Batch booking failed ({code}).',
       home_recurring:'Recurring auto-booking', recur_title:'Recurring auto-booking', recur_desc:"We auto-book next month's sessions on the 25th each month.",
       recur_every:'Every {dow} {time}', recur_add:'Add', recur_weekday:'Day', recur_time:'Time', recur_trainer:'Trainer',
       recur_none:'No recurring slots yet.', recur_delete:'Delete', recur_added:"Registered. We'll auto-book next month on the 25th.",
@@ -276,6 +291,10 @@
     },
     zh: {
       header:'TOKOWAKA 吉祥寺｜预约', loading:'加载中…', booting:'启动中…',
+      batch_start:'批量预约', batch_cancel:'取消批量预约', batch_hint:'点选想预约的时段，再按下方「批量预约」。',
+      batch_count:'已选 {n}个', batch_go:'批量预约（{n}）', batch_clear:'清除选择',
+      batch_confirm:'将批量预约 {n} 个时段。确定吗？', batch_done:'已为您预约 {n} 个时段。',
+      batch_done_skip:'（{m} 个因空位/剩余次数无法预约，请另选时间）', batch_fail:'批量预约失败（{code}）。',
       home_recurring:'固定预约', recur_title:'固定预约', recur_desc:'每月25日自动预约下月课程。',
       recur_every:'每周{dow} {time}', recur_add:'添加', recur_weekday:'星期', recur_time:'时间', recur_trainer:'教练',
       recur_none:'尚无固定预约。', recur_delete:'删除', recur_added:'已登记。每月25日自动预约下月。',
@@ -333,6 +352,10 @@
     },
     'zh-Hant': {
       header:'TOKOWAKA 吉祥寺｜預約', loading:'載入中…', booting:'啟動中…',
+      batch_start:'批次預約', batch_cancel:'取消批次預約', batch_hint:'點選想預約的時段，再按下方「批次預約」。',
+      batch_count:'已選 {n}個', batch_go:'批次預約（{n}）', batch_clear:'清除選擇',
+      batch_confirm:'將批次預約 {n} 個時段。確定嗎？', batch_done:'已為您預約 {n} 個時段。',
+      batch_done_skip:'（{m} 個因空位/剩餘次數無法預約，請另選時間）', batch_fail:'批次預約失敗（{code}）。',
       home_recurring:'固定預約', recur_title:'固定預約', recur_desc:'每月25日自動預約下月課程。',
       recur_every:'每週{dow} {time}', recur_add:'新增', recur_weekday:'星期', recur_time:'時間', recur_trainer:'教練',
       recur_none:'尚無固定預約。', recur_delete:'刪除', recur_added:'已登記。每月25日自動預約下月。',
@@ -443,7 +466,7 @@
 
   var BUSINESS_START = 7, BUSINESS_END = 24;
   var idToken = '';
-  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1, hasNormalRoute:false, pairRemaining:0, pairPackMax:0, pairExpire:'', packKind:'normal' };
+  var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1, hasNormalRoute:false, pairRemaining:0, pairPackMax:0, pairExpire:'', packKind:'normal', batchMode:false, batchSel:{} };
   var _seq = 0;
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
@@ -1040,8 +1063,9 @@
     api({ action:'line_getTrainerSlots', trainerId: state.trainerId, excludeStartISO: state.excludeStartISO || '' }).then(function(res){
       if (!res.success) { showError(t('err_slots')); return; }
       state.slots = res.slots || [];
-      renderWeek();
-      state._repaint = renderWeek;   // 言語切替で週グリッドを再描画（キャッシュ済みslotsを使用）
+      state.batchMode = false; state.batchSel = {};   // 週画面に入るたびにバッチ選択をリセット（変更/振替モードでは出さない）
+      renderWeek(); renderBatchBar();
+      state._repaint = function(){ renderWeek(); renderBatchBar(); };   // 言語切替で週グリッド＋バッチバーを再描画
       show('s-week');
     }).catch(function(e){ showError(t('comm_fail',{msg:e})); });
   }
@@ -1082,14 +1106,64 @@
     var wrap = document.getElementById('gridWrap'); wrap.innerHTML = html;
     state._index = index;
     Array.prototype.forEach.call(wrap.querySelectorAll('.cell-open'), function(td){
+      var slots0 = state._index[td.getAttribute('data-key')];
+      if (state.batchMode && slots0 && slots0.length && state.batchSel[slots0[0].startISO]) td.className = 'cell-sel';   // 選択済みをハイライト（週送り後も維持）
       td.onclick = function(){
         var slots = state._index[td.getAttribute('data-key')];
         if (!slots || !slots.length) return;
+        if (state.batchMode) { _toggleBatch(slots[0], td); return; }   // まとめて予約モード＝選択のトグル（毎時＝1枠。複数枠日は先頭を選択）
         if (slots.length === 1) { openConfirm(slots[0]); return; }   // 毎時（9月〜）＝1枠→即確認
         chooseStartTime(slots);   // 15分刻み（8月）＝複数枠→開始時刻を選ばせる
       };
     });
   }
+
+  // ===== まとめて予約（複数選択）=====
+  function _toggleBatch(slot, td){
+    if (state.batchSel[slot.startISO]) { delete state.batchSel[slot.startISO]; if (td) td.className = 'cell-open'; }
+    else { state.batchSel[slot.startISO] = { startISO: slot.startISO, trainerId: state.trainerId }; if (td) td.className = 'cell-sel'; }
+    renderBatchBar();
+  }
+  function _batchKeys(){ return Object.keys(state.batchSel); }
+  function renderBatchBar(){
+    var bar = document.getElementById('batchBar'), tog = document.getElementById('batchToggle'), hint = document.getElementById('weekHint');
+    // 変更/振替モードは単一枠の選び直し＝まとめて予約は出さない
+    var disable = state.changeMode || state.transferMode;
+    if (tog) tog.style.display = disable ? 'none' : '';
+    if (disable) { state.batchMode=false; state.batchSel={}; if (bar) bar.style.display='none'; if (hint) hint.textContent=t('week_hint'); return; }
+    if (!state.batchMode) { if (bar) bar.style.display='none'; if (tog){ tog.textContent=t('batch_start'); tog.className='btn btn-outline'; } if (hint) hint.textContent=t('week_hint'); return; }
+    if (tog){ tog.textContent=t('batch_cancel'); tog.className='btn'; }
+    if (hint) hint.textContent = t('batch_hint');
+    var n = _batchKeys().length;
+    if (bar){ bar.style.display = n ? 'block' : 'none'; }
+    var cnt = document.getElementById('batchCount'); if (cnt) cnt.textContent = t('batch_count', { n: n });
+    var go = document.getElementById('batchGo'); if (go) go.textContent = t('batch_go', { n: n });
+  }
+  on('batchToggle', function(){
+    state.batchMode = !state.batchMode;
+    state.batchSel = {};   // モード切替で選択をリセット
+    renderWeek(); renderBatchBar();
+  });
+  on('batchClear', function(){ state.batchSel = {}; renderWeek(); renderBatchBar(); });
+  on('batchGo', function(){
+    var keys = _batchKeys(); if (!keys.length) return;
+    var items = keys.map(function(k){ return { trainerId: state.batchSel[k].trainerId, startISO: k }; });
+    if (!window.confirm(t('batch_confirm', { n: items.length }))) return;
+    show('s-loading'); dbg(t('cf_submitting'));
+    var req = state.proxyMode
+      ? { action:'line_makeBatchReservationProxy', customerId: state.proxyCustomerId, items: JSON.stringify(items) }
+      : { action:'line_makeBatchReservation', items: JSON.stringify(items) };
+    api(req).then(function(res){
+      if (!res || (!res.success && !res.skippedCount)) { showError(t('batch_fail', { code: (res && res.code) || '?' })); return; }
+      state.batchMode = false; state.batchSel = {};
+      var msg = res.createdCount ? t('batch_done', { n: res.createdCount }) : '';   // 全スキップ時は「0件承りました」を出さない
+      if (res.skippedCount) msg += (msg ? '\n' : '') + t('batch_done_skip', { m: res.skippedCount });
+      if (!msg) msg = t('batch_done', { n: 0 });
+      window.alert(msg);
+      if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); }
+      else { loadHome(); }
+    }).catch(function(e){ showError(t('comm_fail', { msg: e })); });
+  });
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
   on('nextWeek', function(){
