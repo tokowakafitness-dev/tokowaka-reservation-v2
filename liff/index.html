@@ -106,6 +106,7 @@
     <button id="batchToggle" class="btn btn-outline" style="margin:6px 0;" data-i18n="batch_start">まとめて予約する</button>
     <div id="batchBar" style="display:none;position:sticky;top:0;z-index:5;background:var(--navy,#1f2a44);color:#fff;padding:10px;border-radius:8px;margin-bottom:8px;">
       <div id="batchCount" style="font-weight:700;margin-bottom:6px;"></div>
+      <div id="batchList" style="font-size:13px;line-height:1.5;margin-bottom:8px;max-height:150px;overflow-y:auto;"></div>
       <button id="batchGo" class="btn" style="margin:0;">まとめて予約する</button>
       <button id="batchClear" class="btn btn-outline" style="margin:6px 0 0;background:transparent;color:#fff;border-color:#fff;" data-i18n="batch_clear">選択をクリア</button>
     </div>
@@ -1121,10 +1122,16 @@
   // ===== まとめて予約（複数選択）=====
   function _toggleBatch(slot, td){
     if (state.batchSel[slot.startISO]) { delete state.batchSel[slot.startISO]; if (td) td.className = 'cell-open'; }
-    else { state.batchSel[slot.startISO] = { startISO: slot.startISO, trainerId: state.trainerId }; if (td) td.className = 'cell-sel'; }
+    else { state.batchSel[slot.startISO] = { startISO: slot.startISO, trainerId: state.trainerId, date: slot.date, startTime: slot.startTime }; if (td) td.className = 'cell-sel'; }
     renderBatchBar();
   }
   function _batchKeys(){ return Object.keys(state.batchSel); }
+  // 選択中の1枠を「9/9(水) 11:00」形式に（date=YYYY/MM/DDはJST基準・timezoneずれなし）
+  function _fmtBatchSlot(v){
+    var p = String(v.date||'').split('/'), mm = p[1]?parseInt(p[1],10):'', dd = p[2]?parseInt(p[2],10):'', dw='';
+    try { dw = dow(new Date(v.date).getDay()); } catch(e){}
+    return mm + '/' + dd + (dw?'('+dw+')':'') + ' ' + (v.startTime||'');
+  }
   function renderBatchBar(){
     var bar = document.getElementById('batchBar'), tog = document.getElementById('batchToggle'), hint = document.getElementById('weekHint');
     // 変更/振替モードは単一枠の選び直し＝まとめて予約は出さない
@@ -1134,9 +1141,23 @@
     if (!state.batchMode) { if (bar) bar.style.display='none'; if (tog){ tog.textContent=t('batch_start'); tog.className='btn btn-outline'; } if (hint) hint.textContent=t('week_hint'); return; }
     if (tog){ tog.textContent=t('batch_cancel'); tog.className='btn'; }
     if (hint) hint.textContent = t('batch_hint');
-    var n = _batchKeys().length;
+    var keys = _batchKeys().sort();   // startISO昇順＝時系列
+    var n = keys.length;
     if (bar){ bar.style.display = n ? 'block' : 'none'; }
     var cnt = document.getElementById('batchCount'); if (cnt) cnt.textContent = t('batch_count', { n: n });
+    var list = document.getElementById('batchList');
+    if (list){
+      list.innerHTML = '';
+      keys.forEach(function(k){
+        var v = state.batchSel[k];
+        var row = document.createElement('div'); row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-top:1px solid rgba(255,255,255,.15);';
+        var lab = document.createElement('span'); lab.textContent = _fmtBatchSlot(v);
+        var x = document.createElement('button'); x.textContent = '✕'; x.setAttribute('aria-label','remove');
+        x.style.cssText = 'background:transparent;border:none;color:#fff;font-size:15px;cursor:pointer;padding:0 6px;line-height:1;';
+        x.onclick = function(){ delete state.batchSel[k]; renderWeek(); renderBatchBar(); };   // 削除→グリッド再描画でハイライトも解除
+        row.appendChild(lab); row.appendChild(x); list.appendChild(row);
+      });
+    }
     var go = document.getElementById('batchGo'); if (go) go.textContent = t('batch_go', { n: n });
   }
   on('batchToggle', function(){
