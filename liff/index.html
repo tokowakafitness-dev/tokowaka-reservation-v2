@@ -113,6 +113,7 @@
     <div id="gridWrap"></div>
     <p class="muted" style="margin-top:8px;" id="weekHint" data-i18n="week_hint">○ をタップすると予約確認へ進みます。</p>
     <button id="backToTrainer" class="btn btn-outline" data-i18n="week_reselect">トレーナーを選び直す</button>
+    <button id="weekHome" class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
   </div>
 
   <div id="s-confirm" class="screen" hidden>
@@ -124,6 +125,7 @@
     <div id="confirmErr" class="err" hidden></div>
     <button id="confirmBtn" class="btn" data-i18n="cf_submit">予約を確定する</button>
     <button id="confirmCancel" class="btn btn-outline" data-i18n="back">戻る</button>
+    <button id="confirmHome" class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
   </div>
 
   <div id="s-done" class="screen" hidden>
@@ -1225,31 +1227,39 @@
     state.packKindExplicit = false;
     // 選択肢は「予約対象日時」基準でサーバから取り直す（ホームの当日基準の残数で未来予約を縛らない）。
     //   応答が返るまで選択UIは出さず、最後のリクエストの応答だけを採用する（顧客/日時の切替競合を防ぐ）。
-    state.optReady = false; state.optError = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
-    setConfirmEnabled();   // 取得できるまで確定させない（既定1名のまま送られるのを防ぐ）
-    var _seq = (state._optSeq = (state._optSeq || 0) + 1);
-    var _optReq = { action:'line_getBookingOptions', startISO: slot.startISO };
-    if (state.proxyMode) _optReq.customerId = state.proxyCustomerId;
-    api(_optReq).then(function(r){
-      if (_seq !== state._optSeq) return;   // 古い応答は捨てる
-      if (r && r.success) {
-        state.pairRemaining = Number(r.pairRemaining || 0);
-        state.pairPackMax = Number(r.pairPackMax || 0);
-        state.hasNormalRoute = !!r.hasNormalRoute;
-        state.pairExpire = String(r.pairExpire || '');   // 対象日に有効なpackの期限（当日基準の期限を出さない）
-        state.isPair = state.pairRemaining > 0;
-        state.packKind = (state.isPair && !state.hasNormalRoute) ? 'pair' : 'normal';
-        state.attendeeCount = (!state.proxyMode && state.packKind === 'pair' && state.pairPackMax >= 2) ? 2 : 1;
-        state.optReady = true; state.optError = '';
-      } else {
-        // 取得できないまま人数を推測して予約しない（fail-closed）
-        state.optError = (r && r.message) || t('opt_fail');
-      }
-      buildConfirmOptions(); setConfirmEnabled();
-    }).catch(function(){
-      if (_seq !== state._optSeq) return;
-      state.optError = t('comm_fail',{msg:''}); buildConfirmOptions(); setConfirmEnabled();
-    });
+    // 変更/振替は来店人数・消化先を「旧予約」から引き継ぐ（サーバ側 changeReservationLine が復元）＝残数オプション取得は不要。
+    //   ここで getBookingOptions を待たず・失敗をゲートにしない。チケット/レンタル会員でオプション取得が失敗しても
+    //   変更/振替を止めない（残数は changeReservationLine が旧枠を空けて正しく判定＝残0でも変更可）。
+    if (state.changeMode || state.transferMode) {
+      state.optReady = true; state.optError = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
+      state.attendeeCount = 1; state.packKind = 'normal';
+    } else {
+      state.optReady = false; state.optError = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
+      setConfirmEnabled();   // 取得できるまで確定させない（既定1名のまま送られるのを防ぐ）
+      var _seq = (state._optSeq = (state._optSeq || 0) + 1);
+      var _optReq = { action:'line_getBookingOptions', startISO: slot.startISO };
+      if (state.proxyMode) _optReq.customerId = state.proxyCustomerId;
+      api(_optReq).then(function(r){
+        if (_seq !== state._optSeq) return;   // 古い応答は捨てる
+        if (r && r.success) {
+          state.pairRemaining = Number(r.pairRemaining || 0);
+          state.pairPackMax = Number(r.pairPackMax || 0);
+          state.hasNormalRoute = !!r.hasNormalRoute;
+          state.pairExpire = String(r.pairExpire || '');   // 対象日に有効なpackの期限（当日基準の期限を出さない）
+          state.isPair = state.pairRemaining > 0;
+          state.packKind = (state.isPair && !state.hasNormalRoute) ? 'pair' : 'normal';
+          state.attendeeCount = (!state.proxyMode && state.packKind === 'pair' && state.pairPackMax >= 2) ? 2 : 1;
+          state.optReady = true; state.optError = '';
+        } else {
+          // 取得できないまま人数を推測して予約しない（fail-closed）
+          state.optError = (r && r.message) || t('opt_fail');
+        }
+        buildConfirmOptions(); setConfirmEnabled();
+      }).catch(function(){
+        if (_seq !== state._optSeq) return;
+        state.optError = t('comm_fail',{msg:''}); buildConfirmOptions(); setConfirmEnabled();
+      });
+    }
     // 代行は既定1名（月額会員の通常予約が大半なので、2名はトレーナーの明示選択に限る）
     state.attendeeCount = state.proxyMode ? 1 : ((state.packKind === 'pair' && state.pairPackMax >= 2) ? 2 : 1);   // 毎回リセット
     document.getElementById('cfTrainer').textContent = state.trainerName;
@@ -1257,6 +1267,7 @@
     state._repaint = function(){ openConfirm(slot); };   // 言語切替で確認画面を再描画
     document.getElementById('cfDatetime').textContent = fullDateLabel(dt, slot.startTime, slot.endTime);
     buildConfirmOptions();
+    setConfirmEnabled();   // 変更/振替は optReady=true 即座に有効化（通常/代行は取得後にコールバックで更新）
     document.getElementById('confirmErr').hidden = true;
     show('s-confirm');
   }
@@ -1339,6 +1350,16 @@
     rc.appendChild(lbl); rc.appendChild(sel); host.appendChild(rc);
   }
   on('confirmCancel', function(){ show('s-week'); });
+  // 全体に戻る＝どの画面/モードからでも最初（会員ホーム／トレーナーは管理一覧）へ抜ける。詰まった時の脱出口。
+  function goHome(){
+    var wasTrainer = state._fromTrainerAdmin || state.proxyMode;
+    state.changeMode=false; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false;
+    state.proxyCustomerId=''; state.proxyCustomerName=''; state.batchMode=false; state.batchSel={};
+    state.excludeStartISO=''; state.useTransfer=false; state.repeatCount=1; state._fromTrainerAdmin=false;
+    if (wasTrainer) { loadTrainerReservations(); } else { loadHome(); }   // トレーナーは管理一覧／会員はホームへ
+  }
+  on('confirmHome', goHome);
+  on('weekHome', goHome);
   on('confirmBtn', function(){
     if (!state.optReady || state.optError) return;   // 二重防御：選択肢が確定していない状態では送らない
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
