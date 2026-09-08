@@ -641,9 +641,87 @@
         box.appendChild(d);
       });
     }
+    var hold = document.createElement('button'); hold.className = 'btn'; hold.textContent = '＋ 未登録客の予約枠を作る';
+    hold.onclick = function(){ renderAdminHoldForm(); };
+    box.appendChild(hold);
+    var block = document.createElement('button'); block.className = 'btn btn-outline'; block.textContent = '＋ ブロック（枠を塞ぐ）';
+    block.onclick = function(){ renderBlockForm(); };
+    box.appendChild(block);
     var unlink = document.createElement('button'); unlink.className = 'btn btn-outline'; unlink.textContent = '未紐付け予約を紐付ける';
     unlink.onclick = function(){ loadUnlinked(); };
     box.appendChild(unlink);
+    show('s-tadmin');
+  }
+  // 日付(YYYY-MM-DD)＋時刻(HH:mm)→ISO。端末TZ(日本)でパースしUTC ISOへ。不正なら null。
+  function _adminBuildISO(date, time){
+    if (!date || !time) return null;
+    var dt = new Date(date + 'T' + time + ':00');
+    return isNaN(dt.getTime()) ? null : dt.toISOString();
+  }
+  // 未登録客の予約枠（本予約書式でB1に作成→会員登録＆同期で残数へ反映）。日時は直接指定＝翌月先取り・シフト外も可。
+  function renderAdminHoldForm(){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜未登録客の予約枠を作る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る';
+    back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    var kinds = ['通常','体験','モニター','オンライン','チケット','単発'];
+    var d = document.createElement('div'); d.className='card';
+    d.innerHTML =
+      '<label style="font-weight:700;">種別</label>'+
+      '<select id="ahKind" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+kinds.map(function(k){return '<option value="'+k+'">'+k+'</option>';}).join('')+'</select>'+
+      '<label style="font-weight:700;">お名前（フルネーム）</label>'+
+      '<input id="ahName" type="text" placeholder="例：山田 太郎" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
+      '<div class="muted" style="margin-bottom:12px;">担当：'+(state.trainerName||'')+'</div>'+
+      '<label style="font-weight:700;">日付</label>'+
+      '<input id="ahDate" type="date" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
+      '<label style="font-weight:700;">開始時刻</label>'+
+      '<input id="ahTime" type="time" step="900" style="width:100%;padding:9px;margin:6px 0 4px;box-sizing:border-box;">';
+    box.appendChild(d);
+    var submit = document.createElement('button'); submit.className='btn'; submit.textContent='この内容で予約枠を作る';
+    submit.onclick = function(){
+      var name = (document.getElementById('ahName').value||'').trim();
+      var iso = _adminBuildISO(document.getElementById('ahDate').value, document.getElementById('ahTime').value);
+      if (!name) { window.alert('お名前をご入力ください。'); return; }
+      if (!iso) { window.alert('日付・時刻をご入力ください。'); return; }
+      submit.disabled = true; submit.textContent = '作成中…';
+      api({ action:'line_makeAdminBooking', trainerId: state.trainerId, startISO: iso, customerName: name, kind: document.getElementById('ahKind').value }).then(function(res){
+        if (res && res.success) { window.alert('予約枠を作成しました（'+res.start+'）。\n会員登録後に自動で残数へ反映されます。'); renderCustomerList(); }
+        else { submit.disabled=false; submit.textContent='この内容で予約枠を作る'; window.alert('作成できませんでした（'+((res&&res.code)||'不明')+'）。'+((res&&res.message)?'\n'+res.message:'')); }
+      }).catch(function(e){ submit.disabled=false; submit.textContent='この内容で予約枠を作る'; showError('通信に失敗しました：'+e); });
+    };
+    box.appendChild(submit);
+    var note = document.createElement('p'); note.className='muted'; note.style.marginTop='10px';
+    note.textContent='※施設が空いていれば作成できます（出勤シフト外・翌月分も可）。会員登録＆同期で残数に反映されます。体験・カウンセリングは残数計上されません（枠確保のみ）。';
+    box.appendChild(note);
+    show('s-tadmin');
+  }
+  // ブロック（施設/担当の枠を塞ぐ）。ラベルは任意（私用・仮押さえ等）。
+  function renderBlockForm(){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜ブロック（枠を塞ぐ）';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る';
+    back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    var d = document.createElement('div'); d.className='card';
+    d.innerHTML =
+      '<label style="font-weight:700;">ラベル（任意）</label>'+
+      '<input id="bkLabel" type="text" placeholder="例：私用／仮押さえ／田中様仮" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
+      '<div class="muted" style="margin-bottom:12px;">担当：'+(state.trainerName||'')+'</div>'+
+      '<label style="font-weight:700;">日付</label>'+
+      '<input id="bkDate" type="date" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
+      '<label style="font-weight:700;">開始時刻</label>'+
+      '<input id="bkTime" type="time" step="900" style="width:100%;padding:9px;margin:6px 0 4px;box-sizing:border-box;">';
+    box.appendChild(d);
+    var submit = document.createElement('button'); submit.className='btn'; submit.textContent='この時間を塞ぐ';
+    submit.onclick = function(){
+      var iso = _adminBuildISO(document.getElementById('bkDate').value, document.getElementById('bkTime').value);
+      if (!iso) { window.alert('日付・時刻をご入力ください。'); return; }
+      submit.disabled = true; submit.textContent='作成中…';
+      api({ action:'line_makeBlock', trainerId: state.trainerId, startISO: iso, label: (document.getElementById('bkLabel').value||'') }).then(function(res){
+        if (res && res.success) { window.alert('枠を塞ぎました（'+res.start+'）。'); renderCustomerList(); }
+        else { submit.disabled=false; submit.textContent='この時間を塞ぐ'; window.alert('作成できませんでした（'+((res&&res.code)||'不明')+'）。'+((res&&res.message)?'\n'+res.message:'')); }
+      }).catch(function(e){ submit.disabled=false; submit.textContent='この時間を塞ぐ'; showError('通信に失敗しました：'+e); });
+    };
+    box.appendChild(submit);
     show('s-tadmin');
   }
   // 未紐付け予約（同期でカレンダーから拾ったが会員未特定）を会員に紐付ける
