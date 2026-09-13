@@ -789,25 +789,6 @@
     }).catch(function(e){ if (_seq !== state._custHomeSeq) return; cardEl.innerHTML = '<span class="muted">残数情報の取得に失敗しました：' + e + '</span>'; });
   }
   // 選んだ顧客の予約（変更・キャンセル）
-  // 担当設定UI（担当なし＝任意トレーナーが代行予約できる）。homeCardの直後に差し込む。
-  function _renderTrainerAssign(box, afterEl, customerId){
-    _ensureAdminTrainers(function(){
-      var wrap = document.createElement('div'); wrap.className = 'card';
-      var trs = state._allTrainers || [];
-      var opts = '<option value="">担当なし（誰でも代行可）</option>' + trs.map(function(t){ return '<option value="'+t.id+'">'+t.name+'</option>'; }).join('');
-      wrap.innerHTML = '<label style="font-weight:700;">担当トレーナー</label><div style="display:flex;gap:8px;margin-top:6px;"><select id="cdTrainer" style="flex:1;padding:9px;">'+opts+'</select><button id="cdSetTr" class="btn btn-outline" style="margin:0;white-space:nowrap;">変更</button></div>';
-      if (afterEl && afterEl.nextSibling) box.insertBefore(wrap, afterEl.nextSibling); else box.appendChild(wrap);
-      api({ action:'line_getCustomerHome', customerId:customerId }).then(function(res){ var sel = document.getElementById('cdTrainer'); if (res && res.success && sel) sel.value = res.trainerId || ''; });
-      document.getElementById('cdSetTr').onclick = function(){
-        var tid = document.getElementById('cdTrainer').value, b = this; b.disabled = true; b.textContent = '変更中…';
-        api({ action:'line_setCustomerTrainer', customerId:customerId, trainerId:tid }).then(function(res){
-          b.disabled = false; b.textContent = '変更';
-          if (res && res.success) window.alert('担当を「' + (res.trainerName || '担当なし') + '」に変更しました。');
-          else window.alert('変更できませんでした（' + ((res&&res.code)||'不明') + '）。');
-        }).catch(function(e){ b.disabled = false; b.textContent = '変更'; showError('通信に失敗しました：'+e); });
-      };
-    });
-  }
   function renderCustomerDetail(customerId, name){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = name + ' 様のご予約';
@@ -818,7 +799,6 @@
     var homeCard = document.createElement('div'); homeCard.className = 'card';
     box.appendChild(homeCard);
     refreshCustomerHome(customerId, homeCard);
-    _renderTrainerAssign(box, homeCard, customerId);   // 担当設定（担当なし＝任意トレーナー代行可）
     var _list = (state._trainerResv || []).filter(function(r){ return r.customerId === customerId; });
     var _cId = customerId;   // 予約が無くても顧客IDが確定＝代行/チケット補充が可能
     if (!_list.length) { var none = document.createElement('p'); none.className = 'muted'; none.textContent = '今後のご予約はありません。'; box.appendChild(none); }
