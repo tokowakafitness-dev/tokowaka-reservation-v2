@@ -642,10 +642,10 @@
       });
     }
     var hold = document.createElement('button'); hold.className = 'btn'; hold.textContent = '＋ 未登録客の予約枠を作る';
-    hold.onclick = function(){ renderAdminHoldForm(); };
+    hold.onclick = function(){ _ensureAdminTrainers(renderAdminHoldForm); };
     box.appendChild(hold);
     var block = document.createElement('button'); block.className = 'btn btn-outline'; block.textContent = '＋ ブロック（枠を塞ぐ）';
-    block.onclick = function(){ renderBlockForm(); };
+    block.onclick = function(){ _ensureAdminTrainers(renderBlockForm); };
     box.appendChild(block);
     var unlink = document.createElement('button'); unlink.className = 'btn btn-outline'; unlink.textContent = '未紐付け予約を紐付ける';
     unlink.onclick = function(){ loadUnlinked(); };
@@ -659,6 +659,19 @@
     return isNaN(dt.getTime()) ? null : dt.toISOString();
   }
   // 未登録客の予約枠（本予約書式でB1に作成→会員登録＆同期で残数へ反映）。日時は直接指定＝翌月先取り・シフト外も可。
+  // 担当選択用の全トレーナー取得（オーナーのみ他トレーナーを選べる／一般は自分固定）。1度取得したらstateにキャッシュ。
+  function _ensureAdminTrainers(cb){
+    if (state._allTrainers) { cb(); return; }
+    api({ action:'line_getAllTrainers' }).then(function(res){
+      if (res && res.success) { state._allTrainers = res.trainers || []; state._isOwner = !!res.isOwner; }
+      cb();
+    }).catch(function(){ cb(); });
+  }
+  function _adminTrainerSelect(elId){
+    var trs = (state._isOwner && state._allTrainers && state._allTrainers.length) ? state._allTrainers : [{ id: state.trainerId, name: state.trainerName }];
+    var opts = trs.map(function(t){ return '<option value="'+t.id+'"'+(String(t.id)===String(state.trainerId)?' selected':'')+'>'+t.name+'</option>'; }).join('');
+    return '<label style="font-weight:700;">担当</label><select id="'+elId+'" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+opts+'</select>';
+  }
   function renderAdminHoldForm(){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜未登録客の予約枠を作る';
@@ -671,7 +684,7 @@
       '<select id="ahKind" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+kinds.map(function(k){return '<option value="'+k+'">'+k+'</option>';}).join('')+'</select>'+
       '<label style="font-weight:700;">お名前（フルネーム）</label>'+
       '<input id="ahName" type="text" placeholder="例：山田 太郎" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
-      '<div class="muted" style="margin-bottom:12px;">担当：'+(state.trainerName||'')+'</div>'+
+      _adminTrainerSelect('ahTrainer')+
       '<label style="font-weight:700;">日付</label>'+
       '<input id="ahDate" type="date" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
       '<label style="font-weight:700;">開始時刻</label>'+
@@ -684,7 +697,7 @@
       if (!name) { window.alert('お名前をご入力ください。'); return; }
       if (!iso) { window.alert('日付・時刻をご入力ください。'); return; }
       submit.disabled = true; submit.textContent = '作成中…';
-      api({ action:'line_makeAdminBooking', trainerId: state.trainerId, startISO: iso, customerName: name, kind: document.getElementById('ahKind').value }).then(function(res){
+      api({ action:'line_makeAdminBooking', trainerId: ((document.getElementById('ahTrainer')||{}).value || state.trainerId), startISO: iso, customerName: name, kind: document.getElementById('ahKind').value }).then(function(res){
         if (res && res.success) { window.alert('予約枠を作成しました（'+res.start+'）。\n会員登録後に自動で残数へ反映されます。'); renderCustomerList(); }
         else { submit.disabled=false; submit.textContent='この内容で予約枠を作る'; window.alert('作成できませんでした（'+((res&&res.code)||'不明')+'）。'+((res&&res.message)?'\n'+res.message:'')); }
       }).catch(function(e){ submit.disabled=false; submit.textContent='この内容で予約枠を作る'; showError('通信に失敗しました：'+e); });
@@ -705,7 +718,7 @@
     d.innerHTML =
       '<label style="font-weight:700;">ラベル（任意）</label>'+
       '<input id="bkLabel" type="text" placeholder="例：私用／仮押さえ／田中様仮" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
-      '<div class="muted" style="margin-bottom:12px;">担当：'+(state.trainerName||'')+'</div>'+
+      _adminTrainerSelect('bkTrainer')+
       '<label style="font-weight:700;">日付</label>'+
       '<input id="bkDate" type="date" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
       '<label style="font-weight:700;">開始時刻</label>'+
@@ -716,7 +729,7 @@
       var iso = _adminBuildISO(document.getElementById('bkDate').value, document.getElementById('bkTime').value);
       if (!iso) { window.alert('日付・時刻をご入力ください。'); return; }
       submit.disabled = true; submit.textContent='作成中…';
-      api({ action:'line_makeBlock', trainerId: state.trainerId, startISO: iso, label: (document.getElementById('bkLabel').value||'') }).then(function(res){
+      api({ action:'line_makeBlock', trainerId: ((document.getElementById('bkTrainer')||{}).value || state.trainerId), startISO: iso, label: (document.getElementById('bkLabel').value||'') }).then(function(res){
         if (res && res.success) { window.alert('枠を塞ぎました（'+res.start+'）。'); renderCustomerList(); }
         else { submit.disabled=false; submit.textContent='この時間を塞ぐ'; window.alert('作成できませんでした（'+((res&&res.code)||'不明')+'）。'+((res&&res.message)?'\n'+res.message:'')); }
       }).catch(function(e){ submit.disabled=false; submit.textContent='この時間を塞ぐ'; showError('通信に失敗しました：'+e); });
