@@ -605,12 +605,14 @@ function doSubmit() {
       utm_source:   p.get('utm_source')   || 'direct',
       utm_medium:   p.get('utm_medium')   || 'none',
       utm_campaign: p.get('utm_campaign') || 'none',
-      utm_content:  p.get('utm_content')  || ''
+      utm_content:  p.get('utm_content')  || '',
+      gclid:        p.get('gclid')        || '',
+      ref:          p.get('ref')          || ''
     };
   })();
 
   gasCall('makeReservation',
-    { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO, utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign, utmContent:utmParams.utm_content },
+    { customerName:name, customerKana:kana, customerEmail:email, customerPhone:phone, customerNote:note, startISO:selSlot.startISO, endISO:selSlot.endISO, utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign, utmContent:utmParams.utm_content, gclid:utmParams.gclid, refDomain:utmParams.ref },
     function(r) {
       document.getElementById('submittingOverlay').classList.remove('on');
       if (r && r.success !== false) {
