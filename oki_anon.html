@@ -458,13 +458,13 @@ function doSubmit() {
   document.getElementById('submittingOverlay').classList.add('on');
   var utmParams = (function(){
     var p = new URLSearchParams(window.location.search);
-    return { utm_source: p.get('utm_source')||'direct', utm_medium: p.get('utm_medium')||'none', utm_campaign: p.get('utm_campaign')||'none' };
+    return { utm_source: p.get('utm_source')||'direct', utm_medium: p.get('utm_medium')||'none', utm_campaign: p.get('utm_campaign')||'none', utm_content: p.get('utm_content')||'' };
   })();
   gasCall('makeReservation',
     { customerName:name, customerKana:'', customerEmail:email, customerPhone:phone, customerNote:note,
       startISO:selSlot.startISO, endISO:selSlot.endISO,
       trainerId:TRAINER_ID,
-      utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign },
+      utmSource:utmParams.utm_source, utmMedium:utmParams.utm_medium, utmCampaign:utmParams.utm_campaign, utmContent:utmParams.utm_content },
     function(r) {
       document.getElementById('submittingOverlay').classList.remove('on');
       if (r && r.success !== false) {
