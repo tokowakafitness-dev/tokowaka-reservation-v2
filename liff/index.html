@@ -177,7 +177,7 @@
       batch_confirm:'{n}件をまとめて予約します。よろしいですか？', batch_done:'{n}件のご予約を承りました。',
       batch_done_skip:'（{m}件は空き・残数の都合でお取りできませんでした。別の時間をお選びください）', batch_fail:'まとめて予約に失敗しました（{code}）。',
       home_recurring:'固定枠の自動予約', recur_title:'固定枠の自動予約', recur_desc:'毎月25日に翌月分を自動で予約します。',
-      recur_every:'毎週{dow} {time}', recur_add:'追加する', recur_weekday:'曜日', recur_time:'時刻', recur_trainer:'担当',
+      recur_every:'毎週{dow} {time}', recur_add:'追加する', recur_weekday:'曜日', recur_time:'時刻', recur_trainer:'担当', recur_trainer_none:'担当なし（シフトに均等配置）',
       recur_none:'登録された固定枠はありません。', recur_delete:'削除', recur_added:'固定枠を登録しました。毎月25日に翌月分を自動予約します。',
       recur_add_fail:'登録できませんでした（{code}）。', recur_delete_confirm:'この固定枠を削除しますか？', recur_deleted:'削除しました。',
       recur_pick_all:'曜日・時刻・担当をお選びください。', recur_back:'← ホームに戻る',
@@ -238,7 +238,7 @@
       batch_confirm:'Book {n} sessions together. Proceed?', batch_done:'{n} booking(s) confirmed.',
       batch_done_skip:'({m} could not be booked due to availability/remaining. Please pick another time.)', batch_fail:'Batch booking failed ({code}).',
       home_recurring:'Recurring auto-booking', recur_title:'Recurring auto-booking', recur_desc:"We auto-book next month's sessions on the 25th each month.",
-      recur_every:'Every {dow} {time}', recur_add:'Add', recur_weekday:'Day', recur_time:'Time', recur_trainer:'Trainer',
+      recur_every:'Every {dow} {time}', recur_add:'Add', recur_weekday:'Day', recur_time:'Time', recur_trainer:'Trainer', recur_trainer_none:'No assignee (balanced across shift)',
       recur_none:'No recurring slots yet.', recur_delete:'Delete', recur_added:"Registered. We'll auto-book next month on the 25th.",
       recur_add_fail:'Could not register ({code}).', recur_delete_confirm:'Delete this recurring slot?', recur_deleted:'Deleted.',
       recur_pick_all:'Please choose day, time and trainer.', recur_back:'← Back to home',
@@ -299,7 +299,7 @@
       batch_confirm:'将批量预约 {n} 个时段。确定吗？', batch_done:'已为您预约 {n} 个时段。',
       batch_done_skip:'（{m} 个因空位/剩余次数无法预约，请另选时间）', batch_fail:'批量预约失败（{code}）。',
       home_recurring:'固定预约', recur_title:'固定预约', recur_desc:'每月25日自动预约下月课程。',
-      recur_every:'每周{dow} {time}', recur_add:'添加', recur_weekday:'星期', recur_time:'时间', recur_trainer:'教练',
+      recur_every:'每周{dow} {time}', recur_add:'添加', recur_weekday:'星期', recur_time:'时间', recur_trainer:'教练', recur_trainer_none:'无指定（按班次均分）',
       recur_none:'尚无固定预约。', recur_delete:'删除', recur_added:'已登记。每月25日自动预约下月。',
       recur_add_fail:'无法登记（{code}）。', recur_delete_confirm:'要删除此固定预约吗？', recur_deleted:'已删除。',
       recur_pick_all:'请选择星期、时间和教练。', recur_back:'← 返回首页',
@@ -496,15 +496,41 @@
     });
   }
 
+  // 通信が切れたら1回だけ自動で再試行する。
+  //   会員登録は契約フォームとの照合が重く、サーバー側の記憶が空だと応答に数十秒かかる
+  //   （深夜の初回など）。1回目の裏で読み込みが完了して記憶に乗るため、再試行はほぼ通る。
+  //   ★予約の作成・変更・取消など「サーバーの状態を変える」操作は再試行しない：
+  //     1回目が実際には成功していた場合、2回目は重複として弾かれ、成功しているのに
+  //     「失敗」と表示されてしまうため（予約が消えたように見えるのが最悪の体験）。
+  var _NO_RETRY = [
+    'makeReservationLine', 'makeReservationLineProxy', 'makeTransferReservation',
+    'makeRecurringReservation', 'makeBatchReservation', 'makeBatchReservationProxy',
+    'changeReservation', 'cancelReservation', 'makeAdminBooking', 'makeBlock',
+    'linkUnlinked', 'addTicketRefill', 'addRecurringPatternByTrainer', 'deleteRecurringPattern',
+    'verifyMembership'
+  ];
+  function _isRetryable(action){
+    var a = String(action || '').replace(/^line_/, '');
+    for (var i = 0; i < _NO_RETRY.length; i++) { if (a === _NO_RETRY[i]) return false; }
+    return true;   // 参照系と selfRegister（サーバー側が冪等）は再試行してよい
+  }
+  function _apiOnce(params){
+    return _rawApi(params).catch(function(e){
+      if (!_isRetryable(params.action)) throw e;
+      dbg('通信を再試行しています…');
+      return _rawApi(params);   // 再試行は1回だけ（無限に粘らない）
+    });
+  }
+
   // ID Token失効(UNAUTHORIZED)を自動回復：まず getIDToken() で取り直して1回リトライ、
   // それでもダメなら1回だけリロードして liff.init を再実行（無限ループは sessionStorage で防止）。
   function api(params){
-    return _rawApi(params).then(function(res){
+    return _apiOnce(params).then(function(res){
       if (res && res.code === 'UNAUTHORIZED') {
         var fresh = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : '';
         if (fresh && fresh !== idToken) {
           idToken = fresh;
-          return _rawApi(params);            // 新しいID Tokenで1回だけ再試行
+          return _apiOnce(params);           // 新しいID Tokenで1回だけ再試行
         }
         if (!sessionStorage.getItem('_reauthTried')) {
           sessionStorage.setItem('_reauthTried', '1');
@@ -1040,7 +1066,7 @@
         for (var hh = 7; hh <= 23; hh++){ var hs = ('0' + hh).slice(-2) + ':00'; topts += '<option value="' + hs + '">' + hs + '</option>'; }
         tsel.innerHTML = topts;
         var trsel = document.createElement('select'); trsel.style.cssText = 'width:100%;padding:9px;margin:6px 0;box-sizing:border-box;';
-        trsel.innerHTML = '<option value="">' + t('recur_trainer') + '</option>' + trainers.map(function(tr){ return '<option value="' + tr.id + '"' + ((defaultTrainerId && String(tr.id) === String(defaultTrainerId)) ? ' selected' : '') + '>' + tr.name + '</option>'; }).join('');
+        trsel.innerHTML = '<option value="">' + t('recur_trainer_none') + '</option>' + trainers.map(function(tr){ return '<option value="' + tr.id + '"' + ((defaultTrainerId && String(tr.id) === String(defaultTrainerId)) ? ' selected' : '') + '>' + tr.name + '</option>'; }).join('');
         var addBtn = document.createElement('button'); addBtn.className = 'btn'; addBtn.textContent = t('recur_add');
         addBtn.onclick = function(){
           if (wsel.value === '' || tsel.value === '' || trsel.value === '') { window.alert(t('recur_pick_all')); return; }
