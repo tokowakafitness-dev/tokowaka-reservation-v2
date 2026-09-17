@@ -677,6 +677,9 @@
     var block = document.createElement('button'); block.className = 'btn btn-outline'; block.textContent = '＋ ブロック（枠を塞ぐ）';
     block.onclick = function(){ _ensureAdminTrainers(renderBlockForm); };
     box.appendChild(block);
+    var pace = document.createElement('button'); pace.className = 'btn btn-outline'; pace.textContent = '📈 消化ペースを見る';
+    pace.onclick = function(){ loadPaceBoard(); };
+    box.appendChild(pace);
     var unlink = document.createElement('button'); unlink.className = 'btn btn-outline'; unlink.textContent = '未紐付け予約を紐付ける';
     unlink.onclick = function(){ loadUnlinked(); };
     box.appendChild(unlink);
@@ -802,6 +805,80 @@
     box.appendChild(submit);
     show('s-tadmin');
   }
+  // ===== 消化ペースのダッシュボード =====
+  //   通知は流れて消えるが、画面はいつでも見られる。トレーナーは自分の担当だけ、オーナーは全員。
+  //   目的は「月末に偏らせず、均等なペースで通う習慣をつくる」こと（遅れ回数で表示）。
+  function loadPaceBoard(){
+    show('s-loading'); dbg('消化ペースを集計中…');
+    api({ action:'line_getPaceBoard' }).then(function(res){
+      if (!res || !res.success) { showError('消化ペースを取得できませんでした（' + ((res&&res.code)||'不明') + '）。'); return; }
+      renderPaceBoard(res);
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  function _paceColor(level){ return level === 'alert' ? '#c0392b' : (level === 'warn' ? '#b8860b' : '#4a6b4a'); }
+  function _paceIcon(level){ return level === 'alert' ? '🔴' : (level === 'warn' ? '⚠️' : '✅'); }
+  function renderPaceBoard(res){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = (res.isOwner ? '全体' : res.trainerName + ' 様') + '｜消化ペース';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+
+    // 今月の進み具合（分母が分かると「遅れ」の意味が伝わる）
+    var head = document.createElement('div'); head.className='card';
+    head.innerHTML = '<div style="font-weight:700;">今月の経過：' + res.month.dayNow + '/' + res.month.daysInMonth + '日（' + res.month.elapsedPct + '%）</div>'
+      + '<p class="muted" style="margin-top:6px;font-size:13px;line-height:1.6;">月末にまとめてではなく、均等なペースで通う習慣づくりが目的です。<br>月4回＝週1回／月8回＝週2回／月2回＝2週に1回が目安。</p>';
+    box.appendChild(head);
+
+    // 遅れている人だけを上に固める（全員を並べると見る気が失せる）
+    function section(title, items, render, emptyText){
+      var h = document.createElement('div'); h.className='sect-h'; h.textContent = title; box.appendChild(h);
+      if (!items.length) { var p0 = document.createElement('p'); p0.className='muted'; p0.textContent = emptyText; box.appendChild(p0); return; }
+      items.forEach(function(it){ box.appendChild(render(it)); });
+    }
+    var mAlert = res.monthly.filter(function(x){ return x.level !== 'ok'; });
+    var mOk = res.monthly.filter(function(x){ return x.level === 'ok'; });
+    var tAlert = res.ticket.filter(function(x){ return x.level !== 'ok'; });
+    var tOk = res.ticket.filter(function(x){ return x.level === 'ok'; });
+
+    function monthlyCard(x){
+      var d = document.createElement('div'); d.className='card';
+      var pct = x.should > 0 ? Math.min(100, Math.round(x.used / x.should * 100)) : 100;
+      d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
+        + '<b>' + _paceIcon(x.level) + ' ' + x.name + ' 様</b>'
+        + '<span style="color:' + _paceColor(x.level) + ';font-weight:700;">' + (x.behind > 0 ? x.behind + '回の遅れ' : '予定どおり') + '</span></div>'
+        + '<div class="muted" style="margin-top:6px;font-size:13px;">月' + x.quota + '回（週' + x.weekly + '回ペース）' + (x.carry ? '＋繰越' + x.carry + '回' : '') + '</div>'
+        + '<div style="margin-top:8px;font-size:14px;">今月 <b>' + x.used + '</b> 回 ／ 本来 ' + x.should + ' 回　<span class="muted">残' + x.rem + '回</span></div>'
+        + '<div style="margin-top:6px;height:8px;background:#e8e4da;border-radius:4px;overflow:hidden;">'
+        + '<div style="height:100%;width:' + pct + '%;background:' + _paceColor(x.level) + ';"></div></div>';
+      return d;
+    }
+    function ticketCard(y){
+      var d = document.createElement('div'); d.className='card';
+      d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
+        + '<b>' + _paceIcon(y.level) + ' ' + y.name + ' 様</b>'
+        + '<span style="color:' + _paceColor(y.level) + ';font-weight:700;">残' + y.rem + '回</span></div>'
+        + '<div class="muted" style="margin-top:6px;font-size:13px;">期限 ' + y.expire + (y.daysLeft != null ? '（あと' + y.daysLeft + '日）' : '') + '</div>'
+        + '<div style="margin-top:6px;font-size:14px;">月 <b>' + y.needPerMonth + '</b> 回ペースが必要'
+        + (y.needPerMonth > 1 ? '<span style="color:#c0392b;">（月1回では使い切れません）</span>' : '') + '</div>';
+      return d;
+    }
+    section('月額：フォローが必要', mAlert, monthlyCard, '全員が予定どおりのペースです。');
+    section('チケット：フォローが必要', tAlert, ticketCard, '期限に間に合わないお客様はいません。');
+    if (mOk.length || tOk.length) {
+      var t = document.createElement('button'); t.className='btn btn-outline'; t.textContent = '順調なお客様も見る（' + (mOk.length + tOk.length) + '名）';
+      t.onclick = function(){
+        t.remove();
+        section('月額：予定どおり', mOk, monthlyCard, '');
+        section('チケット：予定どおり', tOk, ticketCard, '');
+      };
+      box.appendChild(t);
+    }
+    var note = document.createElement('p'); note.className='muted'; note.style.marginTop='10px'; note.style.fontSize='12px';
+    note.textContent = '対象' + res.checked + '名／今月の月額を消化済み ' + res.done + '名。残数が確定できないお客様は表示されません。';
+    box.appendChild(note);
+    show('s-tadmin');
+  }
+
   // 未紐付け予約（同期でカレンダーから拾ったが会員未特定）を会員に紐付ける
   function loadUnlinked(){
     show('s-loading'); dbg('未紐付け予約を取得中…');
