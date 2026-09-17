@@ -688,6 +688,33 @@
     var dt = new Date(date + 'T' + time + ':00');
     return isNaN(dt.getTime()) ? null : dt.toISOString();
   }
+  // 入力した日時をその場で読み上げる。端末の時刻ピッカーは午前/午後の切替を伴うため、
+  //   19:45のつもりが07:45で確定していても画面上は見分けがつかない（2026-09-17に実際に発生）。
+  //   「午後7:45［19:45］」と両方の表記で返し、送信前にも同じ文言で確認を取る。
+  function _adminWhenText(date, time){
+    if (!date || !time) return '';
+    var dt = new Date(date + 'T' + time + ':00');
+    if (isNaN(dt.getTime())) return '';
+    var w = ['日','月','火','水','木','金','土'][dt.getDay()];
+    var h = dt.getHours(), m = dt.getMinutes();
+    var h12 = (h % 12 === 0) ? 12 : (h % 12);
+    var mm = (m < 10 ? '0' : '') + m, hh = (h < 10 ? '0' : '') + h;
+    return (dt.getMonth() + 1) + '月' + dt.getDate() + '日(' + w + ') ' + (h < 12 ? '午前' : '午後') + h12 + ':' + mm + '　［' + hh + ':' + mm + '］';
+  }
+  // 入力欄の下に解釈結果を出し続ける（打ち間違いにその場で気づけるように）
+  function _adminBindWhen(dateId, timeId, outId){
+    var dEl = document.getElementById(dateId), tEl = document.getElementById(timeId), oEl = document.getElementById(outId);
+    if (!dEl || !tEl || !oEl) return;
+    function upd(){
+      var txt = _adminWhenText(dEl.value, tEl.value);
+      oEl.textContent = txt ? ('→ ' + txt) : '日付と開始時刻をご入力ください';
+      oEl.style.color = txt ? '#1b2a4a' : '#888';
+    }
+    dEl.addEventListener('change', upd); dEl.addEventListener('input', upd);
+    tEl.addEventListener('change', upd); tEl.addEventListener('input', upd);
+    upd();
+  }
+
   // 未登録客の予約枠（本予約書式でB1に作成→会員登録＆同期で残数へ反映）。日時は直接指定＝翌月先取り・シフト外も可。
   // 担当選択用の全トレーナー取得（オーナーのみ他トレーナーを選べる／一般は自分固定）。1度取得したらstateにキャッシュ。
   function _ensureAdminTrainers(cb){
@@ -718,14 +745,18 @@
       '<label style="font-weight:700;">日付</label>'+
       '<input id="ahDate" type="date" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
       '<label style="font-weight:700;">開始時刻</label>'+
-      '<input id="ahTime" type="time" step="900" style="width:100%;padding:9px;margin:6px 0 4px;box-sizing:border-box;">';
+      '<input id="ahTime" type="time" step="900" style="width:100%;padding:9px;margin:6px 0 4px;box-sizing:border-box;">'+
+      '<div id="ahWhen" style="margin-top:8px;font-weight:700;font-size:15px;"></div>';
     box.appendChild(d);
+    _adminBindWhen('ahDate', 'ahTime', 'ahWhen');
     var submit = document.createElement('button'); submit.className='btn'; submit.textContent='この内容で予約枠を作る';
     submit.onclick = function(){
       var name = (document.getElementById('ahName').value||'').trim();
       var iso = _adminBuildISO(document.getElementById('ahDate').value, document.getElementById('ahTime').value);
       if (!name) { window.alert('お名前をご入力ください。'); return; }
       if (!iso) { window.alert('日付・時刻をご入力ください。'); return; }
+      var _when = _adminWhenText(document.getElementById('ahDate').value, document.getElementById('ahTime').value);
+      if (!window.confirm('この内容で予約枠を作成します。\n\n' + _when + '\n' + name + ' 様（' + document.getElementById('ahKind').value + '）\n\nよろしいですか？')) return;
       submit.disabled = true; submit.textContent = '作成中…';
       api({ action:'line_makeAdminBooking', trainerId: ((document.getElementById('ahTrainer')||{}).value || state.trainerId), startISO: iso, customerName: name, kind: document.getElementById('ahKind').value }).then(function(res){
         if (res && res.success) { window.alert('予約枠を作成しました（'+res.start+'）。\n会員登録後に自動で残数へ反映されます。'); renderCustomerList(); }
@@ -752,12 +783,16 @@
       '<label style="font-weight:700;">日付</label>'+
       '<input id="bkDate" type="date" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
       '<label style="font-weight:700;">開始時刻</label>'+
-      '<input id="bkTime" type="time" step="900" style="width:100%;padding:9px;margin:6px 0 4px;box-sizing:border-box;">';
+      '<input id="bkTime" type="time" step="900" style="width:100%;padding:9px;margin:6px 0 4px;box-sizing:border-box;">'+
+      '<div id="bkWhen" style="margin-top:8px;font-weight:700;font-size:15px;"></div>';
     box.appendChild(d);
+    _adminBindWhen('bkDate', 'bkTime', 'bkWhen');
     var submit = document.createElement('button'); submit.className='btn'; submit.textContent='この時間を塞ぐ';
     submit.onclick = function(){
       var iso = _adminBuildISO(document.getElementById('bkDate').value, document.getElementById('bkTime').value);
       if (!iso) { window.alert('日付・時刻をご入力ください。'); return; }
+      var _whenB = _adminWhenText(document.getElementById('bkDate').value, document.getElementById('bkTime').value);
+      if (!window.confirm('この時間を塞ぎます。\n\n' + _whenB + '\n\nよろしいですか？')) return;
       submit.disabled = true; submit.textContent='作成中…';
       api({ action:'line_makeBlock', trainerId: ((document.getElementById('bkTrainer')||{}).value || state.trainerId), startISO: iso, label: (document.getElementById('bkLabel').value||'') }).then(function(res){
         if (res && res.success) { window.alert('枠を塞ぎました（'+res.start+'）。'); renderCustomerList(); }
