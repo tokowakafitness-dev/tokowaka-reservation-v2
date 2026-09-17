@@ -643,6 +643,7 @@
   function renderTrainerAdmin(res){
     state.trainerId = res.trainerId || '';
     state.trainerName = res.trainerName || '';
+    state._isOwner = !!res.isOwner;   // システム状態の導線をオーナーにだけ出す（roleは'trainer'固定のため別フラグで判定）
     document.getElementById('tadminName').textContent = (res.trainerName || 'トレーナー') + ' 様｜担当の今後のご予約';
     loadTrainerReservations();
   }
@@ -689,6 +690,11 @@
     var pace = document.createElement('button'); pace.className = 'btn btn-outline'; pace.textContent = '📈 消化ペースを見る';
     pace.onclick = function(){ loadPaceBoard(); };
     box.appendChild(pace);
+    if (state._isOwner) {   // 全体の不備・他担当の顧客名を含むためオーナー限定
+      var health = document.createElement('button'); health.className = 'btn btn-outline'; health.textContent = '🩺 システム状態を見る';
+      health.onclick = function(){ loadHealthBoard(); };
+      box.appendChild(health);
+    }
     var unlink = document.createElement('button'); unlink.className = 'btn btn-outline'; unlink.textContent = '未紐付け予約を紐付ける';
     unlink.onclick = function(){ loadUnlinked(); };
     box.appendChild(unlink);
@@ -814,6 +820,53 @@
     box.appendChild(submit);
     show('s-tadmin');
   }
+  // ===== システム状態のダッシュボード（オーナー限定） =====
+  //   顧客やトレーナーが「予約できない」「残数が違う」と報告してくる前に、こちらが気づくための画面。
+  //   点検は毎朝7時に自動で走り、ここはその結果を読むだけ。
+  function loadHealthBoard(){
+    show('s-loading'); dbg('システム状態を取得中…');
+    api({ action:'line_getHealthBoard' }).then(function(res){
+      if (!res || !res.success) { showError((res && res.message) || 'システム状態を取得できませんでした。'); return; }
+      renderHealthBoard(res);
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  function renderHealthBoard(res){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = 'システム状態';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+
+    var head = document.createElement('div'); head.className='card';
+    if (!res.stamp) {
+      head.innerHTML = '<p class="muted">' + (res.message || '点検の記録がまだありません。') + '</p>';
+      box.appendChild(head); show('s-tadmin'); return;
+    }
+    var c = res.counts || { high:0, warn:0, info:0 };
+    var ok = (c.high + c.warn) === 0;
+    head.innerHTML = '<div style="font-weight:700;font-size:16px;color:' + (ok ? '#4a6b4a' : (c.high ? '#c0392b' : '#b8860b')) + ';">'
+      + (ok ? '✅ 問題は見つかっていません' : (c.high ? '🔴 至急の対応が ' + c.high + '件' : '⚠️ 要確認が ' + c.warn + '件')) + '</div>'
+      + '<div class="muted" style="margin-top:6px;font-size:12px;">点検時刻：' + res.stamp + '（毎朝7時に自動点検）</div>'
+      + '<p class="muted" style="margin-top:6px;font-size:13px;line-height:1.6;">お客様やトレーナーから報告が来る前に気づくための画面です。<br>🔴は顧客体験や売上に直結します。優先して対応してください。</p>';
+    box.appendChild(head);
+
+    if (!res.issues.length) { show('s-tadmin'); return; }
+    var sevLabel = { high: '🔴 至急', warn: '⚠️ 要確認', info: 'ℹ️ 参考' };
+    var sevColor = { high: '#c0392b', warn: '#b8860b', info: '#666' };
+    var lastSev = '';
+    res.issues.forEach(function(it){
+      if (it.severity !== lastSev) {
+        var h = document.createElement('div'); h.className='sect-h'; h.textContent = sevLabel[it.severity] || it.severity;
+        box.appendChild(h); lastSev = it.severity;
+      }
+      var d = document.createElement('div'); d.className='card';
+      d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
+        + '<b>' + it.area + '</b><span style="color:' + (sevColor[it.severity]||'#666') + ';font-weight:700;">' + it.count + '件</span></div>'
+        + '<div style="margin-top:6px;font-size:13px;line-height:1.7;word-break:break-all;">' + it.detail + '</div>';
+      box.appendChild(d);
+    });
+    show('s-tadmin');
+  }
+
   // ===== 消化ペースのダッシュボード =====
   //   通知は流れて消えるが、画面はいつでも見られる。トレーナーは自分の担当だけ、オーナーは全員。
   //   目的は「月末に偏らせず、均等なペースで通う習慣をつくる」こと（遅れ回数で表示）。
