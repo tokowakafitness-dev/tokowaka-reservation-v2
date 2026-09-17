@@ -535,9 +535,18 @@
         if (!sessionStorage.getItem('_reauthTried')) {
           sessionStorage.setItem('_reauthTried', '1');
           dbg('セッションを更新しています…');
+          // ★PC等の外部ブラウザでは、LIFFがID Tokenを自動更新せず**期限切れのまま返し続ける**。
+          //   リロードだけでは同じトークンを掴んで失敗が続くため、一度ログアウトして入り直す。
+          //   LINEアプリ内では自動更新されるので、従来どおりリロードのみ（再ログインを強いない）。
+          try {
+            var _inClient = (typeof liff.isInClient === 'function') ? liff.isInClient() : true;
+            if (!_inClient && typeof liff.logout === 'function') liff.logout();
+          } catch (e) {}
           location.reload();                 // liff.init を再実行して新ID Tokenを取得
           return new Promise(function(){});  // リロード中は解決しない
         }
+        // 2度目も失敗＝自動回復では直らない。何をすればよいかを伝える。
+        return { success: false, code: 'UNAUTHORIZED', message: 'ログインの有効期限が切れました。ページを再読み込みするか、LINEアプリから開き直してください。' };
       }
       return res;
     });
@@ -581,7 +590,7 @@
         if (res.success && res.role === 'trainer') { renderTrainerAdmin(res); }
         else if (res.success && res.verified) { renderHome(res); }
         else if (res.success) { show('s-register'); }
-        else { showError(t('err_member_status', { code: res.code || '?' })); }
+        else { showError((res && res.message) ? res.message : t('err_member_status', { code: res.code || '?' })); }
       }).catch(function(e){ showError(t('err_init', { msg: (e && e.message ? e.message : e) })); });
     } catch (err) {
       showError('起動エラー：' + (err && err.message ? err.message : err));
@@ -823,9 +832,16 @@
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
 
-    // 今月の進み具合（分母が分かると「遅れ」の意味が伝わる）
+    // 集計がまだ無い場合は、原因と次の一手だけを出して終わる
+    if (!res.month) {
+      var w0 = document.createElement('div'); w0.className='card';
+      w0.innerHTML = '<p class="muted">' + (res.message || '集計がまだありません。') + '</p>';
+      box.appendChild(w0); show('s-tadmin'); return;
+    }
+    // 今月の進み具合（分母が分かると「遅れ」の意味が伝わる）＋いつ時点の数字か
     var head = document.createElement('div'); head.className='card';
     head.innerHTML = '<div style="font-weight:700;">今月の経過：' + res.month.dayNow + '/' + res.month.daysInMonth + '日（' + res.month.elapsedPct + '%）</div>'
+      + '<div class="muted" style="margin-top:4px;font-size:12px;">集計時点：' + (res.stamp || '不明') + '（毎朝6時に更新）</div>'
       + '<p class="muted" style="margin-top:6px;font-size:13px;line-height:1.6;">月末にまとめてではなく、均等なペースで通う習慣づくりが目的です。<br>月4回＝週1回／月8回＝週2回／月2回＝2週に1回が目安。</p>';
     box.appendChild(head);
 
