@@ -889,8 +889,26 @@
       };
       box.appendChild(t);
     }
-    var note = document.createElement('p'); note.className='muted'; note.style.marginTop='10px'; note.style.fontSize='12px';
-    note.textContent = '対象' + res.checked + '名／今月の月額を消化済み ' + res.done + '名。残数が確定できないお客様は表示されません。';
+    // 内訳は「会員数」と「表示件数」を分けて書く。併用（月額＋チケット）の方は2件に数えられるため、
+    //   合計が合わないように見えて混乱する。数字の意味を明示する。
+    var st = res.stats || {};
+    var note = document.createElement('div'); note.className='muted'; note.style.cssText='margin-top:12px;font-size:12px;line-height:1.8;';
+    var lines = [];
+    if (st.members) {
+      var tc = st.typeCount || {};
+      lines.push('会員 ' + st.members + '名を集計（月額' + (tc.monthly || 0) + '／チケット' + (tc.ticket || 0) + '／併用' + (tc.both || 0) + '）');
+      lines.push('・今月の月額を使い切り：' + (st.monthlyDone || 0) + '名　・チケットを使い切り：' + (st.ticketDone || 0) + '名');
+      lines.push('※ 上の一覧は月額とチケットを別々に数えています（併用の方は2件に出ます）。');
+      if (st.noContractCount) lines.push('・契約が見つからない：' + st.noContractCount + '名（退会・契約切れなら正常です）');
+      if (st.brokenCount) {
+        lines.push('<span style="color:#c0392b;">・残数を確定できない：' + st.brokenCount + '名'
+          + (st.brokenNames && st.brokenNames.length ? '（' + st.brokenNames.join('、') + '）' : '')
+          + ' ← 契約データの不備です。オーナーにご確認ください。</span>');
+      }
+    } else {
+      lines.push('対象' + res.checked + '名／今月の月額を消化済み ' + res.done + '名');
+    }
+    note.innerHTML = lines.join('<br>');
     box.appendChild(note);
     show('s-tadmin');
   }
