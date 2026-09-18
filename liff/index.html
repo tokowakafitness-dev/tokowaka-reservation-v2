@@ -687,6 +687,18 @@
     var block = document.createElement('button'); block.className = 'btn btn-outline'; block.textContent = '＋ ブロック（枠を塞ぐ）';
     block.onclick = function(){ _ensureAdminTrainers(renderBlockForm); };
     box.appendChild(block);
+    // 契約（顧客マスタ）を直した直後に押す。契約は1時間キャッシュしているため、
+    //   これを押さないと最大1時間お客様の残数表示が古いままになる。
+    var refresh = document.createElement('button'); refresh.className = 'btn btn-outline'; refresh.textContent = '🔄 契約情報を再読み込み';
+    refresh.onclick = function(){
+      if (!window.confirm('契約フォームを直した後にお使いください。\n\nお客様の残数表示に最新の契約を反映します。よろしいですか？')) return;
+      var self = this; self.disabled = true; self.textContent = '読み込み中…';
+      api({ action:'line_refreshContract' }).then(function(res){
+        self.disabled = false; self.textContent = '🔄 契約情報を再読み込み';
+        window.alert((res && res.success) ? (res.message || '反映しました。') : ('反映できませんでした（' + ((res&&res.code)||'不明') + '）。'));
+      }).catch(function(e){ self.disabled = false; self.textContent = '🔄 契約情報を再読み込み'; showError('通信に失敗しました：'+e); });
+    };
+    box.appendChild(refresh);
     var pace = document.createElement('button'); pace.className = 'btn btn-outline'; pace.textContent = '📈 消化ペースを見る';
     pace.onclick = function(){ loadPaceBoard(); };
     box.appendChild(pace);
