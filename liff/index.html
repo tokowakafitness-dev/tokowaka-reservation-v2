@@ -692,7 +692,7 @@
     var refresh = document.createElement('button'); refresh.className = 'btn btn-outline'; refresh.textContent = '🔄 契約情報を再読み込み';
     refresh.onclick = function(){
       if (!window.confirm('契約フォームを直した後にお使いください。\n\nお客様の残数表示に最新の契約を反映します。よろしいですか？')) return;
-      var self = this; self.disabled = true; self.textContent = '読み込み中…';
+      var self = this; self.disabled = true; self.textContent = '反映中…';   // 実処理は一瞬（読み込みは裏で走る）
       api({ action:'line_refreshContract' }).then(function(res){
         self.disabled = false; self.textContent = '🔄 契約情報を再読み込み';
         window.alert((res && res.success) ? (res.message || '反映しました。') : ('反映できませんでした（' + ((res&&res.code)||'不明') + '）。'));
