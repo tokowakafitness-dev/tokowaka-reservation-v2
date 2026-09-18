@@ -689,6 +689,9 @@
     box.appendChild(block);
     // 契約（顧客マスタ）を直した直後に押す。契約は1時間キャッシュしているため、
     //   これを押さないと最大1時間お客様の残数表示が古いままになる。
+    var slots = document.createElement('button'); slots.className = 'btn btn-outline'; slots.textContent = '🗂 作成した枠・ブロックを管理';
+    slots.onclick = function(){ loadAdminSlots(); };
+    box.appendChild(slots);
     var refresh = document.createElement('button'); refresh.className = 'btn btn-outline'; refresh.textContent = '🔄 契約情報を再読み込み';
     refresh.onclick = function(){
       if (!window.confirm('契約フォームを直した後にお使いください。\n\nお客様の残数表示に最新の契約を反映します。よろしいですか？')) return;
@@ -832,6 +835,51 @@
     box.appendChild(submit);
     show('s-tadmin');
   }
+  // ===== 作成した枠・ブロックの管理 =====
+  //   未登録客の枠とブロックは台帳に書かないため、顧客画面からは消せない。
+  //   Googleカレンダーを開かずに管理画面で完結させる。お客様の本予約は対象外。
+  function loadAdminSlots(){
+    show('s-loading'); dbg('作成した枠を取得中…');
+    api({ action:'line_listAdminSlots' }).then(function(res){
+      if (!res || !res.success) { showError('取得できませんでした（' + ((res&&res.code)||'不明') + '）。'); return; }
+      renderAdminSlots(res);
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  function renderAdminSlots(res){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = (res.isOwner ? '全体' : (state.trainerName||'トレーナー') + ' 様') + '｜作成した枠・ブロック';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+
+    var note = document.createElement('p'); note.className='muted'; note.style.cssText='margin-top:10px;line-height:1.7;font-size:13px;';
+    note.textContent = '未登録のお客様の枠と、枠を塞ぐブロックの一覧です。お客様のご予約はここには出ません（顧客の画面からキャンセルしてください）。';
+    box.appendChild(note);
+
+    if (!res.slots.length) {
+      var p0 = document.createElement('p'); p0.className='muted'; p0.textContent='作成した枠・ブロックはありません。';
+      box.appendChild(p0); show('s-tadmin'); return;
+    }
+    res.slots.forEach(function(sl){
+      var d = document.createElement('div'); d.className='card';
+      var badge = (sl.kind === 'block') ? '<span class="hlabel" style="background:#efe9dc;">ブロック</span>' : '<span class="hlabel" style="background:#eef1f6;">未登録客の枠</span>';
+      d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
+        + '<b>' + sl.when + '</b>' + badge + '</div>'
+        + '<div class="muted" style="margin-top:6px;font-size:13px;word-break:break-all;">' + sl.title + '</div>';
+      var del = document.createElement('button'); del.className='btn btn-outline'; del.style.marginTop='10px'; del.textContent='削除する';
+      del.onclick = function(){
+        if (!window.confirm('この枠を削除します。\n\n' + sl.when + '\n' + sl.title + '\n\nよろしいですか？')) return;
+        del.disabled = true; del.textContent = '削除中…';
+        api({ action:'line_deleteAdminSlot', eventId: sl.id }).then(function(r){
+          if (r && r.success) { window.alert('削除しました（' + r.when + '）。'); loadAdminSlots(); }
+          else { del.disabled=false; del.textContent='削除する'; window.alert('削除できませんでした。\n' + ((r&&r.message) || ('コード：'+((r&&r.code)||'不明')))); }
+        }).catch(function(e){ del.disabled=false; del.textContent='削除する'; showError('通信に失敗しました：'+e); });
+      };
+      d.appendChild(del);
+      box.appendChild(d);
+    });
+    show('s-tadmin');
+  }
+
   // ===== システム状態のダッシュボード（オーナー限定） =====
   //   顧客やトレーナーが「予約できない」「残数が違う」と報告してくる前に、こちらが気づくための画面。
   //   点検は毎朝7時に自動で走り、ここはその結果を読むだけ。
