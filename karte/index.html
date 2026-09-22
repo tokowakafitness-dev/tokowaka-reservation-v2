@@ -198,6 +198,7 @@
     <div class="hint">
       記録はトークから送れます。<b>「体重」</b>と送ると入力ボタンが出ます。<br>
       体組成（体脂肪率・除脂肪量など）は、InBodyを測った日にトレーナーが入れます。
+      <div style="margin-top:10px;font-size:10.5px;color:var(--ink-faint)">build 2026-09-22c</div>
     </div>
   </div>
 
@@ -297,7 +298,10 @@
     // 記録が少ないと、期間を変えても点の位置はほとんど動かない。
     // 何年何月から何月までを見ているのかを、数字で明示する。
     var spanEl=document.getElementById('span');
-    var lab = DAYS>=365 ? '1年' : (DAYS>=180 ? '6ヶ月' : '2ヶ月');
+    // ★見出しは DATA（サーバーが返した実物）から作る。DAYS（押した希望）から作ると、
+    //   取り直しに失敗した時に「2ヶ月を表示中／実際は6ヶ月分」という嘘が出る。
+    var shownDays = Number(DATA.days) || Math.round((toDay(DATA.today)-toDay(DATA.from)));
+    var lab = shownDays>=365 ? '1年' : (shownDays>=180 ? '6ヶ月' : '2ヶ月');
     spanEl.innerHTML = '<b>'+lab+'</b>を表示中　'+ jpDate(toDay(DATA.from)) +' 〜 '+ jpDate(toDay(DATA.today))
                      + '　<span style="color:var(--ink-faint)">'+m.label+'の記録 '+pts.length+'件</span>';
 
@@ -534,8 +538,26 @@
   }
   document.getElementById('ranges').onclick=function(e){
     var b=e.target.closest('button'); if(!b) return;
-    Array.prototype.forEach.call(this.children,function(x){ x.setAttribute('aria-pressed', String(x===b)); });
-    DAYS=Number(b.dataset.days); load();
+    var box=this, prev=DAYS;
+    var kids=Array.prototype.slice.call(box.children);
+    if (box.dataset.busy==='1') return;                     // 連打を吸収する
+    box.dataset.busy='1';
+    kids.forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); x.disabled=true; });
+    var spanEl=document.getElementById('span');
+    if (spanEl) spanEl.innerHTML='<span style="color:var(--ink-faint)">期間を取り直しています…</span>';
+    DAYS=Number(b.dataset.days);
+    load().then(function(){
+      box.dataset.busy=''; kids.forEach(function(x){ x.disabled=false; });
+    }).catch(function(err){
+      // 失敗したら黙って古い表示を残さない。押した状態も元に戻す。
+      box.dataset.busy=''; DAYS=prev;
+      kids.forEach(function(x){
+        x.disabled=false;
+        x.setAttribute('aria-pressed', String(Number(x.dataset.days)===prev));
+      });
+      if (spanEl) spanEl.innerHTML='<span style="color:var(--crit)">期間を変更できませんでした（'
+        + String(err && err.message ? err.message : err) + '）。もう一度お試しください。</span>';
+    });
   };
 
   /* ── 読み込み ─────────────────────────────────────
