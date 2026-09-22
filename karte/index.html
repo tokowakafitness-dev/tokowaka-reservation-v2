@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>からだのカルテ</title>
+<style>
+  /* ── TOKOWAKA トークン ─────────────────────────── */
+  :root{
+    --navy:#1b2a47; --gold:#b8965a; --cream:#f6f0e5;
+    --bg:#f6f0e5; --panel:#fffdf8; --rule:#e3dacb; --rule-soft:#efe8db;
+    --ink:#22201c; --ink-soft:#5f5a51; --ink-faint:#8d867a;
+    --wt:#1f63c4; --fat:#c85a1e; --lean:#2e8b57; --water:#8f4bb0;
+    --ok:#2e6b3f; --crit:#a4402a;
+    --r:3px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0f1520; --panel:#141b28; --rule:#2b3648; --rule-soft:#222c3c;
+      --ink:#ece6da; --ink-soft:#a9a496; --ink-faint:#7c7566; --gold:#c9a86c;
+      --wt:#5b91e0; --fat:#d2703c; --lean:#3fa876; --water:#a86bc8;
+      --ok:#5fb37a; --crit:#e0795e;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f1520; --panel:#141b28; --rule:#2b3648; --rule-soft:#222c3c;
+    --ink:#ece6da; --ink-soft:#a9a496; --ink-faint:#7c7566; --gold:#c9a86c;
+    --wt:#5b91e0; --fat:#d2703c; --lean:#3fa876; --water:#a86bc8;
+    --ok:#5fb37a; --crit:#e0795e;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f0e5; --panel:#fffdf8; --rule:#e3dacb; --rule-soft:#efe8db;
+    --ink:#22201c; --ink-soft:#5f5a51; --ink-faint:#8d867a; --gold:#b8965a;
+    --wt:#1f63c4; --fat:#c85a1e; --lean:#2e8b57; --water:#8f4bb0;
+    --ok:#2e6b3f; --crit:#a4402a;
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
+    font-weight:300; letter-spacing:.035em; line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  #app{max-width:480px;margin:0 auto;min-height:100vh;padding-bottom:28px;}
+
+  header{padding:18px 18px 14px;border-bottom:1px solid var(--rule);}
+  .eyebrow{font-size:10px;letter-spacing:.22em;color:var(--gold);text-transform:uppercase;}
+  h1{margin:4px 0 0;font-size:17px;font-weight:400;letter-spacing:.09em;}
+  .who{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+
+  .wrap{padding:16px 14px 0;}
+  .panel{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r);}
+
+  /* 読み値 */
+  .readout{padding:16px 16px 12px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;}
+  .ro-label{font-size:11px;color:var(--ink-faint);letter-spacing:.12em;}
+  .ro-now{font-size:33px;font-weight:300;letter-spacing:.01em;font-variant-numeric:tabular-nums;line-height:1.1;}
+  .ro-now small{font-size:14px;color:var(--ink-soft);margin-left:3px;letter-spacing:.06em;}
+  .ro-delta{font-size:12px;color:var(--ink-soft);text-align:right;font-variant-numeric:tabular-nums;}
+  .ro-date{font-size:10px;color:var(--ink-faint);margin-top:2px;}
+
+  /* 指標タブ */
+  #tabs{display:flex;gap:6px;overflow-x:auto;padding:0 14px 12px;margin-top:12px;
+        scrollbar-width:none;-ms-overflow-style:none;}
+  #tabs::-webkit-scrollbar{display:none;}
+  #tabs button{
+    flex:0 0 auto;padding:7px 13px;border:1px solid var(--rule);border-radius:var(--r);
+    background:var(--panel);color:var(--ink-soft);font-size:12px;font-family:inherit;
+    font-weight:300;letter-spacing:.08em;cursor:pointer;white-space:nowrap;
+  }
+  #tabs button[aria-pressed="true"]{background:var(--navy);border-color:var(--navy);color:#f6f0e5;}
+  #tabs button:disabled{opacity:.34;}
+
+  /* グラフ */
+  .chart{padding:6px 6px 0;position:relative;}
+  svg{display:block;width:100%;height:auto;touch-action:pan-y;}
+  #tip{
+    position:absolute;pointer-events:none;opacity:0;transition:opacity .12s;
+    background:var(--navy);color:#f6f0e5;border-radius:var(--r);
+    padding:7px 10px;font-size:11px;letter-spacing:.04em;line-height:1.5;
+    font-variant-numeric:tabular-nums;white-space:nowrap;z-index:5;
+    box-shadow:0 4px 14px rgba(0,0,0,.18);
+  }
+  #foot{display:flex;flex-wrap:wrap;gap:10px 16px;padding:10px 16px 15px;
+        font-size:10.5px;color:var(--ink-soft);letter-spacing:.06em;}
+  #foot s{text-decoration:none;display:inline-flex;align-items:center;gap:6px;}
+  i.swatch-line{width:15px;height:2px;background:currentColor;display:inline-block;}
+  i.swatch-dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;}
+  i.swatch-dash{width:15px;height:0;border-top:1.6px dashed currentColor;display:inline-block;}
+  .note{font-size:10.5px;color:var(--ink-faint);padding:0 16px 14px;line-height:1.75;}
+
+  /* 範囲切替 */
+  .ranges{display:flex;gap:6px;padding:12px 14px 0;}
+  .ranges button{
+    flex:1;padding:6px 0;border:1px solid var(--rule);border-radius:var(--r);
+    background:transparent;color:var(--ink-faint);font-size:11px;font-family:inherit;
+    font-weight:300;letter-spacing:.08em;cursor:pointer;
+  }
+  .ranges button[aria-pressed="true"]{color:var(--ink);border-color:var(--gold);}
+
+  /* 表 */
+  details{margin:14px 14px 0;}
+  summary{font-size:11.5px;color:var(--ink-soft);letter-spacing:.09em;cursor:pointer;padding:9px 2px;}
+  table{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums;
+        margin-top:4px;background:var(--panel);border:1px solid var(--rule);border-radius:var(--r);}
+  th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--rule-soft);font-weight:300;}
+  th{color:var(--ink-faint);font-size:10px;letter-spacing:.1em;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  tbody tr:last-child td{border-bottom:none;}
+  .tbl-wrap{overflow-x:auto;}
+
+  /* 状態表示 */
+  .state{padding:38px 22px;text-align:center;}
+  .state p{margin:0 0 8px;font-size:13px;color:var(--ink-soft);line-height:1.9;white-space:pre-line;}
+  .state .sub{font-size:11.5px;color:var(--ink-faint);}
+  .hint{margin:16px 14px 0;padding:13px 15px;border-left:2px solid var(--gold);
+        background:var(--panel);font-size:11.5px;color:var(--ink-soft);line-height:1.85;}
+  .hint b{font-weight:400;color:var(--ink);}
+  [hidden]{display:none !important;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="eyebrow">TOKOWAKA</div>
+    <h1>からだのカルテ</h1>
+    <div class="who" id="who"></div>
+  </header>
+
+  <!-- 読み込み中 -->
+  <div id="s-loading" class="state">
+    <p id="loadMsg">読み込んでいます…</p>
+    <p class="sub" id="diag" style="text-align:left;font-family:ui-monospace,monospace;
+       font-size:10.5px;line-height:1.85;word-break:break-all;margin-top:18px;"></p>
+  </div>
+
+  <!-- 本体 -->
+  <div id="s-main" hidden>
+    <div class="wrap">
+      <div class="panel">
+        <div class="readout">
+          <div>
+            <div class="ro-label" id="ro-label">体重</div>
+            <div class="ro-now" id="ro-now">—</div>
+            <div class="ro-date" id="ro-date"></div>
+          </div>
+          <div class="ro-delta" id="ro-delta"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tabs"></div>
+
+    <div class="wrap" style="padding-top:0">
+      <div class="panel">
+        <div class="chart">
+          <svg id="plot" viewBox="0 0 640 260" preserveAspectRatio="xMidYMid meet" role="img"
+               aria-label="体重と体組成の推移グラフ"></svg>
+          <div id="tip"></div>
+        </div>
+        <div id="foot"></div>
+        <div class="note" id="note"></div>
+      </div>
+    </div>
+
+    <div class="ranges" id="ranges">
+      <button data-days="60"  aria-pressed="false">2ヶ月</button>
+      <button data-days="180" aria-pressed="true">6ヶ月</button>
+      <button data-days="365" aria-pressed="false">1年</button>
+    </div>
+
+    <details>
+      <summary>数値で見る</summary>
+      <div class="tbl-wrap"><table id="tbl"></table></div>
+    </details>
+
+    <div class="hint">
+      記録はトークから送れます。<b>「体重」</b>と送ると入力ボタンが出ます。<br>
+      体組成（体脂肪率・除脂肪量など）は、InBodyを測った日にトレーナーが入れます。
+    </div>
+  </div>
+
+  <!-- 空・エラー -->
+  <div id="s-empty" class="state" hidden>
+    <p>まだ記録がありません。</p>
+    <p class="sub">トークに「体重」と送ると入力ボタンが出ます。<br>4回たまると平均の線が引けます。</p>
+  </div>
+  <div id="s-error" class="state" hidden>
+    <p id="errMsg"></p>
+  </div>
+</div>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+  /* ── 設定 ────────────────────────────────────────
+   * 予約LIFF（liff/index.html）と同じ作り。GASのHtmlServiceは入れ子iframeで
+   * 配信されるため liff.init が返ってこない。GitHub Pagesから配信し、
+   * データはJSONPでGASへ取りに行く。                                        */
+  var LIFF_ID = '2010827953-Akx24rTp';
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
+  var _seq = 0;
+
+  var idToken = '', DATA = null, DAYS = 180, CUR = 'w';
+
+  /* ── 指標の定義。色は色覚検証済み（CVD ΔE・コントラストとも合格）── */
+  var METRICS = [
+    {k:'w',   label:'体重',     unit:'kg', c:'--wt',    dec:1, daily:true,  goal:'targetKg'},
+    {k:'pbf', label:'体脂肪率', unit:'%',  c:'--fat',   dec:1, daily:false},
+    {k:'fat', label:'体脂肪量', unit:'kg', c:'--fat',   dec:1, daily:false, goal:'targetFat'},
+    {k:'lean',label:'除脂肪量', unit:'kg', c:'--lean',  dec:1, daily:false, goal:'targetLean'},
+    {k:'tbw', label:'体水分量', unit:'L',  c:'--water', dec:1, daily:false},
+    {k:'vis', label:'内臓脂肪', unit:'',   c:'--fat',   dec:0, daily:false}
+  ];
+  function M(k){ for(var i=0;i<METRICS.length;i++) if(METRICS[i].k===k) return METRICS[i]; return METRICS[0]; }
+
+  /* ── 画面の切替 ── */
+  function show(id){
+    ['s-loading','s-main','s-empty','s-error'].forEach(function(s){
+      document.getElementById(s).hidden = (s !== id);
+    });
+  }
+  function showError(msg){ document.getElementById('errMsg').textContent = msg; show('s-error'); }
+  function dbg(m){ var el=document.getElementById('loadMsg'); if(el) el.textContent=m; }
+
+  /* ── 日付の小物（すべてUTC固定。ローカル時刻を混ぜない）── */
+  function toDay(s){ var p=String(s).split('-'); return Date.UTC(+p[0],+p[1]-1,+p[2])/86400000; }
+  function fromDay(n){ var d=new Date(n*86400000);
+    return (d.getUTCMonth()+1)+'/'+d.getUTCDate(); }
+  function fullDate(n){ var d=new Date(n*86400000);
+    return (d.getUTCMonth()+1)+'月'+d.getUTCDate()+'日'; }
+
+  /* ── 7日移動平均。窓の中に4点未満なら引かない（嘘の平均を出さない）── */
+  function movingAvg(pts){
+    var out=[];
+    for(var i=0;i<pts.length;i++){
+      var lo=pts[i].x-6, s=0, n=0;
+      for(var j=i;j>=0 && pts[j].x>=lo;j--){ s+=pts[j].y; n++; }
+      if(n>=4) out.push({x:pts[i].x, y:s/n, n:n});
+    }
+    return out;
+  }
+
+  /* ── 描画 ───────────────────────────────────── */
+  var NS='http://www.w3.org/2000/svg';
+  var W=640,H=260,L=44,R=14,T=16,B=30;
+  function el(n,a){ var e=document.createElementNS(NS,n); for(var k in a) e.setAttribute(k,a[k]); return e; }
+  function cv(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  var _hit = null;   // ツールチップ用の当たり判定データ
+
+  function draw(){
+    var m=M(CUR), svg=document.getElementById('plot');
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+    document.getElementById('ro-label').textContent = m.label;
+
+    var col=cv(m.c), rule=cv('--rule-soft'), faint=cv('--ink-faint'), gold=cv('--gold');
+
+    // 値の抽出
+    var pts=[];
+    for(var i=0;i<DATA.rows.length;i++){
+      var v=DATA.rows[i][m.k];
+      if(typeof v==='number' && !isNaN(v)) pts.push({x:toDay(DATA.rows[i].d), y:v, d:DATA.rows[i].d});
+    }
+
+    var foot=document.getElementById('foot'); foot.innerHTML='';
+    var note=document.getElementById('note'); note.textContent='';
+    var tbl=document.getElementById('tbl');
+
+    if(!pts.length){
+      document.getElementById('ro-now').textContent='—';
+      document.getElementById('ro-delta').textContent='';
+      document.getElementById('ro-date').textContent='';
+      var tx=el('text',{x:W/2,y:H/2,'text-anchor':'middle','font-size':13,fill:faint});
+      tx.textContent = m.label + 'の記録はまだありません';
+      svg.appendChild(tx);
+      note.textContent = m.daily ? '' : 'InBodyを測った日に入ります。';
+      tbl.innerHTML=''; _hit=null;
+      return;
+    }
+
+    // x範囲＝表示期間の全体（点が少なくても軸は動かさない）
+    var x0=toDay(DATA.from), x1=toDay(DATA.today);
+    if(pts[0].x < x0) x0 = pts[0].x;
+
+    // 目標線の頂点
+    var gl=[];
+    if(DATA.goal && m.k==='w' && DATA.goal.line && DATA.goal.line.length>=2){
+      gl = DATA.goal.line.map(function(p){ return {x:toDay(p.d), y:p.v}; });
+    } else if(DATA.goal && m.goal && DATA.goal[m.goal]){
+      gl = [{x:x0,y:DATA.goal[m.goal]},{x:x1,y:DATA.goal[m.goal]}];   // 目標値だけある指標は水平線
+    }
+
+    // y範囲
+    var vals=pts.map(function(p){return p.y;}).concat(gl.map(function(p){return p.y;}));
+    var lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+    var pad=(hi-lo)*0.2 || (m.dec?0.8:1); lo-=pad; hi+=pad;
+
+    function X(x){ return L+(W-L-R)*((x-x0)/Math.max(1,(x1-x0))); }
+    function Y(y){ return T+(H-T-B)*(1-(y-lo)/Math.max(1e-6,(hi-lo))); }
+
+    // グリッド
+    for(var g=0;g<=4;g++){
+      var gv=lo+(hi-lo)*g/4, gy=Y(gv);
+      svg.appendChild(el('line',{x1:L,y1:gy,x2:W-R,y2:gy,stroke:rule,'stroke-width':1}));
+      var t1=el('text',{x:L-8,y:gy+4,'text-anchor':'end','font-size':10.5,fill:faint,
+        'font-family':'ui-monospace,SFMono-Regular,monospace'});
+      t1.textContent=gv.toFixed(m.dec); svg.appendChild(t1);
+    }
+    // x軸ラベル（4つだけ）
+    for(var s=0;s<4;s++){
+      var xv=x0+(x1-x0)*s/3;
+      var t2=el('text',{x:X(xv),y:H-10,'text-anchor':(s===0?'start':(s===3?'end':'middle')),
+        'font-size':10.5,fill:faint,'font-family':'ui-monospace,SFMono-Regular,monospace'});
+      t2.textContent=fromDay(Math.round(xv)); svg.appendChild(t2);
+    }
+
+    // 目標線（破線・ゴールド）
+    if(gl.length>=2){
+      var gd='';
+      gl.forEach(function(p,i){ gd += (i?' L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1); });
+      svg.appendChild(el('path',{d:gd,fill:'none',stroke:gold,'stroke-width':1.6,
+        'stroke-dasharray':'5 4',opacity:.75}));
+    }
+
+    // 本体
+    var lastPt=null, lastLabel='';
+    if(m.daily){
+      pts.forEach(function(p){
+        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:2.2,fill:col,opacity:.3}));
+      });
+      var wa=movingAvg(pts);
+      if(wa.length>=2){
+        var wd='';
+        wa.forEach(function(p,i){ wd += (i?' L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1); });
+        svg.appendChild(el('path',{d:wd,fill:'none',stroke:col,'stroke-width':2,
+          'stroke-linejoin':'round','stroke-linecap':'round'}));
+        lastPt=wa[wa.length-1]; lastLabel='週の平均';
+        svg.appendChild(el('circle',{cx:X(lastPt.x),cy:Y(lastPt.y),r:4.5,fill:col,
+          stroke:cv('--panel'),'stroke-width':2}));
+      } else {
+        lastPt=pts[pts.length-1]; lastLabel='最新';
+        svg.appendChild(el('circle',{cx:X(lastPt.x),cy:Y(lastPt.y),r:4.5,fill:col,
+          stroke:cv('--panel'),'stroke-width':2}));
+      }
+      foot.appendChild(leg('swatch-dot',col,'毎日の記録'));
+      if(wa.length>=2) foot.appendChild(leg('swatch-line',col,'7日の平均'));
+      if(gl.length>=2) foot.appendChild(leg('swatch-dash',gold,'目標線'));
+      note.textContent = wa.length>=2
+        ? '体重は水分で1〜2kg動きます。日々の上下ではなく、平均の線の傾きを見てください。'
+        : 'あと'+Math.max(0,4-pts.length)+'回記録すると、平均の線が出ます。';
+    } else {
+      if(pts.length>=2){
+        var sd='';
+        pts.forEach(function(p,i){ sd += (i?' L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1); });
+        svg.appendChild(el('path',{d:sd,fill:'none',stroke:col,'stroke-width':2,'stroke-linejoin':'round'}));
+      }
+      pts.forEach(function(p){
+        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:4.5,fill:cv('--panel'),
+          stroke:col,'stroke-width':2.2}));
+      });
+      lastPt=pts[pts.length-1]; lastLabel='最新';
+      foot.appendChild(leg('swatch-line',col,'測定値（'+pts.length+'回）'));
+      if(gl.length>=2) foot.appendChild(leg('swatch-dash',gold,'目標'));
+      note.textContent='測定が少ないため平均の線は引きません。点と点を結んでいます。';
+    }
+
+    // 読み値
+    var now=lastPt.y, prev=null;
+    if(m.daily){
+      var wa2=movingAvg(pts);
+      if(wa2.length>=2){
+        var want=lastPt.x-7;
+        for(var q=wa2.length-1;q>=0;q--){ if(wa2[q].x<=want){ prev=wa2[q].y; break; } }
+        if(prev===null && wa2.length>1) prev=wa2[0].y;
+      } else if(pts.length>=2) prev=pts[pts.length-2].y;
+    } else if(pts.length>=2) prev=pts[pts.length-2].y;
+
+    document.getElementById('ro-now').innerHTML =
+      now.toFixed(m.dec) + (m.unit ? ' <small>'+m.unit+'</small>' : '');
+    document.getElementById('ro-date').textContent =
+      lastLabel + '・' + fullDate(lastPt.x) + ' 時点';
+    if(prev===null){
+      document.getElementById('ro-delta').textContent='';
+    } else {
+      var diff=now-prev;
+      var c = Math.abs(diff)<0.05 ? cv('--ink-soft') : (goodDown(m)===(diff<0) ? cv('--ok') : cv('--crit'));
+      document.getElementById('ro-delta').innerHTML =
+        '<span style="color:'+cv('--ink-faint')+'">'+(m.daily?'7日前から':'前回から')+'</span><br>'+
+        '<span style="color:'+c+';font-size:15px">'+(diff>0?'+':'−')+Math.abs(diff).toFixed(m.dec)+(m.unit||'')+'</span>';
+    }
+
+    buildTable(m, pts);
+    _hit = { m:m, pts:pts, X:X, Y:Y, col:col, svg:svg };
+    attachHover();
+  }
+
+  // 減るのが良い指標かどうか（除脂肪・体水分は増える方が良い）
+  function goodDown(m){ return !(m.k==='lean' || m.k==='tbw'); }
+
+  function leg(cls,c,t){
+    var s=document.createElement('s'); s.style.color=c;
+    s.innerHTML='<i class="'+cls+'"></i><span style="color:var(--ink-soft)">'+t+'</span>';
+    return s;
+  }
+
+  function buildTable(m, pts){
+    var rows = pts.slice(-40).reverse();
+    var h='<thead><tr><th>日付</th><th>'+m.label+(m.unit?'（'+m.unit+'）':'')+'</th><th>前回差</th></tr></thead><tbody>';
+    for(var i=0;i<rows.length;i++){
+      var d = (i+1<rows.length) ? rows[i].y-rows[i+1].y : null;
+      h+='<tr><td>'+fullDate(rows[i].x)+'</td><td>'+rows[i].y.toFixed(m.dec)+'</td><td>'+
+         (d===null?'—':((d>0?'+':'−')+Math.abs(d).toFixed(m.dec)))+'</td></tr>';
+    }
+    document.getElementById('tbl').innerHTML = h+'</tbody>';
+  }
+
+  /* ── タップで値を読む ── */
+  function attachHover(){
+    var svg=_hit.svg, tip=document.getElementById('tip'), wrap=svg.parentNode;
+    var cross=null, mark=null;
+
+    function clear(){ tip.style.opacity=0; if(cross){cross.remove();cross=null;} if(mark){mark.remove();mark=null;} }
+    function at(clientX){
+      var box=svg.getBoundingClientRect();
+      var vx=(clientX-box.left)/box.width*W;
+      var best=null, bd=1e9;
+      for(var i=0;i<_hit.pts.length;i++){
+        var dx=Math.abs(_hit.X(_hit.pts[i].x)-vx);
+        if(dx<bd){ bd=dx; best=_hit.pts[i]; }
+      }
+      if(!best || bd>60) { clear(); return; }
+      if(cross) cross.remove(); if(mark) mark.remove();
+      var px=_hit.X(best.x), py=_hit.Y(best.y);
+      cross=el('line',{x1:px,y1:T,x2:px,y2:H-B,stroke:cv('--ink-faint'),'stroke-width':1,opacity:.5});
+      svg.appendChild(cross);
+      mark=el('circle',{cx:px,cy:py,r:5.5,fill:_hit.col,stroke:cv('--panel'),'stroke-width':2});
+      svg.appendChild(mark);
+      tip.innerHTML = fullDate(best.x)+'<br>'+best.y.toFixed(_hit.m.dec)+(_hit.m.unit||'');
+      tip.style.opacity=1;
+      var sx=px/W*box.width, tw=tip.offsetWidth;
+      tip.style.left = Math.max(4, Math.min(box.width-tw-4, sx-tw/2)) + 'px';
+      tip.style.top  = Math.max(0, (py/H*box.height) - tip.offsetHeight - 12) + 'px';
+    }
+    svg.onpointerdown = function(e){ at(e.clientX); };
+    svg.onpointermove = function(e){ if(e.pressure>0 || e.buttons || e.pointerType==='mouse') at(e.clientX); };
+    svg.onpointerup = svg.onpointerleave = function(){ setTimeout(clear, 1400); };
+  }
+
+  /* ── タブ・範囲 ── */
+  function buildTabs(){
+    var box=document.getElementById('tabs'); box.innerHTML='';
+    METRICS.forEach(function(m){
+      var has = DATA.rows.some(function(r){ return typeof r[m.k]==='number'; });
+      var b=document.createElement('button');
+      b.textContent=m.label; b.setAttribute('aria-pressed', String(m.k===CUR));
+      if(!has && m.k!==CUR) b.disabled=true;
+      b.onclick=function(){
+        CUR=m.k;
+        Array.prototype.forEach.call(box.children,function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+        draw();
+      };
+      box.appendChild(b);
+    });
+  }
+  document.getElementById('ranges').onclick=function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    Array.prototype.forEach.call(this.children,function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+    DAYS=Number(b.dataset.days); load();
+  };
+
+  /* ── 読み込み ── */
+  function load(){
+    return api({action:'series', days:DAYS}).then(function(res){
+      if(!res.success){
+        if(res.code==='NOT_OPEN')   { showError('この画面はまだ公開前です。'); return; }
+        if(res.code==='NOT_MEMBER') { showError('会員情報と結びついていません。トークから会員登録をお願いします。'); return; }
+        showError('読み込めませんでした（'+(res.code||'不明')+'）'); return;
+      }
+      DATA=res;
+      document.getElementById('who').textContent = res.name ? res.name+' さん' : '';
+      if(!res.rows.length){ show('s-empty'); return; }
+      if(!DATA.rows.some(function(r){ return typeof r[CUR]==='number'; })) CUR='w';
+      buildTabs(); show('s-main'); draw();
+    });
+  }
+
+
+  // テーマ切替に追随
+  if(window.matchMedia){
+    window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(){ if(DATA) draw(); });
+  }
+  new MutationObserver(function(){ if(DATA) draw(); })
+    .observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+  window.addEventListener('resize', function(){ if(DATA) draw(); });
+
+  /* ── 通信（JSONP）。予約LIFFと同じ方式 ── */
+  function _rawApi(params){
+    params.idToken = idToken;
+    return new Promise(function(resolve, reject){
+      var cb = 'mcb_' + (++_seq) + '_' + new Date().getTime();
+      var s = document.createElement('script');
+      var timer = setTimeout(function(){ cleanup(); reject('サーバー応答がタイムアウトしました'); }, 20000);
+      function cleanup(){
+        clearTimeout(timer);
+        try { delete window[cb]; } catch(e){ window[cb] = undefined; }
+        if (s.parentNode) s.parentNode.removeChild(s);
+      }
+      window[cb] = function(data){ cleanup(); resolve(data); };
+      var qs = Object.keys(params).map(function(k){
+        return encodeURIComponent(k) + '=' + encodeURIComponent(params[k] == null ? '' : params[k]);
+      }).join('&');
+      s.src = GAS_URL + '?' + qs + '&callback=' + cb;
+      s.onerror = function(){ cleanup(); reject('サーバーへの接続に失敗しました'); };
+      document.head.appendChild(s);
+    });
+  }
+
+  // 参照しかしないので、通信が切れたら1回だけ黙って引き直す
+  function _apiOnce(params){
+    return _rawApi(params).catch(function(){
+      dbg('通信を再試行しています…');
+      return _rawApi(params);
+    });
+  }
+
+  // ID Tokenの失効を自動回復（予約LIFFと同じ手順）
+  function api(payload){
+    var params = { action: 'ma_' + String(payload.action || '').replace(/^ma_/, ''), days: payload.days };
+    return _apiOnce(params).then(function(res){
+      if (res && res.code === 'UNAUTHORIZED') {
+        var fresh = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : '';
+        if (fresh && fresh !== idToken) { idToken = fresh; return _apiOnce(params); }
+        if (!sessionStorage.getItem('_karteReauth')) {
+          sessionStorage.setItem('_karteReauth', '1');
+          dbg('セッションを更新しています…');
+          try {
+            var inClient = (typeof liff.isInClient === 'function') ? liff.isInClient() : true;
+            if (!inClient && typeof liff.logout === 'function') liff.logout();
+          } catch(e){}
+          location.reload();
+          return new Promise(function(){});     // リロード中は解決しない
+        }
+        return { success:false, code:'UNAUTHORIZED',
+                 message:'ログインの有効期限が切れました。LINEから開き直してください。' };
+      }
+      return res;
+    });
+  }
+
+  /* ── 起動 ── */
+  function boot(){
+    if(!LIFF_ID){ showError('LIFF IDが未設定です。'); return; }
+    if(!window.liff){ showError('LIFF SDKを読み込めませんでした（ネットワーク）。'); return; }
+    dbg('LINEと接続しています…');
+    liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true }).then(function(){
+      if(!liff.isLoggedIn()){ liff.login(); return; }
+      idToken = liff.getIDToken();
+      if(!idToken){ showError('IDトークンを取得できません（LIFFのScopeで openid を有効に）。'); return; }
+      dbg('記録を読み込んでいます…');
+      return load();
+    }).catch(function(e){
+      var code = (e && e.code) ? '[' + e.code + '] ' : '';
+      showError('初期化に失敗しました：' + code + ((e && e.message) ? e.message : String(e)));
+    });
+  }
+  boot();
+</script>
+</body>
+</html>
