@@ -82,6 +82,9 @@
   i.swatch-dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;}
   i.swatch-dash{width:16px;height:0;border-top:2px dashed currentColor;display:inline-block;}
   .note{font-size:12px;color:var(--ink-faint);margin-top:10px;line-height:1.8;}
+  .spanline{margin-top:10px;padding-top:10px;border-top:1px solid var(--rule-soft);
+            font-size:12.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums;}
+  .spanline b{font-weight:700;color:var(--navy);}
 
   /* 範囲切替 */
   .ranges{display:flex;gap:8px;padding:0 16px;}
@@ -90,7 +93,7 @@
     background:#fff;color:var(--ink-soft);font-family:inherit;font-size:13px;font-weight:500;
     letter-spacing:.03em;cursor:pointer;
   }
-  .ranges button[aria-pressed="true"]{color:var(--navy);border-color:var(--acc);background:#fffdf7;}
+  .ranges button[aria-pressed="true"]{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:700;}
 
   /* 表 */
   details{margin:12px 16px 0;}
@@ -171,10 +174,11 @@
     <div class="screen" style="padding-top:0;padding-bottom:4px">
       <div class="card">
         <div class="chart">
-          <svg id="plot" viewBox="0 0 640 260" preserveAspectRatio="xMidYMid meet" role="img"
+          <svg id="plot" viewBox="0 0 640 290" preserveAspectRatio="xMidYMid meet" role="img"
                aria-label="体重と体組成の推移グラフ"></svg>
           <div id="tip"></div>
         </div>
+        <div class="spanline" id="span"></div>
         <div id="foot"></div>
         <div class="note" id="note"></div>
       </div>
@@ -245,6 +249,8 @@
     return (d.getUTCMonth()+1)+'/'+d.getUTCDate(); }
   function fullDate(n){ var d=new Date(n*86400000);
     return (d.getUTCMonth()+1)+'月'+d.getUTCDate()+'日'; }
+  function jpDate(n){ var d=new Date(n*86400000);
+    return d.getUTCFullYear()+'/'+(d.getUTCMonth()+1)+'/'+d.getUTCDate(); }
 
   /* ── 7日移動平均。窓の中に4点未満なら引かない（嘘の平均を出さない）── */
   function movingAvg(pts){
@@ -259,7 +265,7 @@
 
   /* ── 描画 ───────────────────────────────────── */
   var NS='http://www.w3.org/2000/svg';
-  var W=640,H=260,L=44,R=14,T=16,B=30;
+  var W=640,H=290,L=74,R=22,T=22,B=52;   // 文字を大きくした分、軸の余白を広げる
   function el(n,a){ var e=document.createElementNS(NS,n); for(var k in a) e.setAttribute(k,a[k]); return e; }
   function cv(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
 
@@ -288,11 +294,18 @@
     var note=document.getElementById('note'); note.textContent='';
     var tbl=document.getElementById('tbl');
 
+    // 記録が少ないと、期間を変えても点の位置はほとんど動かない。
+    // 何年何月から何月までを見ているのかを、数字で明示する。
+    var spanEl=document.getElementById('span');
+    var lab = DAYS>=365 ? '1年' : (DAYS>=180 ? '6ヶ月' : '2ヶ月');
+    spanEl.innerHTML = '<b>'+lab+'</b>を表示中　'+ jpDate(toDay(DATA.from)) +' 〜 '+ jpDate(toDay(DATA.today))
+                     + '　<span style="color:var(--ink-faint)">'+m.label+'の記録 '+pts.length+'件</span>';
+
     if(!pts.length){
       document.getElementById('ro-now').textContent='—';
       document.getElementById('ro-delta').textContent='';
       document.getElementById('ro-date').textContent='';
-      var tx=el('text',{x:W/2,y:H/2,'text-anchor':'middle','font-size':13,fill:faint});
+      var tx=el('text',{x:W/2,y:H/2,'text-anchor':'middle','font-size':22,fill:faint});
       tx.textContent = m.label + 'の記録はまだありません';
       svg.appendChild(tx);
       note.textContent = m.daily ? '' : 'InBodyを測った日に入ります。';
@@ -324,15 +337,15 @@
     for(var g=0;g<=4;g++){
       var gv=lo+(hi-lo)*g/4, gy=Y(gv);
       svg.appendChild(el('line',{x1:L,y1:gy,x2:W-R,y2:gy,stroke:rule,'stroke-width':1}));
-      var t1=el('text',{x:L-8,y:gy+4,'text-anchor':'end','font-size':10.5,fill:faint,
+      var t1=el('text',{x:L-10,y:gy+7,'text-anchor':'end','font-size':20,fill:faint,
         'font-family':'ui-monospace,SFMono-Regular,monospace'});
       t1.textContent=gv.toFixed(m.dec); svg.appendChild(t1);
     }
     // x軸ラベル（4つだけ）
     for(var s=0;s<4;s++){
       var xv=x0+(x1-x0)*s/3;
-      var t2=el('text',{x:X(xv),y:H-10,'text-anchor':(s===0?'start':(s===3?'end':'middle')),
-        'font-size':10.5,fill:faint,'font-family':'ui-monospace,SFMono-Regular,monospace'});
+      var t2=el('text',{x:X(xv),y:H-16,'text-anchor':(s===0?'start':(s===3?'end':'middle')),
+        'font-size':20,fill:faint,'font-family':'ui-monospace,SFMono-Regular,monospace'});
       t2.textContent=fromDay(Math.round(xv)); svg.appendChild(t2);
     }
 
@@ -348,21 +361,21 @@
     var lastPt=null, lastLabel='';
     if(m.daily){
       pts.forEach(function(p){
-        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:2.2,fill:col,opacity:.3}));
+        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:3.2,fill:col,opacity:.32}));
       });
       var wa=movingAvg(pts);
       if(wa.length>=2){
         var wd='';
         wa.forEach(function(p,i){ wd += (i?' L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1); });
-        svg.appendChild(el('path',{d:wd,fill:'none',stroke:col,'stroke-width':2,
+        svg.appendChild(el('path',{d:wd,fill:'none',stroke:col,'stroke-width':2.8,
           'stroke-linejoin':'round','stroke-linecap':'round'}));
         lastPt=wa[wa.length-1]; lastLabel='週の平均';
-        svg.appendChild(el('circle',{cx:X(lastPt.x),cy:Y(lastPt.y),r:4.5,fill:col,
-          stroke:cv('--panel'),'stroke-width':2}));
+        svg.appendChild(el('circle',{cx:X(lastPt.x),cy:Y(lastPt.y),r:6,fill:col,
+          stroke:cv('--panel'),'stroke-width':2.6}));
       } else {
         lastPt=pts[pts.length-1]; lastLabel='最新';
-        svg.appendChild(el('circle',{cx:X(lastPt.x),cy:Y(lastPt.y),r:4.5,fill:col,
-          stroke:cv('--panel'),'stroke-width':2}));
+        svg.appendChild(el('circle',{cx:X(lastPt.x),cy:Y(lastPt.y),r:6,fill:col,
+          stroke:cv('--panel'),'stroke-width':2.6}));
       }
       foot.appendChild(leg('swatch-dot',col,'毎日の記録'));
       if(wa.length>=2) foot.appendChild(leg('swatch-line',col,'7日の平均'));
@@ -379,7 +392,7 @@
           'stroke-linejoin':'round',opacity:.45}));
       }
       ptsS.forEach(function(p){
-        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:2.6,fill:col,opacity:.5}));
+        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:3.4,fill:col,opacity:.5}));
       });
       // InBodyは太く大きく。判断の基準はこちら
       if(ptsI.length>=2){
@@ -388,8 +401,8 @@
         svg.appendChild(el('path',{d:si,fill:'none',stroke:col,'stroke-width':2.4,'stroke-linejoin':'round'}));
       }
       ptsI.forEach(function(p){
-        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:4.8,fill:cv('--panel'),
-          stroke:col,'stroke-width':2.4}));
+        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:6,fill:cv('--panel'),
+          stroke:col,'stroke-width':3}));
       });
 
       // 読み値の基準はInBody。無ければ自己申告で代用する
@@ -488,7 +501,7 @@
       var px=_hit.X(best.x), py=_hit.Y(best.y);
       cross=el('line',{x1:px,y1:T,x2:px,y2:H-B,stroke:cv('--ink-faint'),'stroke-width':1,opacity:.5});
       svg.appendChild(cross);
-      mark=el('circle',{cx:px,cy:py,r:5.5,fill:_hit.col,stroke:cv('--panel'),'stroke-width':2});
+      mark=el('circle',{cx:px,cy:py,r:7,fill:_hit.col,stroke:cv('--panel'),'stroke-width':2.6});
       svg.appendChild(mark);
       tip.innerHTML = fullDate(best.x)
         + (_hit.m.daily ? '' : '　<span style="opacity:.7">'+(best.src==='i'?'InBody':'自己申告')+'</span>')
