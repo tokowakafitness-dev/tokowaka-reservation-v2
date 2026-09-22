@@ -198,7 +198,7 @@
     <div class="hint">
       記録はトークから送れます。<b>「体重」</b>と送ると入力ボタンが出ます。<br>
       体組成（体脂肪率・除脂肪量など）は、InBodyを測った日にトレーナーが入れます。
-      <div style="margin-top:10px;font-size:10.5px;color:var(--ink-faint)">build 2026-09-22c</div>
+      <div style="margin-top:10px;font-size:10.5px;color:var(--ink-faint)">build 2026-09-22d</div>
     </div>
   </div>
 
@@ -542,15 +542,25 @@
     var kids=Array.prototype.slice.call(box.children);
     if (box.dataset.busy==='1') return;                     // 連打を吸収する
     box.dataset.busy='1';
+    // 想定外の例外で busy が立ちっぱなしになると、以後ずっと押せなくなる。10秒で必ず解く。
+    var WEDGE = setTimeout(function(){
+      box.dataset.busy='';
+      kids.forEach(function(x){ x.disabled=false; });
+    }, 10000);
     kids.forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); x.disabled=true; });
     var spanEl=document.getElementById('span');
     if (spanEl) spanEl.innerHTML='<span style="color:var(--ink-faint)">期間を取り直しています…</span>';
     DAYS=Number(b.dataset.days);
-    load().then(function(){
+    // 応答が速いと取り直し表示が一瞬で消え、「押しても何も起きない」ように見える。
+    // 最低350msは見えるように待ってから描き直す。
+    var gate = new Promise(function(r){ setTimeout(r, 350); });
+    load(gate).then(function(){
+      clearTimeout(WEDGE);
       box.dataset.busy=''; kids.forEach(function(x){ x.disabled=false; });
     }).catch(function(err){
       // 失敗したら黙って古い表示を残さない。押した状態も元に戻す。
       box.dataset.busy=''; DAYS=prev;
+      if (WEDGE) clearTimeout(WEDGE);
       kids.forEach(function(x){
         x.disabled=false;
         x.setAttribute('aria-pressed', String(Number(x.dataset.days)===prev));
@@ -579,10 +589,14 @@
     return '';
   }
 
-  function load(){
+  function load(gate){
     var p = { action:'series', days:DAYS };
     if (VIEW_CID) p.customerId = VIEW_CID;
+    // gate は「最低これだけは待ってから描く」合図。取り直し中の表示が一瞬で
+    // 消えると、押しても何も起きなかったように見えるため。
     return api(p).then(function(res){
+      return (gate || Promise.resolve()).then(function(){ return res; });
+    }).then(function(res){
       if(!res.success){
         if(res.code==='NOT_OPEN')   { showError('この画面はまだ公開前です。'); return; }
         if(res.code==='NOT_MEMBER') {
