@@ -1073,6 +1073,102 @@
       cardEl.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : ('<span class="muted">残数情報を取得できませんでした（' + ((res && res.code) || '通信') + '）。</span>');
     }).catch(function(e){ if (_seq !== state._custHomeSeq) return; cardEl.innerHTML = '<span class="muted">残数情報の取得に失敗しました：' + e + '</span>'; });
   }
+  // ── InBody記録（meal-ai）────────────────────────────────
+  //   セッション直後、顧客を開いた画面から数字を打つだけで終わる形にする。
+  //   会員のカルテ画面（reservation.tokowaka-gym.com/karte/）に即反映される。
+  //   ※この機能が未配置でも予約画面を壊さないよう、失敗は静かに畳む。
+  function buildInBodyCard(customerId, name){
+    var card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = '<div class="sect-h" style="margin:0 0 8px">InBodyを記録</div>'
+                   + '<span class="muted">読み込み中…</span>';
+
+    api({ action:'line_maInBodyCard', customerId: customerId }).then(function(res){
+      if (!res || !res.success) { card.style.display = 'none'; return; }   // 権限なし・未配置は出さない
+      card.innerHTML = '<div class="sect-h" style="margin:0 0 8px">InBodyを記録</div>';
+
+      var last = res.last || null;
+      var lead = document.createElement('p'); lead.className = 'muted'; lead.style.margin = '0 0 10px';
+      lead.textContent = last
+        ? ('前回 ' + last.d + ' の値を薄く表示しています。測った項目だけ入れれば結構です。')
+        : ('この方の実測はまだありません。測った項目だけ入れれば結構です。');
+      card.appendChild(lead);
+
+      // 測定日（既定＝今日。過去日も入れられる）
+      var drow = document.createElement('div');
+      drow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+      var dlab = document.createElement('span'); dlab.className = 'muted'; dlab.textContent = '測定日';
+      var dinp = document.createElement('input'); dinp.type = 'date'; dinp.value = res.today;
+      dinp.max = res.today; dinp.style.cssText = 'padding:9px;flex:1;';
+      drow.appendChild(dlab); drow.appendChild(dinp);
+      card.appendChild(drow);
+
+      // 数値入力（項目はサーバー定義に従う。範囲もサーバーと同じ値を使う）
+      var inputs = {};
+      (res.fields || []).forEach(function(f){
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+        var lab = document.createElement('span');
+        lab.style.cssText = 'flex:0 0 78px;font-size:13px;';
+        lab.textContent = f.label;
+        var inp = document.createElement('input');
+        inp.type = 'number'; inp.inputMode = 'decimal';
+        inp.step = f.dec ? '0.1' : '1';
+        inp.min = f.min; inp.max = f.max;
+        inp.placeholder = (last && last[f.key] !== undefined) ? String(last[f.key]) : '—';
+        inp.style.cssText = 'padding:9px;flex:1;min-width:0;';
+        var unit = document.createElement('span');
+        unit.className = 'muted'; unit.style.cssText = 'flex:0 0 28px;font-size:12px;';
+        unit.textContent = f.unit || '';
+        row.appendChild(lab); row.appendChild(inp); row.appendChild(unit);
+        card.appendChild(row);
+        inputs[f.key] = inp;
+      });
+
+      var hint = document.createElement('p'); hint.className = 'muted';
+      hint.style.cssText = 'margin:2px 0 10px;font-size:12px;';
+      hint.textContent = '体重と体脂肪率を入れれば、除脂肪量は自動で計算します。';
+      card.appendChild(hint);
+
+      var btn = document.createElement('button');
+      btn.className = 'btn'; btn.style.marginTop = '0'; btn.textContent = 'この内容で記録する';
+      btn.onclick = function(){
+        var payload = { action:'line_maSaveInBody', customerId: customerId, date: dinp.value };
+        var shown = [], any = false;
+        (res.fields || []).forEach(function(f){
+          var v = String(inputs[f.key].value || '').trim();
+          payload[f.key] = v;
+          if (v !== '') { any = true; shown.push(f.label + ' ' + v + f.unit); }
+        });
+        if (!any) { window.alert('1つ以上入力してください。'); return; }
+        if (!window.confirm(name + ' 様の記録（' + dinp.value + '）\n' + shown.join('\n') + '\n\nこの内容で記録します。')) return;
+
+        btn.disabled = true; btn.textContent = '記録中…';
+        api(payload).then(function(r2){
+          btn.disabled = false; btn.textContent = 'この内容で記録する';
+          if (!r2 || !r2.success) { window.alert('記録できませんでした。\n' + ((r2 && r2.message) || (r2 && r2.code) || '通信エラー')); return; }
+          var msg = '記録しました（' + r2.date + '）。';
+          if (r2.diffs && r2.diffs.length) {
+            msg += '\n\n前回（' + r2.prevDate + '）から';
+            r2.diffs.forEach(function(d){
+              msg += '\n' + d.label + '  ' + (d.diff > 0 ? '+' : (d.diff < 0 ? '−' : '±')) + Math.abs(d.diff) + d.unit;
+            });
+          }
+          window.alert(msg);
+          (res.fields || []).forEach(function(f){ inputs[f.key].value = ''; });
+          // 次回の下敷きを更新したいので、カードごと引き直す
+          var fresh = buildInBodyCard(customerId, name);
+          if (card.parentNode) card.parentNode.replaceChild(fresh, card);
+        }).catch(function(e){
+          btn.disabled = false; btn.textContent = 'この内容で記録する';
+          window.alert('通信に失敗しました：' + e);
+        });
+      };
+      card.appendChild(btn);
+    }).catch(function(){ card.style.display = 'none'; });
+
+    return card;
+  }
+
   // 選んだ顧客の予約（変更・キャンセル）
   function renderCustomerDetail(customerId, name){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
@@ -1084,6 +1180,8 @@
     var homeCard = document.createElement('div'); homeCard.className = 'card';
     box.appendChild(homeCard);
     refreshCustomerHome(customerId, homeCard);
+    // InBody記録（meal-ai）。取得に失敗しても予約画面は壊さない
+    try { box.appendChild(buildInBodyCard(customerId, name)); } catch (e) {}
     var _list = (state._trainerResv || []).filter(function(r){ return r.customerId === customerId; });
     var _cId = customerId;   // 予約が無くても顧客IDが確定＝代行/チケット補充が可能
     if (!_list.length) { var none = document.createElement('p'); none.className = 'muted'; none.textContent = '今後のご予約はありません。'; box.appendChild(none); }

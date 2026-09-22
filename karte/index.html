@@ -246,11 +246,16 @@
 
     var col=cv(m.c), rule=cv('--rule-soft'), faint=cv('--ink-faint'), gold=cv('--gold');
 
-    // 値の抽出
-    var pts=[];
+    // 値の抽出。測定元（i=InBody / s=自己申告）で分ける。
+    // 家庭用体重計はInBodyと絶対値がずれるが、同じ端末なら動きは読める。
+    // だから捨てずに、線を分けて両方見せる。
+    var pts=[], ptsI=[], ptsS=[];
     for(var i=0;i<DATA.rows.length;i++){
-      var v=DATA.rows[i][m.k];
-      if(typeof v==='number' && !isNaN(v)) pts.push({x:toDay(DATA.rows[i].d), y:v, d:DATA.rows[i].d});
+      var row=DATA.rows[i], v=row[m.k];
+      if(typeof v!=='number' || isNaN(v)) continue;
+      var pt={x:toDay(row.d), y:v, d:row.d, src:(row.s && row.s[m.k]==='i') ? 'i' : 's'};
+      pts.push(pt);
+      (pt.src==='i' ? ptsI : ptsS).push(pt);
     }
 
     var foot=document.getElementById('foot'); foot.innerHTML='';
@@ -340,19 +345,39 @@
         ? '体重は水分で1〜2kg動きます。日々の上下ではなく、平均の線の傾きを見てください。'
         : 'あと'+Math.max(0,4-pts.length)+'回記録すると、平均の線が出ます。';
     } else {
-      if(pts.length>=2){
-        var sd='';
-        pts.forEach(function(p,i){ sd += (i?' L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1); });
-        svg.appendChild(el('path',{d:sd,fill:'none',stroke:col,'stroke-width':2,'stroke-linejoin':'round'}));
+      // 自己申告は細く小さく（先に描いて下に敷く）
+      if(ptsS.length>=2){
+        var ss2='';
+        ptsS.forEach(function(p,i){ ss2 += (i?' L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1); });
+        svg.appendChild(el('path',{d:ss2,fill:'none',stroke:col,'stroke-width':1.2,
+          'stroke-linejoin':'round',opacity:.45}));
       }
-      pts.forEach(function(p){
-        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:4.5,fill:cv('--panel'),
-          stroke:col,'stroke-width':2.2}));
+      ptsS.forEach(function(p){
+        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:2.6,fill:col,opacity:.5}));
       });
-      lastPt=pts[pts.length-1]; lastLabel='最新';
-      foot.appendChild(leg('swatch-line',col,'測定値（'+pts.length+'回）'));
+      // InBodyは太く大きく。判断の基準はこちら
+      if(ptsI.length>=2){
+        var si='';
+        ptsI.forEach(function(p,i){ si += (i?' L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1); });
+        svg.appendChild(el('path',{d:si,fill:'none',stroke:col,'stroke-width':2.4,'stroke-linejoin':'round'}));
+      }
+      ptsI.forEach(function(p){
+        svg.appendChild(el('circle',{cx:X(p.x),cy:Y(p.y),r:4.8,fill:cv('--panel'),
+          stroke:col,'stroke-width':2.4}));
+      });
+
+      // 読み値の基準はInBody。無ければ自己申告で代用する
+      var base = ptsI.length ? ptsI : ptsS;
+      lastPt = base[base.length-1];
+      lastLabel = ptsI.length ? 'InBody' : '自己申告';
+
+      if(ptsI.length) foot.appendChild(leg('swatch-line',col,'InBody（'+ptsI.length+'回）'));
+      if(ptsS.length) foot.appendChild(leg('swatch-dot',col,'自己申告（'+ptsS.length+'回）'));
       if(gl.length>=2) foot.appendChild(leg('swatch-dash',gold,'目標'));
-      note.textContent='測定が少ないため平均の線は引きません。点と点を結んでいます。';
+      note.textContent = (ptsI.length && ptsS.length)
+        ? '太い線がInBody、細い線が自己申告です。体重計が違うと数値そのものはずれます。同じ体重計の中での動きを見てください。'
+        : (ptsI.length ? '測定が少ないため平均の線は引きません。実測を結んでいます。'
+                       : '自己申告のみです。InBodyを測ると太い線が引かれます。');
     }
 
     // 読み値
@@ -364,7 +389,10 @@
         for(var q=wa2.length-1;q>=0;q--){ if(wa2[q].x<=want){ prev=wa2[q].y; break; } }
         if(prev===null && wa2.length>1) prev=wa2[0].y;
       } else if(pts.length>=2) prev=pts[pts.length-2].y;
-    } else if(pts.length>=2) prev=pts[pts.length-2].y;
+    } else {
+      var series = ptsI.length ? ptsI : ptsS;      // 系統をまたいで比べない
+      if(series.length>=2) prev=series[series.length-2].y;
+    }
 
     document.getElementById('ro-now').innerHTML =
       now.toFixed(m.dec) + (m.unit ? ' <small>'+m.unit+'</small>' : '');
@@ -376,7 +404,7 @@
       var diff=now-prev;
       var c = Math.abs(diff)<0.05 ? cv('--ink-soft') : (goodDown(m)===(diff<0) ? cv('--ok') : cv('--crit'));
       document.getElementById('ro-delta').innerHTML =
-        '<span style="color:'+cv('--ink-faint')+'">'+(m.daily?'7日前から':'前回から')+'</span><br>'+
+        '<span style="color:'+cv('--ink-faint')+'">'+(m.daily?'7日前から':('前回の'+lastLabel+'から'))+'</span><br>'+
         '<span style="color:'+c+';font-size:15px">'+(diff>0?'+':'−')+Math.abs(diff).toFixed(m.dec)+(m.unit||'')+'</span>';
     }
 
@@ -396,10 +424,20 @@
 
   function buildTable(m, pts){
     var rows = pts.slice(-40).reverse();
-    var h='<thead><tr><th>日付</th><th>'+m.label+(m.unit?'（'+m.unit+'）':'')+'</th><th>前回差</th></tr></thead><tbody>';
+    var showSrc = !m.daily;                       // 体重はどちらも体重計の値なので出所を分けない
+    var h='<thead><tr><th>日付</th>'+(showSrc?'<th>測定</th>':'')+
+          '<th>'+m.label+(m.unit?'（'+m.unit+'）':'')+'</th><th>前回差</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
-      var d = (i+1<rows.length) ? rows[i].y-rows[i+1].y : null;
-      h+='<tr><td>'+fullDate(rows[i].x)+'</td><td>'+rows[i].y.toFixed(m.dec)+'</td><td>'+
+      // 差は同じ測定元どうしでしか取らない（InBodyと自己申告を引き算しない）
+      var d=null;
+      for(var j=i+1;j<rows.length;j++){
+        if(showSrc && rows[j].src!==rows[i].src) continue;
+        d = rows[i].y-rows[j].y; break;
+      }
+      h+='<tr><td>'+fullDate(rows[i].x)+'</td>'+
+         (showSrc?('<td style="text-align:left;color:var(--ink-faint)">'+
+                   (rows[i].src==='i'?'InBody':'自己')+'</td>'):'')+
+         '<td>'+rows[i].y.toFixed(m.dec)+'</td><td>'+
          (d===null?'—':((d>0?'+':'−')+Math.abs(d).toFixed(m.dec)))+'</td></tr>';
     }
     document.getElementById('tbl').innerHTML = h+'</tbody>';
@@ -426,7 +464,9 @@
       svg.appendChild(cross);
       mark=el('circle',{cx:px,cy:py,r:5.5,fill:_hit.col,stroke:cv('--panel'),'stroke-width':2});
       svg.appendChild(mark);
-      tip.innerHTML = fullDate(best.x)+'<br>'+best.y.toFixed(_hit.m.dec)+(_hit.m.unit||'');
+      tip.innerHTML = fullDate(best.x)
+        + (_hit.m.daily ? '' : '　<span style="opacity:.7">'+(best.src==='i'?'InBody':'自己申告')+'</span>')
+        + '<br>'+best.y.toFixed(_hit.m.dec)+(_hit.m.unit||'');
       tip.style.opacity=1;
       var sx=px/W*box.width, tw=tip.offsetWidth;
       tip.style.left = Math.max(4, Math.min(box.width-tw-4, sx-tw/2)) + 'px';
