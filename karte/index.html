@@ -4,142 +4,130 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
 <title>からだのカルテ</title>
 <style>
-  /* ── TOKOWAKA トークン ─────────────────────────── */
+  /* ── 予約LIFF（liff/index.html）と同じ設計体系 ─────────── */
   :root{
-    --navy:#1b2a47; --gold:#b8965a; --cream:#f6f0e5;
-    --bg:#f6f0e5; --panel:#fffdf8; --rule:#e3dacb; --rule-soft:#efe8db;
-    --ink:#22201c; --ink-soft:#5f5a51; --ink-faint:#8d867a;
+    --pri:#1b2a47; --navy:#1b2a47; --acc:#b8965a; --gold:#b8965a;
+    --line:#e6ddcd; --rule:#e6ddcd; --rule-soft:#f1eadd;
+    --bg:#faf5eb; --panel:#fff;
+    --ink:#1a1a1a; --ink-soft:#6b6459; --ink-faint:#9a9283;
+    --ok:#2e7d32; --crit:#a4402a;
+    /* データの色は色覚検証済み（白地でも全項目合格） */
     --wt:#1f63c4; --fat:#c85a1e; --lean:#2e8b57; --water:#8f4bb0;
-    --ok:#2e6b3f; --crit:#a4402a;
-    --r:3px;
   }
-  @media (prefers-color-scheme:dark){
-    :root{
-      --bg:#0f1520; --panel:#141b28; --rule:#2b3648; --rule-soft:#222c3c;
-      --ink:#ece6da; --ink-soft:#a9a496; --ink-faint:#7c7566; --gold:#c9a86c;
-      --wt:#5b91e0; --fat:#d2703c; --lean:#3fa876; --water:#a86bc8;
-      --ok:#5fb37a; --crit:#e0795e;
-    }
-  }
-  :root[data-theme="dark"]{
-    --bg:#0f1520; --panel:#141b28; --rule:#2b3648; --rule-soft:#222c3c;
-    --ink:#ece6da; --ink-soft:#a9a496; --ink-faint:#7c7566; --gold:#c9a86c;
-    --wt:#5b91e0; --fat:#d2703c; --lean:#3fa876; --water:#a86bc8;
-    --ok:#5fb37a; --crit:#e0795e;
-  }
-  :root[data-theme="light"]{
-    --bg:#f6f0e5; --panel:#fffdf8; --rule:#e3dacb; --rule-soft:#efe8db;
-    --ink:#22201c; --ink-soft:#5f5a51; --ink-faint:#8d867a; --gold:#b8965a;
-    --wt:#1f63c4; --fat:#c85a1e; --lean:#2e8b57; --water:#8f4bb0;
-    --ok:#2e6b3f; --crit:#a4402a;
-  }
-
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   body{
     margin:0; background:var(--bg); color:var(--ink);
-    font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
-    font-weight:300; letter-spacing:.035em; line-height:1.7;
-    -webkit-font-smoothing:antialiased;
+    font-family:'Noto Sans JP',-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;
+    line-height:1.7; -webkit-font-smoothing:antialiased;
   }
   #app{max-width:480px;margin:0 auto;min-height:100vh;padding-bottom:28px;}
 
-  header{padding:18px 18px 14px;border-bottom:1px solid var(--rule);}
-  .eyebrow{font-size:10px;letter-spacing:.22em;color:var(--gold);text-transform:uppercase;}
-  h1{margin:4px 0 0;font-size:17px;font-weight:400;letter-spacing:.09em;}
-  .who{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+  header{
+    padding:15px 16px; background:var(--navy); color:#fff;
+    border-bottom:1px solid var(--line);
+    font-family:'Shippori Mincho',serif; font-weight:600; font-size:15px; letter-spacing:.04em;
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+  }
+  header .who{
+    font-family:'Noto Sans JP',sans-serif; font-size:12px; font-weight:400;
+    letter-spacing:.04em; color:#d9cfbb; white-space:nowrap;
+  }
 
-  .wrap{padding:16px 14px 0;}
-  .panel{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r);}
+  .screen{padding:16px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+        padding:16px;margin-bottom:12px;}
 
   /* 読み値 */
-  .readout{padding:16px 16px 12px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;}
-  .ro-label{font-size:11px;color:var(--ink-faint);letter-spacing:.12em;}
-  .ro-now{font-size:33px;font-weight:300;letter-spacing:.01em;font-variant-numeric:tabular-nums;line-height:1.1;}
-  .ro-now small{font-size:14px;color:var(--ink-soft);margin-left:3px;letter-spacing:.06em;}
+  .readout{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;}
+  .ro-label{font-size:12px;color:var(--ink-soft);font-weight:500;letter-spacing:.04em;}
+  .ro-now{font-family:'Shippori Mincho',serif;font-size:32px;font-weight:600;color:var(--navy);
+          letter-spacing:.02em;font-variant-numeric:tabular-nums;line-height:1.25;margin-top:2px;}
+  .ro-now small{font-family:'Noto Sans JP',sans-serif;font-size:13px;font-weight:400;
+                color:var(--ink-soft);margin-left:4px;letter-spacing:.04em;}
   .ro-delta{font-size:12px;color:var(--ink-soft);text-align:right;font-variant-numeric:tabular-nums;}
-  .ro-date{font-size:10px;color:var(--ink-faint);margin-top:2px;}
+  .ro-date{font-size:11px;color:var(--ink-faint);margin-top:3px;}
 
   /* 指標タブ */
-  #tabs{display:flex;gap:6px;overflow-x:auto;padding:0 14px 12px;margin-top:12px;
+  #tabs{display:flex;gap:8px;overflow-x:auto;padding:0 16px 12px;
         scrollbar-width:none;-ms-overflow-style:none;}
   #tabs::-webkit-scrollbar{display:none;}
   #tabs button{
-    flex:0 0 auto;padding:7px 13px;border:1px solid var(--rule);border-radius:var(--r);
-    background:var(--panel);color:var(--ink-soft);font-size:12px;font-family:inherit;
-    font-weight:300;letter-spacing:.08em;cursor:pointer;white-space:nowrap;
+    flex:0 0 auto;padding:9px 15px;border:1px solid var(--line);border-radius:10px;
+    background:#fff;color:var(--ink-soft);font-family:inherit;font-size:13px;font-weight:500;
+    letter-spacing:.03em;cursor:pointer;white-space:nowrap;
   }
-  #tabs button[aria-pressed="true"]{background:var(--navy);border-color:var(--navy);color:#f6f0e5;}
-  #tabs button:disabled{opacity:.34;}
+  #tabs button[aria-pressed="true"]{background:var(--pri);border-color:var(--pri);color:#fff;}
+  #tabs button:disabled{opacity:.36;}
 
   /* グラフ */
-  .chart{padding:6px 6px 0;position:relative;}
+  .chart{position:relative;margin:0 -4px;}
   svg{display:block;width:100%;height:auto;touch-action:pan-y;}
   #tip{
     position:absolute;pointer-events:none;opacity:0;transition:opacity .12s;
-    background:var(--navy);color:#f6f0e5;border-radius:var(--r);
-    padding:7px 10px;font-size:11px;letter-spacing:.04em;line-height:1.5;
+    background:var(--navy);color:#fff;border-radius:10px;
+    padding:8px 11px;font-size:12px;line-height:1.5;letter-spacing:.03em;
     font-variant-numeric:tabular-nums;white-space:nowrap;z-index:5;
-    box-shadow:0 4px 14px rgba(0,0,0,.18);
+    box-shadow:0 4px 14px rgba(27,42,71,.2);
   }
-  #foot{display:flex;flex-wrap:wrap;gap:10px 16px;padding:10px 16px 15px;
-        font-size:10.5px;color:var(--ink-soft);letter-spacing:.06em;}
+  #foot{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px;
+        font-size:12px;color:var(--ink-soft);}
   #foot s{text-decoration:none;display:inline-flex;align-items:center;gap:6px;}
-  i.swatch-line{width:15px;height:2px;background:currentColor;display:inline-block;}
-  i.swatch-dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;}
-  i.swatch-dash{width:15px;height:0;border-top:1.6px dashed currentColor;display:inline-block;}
-  .note{font-size:10.5px;color:var(--ink-faint);padding:0 16px 14px;line-height:1.75;}
+  i.swatch-line{width:16px;height:2px;background:currentColor;display:inline-block;}
+  i.swatch-dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;}
+  i.swatch-dash{width:16px;height:0;border-top:2px dashed currentColor;display:inline-block;}
+  .note{font-size:12px;color:var(--ink-faint);margin-top:10px;line-height:1.8;}
 
   /* 範囲切替 */
-  .ranges{display:flex;gap:6px;padding:12px 14px 0;}
+  .ranges{display:flex;gap:8px;padding:0 16px;}
   .ranges button{
-    flex:1;padding:6px 0;border:1px solid var(--rule);border-radius:var(--r);
-    background:transparent;color:var(--ink-faint);font-size:11px;font-family:inherit;
-    font-weight:300;letter-spacing:.08em;cursor:pointer;
+    flex:1;padding:9px 0;border:1px solid var(--line);border-radius:10px;
+    background:#fff;color:var(--ink-soft);font-family:inherit;font-size:13px;font-weight:500;
+    letter-spacing:.03em;cursor:pointer;
   }
-  .ranges button[aria-pressed="true"]{color:var(--ink);border-color:var(--gold);}
+  .ranges button[aria-pressed="true"]{color:var(--navy);border-color:var(--acc);background:#fffdf7;}
 
   /* 表 */
-  details{margin:14px 14px 0;}
-  summary{font-size:11.5px;color:var(--ink-soft);letter-spacing:.09em;cursor:pointer;padding:9px 2px;}
-  table{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums;
-        margin-top:4px;background:var(--panel);border:1px solid var(--rule);border-radius:var(--r);}
-  th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--rule-soft);font-weight:300;}
-  th{color:var(--ink-faint);font-size:10px;letter-spacing:.1em;text-align:right;}
+  details{margin:12px 16px 0;}
+  summary{font-family:'Shippori Mincho',serif;font-size:14px;color:var(--navy);font-weight:600;
+          letter-spacing:.04em;cursor:pointer;padding:10px 2px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;
+        margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:12px;}
+  th,td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--rule-soft);font-weight:400;}
+  th{color:var(--ink-faint);font-size:11px;font-weight:500;letter-spacing:.04em;text-align:right;}
   th:first-child,td:first-child{text-align:left;}
   tbody tr:last-child td{border-bottom:none;}
   .tbl-wrap{overflow-x:auto;}
 
   /* 状態表示 */
-  .state{padding:38px 22px;text-align:center;}
-  .state p{margin:0 0 8px;font-size:13px;color:var(--ink-soft);line-height:1.9;white-space:pre-line;}
-  .state .sub{font-size:11.5px;color:var(--ink-faint);}
-  .hint{margin:16px 14px 0;padding:13px 15px;border-left:2px solid var(--gold);
-        background:var(--panel);font-size:11.5px;color:var(--ink-soft);line-height:1.85;}
-  .hint b{font-weight:400;color:var(--ink);}
+  .state{padding:40px 24px;text-align:center;}
+  .state p{margin:0 0 8px;font-size:14px;color:var(--ink-soft);line-height:1.9;white-space:pre-line;}
+  .state .sub{font-size:13px;color:var(--ink-faint);}
+  .hint{margin:16px;padding:14px 16px;background:#fff;border:1px solid var(--line);
+        border-left:3px solid var(--acc);border-radius:10px;
+        font-size:13px;color:var(--ink-soft);line-height:1.9;}
+  .hint b{font-weight:700;color:var(--ink);}
   [hidden]{display:none !important;}
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <div class="eyebrow">TOKOWAKA</div>
-    <h1>からだのカルテ</h1>
-    <div class="who" id="who"></div>
+    <span>TOKOWAKA 吉祥寺｜カルテ</span>
+    <span class="who" id="who"></span>
   </header>
 
   <!-- 読み込み中 -->
-  <div id="s-loading" class="state">
-    <p id="loadMsg">読み込んでいます…</p>
-    <p class="sub" id="diag" style="text-align:left;font-family:ui-monospace,monospace;
-       font-size:10.5px;line-height:1.85;word-break:break-all;margin-top:18px;"></p>
-  </div>
+  <div id="s-loading" class="state"><p id="loadMsg">読み込んでいます…</p></div>
 
   <!-- 本体 -->
   <div id="s-main" hidden>
-    <div class="wrap">
-      <div class="panel">
+    <div class="screen" style="padding-bottom:4px">
+      <div class="card">
         <div class="readout">
           <div>
             <div class="ro-label" id="ro-label">体重</div>
@@ -153,8 +141,8 @@
 
     <div id="tabs"></div>
 
-    <div class="wrap" style="padding-top:0">
-      <div class="panel">
+    <div class="screen" style="padding-top:0;padding-bottom:4px">
+      <div class="card">
         <div class="chart">
           <svg id="plot" viewBox="0 0 640 260" preserveAspectRatio="xMidYMid meet" role="img"
                aria-label="体重と体組成の推移グラフ"></svg>
@@ -487,12 +475,6 @@
   }
 
 
-  // テーマ切替に追随
-  if(window.matchMedia){
-    window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(){ if(DATA) draw(); });
-  }
-  new MutationObserver(function(){ if(DATA) draw(); })
-    .observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
   window.addEventListener('resize', function(){ if(DATA) draw(); });
 
   /* ── 通信（JSONP）。予約LIFFと同じ方式 ── */
