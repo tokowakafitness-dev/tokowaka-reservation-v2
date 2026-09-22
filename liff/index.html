@@ -1129,6 +1129,16 @@
       hint.textContent = '体重と体脂肪率を入れれば、除脂肪量は自動で計算します。';
       card.appendChild(hint);
 
+      var open = document.createElement('button');
+      open.className = 'btn btn-outline'; open.style.cssText = 'margin:0 0 10px';
+      open.textContent = 'この方のカルテを見る';
+      open.onclick = function(){
+        var url = 'https://liff.line.me/2010827953-Akx24rTp?c=' + encodeURIComponent(customerId);
+        if (window.liff && liff.openWindow) liff.openWindow({ url: url, external: false });
+        else window.open(url, '_blank');
+      };
+      card.appendChild(open);
+
       var btn = document.createElement('button');
       btn.className = 'btn'; btn.style.marginTop = '0'; btn.textContent = 'この内容で記録する';
       btn.onclick = function(){

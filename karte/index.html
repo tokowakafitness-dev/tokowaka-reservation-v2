@@ -112,6 +112,21 @@
         border-left:3px solid var(--acc);border-radius:10px;
         font-size:13px;color:var(--ink-soft);line-height:1.9;}
   .hint b{font-weight:700;color:var(--ink);}
+  /* トレーナー用：会員一覧と行き来の帯 */
+  .tbar{display:flex;align-items:center;gap:10px;padding:10px 16px;
+        background:#f2ead9;border-bottom:1px solid var(--line);font-size:12.5px;}
+  .tbar b{font-weight:700;color:var(--navy);}
+  .tbar a{margin-left:auto;color:var(--navy);text-decoration:none;font-weight:500;white-space:nowrap;}
+  .mrow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+        background:#fff;border:1px solid var(--line);border-radius:12px;
+        padding:13px 15px;margin-bottom:8px;font-family:inherit;cursor:pointer;}
+  .mrow .nm{font-size:14px;color:var(--ink);flex:1;min-width:0;
+            overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mrow .ago{font-size:12px;color:var(--ink-faint);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .mrow .ago.warn{color:var(--crit);font-weight:500;}
+  .linkbtn{display:block;text-align:center;padding:12px;margin-top:6px;
+           border:1px solid var(--line);border-radius:10px;background:#fff;
+           color:var(--navy);text-decoration:none;font-size:13px;font-weight:500;}
   [hidden]{display:none !important;}
 </style>
 </head>
@@ -125,8 +140,19 @@
   <!-- 読み込み中 -->
   <div id="s-loading" class="state"><p id="loadMsg">読み込んでいます…</p></div>
 
+  <!-- トレーナー：会員一覧 -->
+  <div id="s-list" hidden>
+    <div class="screen">
+      <p class="muted" style="margin:0 0 12px;font-size:12.5px;color:var(--ink-faint)">
+        記録が止まっている方から並べています。氏名をタップするとカルテが開きます。</p>
+      <div id="memberList"></div>
+      <a class="linkbtn" href="https://liff.line.me/2010827953-QgBQFzh9">予約の画面へ →</a>
+    </div>
+  </div>
+
   <!-- 本体 -->
   <div id="s-main" hidden>
+    <div id="trainerBar" hidden></div>
     <div class="screen" style="padding-bottom:4px">
       <div class="card">
         <div class="readout">
@@ -206,7 +232,7 @@
 
   /* ── 画面の切替 ── */
   function show(id){
-    ['s-loading','s-main','s-empty','s-error'].forEach(function(s){
+    ['s-loading','s-list','s-main','s-empty','s-error'].forEach(function(s){
       document.getElementById(s).hidden = (s !== id);
     });
   }
@@ -499,19 +525,89 @@
     DAYS=Number(b.dataset.days); load();
   };
 
-  /* ── 読み込み ── */
+  /* ── 読み込み ─────────────────────────────────────
+   * 会員：自分のカルテだけ。
+   * トレーナー：顧客を指定していなければ会員一覧、指定があればその人のカルテ。
+   *             顧客の指定はサーバー側でトレーナー判定を通した時だけ効く。 */
+  var VIEW_CID = '';
+
+  function qs(name){
+    var m = new RegExp('[?&]'+name+'=([^&]*)').exec(location.search);
+    if (m) return decodeURIComponent(m[1]);
+    // LIFFは元のクエリを liff.state に包んで渡してくることがある
+    var st = new RegExp('[?&]liff\\.state=([^&]*)').exec(location.search);
+    if (st) {
+      var inner = decodeURIComponent(st[1]);
+      var m2 = new RegExp('[?&]'+name+'=([^&]*)').exec(inner);
+      if (m2) return decodeURIComponent(m2[1]);
+    }
+    return '';
+  }
+
   function load(){
-    return api({action:'series', days:DAYS}).then(function(res){
+    var p = { action:'series', days:DAYS };
+    if (VIEW_CID) p.customerId = VIEW_CID;
+    return api(p).then(function(res){
       if(!res.success){
         if(res.code==='NOT_OPEN')   { showError('この画面はまだ公開前です。'); return; }
-        if(res.code==='NOT_MEMBER') { showError('会員情報と結びついていません。トークから会員登録をお願いします。'); return; }
+        if(res.code==='NOT_MEMBER') {
+          // トレーナー本人が会員登録していない場合もここに来る。一覧へ逃がす。
+          return loadMembers(true);
+        }
+        if(res.code==='NOT_FOUND')  { showError('この顧客が見つかりませんでした。'); return; }
         showError('読み込めませんでした（'+(res.code||'不明')+'）'); return;
       }
       DATA=res;
       document.getElementById('who').textContent = res.name ? res.name+' さん' : '';
+      renderTrainerBar(res);
       if(!res.rows.length){ show('s-empty'); return; }
       if(!DATA.rows.some(function(r){ return typeof r[CUR]==='number'; })) CUR='w';
       buildTabs(); show('s-main'); draw();
+    });
+  }
+
+  /* トレーナーが会員のカルテを開いている時だけ、戻り先を上に出す */
+  function renderTrainerBar(res){
+    var bar = document.getElementById('trainerBar');
+    if (!res.asTrainer) { bar.hidden = true; return; }
+    bar.className = 'tbar'; bar.hidden = false; bar.innerHTML = '';
+    var back = document.createElement('a');
+    back.href = 'javascript:void(0)'; back.style.marginLeft = '0';
+    back.textContent = '← 会員一覧';
+    back.onclick = function(){ VIEW_CID=''; DATA=null; show('s-loading'); loadMembers(false); };
+    var who = document.createElement('b'); who.textContent = res.name + ' 様';
+    var resv = document.createElement('a');
+    resv.href = 'https://liff.line.me/2010827953-QgBQFzh9';
+    resv.textContent = '予約へ →';
+    bar.appendChild(back); bar.appendChild(who); bar.appendChild(resv);
+  }
+
+  /* トレーナーの会員一覧。測定が止まっている人が上に来る */
+  function loadMembers(silent){
+    return api({ action:'myMembers' }).then(function(res){
+      if(!res || !res.success){
+        if (silent) { showError('会員情報と結びついていません。トークから会員登録をお願いします。'); return; }
+        showError('会員一覧を取得できませんでした（'+((res&&res.code)||'通信')+'）'); return;
+      }
+      var box = document.getElementById('memberList'); box.innerHTML='';
+      if(!res.members.length){
+        var p0=document.createElement('p'); p0.className='muted';
+        p0.textContent='記録のある会員がまだいません。';
+        box.appendChild(p0);
+      }
+      res.members.forEach(function(m){
+        var b=document.createElement('button'); b.className='mrow';
+        var nm=document.createElement('span'); nm.className='nm'; nm.textContent=m.name;
+        var ago=document.createElement('span'); ago.className='ago';
+        if(m.daysSince===0)      ago.textContent='今日';
+        else if(m.daysSince===1) ago.textContent='昨日';
+        else                     ago.textContent=m.daysSince+'日前';
+        if(m.daysSince>=14) ago.className='ago warn';      // 2週間止まっていたら赤
+        b.appendChild(nm); b.appendChild(ago);
+        b.onclick=function(){ VIEW_CID=m.customerId; DATA=null; CUR='w'; show('s-loading'); load(); };
+        box.appendChild(b);
+      });
+      show('s-list');
     });
   }
 
@@ -551,6 +647,7 @@
   // ID Tokenの失効を自動回復（予約LIFFと同じ手順）
   function api(payload){
     var params = { action: 'ma_' + String(payload.action || '').replace(/^ma_/, ''), days: payload.days };
+    if (payload.customerId) params.customerId = payload.customerId;
     return _apiOnce(params).then(function(res){
       if (res && res.code === 'UNAUTHORIZED') {
         var fresh = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : '';
@@ -582,6 +679,7 @@
       idToken = liff.getIDToken();
       if(!idToken){ showError('IDトークンを取得できません（LIFFのScopeで openid を有効に）。'); return; }
       dbg('記録を読み込んでいます…');
+      VIEW_CID = qs('c');
       return load();
     }).catch(function(e){
       var code = (e && e.code) ? '[' + e.code + '] ' : '';
