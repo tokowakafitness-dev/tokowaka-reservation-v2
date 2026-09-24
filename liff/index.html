@@ -195,6 +195,7 @@
       no_expiry:'期限なし', until:'まで', transfer_avail:'振替可能', this_month_bookings:'今月のご予約',
       month_quota:'月{q}回', plus_carry:'＋繰越{c}回', inactive_contract:'現在ご予約いただけない契約状態です。店舗にお問い合わせください。',
       no_balance:'残数情報がありません。', book_here:'ご予約はこちらから承ります。',
+      next_open:'{m}月分のご予約を受付中です', next_count:'{m}月は {n} 回 ご利用いただけます',
       trainer_prompt:'担当トレーナーを選んでください。', back_home:'← ホームに戻る', trainer_badge:'担当', trainer_choose:'選ぶ ›',
       myres_title:'あなたの予約', back:'戻る', sect_upcoming:'今後のご予約', sect_history:'これまでの記録',
       no_upcoming:'今後のご予約はありません。',
@@ -256,6 +257,7 @@
       no_expiry:'No expiry', until:'', transfer_avail:'Transfers available', this_month_bookings:'Booked this month',
       month_quota:'{q}/month', plus_carry:' + {c} carried over', inactive_contract:'Your contract is currently not active for booking. Please contact the studio.',
       no_balance:'No balance information.', book_here:'You can book from here.',
+      next_open:'Booking for {m} is now open', next_count:'You can book {n} session(s) in {m}',
       trainer_prompt:'Please choose your trainer.', back_home:'← Back to home', trainer_badge:'Your trainer', trainer_choose:'Select ›',
       myres_title:'Your bookings', back:'Back', sect_upcoming:'Upcoming bookings', sect_history:'History',
       no_upcoming:'No upcoming bookings.',
@@ -317,6 +319,7 @@
       no_expiry:'无期限', until:'前', transfer_avail:'可改期', this_month_bookings:'本月预约',
       month_quota:'每月{q}次', plus_carry:' + 结转{c}次', inactive_contract:'当前合约状态无法预约。请与门店联系。',
       no_balance:'暂无剩余次数信息。', book_here:'可在此进行预约。',
+      next_open:'{m}月的预约已开放', next_count:'{m}月可预约 {n} 次',
       trainer_prompt:'请选择您的教练。', back_home:'← 返回首页', trainer_badge:'专属', trainer_choose:'选择 ›',
       myres_title:'我的预约', back:'返回', sect_upcoming:'即将到来的预约', sect_history:'历史记录',
       no_upcoming:'暂无即将到来的预约。',
@@ -378,6 +381,7 @@
       no_expiry:'無期限', until:'前', transfer_avail:'可改期', this_month_bookings:'本月預約',
       month_quota:'每月{q}次', plus_carry:' + 結轉{c}次', inactive_contract:'目前合約狀態無法預約。請與門市聯繫。',
       no_balance:'目前沒有剩餘次數資訊。', book_here:'可在此進行預約。',
+      next_open:'{m}月的預約已開放', next_count:'{m}月可預約 {n} 次',
       trainer_prompt:'請選擇您的教練。', back_home:'← 返回首頁', trainer_badge:'專屬', trainer_choose:'選擇 ›',
       myres_title:'我的預約', back:'返回', sect_upcoming:'即將到來的預約', sect_history:'歷史紀錄',
       no_upcoming:'目前沒有即將到來的預約。',
@@ -1292,6 +1296,20 @@
   }
 
   // 残数(home)のHTML（会員ホーム・トレーナーの顧客詳細で共用）。detailed=trueで月額の「今月のご予約」明細も出す。
+  // 翌月の受付が始まっているときだけ出す帯。
+  //   ホームの残数は「今日」基準なので、25日以降は「今月0回」でも翌月は予約できる。
+  //   それを知らせないと、お客様は「もう予約できない」と判断して翌月の枠を取りに来ない。
+  function nextMonthHtml(h){
+    if (!h || !h.nextMonth || !(h.nextMonth.total > 0)) return '';
+    var m = h.nextMonth.month;
+    var mLabel = (LANG === 'en')
+      ? ['January','February','March','April','May','June','July','August','September','October','November','December'][m - 1]
+      : m;
+    return '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">'
+      + '<div style="font-weight:700;color:var(--acc);font-size:14px;">' + t('next_open', { m: mLabel }) + '</div>'
+      + '<div style="margin-top:4px;font-size:14px;">' + t('next_count', { m: mLabel, n: h.nextMonth.total }) + '</div>'
+      + '</div>';
+  }
   function homeInfoHtml(h, detailed){
     h = h || { type:null };
     // 月額の内訳：繰越優先消化。当月消化 thisMonth をまず繰越から引き、残りを当月枠から引く。
@@ -1329,17 +1347,18 @@
         monthlyBreakdownRow(p) +
         '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + h.ticketRemaining + '</b> ' + t('unit_sheets') + '</span></div>' +
         packBreakdownRow(h.ticketExpire, false) +
-        '<div class="home-row"><span class="k">' + t('bd_total') + '</span><span class="v"><b>' + grand + '</b> ' + t('unit_times') + '</span></div>';
+        '<div class="home-row"><span class="k">' + t('bd_total') + '</span><span class="v"><b>' + grand + '</b> ' + t('unit_times') + '</span></div>' +
+        nextMonthHtml(h);
     }
     if (h.type === 'ticket') return '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + h.remaining + '</b> ' + t('unit_times') + '</span></div>' +
-      packBreakdownRow(h.expire, true);
+      packBreakdownRow(h.expire, true) + nextMonthHtml(h);
     if (h.type === 'monthly') {
       var mp = monthlyParts();
       var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b>' + mp.total + '</b> ' + t('unit_times') + '</span></div>';
       s += monthlyBreakdownRow(mp);
       if (detailed) { var carry = h.carryover ? t('plus_carry', { c: h.carryover }) : '';
         s += '<div class="home-row"><span class="k">' + t('this_month_bookings') + '</span><span class="v" style="font-size:14px;">' + t('month_detail', { used: h.thisMonth, quota: t('month_quota', { q: h.quota }), carry: carry }) + '</span></div>'; }
-      return s;
+      return s + nextMonthHtml(h);
     }
     return detailed ? '<p class="muted" style="margin-top:12px;">' + t('book_here') + '</p>' : '<p class="muted">' + t('no_balance') + '</p>';
   }
