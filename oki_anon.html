@@ -338,6 +338,9 @@ function parseSlotCsv(csv) {
   for (var i = 1; i < lines.length; i++) {
     var cols = lines[i].split(',').map(function(c){ return c.replace(/^"|"$/g,'').trim(); });
     if (cols.length < 6 || !cols[0]) continue;
+    // 体験は90分押さえるため、90分確保できない枠は出さない（trial_ok＝9列目・2026-09-25）。
+    //   列が無い古いデータは undefined になり従来どおり表示＝後方互換。
+    if (cols[8] === 'no') continue;
     slots.push({ date:cols[0], dayOfWeek:cols[1], startTime:cols[2], endTime:cols[3], startISO:cols[4], endISO:cols[5], trainerName:cols[6]||'', trainerId:cols[7]||'' });
   }
   return slots;
