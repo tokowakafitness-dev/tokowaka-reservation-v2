@@ -1587,6 +1587,7 @@
 
   function renderWeek(){
     var base = new Date(); base.setHours(0,0,0,0);
+    base.setDate(base.getDate() - base.getDay());        // その週の日曜へ（0=日）。左端=日曜・右端=土曜で固定
     base.setDate(base.getDate() + state.weekOffset*7);
     var days = [];
     for (var i=0;i<7;i++){ var d=new Date(base); d.setDate(base.getDate()+i); days.push(d); }

@@ -347,7 +347,8 @@ function parseSlotCsv(csv) {
 
 function getWeekDates(offset) {
   var today = new Date(); today.setHours(0,0,0,0);
-  var start = new Date(today); start.setDate(today.getDate() + offset * 7);
+  // 左端=日曜・右端=土曜で固定（今日始まりだと週の並びが日替わりで変わり、見比べにくい）
+  var start = new Date(today); start.setDate(today.getDate() - today.getDay() + offset * 7);
   var dates = [];
   for (var i = 0; i < 7; i++) { var d = new Date(start); d.setDate(start.getDate() + i); dates.push(d); }
   return dates;
