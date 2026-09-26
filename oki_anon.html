@@ -362,7 +362,9 @@ function renderGrid() {
   var dates  = getWeekDates(weekOffset);
   var today  = new Date(); today.setHours(0,0,0,0);
   var now    = new Date();
-  var cutoff = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  // サーバー側の締め切り（SETTINGS.BOOKING_LEAD_MINUTES=180）と揃える。
+  //   2時間にしていたため「画面には出るのに予約するとエラー」が1時間ぶん起きていた（2026-09-26）。
+  var cutoff = new Date(now.getTime() + 3 * 60 * 60 * 1000);
   var f = dates[0], l = dates[6];
   var titleStr = f.getFullYear() + '年' + (f.getMonth()+1) + '月';
   if (f.getMonth() !== l.getMonth()) titleStr += ' 〜 ' + (l.getMonth()+1) + '月';
@@ -455,8 +457,9 @@ function doSubmit() {
   if (!lastName||!firstName||!email||!phone) { eb.textContent='姓・名・メールアドレス・電話番号は必須です。'; eb.style.display='block'; return; }
   if (!selSlot) { eb.textContent='日時を選択してください。'; eb.style.display='block'; return; }
   var slotStart = new Date(selSlot.startISO);
-  var twoHoursLater = new Date(Date.now() + 2 * 60 * 60 * 1000);
-  if (slotStart < twoHoursLater) { eb.textContent='当日のご予約は2時間前までとなります。別の日時をお選びください。'; eb.style.display='block'; return; }
+  // サーバー側の締め切り（開始3時間前）と揃える。2時間のままだと送信して初めてエラーになる（2026-09-26）
+  var leadLimit = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  if (slotStart < leadLimit) { eb.textContent='ご予約は開始の3時間前まで承っております。別の日時をお選びください。'; eb.style.display='block'; return; }
   eb.style.display = 'none';
   var btn = document.getElementById('sbtn'); btn.disabled=true; btn.textContent='送信中...';
   document.getElementById('submittingOverlay').classList.add('on');
