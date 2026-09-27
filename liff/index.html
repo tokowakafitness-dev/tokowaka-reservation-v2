@@ -476,6 +476,39 @@
   var state = { trainerId:'', trainerName:'', weekOffset:0, slots:[], selected:null, _index:{}, changeMode:false, changeReservationId:'', excludeStartISO:'', defaultTrainerId:'', transferMode:false, proxyMode:false, proxyCustomerId:'', proxyCustomerName:'', _trainerResv:[], transferCredits:null, useTransfer:false, repeatCount:1, isPair:false, attendeeCount:1, hasNormalRoute:false, pairRemaining:0, pairPackMax:0, pairExpire:'', packKind:'normal', batchMode:false, batchSel:{} };
   var _seq = 0;
 
+  // ---- 通信速度の計測（2026-09-27）----
+  //   目的：Cloudflareへ移す前の「いまの速さ」を記録として残すこと。
+  //   常に記録し、URLに perf を付けて開いたときだけ内訳を画面下に出す（普段の画面は変わらない）。
+  var _PERF = [], _PERF_ON = false;
+  try { _PERF_ON = /[?&#]perf/.test(location.href); } catch(e){}
+  function _nowMs(){ return (window.performance && performance.now) ? performance.now() : Date.now(); }
+  var _T0 = _nowMs();
+  function _perfAdd(action, ms){
+    _PERF.push({ a: String(action || '?').replace(/^line_/, ''), ms: Math.round(ms) });
+    if (_PERF_ON) _perfRender();
+  }
+  function _perfRender(){
+    var el = document.getElementById('_perfPanel');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = '_perfPanel';
+      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;max-height:46vh;overflow:auto;'
+        + 'background:rgba(19,32,58,.96);color:#f4f1ea;font:11px/1.55 -apple-system,sans-serif;'
+        + 'padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));';
+      document.body.appendChild(el);
+    }
+    var total = 0, i;
+    for (i = 0; i < _PERF.length; i++) total += _PERF[i].ms;
+    var rows = _PERF.map(function(p, n){
+      return (n + 1) + '. ' + p.a + ' … <b>' + p.ms.toLocaleString() + 'ms</b>';
+    }).join('<br>');
+    el.innerHTML = '<div style="color:#cda86c;letter-spacing:.06em;margin-bottom:3px">通信の内訳'
+      + '（画面を開いてから ' + Math.round(_nowMs() - _T0).toLocaleString() + 'ms）</div>'
+      + rows
+      + '<div style="margin-top:5px;border-top:1px solid #37527e;padding-top:4px">通信 '
+      + _PERF.length + '回 ／ 合計 <b>' + total.toLocaleString() + 'ms</b></div>';
+  }
+
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
   function show(id){
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
@@ -492,7 +525,8 @@
       var s = document.createElement('script');
       var timer = setTimeout(function(){ cleanup(); reject('サーバー応答がタイムアウトしました'); }, 20000);
       function cleanup(){ clearTimeout(timer); try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
-      window[cb] = function(data){ cleanup(); resolve(data); };
+      var _t0 = _nowMs();
+      window[cb] = function(data){ cleanup(); _perfAdd(params.action, _nowMs() - _t0); resolve(data); };
       var qs = Object.keys(params).map(function(k){ return encodeURIComponent(k) + '=' + encodeURIComponent(params[k] == null ? '' : params[k]); }).join('&');
       s.src = GAS_URL + '?' + qs + '&callback=' + cb;
       s.onerror = function(){ cleanup(); reject('サーバーへの接続に失敗しました'); };
@@ -562,7 +596,9 @@
       if (!LIFF_ID) { showError('LIFF IDが未設定です。'); return; }
       if (!window.liff) { showError('LIFF SDKが読み込めていません（ネットワーク）。'); return; }
       dbg('LIFF初期化中…');
+      var _tInit = _nowMs();
       liff.init({ liffId: LIFF_ID }).then(function(){
+        _perfAdd('liff.init', _nowMs() - _tInit);
         dbg('ログイン確認中…');
         if (!liff.isLoggedIn()) { dbg('ログインへ移動…'); liff.login(); return; }
         idToken = liff.getIDToken();
