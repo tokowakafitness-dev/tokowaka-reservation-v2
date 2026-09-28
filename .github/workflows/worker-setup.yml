@@ -32,9 +32,12 @@ jobs:
 
       - name: D1 を用意する（アジア太平洋）
         run: |
+          # 作成時の出力に region が出る。ここでは d1 info を呼ばない：
+          # 設定ファイルにIDがまだ入っていない段階では、wrangler がプレースホルダーを
+          # 探しに行って失敗する（場所の確認はデプロイ側で行う）。
           npx wrangler d1 create "$D1_NAME" --location=apac || echo "既にあります（作成済み）"
-          echo "----- 設置場所の確認 -----"
-          npx wrangler d1 info "$D1_NAME" || echo "場所を取得できませんでした"
+          echo "----- 一覧 -----"
+          npx wrangler d1 list
 
       - name: KV を用意する
         run: |
@@ -44,5 +47,5 @@ jobs:
 
       - name: 確認すること
         run: |
-          echo "上の「設置場所の確認」で APAC になっていれば成功です。"
+          echo "作成時の出力に region APAC と出ていれば成功です。"
           echo "IDを手で貼る必要はありません。デプロイ時に名前から自動で引きます。"
