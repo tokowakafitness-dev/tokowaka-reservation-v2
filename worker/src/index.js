@@ -12,6 +12,7 @@ import { isAllowed, redact, canActOnOther } from './perms.js';
 import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
 import { routeSlots } from './routes/slots.js';
+import { handleIngest } from './routes/ingest.js';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
@@ -69,6 +70,13 @@ export default {
         sync = r.results || [];
       } catch (_) {}
       return json({ ok: true, now: Date.now(), sync }, origin);
+    }
+
+    // GASからの押し出し。LINEのID Tokenではなく合言葉で確かめる別経路。
+    //   お客様のブラウザからは呼ばせないので、CORSも許さない（Originを返さない）。
+    if (url.pathname === '/ingest') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return handleIngest(request, env);
     }
 
     if (request.method !== 'POST') {
