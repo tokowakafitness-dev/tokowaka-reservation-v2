@@ -1,6 +1,9 @@
 name: Worker をデプロイ
 
 # worker/ 配下が変わったときだけ動く。GitHub Pages（予約サイト本体）には影響しない。
+#
+# D1とKVのIDは、名前から毎回引いて設定に差し込む。
+#   → 人がIDを貼る作業が要らない。作り直しても追従する。貼り間違いも起きない。
 on:
   push:
     branches: [main]
@@ -19,6 +22,11 @@ jobs:
     defaults:
       run:
         working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_NAME: tokowaka
+      KV_TITLE: KV
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,29 +36,49 @@ jobs:
       - name: wrangler を入れる
         run: npm install --no-fund --no-audit wrangler@4
 
-      - name: 設定が埋まっているか確かめる
+      - name: D1とKVのIDを名前から引く
+        run: |
+          set -euo pipefail
+
+          # wrangler は先頭にバナーを出すので、最初の '[' 以降だけをJSONとして読む
+          d1_json="$(npx wrangler d1 list --json 2>/dev/null | sed -n '/^\[/,$p')"
+          D1_ID="$(printf '%s' "$d1_json" | jq -r --arg n "$D1_NAME" '.[] | select(.name==$n) | .uuid' | head -1)"
+
+          kv_json="$(npx wrangler kv namespace list 2>/dev/null | sed -n '/^\[/,$p')"
+          KV_ID="$(printf '%s' "$kv_json" | jq -r --arg t "$KV_TITLE" '.[] | select(.title==$t) | .id' | head -1)"
+
+          if [ -z "$D1_ID" ] || [ "$D1_ID" = "null" ]; then
+            echo "::error::D1「$D1_NAME」が見つかりません。先に「Worker セットアップ」を実行してください。"; exit 1
+          fi
+          if [ -z "$KV_ID" ] || [ "$KV_ID" = "null" ]; then
+            echo "::error::KV「$KV_TITLE」が見つかりません。先に「Worker セットアップ」を実行してください。"; exit 1
+          fi
+
+          # D1の場所を確認する。apac 以外だと日本からの応答が遅くなるため警告する。
+          region="$(printf '%s' "$d1_json" | jq -r --arg n "$D1_NAME" '.[] | select(.name==$n) | (.region // .location // "unknown")' | head -1)"
+          echo "D1 の場所: $region"
+          case "$region" in
+            APAC|apac|unknown) : ;;
+            *) echo "::warning::D1が $region にあります。日本から遠いため、セットアップを recreate_d1=true で流し直すことを検討してください。" ;;
+          esac
+
+          sed -i "s|PASTE_D1_ID_HERE|$D1_ID|" wrangler.toml
+          sed -i "s|PASTE_KV_ID_HERE|$KV_ID|" wrangler.toml
+          echo "IDを設定に差し込みました（IDは機密ではありませんが、ログには出しません）"
+
+      - name: 差し込み漏れがないか確かめる
         run: |
           if grep -q 'PASTE_.*_HERE' wrangler.toml; then
-            echo "::error::wrangler.toml に未設定の箇所があります。先に worker-setup を実行し、IDを貼ってください。"
-            exit 1
+            echo "::error::wrangler.toml に未設定の箇所が残っています。"; exit 1
           fi
 
       - name: スキーマを適用（何度流しても同じ結果になる）
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler d1 execute tokowaka --remote --file=schema.sql
+        run: npx wrangler d1 execute "$D1_NAME" --remote --file=schema.sql
 
       - name: デプロイ
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy
+        run: npx wrangler deploy 2>&1 | tee deploy.log
 
-      - name: 疎通を確かめる
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: 公開先を表示
         run: |
-          URL="$(npx wrangler deployments list --json 2>/dev/null | head -c 0; echo '')"
-          echo "デプロイ完了。/health で鮮度を確認できます。"
+          grep -Eo 'https://[a-zA-Z0-9.-]+workers\.dev' deploy.log | head -1 \
+            || echo "URLはデプロイのログを参照してください"
