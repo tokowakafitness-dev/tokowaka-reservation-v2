@@ -5,6 +5,11 @@
 --
 -- 適用: wrangler d1 execute tokowaka --remote --file=worker/schema.sql
 
+-- ★外部キー制約は置かない（2026-09-28）
+--   第1段階のD1は写しであり、真実はスプレッドシートとカレンダーにある。
+--   元データに歯抜け（担当トレーナー未設定など）があっても、それを理由に
+--   顧客や予約を丸ごと落としてはいけない。整合は元データ側で正す。
+
 -- ============================================================
 -- トレーナー
 -- ============================================================
@@ -40,8 +45,7 @@ CREATE TABLE IF NOT EXISTS customers (
   note               TEXT,
   created_at         INTEGER NOT NULL,
   updated_at         INTEGER NOT NULL,
-  synced_at          INTEGER,
-  FOREIGN KEY (default_trainer_id) REFERENCES trainers(trainer_id)
+  synced_at          INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_customers_line    ON customers(line_user_id);
 CREATE INDEX IF NOT EXISTS idx_customers_trainer ON customers(default_trainer_id);
@@ -77,8 +81,7 @@ CREATE TABLE IF NOT EXISTS contracts (
   approved_at    INTEGER,
   source         TEXT NOT NULL DEFAULT 'console',   -- console | sheet（第1段階はsheet＝写し）
   sheet_row      INTEGER,                   -- 写しのとき、請求ブックの行番号
-  synced_at      INTEGER,
-  FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+  synced_at      INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_contracts_cust   ON contracts(customer_id, start_date);
 CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
@@ -109,9 +112,7 @@ CREATE TABLE IF NOT EXISTS reservations (
   created_by         TEXT,
   created_at         INTEGER NOT NULL,
   cancelled_at       INTEGER,
-  synced_at          INTEGER,
-  FOREIGN KEY (customer_id) REFERENCES customers(customer_id),
-  FOREIGN KEY (trainer_id)  REFERENCES trainers(trainer_id)
+  synced_at          INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_resv_trainer ON reservations(trainer_id, start_at);
 CREATE INDEX IF NOT EXISTS idx_resv_cust    ON reservations(customer_id, start_at);
@@ -128,8 +129,7 @@ CREATE TABLE IF NOT EXISTS recurring_patterns (
   weekday      INTEGER NOT NULL,            -- 0=日 〜 6=土
   time         TEXT NOT NULL,               -- HH:MM
   active       INTEGER NOT NULL DEFAULT 1,
-  created_at   INTEGER NOT NULL,
-  FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+  created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_recur_cust ON recurring_patterns(customer_id);
 
@@ -144,8 +144,7 @@ CREATE TABLE IF NOT EXISTS body_records (
   body_fat_pct  REAL,
   muscle_kg     REAL,
   note          TEXT,
-  created_at    INTEGER NOT NULL,
-  FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+  created_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_body_cust ON body_records(customer_id, measured_at);
 

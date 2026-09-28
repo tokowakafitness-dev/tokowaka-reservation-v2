@@ -71,6 +71,33 @@ jobs:
       - name: スキーマを適用（何度流しても同じ結果になる）
         run: npx wrangler d1 execute "$D1_NAME" --remote --file=schema.sql
 
+      - name: 表の変更を一度だけ適用する
+        run: |
+          set -euo pipefail
+          # 適用済みを記録しておき、同じ移行を二度流さない。
+          npx wrangler d1 execute "$D1_NAME" --remote \
+            --command "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at INTEGER)" >/dev/null
+
+          shopt -s nullglob
+          for f in migrations/*.sql; do
+            n="$(basename "$f")"
+            out="$(npx wrangler d1 execute "$D1_NAME" --remote --json \
+                   --command "SELECT COUNT(*) AS c FROM schema_migrations WHERE name = '$n'" 2>/dev/null \
+                   | sed -n '/^\[/,$p')"
+            c="$(printf '%s' "$out" | jq -r '.[0].results[0].c // 0')"
+            if [ "$c" = "0" ]; then
+              echo "適用: $n"
+              npx wrangler d1 execute "$D1_NAME" --remote --file="$f"
+              npx wrangler d1 execute "$D1_NAME" --remote \
+                --command "INSERT INTO schema_migrations (name, applied_at) VALUES ('$n', strftime('%s','now')*1000)" >/dev/null
+            else
+              echo "適用済み（飛ばす）: $n"
+            fi
+          done
+
+      - name: 索引を張り直す（移行で表を作り直した場合に備える）
+        run: npx wrangler d1 execute "$D1_NAME" --remote --file=schema.sql
+
       - name: デプロイ
         run: |
           # ★pipefail が無いと、終了状態が tee のもの（常に成功）になり、

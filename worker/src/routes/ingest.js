@@ -77,6 +77,17 @@ function jsonRes(body, status = 200) {
 }
 
 export async function handleIngest(request, env) {
+  try {
+    return await ingest(request, env);
+  } catch (e) {
+    // 中身を返す。ここは合言葉を通った相手（GAS）しか到達しないので、
+    // 原因が分からないまま500だけ返すより、直せるほうがよい。
+    console.error('ingest', e && e.stack);
+    return jsonRes({ success: false, code: 'INTERNAL', detail: String((e && e.message) || e).slice(0, 300) }, 500);
+  }
+}
+
+async function ingest(request, env) {
   const secret = env.SHARED_SECRET || '';
   if (!secret) return jsonRes({ success: false, code: 'SECRET_NOT_SET' }, 503);
 
