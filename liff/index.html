@@ -591,8 +591,22 @@
     listRecurringPatternsByTrainer:'c_recurringList'
   };
 
+  // 残数は「写し」なので、30分ごとにしか更新されない。
+  //   予約・取消をした直後は、その写しがまだ古い。
+  //   書き込みをしたら、残数まわりはしばらくGASに直接聞く（正しさを優先）。
+  var EDGE_STALE_UNTIL = 0;
+  var EDGE_WRITE_ACTIONS = /^(makeReservation|makeRecurring|makeBatch|makeTransfer|changeReservation|cancelReservation|makeAdminBooking|makeBlock|linkUnlinked|addTicketRefill|addRecurringPatternByTrainer|deleteRecurringPattern|deleteAdminSlot|selfRegister)/;
+  var EDGE_HOME_ACTIONS = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1 };
+
   function _edgeTry(params){
     var plain = String(params.action || '').replace(/^line_/, '');
+
+    // 書き込みは必ずGAS。あわせて、残数の写しを「しばらく信用しない」印を付ける。
+    if (EDGE_WRITE_ACTIONS.test(plain)) { EDGE_STALE_UNTIL = Date.now() + 35 * 60 * 1000; return null; }
+
+    // 書き込み直後は、残数まわりだけGASに聞く（枠や名簿は写しのままでよい）
+    if (EDGE_HOME_ACTIONS[plain] && Date.now() < EDGE_STALE_UNTIL) return null;
+
     var act = EDGE_MAP[plain];
     if (!act) return null;                       // 載っていない＝GASへ
 
