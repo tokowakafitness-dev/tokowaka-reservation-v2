@@ -11,15 +11,21 @@ function eq(name, got, want) {
 }
 
 // ---- D1 / KV の身代わり ----
-function makeEnv(secret = 'TEST-SECRET') {
+function makeEnv(secret = 'TEST-SECRET', current = []) {
   const sql = [];          // 実行されたSQLを記録する
   const kv = new Map();
+  const currentRows = current;
   const prepare = (q) => ({
     _q: q, _args: [],
     bind(...a) { this._args = a; return this; },
     async run() { sql.push({ q: this._q, args: this._args }); return { meta: { changes: 3 } }; },
     async first() { sql.push({ q: this._q, args: this._args }); return { n: 42 }; },
-    async all() { sql.push({ q: this._q, args: this._args }); return { results: [] }; },
+    async all() {
+      sql.push({ q: this._q, args: this._args });
+      // いまD1に入っている中身（変更の有無を見比べるために読まれる）
+      if (/^SELECT .* FROM \w+$/.test(this._q.replace(/\s+/g, ' ').trim())) return { results: currentRows };
+      return { results: [] };
+    },
   });
   return {
     SHARED_SECRET: secret,
@@ -31,7 +37,7 @@ function makeEnv(secret = 'TEST-SECRET') {
       async put(k, v, o) { kv.set(k, { v, o }); },
       async get(k) { const e = kv.get(k); return e ? JSON.parse(e.v) : null; },
     },
-    _sql: sql, _kv: kv,
+    _sql: sql, _kv: kv, _current: currentRows,
   };
 }
 function req(body, secret) {
@@ -94,7 +100,8 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 {
   const env = makeEnv();
   const rows = [{ trainer_id: 't1', name: '鈴木' }];
-  const [, b] = await json(await handleIngest(req({ kind: 'trainers', batchId: 100, rows, final: true }, 'TEST-SECRET'), env));
+  const [, b] = await json(await handleIngest(req({ kind: 'trainers', batchId: 100, rows,
+    final: true, deleteStale: true }, 'TEST-SECRET'), env));
   const del = env._sql.find((x) => /DELETE/.test(x.q));
   eq('★finalで削除が走る', !!del, true);
   eq('★消すのは今回より古い行だけ', /synced_at IS NULL OR synced_at < \?/.test(del.q), true);
@@ -142,7 +149,7 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 {
   const env = makeEnv();
   const [, b] = await json(await handleIngest(req({
-    kind: 'customers', batchId: 300, rows: [], final: true,
+    kind: 'customers', batchId: 300, rows: [], final: true, deleteStale: true,
   }, 'TEST-SECRET'), env));
   eq('★0件のfinalでは削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
   eq('理由を返す', b.skippedDelete, 'EMPTY_SOURCE');
@@ -150,8 +157,8 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 {
   // 本当に0件にしたいときは、明示すれば消せる
   const env = makeEnv();
-  await handleIngest(req({ kind: 'customers', batchId: 301, rows: [], final: true, allowEmpty: true },
-    'TEST-SECRET'), env);
+  await handleIngest(req({ kind: 'customers', batchId: 301, rows: [], final: true,
+    allowEmpty: true, deleteStale: true }, 'TEST-SECRET'), env);
   eq('明示すれば消せる', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), true);
 }
 
@@ -193,7 +200,7 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 {
   const env = makeEnv();
   await handleIngest(req({
-    kind: 'home', batchId: 200, final: true,
+    kind: 'home', batchId: 200, final: true, deleteStale: true,
     rows: [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 200 }],
   }, 'TEST-SECRET'), env);
   eq('★残数はfinalでも削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
@@ -201,21 +208,70 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 }
 {
   const env = makeEnv();
-  await handleIngest(req({ kind: 'slots', batchId: 201, final: true, rows: [] }, 'TEST-SECRET'), env);
+  await handleIngest(req({ kind: 'slots', batchId: 201, final: true, deleteStale: true, rows: [] }, 'TEST-SECRET'), env);
   eq('★枠もfinalで削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
 }
 {
   const env = makeEnv();
-  await handleIngest(req({ kind: 'body', batchId: 203, final: true, rows: [] }, 'TEST-SECRET'), env);
+  await handleIngest(req({ kind: 'body', batchId: 203, final: true, deleteStale: true, rows: [] }, 'TEST-SECRET'), env);
   eq('★InBodyもfinalで削除しない（直近ぶんしか送らないため）',
      env._sql.some((x) => /DELETE/.test(x.q)), false);
 }
 // 一方、顧客や予約は消えたら消す（Google側が正）
 {
   const env = makeEnv();
-  await handleIngest(req({ kind: 'customers', batchId: 202, final: true,
+  await handleIngest(req({ kind: 'customers', batchId: 202, final: true, deleteStale: true,
     rows: [{ customer_id: 'c1', name: '残る人' }] }, 'TEST-SECRET'), env);
   eq('★顧客はfinalで古い行を消す', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), true);
+}
+
+// ---------- 13. 変わっていない行は書かない ----------
+//   D1の書き込みは1日10万行まで。変わっていない行を15分ごとに書き直すと枠を使い切る。
+{
+  const cur = [{ customer_id: 'c1', name: '山田', kana: null, phone: '090', email: null,
+    birthday: null, line_user_id: null, default_trainer_id: null, contract_status: '在籍',
+    contract_type: null, lang: null, goal: null, note: null, created_at: 1, updated_at: 1 }];
+  const env = makeEnv('TEST-SECRET', cur);
+  const [, b] = await json(await handleIngest(req({
+    kind: 'customers', batchId: 700,
+    rows: [{ ...cur[0] }, { ...cur[0], customer_id: 'c2', name: '新しい人' }],
+  }, 'TEST-SECRET'), env));
+  eq('★同じ中身の行は書かない', b.skipped, 1);
+  eq('★変わった行だけ書く', b.written, 1);
+  eq('やり方を返す', b.mode, 'diff');
+}
+{
+  // 1文字でも違えば書く
+  const cur = [{ customer_id: 'c1', name: '山田', phone: '090', contract_status: '在籍',
+    created_at: 1, updated_at: 1 }];
+  const env = makeEnv('TEST-SECRET', cur);
+  const [, b] = await json(await handleIngest(req({
+    kind: 'customers', batchId: 701, rows: [{ ...cur[0], phone: '080' }],
+  }, 'TEST-SECRET'), env));
+  eq('★電話が変わったら書く', b.written, 1);
+}
+
+// ---------- 14. ふだんの押し出しでは消さない ----------
+//   変わった行しか書かないので、synced_at が古いまま残る行が正常にある。
+//   そこで消すと、変わっていないだけの行が全部消える。
+{
+  const env = makeEnv();
+  await handleIngest(req({ kind: 'customers', batchId: 800, final: true,
+    rows: [{ customer_id: 'c1', name: 'x' }] }, 'TEST-SECRET'), env);
+  eq('★ふだんの押し出しでは消さない', env._sql.some((x) => /DELETE/.test(x.q)), false);
+}
+{
+  // 完全同期のときだけ消す。そのときは全行を書く（書かないと消えてしまうため）
+  const cur = [{ customer_id: 'c1', name: '同じ' }];
+  const env = makeEnv('TEST-SECRET', cur);
+  const [, b] = await json(await handleIngest(req({
+    kind: 'customers', batchId: 900, final: true, deleteStale: true,
+    rows: [{ customer_id: 'c1', name: '同じ' }],
+  }, 'TEST-SECRET'), env));
+  eq('★完全同期では同じ行も書く', b.written, 1);
+  eq('★完全同期では読み比べをしない', b.skipped, 0);
+  eq('★完全同期で古い行を消す', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), true);
+  eq('やり方を返す', b.mode, 'full');
 }
 
 console.log(`\n取り込み口 検証: ${pass} passed / ${fail} failed`);

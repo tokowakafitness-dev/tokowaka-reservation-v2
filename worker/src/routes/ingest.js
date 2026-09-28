@@ -139,10 +139,40 @@ async function ingest(request, env) {
     return jsonRes({ success: false, code: 'STALE_BATCH', detail: 'newer batch already applied' }, 409);
   }
 
+  // ★中身が変わっていない行は書かない（2026-09-29）。
+  //   D1の無料枠は1日10万行の書き込み。変わっていない行まで15分ごとに書き直すと、
+  //   予約299件だけで1日28,704回になり、枠を使い切って書き込みが止まる。
+  //   読み取りは1日500万行まで無料なので、いまの中身を読んで見比べるほうが安い。
+  //
+  //   ただし deleteStale（1日1回の完全同期）のときは、全行を書く。
+  //   古い行を消す判断に synced_at を使うため、書かないと消えてしまう。
+  const full = body.deleteStale === true;
+  let existing = {};
+  if (!full) {
+    try {
+      const cur = await env.DB.prepare(
+        `SELECT ${conf.cols.join(', ')} FROM ${conf.table}`
+      ).all();
+      for (const row of (cur.results || [])) existing[String(row[conf.key])] = row;
+    } catch (_) { existing = {}; }   // 読めなければ全部書く（安全側）
+  }
+  const same = (a, b) => {
+    if (!b) return false;
+    for (const c of conf.cols) {
+      const x = a[c] === undefined ? null : a[c];
+      const y = b[c] === undefined ? null : b[c];
+      if (x === null && y === null) continue;
+      if (String(x) !== String(y)) return false;
+    }
+    return true;
+  };
+
   const stmts = [];
+  let skipped = 0;
   for (const r of rows) {
     const key = r[conf.key];
     if (key == null || key === '') continue;          // 主キーのない行は捨てる
+    if (!full && same(r, existing[String(key)])) { skipped++; continue; }
     const vals = conf.cols.map((c) => (r[c] === undefined ? null : r[c])).concat([batchId]);
     stmts.push(env.DB.prepare(sql).bind(...vals));
   }
@@ -156,14 +186,16 @@ async function ingest(request, env) {
   let removed = 0;
   // ★0件で final を受けても消さない。元のシートが一時的に読めなかっただけの可能性がある。
   //   顧客や予約がまるごと消えると、会員が「未登録」に見え、予約も全部消える。
-  if (body.final && !conf.keepStale && rows.length === 0 && body.allowEmpty !== true) {
+  if (body.final && full && !conf.keepStale && rows.length === 0 && body.allowEmpty !== true) {
     await stampSync(env, kind, batchId, null);
     return jsonRes({ success: true, written: 0, removed: 0, skippedDelete: 'EMPTY_SOURCE' });
   }
   // keepStale の表は、今回含まれなかった行を消さない。
   //   残数や枠は「会員の一部だけを更新する」使い方をするため、
   //   含まれなかった＝消えた、ではない。
-  if (body.final && !conf.keepStale) {
+  // ★古い行を消すのは完全同期のときだけ。
+  //   ふだんの押し出しは変わった行しか書かないので、synced_at が古いまま残る行が正常にある。
+  if (body.final && full && !conf.keepStale) {
     // この押し出しに含まれなかった＝Google側から消えた行を落とす。
     // final を受け取ったときだけ実行するので、途中で切れても消えない。
     const del = await env.DB.prepare(
@@ -175,7 +207,7 @@ async function ingest(request, env) {
     await stampSync(env, kind, batchId, null);
   }
 
-  return jsonRes({ success: true, written, removed });
+  return jsonRes({ success: true, written, skipped, removed, mode: full ? 'full' : 'diff' });
 }
 
 async function stampSync(env, key, batchId, rows) {
