@@ -25,7 +25,11 @@ CREATE TABLE IF NOT EXISTS customers_nofk (
   updated_at         INTEGER NOT NULL,
   synced_at          INTEGER
 );
-INSERT OR IGNORE INTO customers_nofk SELECT * FROM customers;
+INSERT OR IGNORE INTO customers_nofk
+  (customer_id, name, kana, phone, email, birthday, line_user_id, default_trainer_id,
+   contract_status, lang, goal, note, created_at, updated_at, synced_at)
+SELECT customer_id, name, kana, phone, email, birthday, line_user_id, default_trainer_id,
+       contract_status, lang, goal, note, created_at, updated_at, synced_at FROM customers;
 DROP TABLE customers;
 ALTER TABLE customers_nofk RENAME TO customers;
 
@@ -49,7 +53,13 @@ CREATE TABLE IF NOT EXISTS reservations_nofk (
   cancelled_at       INTEGER,
   synced_at          INTEGER
 );
-INSERT OR IGNORE INTO reservations_nofk SELECT * FROM reservations;
+INSERT OR IGNORE INTO reservations_nofk
+  (reservation_id, customer_id, customer_name, trainer_id, start_at, end_at, kind,
+   attendee_count, status, consumption_kind, consumption_month, consumption_contract_id,
+   calendar_event_id, channel, created_by, created_at, cancelled_at, synced_at)
+SELECT reservation_id, customer_id, customer_name, trainer_id, start_at, end_at, kind,
+       attendee_count, status, consumption_kind, consumption_month, consumption_contract_id,
+       calendar_event_id, channel, created_by, created_at, cancelled_at, synced_at FROM reservations;
 DROP TABLE reservations;
 ALTER TABLE reservations_nofk RENAME TO reservations;
 
@@ -63,7 +73,12 @@ CREATE TABLE IF NOT EXISTS recurring_nofk (
   created_at   INTEGER NOT NULL,
   synced_at    INTEGER
 );
-INSERT OR IGNORE INTO recurring_nofk SELECT * FROM recurring_patterns;
+-- 元の表には synced_at が無い（これが recurring の取り込み失敗の原因だった）。
+-- 新しい表では列を足し、移すときは NULL を入れる。
+INSERT OR IGNORE INTO recurring_nofk
+  (pattern_id, customer_id, trainer_id, weekday, time, active, created_at, synced_at)
+SELECT pattern_id, customer_id, trainer_id, weekday, time, active, created_at, NULL
+FROM recurring_patterns;
 DROP TABLE recurring_patterns;
 ALTER TABLE recurring_nofk RENAME TO recurring_patterns;
 
@@ -93,7 +108,13 @@ CREATE TABLE IF NOT EXISTS contracts_nofk (
   sheet_row      INTEGER,
   synced_at      INTEGER
 );
-INSERT OR IGNORE INTO contracts_nofk SELECT * FROM contracts;
+INSERT OR IGNORE INTO contracts_nofk
+  (contract_id, customer_id, course, mode, freq, tickets, unit_price, monthly_price, pair, rental,
+   start_date, end_date, carry_cap, trainer_id, reward_rate, join_fee, status, created_by,
+   created_at, approved_by, approved_at, source, sheet_row, synced_at)
+SELECT contract_id, customer_id, course, mode, freq, tickets, unit_price, monthly_price, pair, rental,
+       start_date, end_date, carry_cap, trainer_id, reward_rate, join_fee, status, created_by,
+       created_at, approved_by, approved_at, source, sheet_row, synced_at FROM contracts;
 DROP TABLE contracts;
 ALTER TABLE contracts_nofk RENAME TO contracts;
 
@@ -107,6 +128,9 @@ CREATE TABLE IF NOT EXISTS body_nofk (
   note          TEXT,
   created_at    INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO body_nofk SELECT * FROM body_records;
+INSERT OR IGNORE INTO body_nofk
+  (record_id, customer_id, measured_at, weight_kg, body_fat_pct, muscle_kg, note, created_at)
+SELECT record_id, customer_id, measured_at, weight_kg, body_fat_pct, muscle_kg, note, created_at
+FROM body_records;
 DROP TABLE body_records;
 ALTER TABLE body_nofk RENAME TO body_records;

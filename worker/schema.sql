@@ -129,7 +129,8 @@ CREATE TABLE IF NOT EXISTS recurring_patterns (
   weekday      INTEGER NOT NULL,            -- 0=日 〜 6=土
   time         TEXT NOT NULL,               -- HH:MM
   active       INTEGER NOT NULL DEFAULT 1,
-  created_at   INTEGER NOT NULL
+  created_at   INTEGER NOT NULL,
+  synced_at    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_recur_cust ON recurring_patterns(customer_id);
 
