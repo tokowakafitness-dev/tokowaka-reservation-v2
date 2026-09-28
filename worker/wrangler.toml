@@ -12,7 +12,7 @@ LINE_CHANNEL_ID = "2010827953"
 # 契約・顧客・予約。正確さが要るものを置く
 [[d1_databases]]
 binding = "DB"
-database_name = "tokowaka"
+database_name = "tokowaka-apac"
 database_id = "PASTE_D1_ID_HERE"    # setup ワークフローの出力を貼る
 
 # トレーナー名簿・空き枠・残数の写し。みんなが同じものを読むものを置く

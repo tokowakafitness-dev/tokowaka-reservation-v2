@@ -25,7 +25,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      D1_NAME: tokowaka
+      D1_NAME: tokowaka-apac
       KV_TITLE: KV
     steps:
       - uses: actions/checkout@v4
