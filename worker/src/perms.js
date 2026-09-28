@@ -154,12 +154,18 @@ export async function canSeeCustomer(env, who, customerId) {
   return t === '' || t === String(who.trainerId || '');
 }
 
-// 契約行のうち、自分の担当ぶん以外は報酬に関する項目を落とす。
-//   担当なしの顧客でも、過去の契約行には別のトレーナーの報酬割合が入りうる。
+// 契約行の報酬に関する項目を、見てよい人にだけ残す（2026-09-29 オーナー決定）。
+//
+//   隠すのは「**別のトレーナーの名前が入っている契約**」だけ。
+//   トレーナーごとに割合が異なるため、他人の割合が読めてはいけない。
+//
+//   担当が入っていない契約は隠さない。担当なしの顧客の報酬割合は固定なので、
+//   誰か個人の割合を表さず、読めても他人の条件は分からない。
+//   逆に隠すと、その顧客を受け持つトレーナーが自分の報酬を確認できなくなる。
 export function redactContractForViewer(contract, who) {
   if (who.role === 'owner') return contract;
-  const mine = String(contract.trainerId || '') === String(who.trainerId || '');
-  if (mine) return contract;
+  const owner = String(contract.trainerId || '');
+  if (owner === '' || owner === String(who.trainerId || '')) return contract;
   const c = { ...contract };
   delete c.rewardRate;
   delete c.trainerPay;

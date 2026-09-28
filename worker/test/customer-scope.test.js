@@ -64,7 +64,7 @@ const contract = { course: '通常', unitPrice: 15000, monthlyPrice: 90000,
                    trainerId: 't2', rewardRate: 40, trainerPay: 6000, freq: 6 };
 {
   const c = redactContractForViewer(contract, trainer);
-  eq('★他のトレーナーの契約から報酬割合を落とす', 'rewardRate' in c, false);
+  eq('★他のトレーナーの契約から報酬割合を落とす', 'rewardRate' in c, false);   // trainerId='t2'
   eq('★他のトレーナーの契約から報酬額も落とす', 'trainerPay' in c, false);
   eq('単価や回数は残す', [c.unitPrice, c.freq], [15000, 6]);
 }
@@ -78,9 +78,18 @@ const contract = { course: '通常', unitPrice: 15000, monthlyPrice: 90000,
   eq('オーナーは全部見える', [c.rewardRate, c.trainerPay], [40, 6000]);
 }
 {
-  // 担当が空の契約行も、自分のものではないので落とす
-  const c = redactContractForViewer({ ...contract, trainerId: '' }, trainer);
-  eq('★担当が空の契約行も報酬は見せない', 'rewardRate' in c, false);
+  // ★担当が入っていない契約は隠さない（2026-09-29 オーナー決定）。
+  //   担当なしの顧客の報酬割合は固定なので、誰か個人の割合を表さない。
+  //   隠すと、その顧客を受け持つトレーナーが自分の報酬を確認できなくなる。
+  const c = redactContractForViewer({ ...contract, trainerId: '', rewardRate: 35 }, trainer);
+  eq('★担当が入っていない契約は報酬が見える', c.rewardRate, 35);
+  const c2 = redactContractForViewer({ ...contract, trainerId: null, rewardRate: 35 }, trainer);
+  eq('担当が未設定でも同じ', c2.rewardRate, 35);
+}
+{
+  // 別のトレーナーの名前が入っているものだけ隠す
+  const c = redactContractForViewer({ ...contract, trainerId: 't3', rewardRate: 45 }, trainer);
+  eq('★別のトレーナーの割合は見せない', 'rewardRate' in c, false);
 }
 
 console.log(`\n顧客の閲覧範囲 検証: ${pass} passed / ${fail} failed`);
