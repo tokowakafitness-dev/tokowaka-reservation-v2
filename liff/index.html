@@ -630,11 +630,81 @@
     }).catch(function(){ clearTimeout(timer); return null; });
   }
 
+  // ------------------------------------------------------------
+  // 処理中の表示（2026-09-28）
+  //   予約の確定や取消はサーバー側で10秒以上かかることがある。
+  //   その間に何も出ないと、押し直して二重に取り消すおそれがある。
+  //   書き込みは必ず api() を通るので、ここ1箇所で全ての操作に効かせる。
+  // ------------------------------------------------------------
+  var _busyEl = null, _busyCount = 0;
+  var BUSY_TEXT = {
+    ja: { cancel:'キャンセルしています', change:'予約を変更しています', book:'予約しています',
+          block:'登録しています', ticket:'追加しています', save:'保存しています', wait:'少々お待ちください' },
+    en: { cancel:'Cancelling', change:'Changing your booking', book:'Booking',
+          block:'Saving', ticket:'Adding', save:'Saving', wait:'Please wait' },
+    zh: { cancel:'正在取消', change:'正在变更预约', book:'正在预约',
+          block:'正在登记', ticket:'正在添加', save:'正在保存', wait:'请稍候' }
+  };
+  function _busyMsg(plain){
+    var L = BUSY_TEXT[(String(LANG || 'ja').indexOf('zh') === 0) ? 'zh' : (LANG === 'en' ? 'en' : 'ja')];
+    if (/^cancel/.test(plain)) return L.cancel;
+    if (/^change/.test(plain)) return L.change;
+    if (/^make(Reservation|Recurring|Batch|Transfer|AdminBooking)/.test(plain)) return L.book;
+    if (/^makeBlock/.test(plain)) return L.block;
+    if (/^addTicketRefill/.test(plain)) return L.ticket;
+    return L.save;
+  }
+  function _busyShow(msg){
+    _busyCount++;
+    if (!_busyEl) {
+      _busyEl = document.createElement('div');
+      _busyEl.setAttribute('role', 'status');
+      _busyEl.setAttribute('aria-live', 'polite');
+      _busyEl.style.cssText = 'position:fixed;inset:0;z-index:99998;display:flex;flex-direction:column;'
+        + 'align-items:center;justify-content:center;gap:14px;background:rgba(19,32,58,.55);'
+        + '-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);';
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#fff;border-radius:14px;padding:22px 26px;min-width:200px;'
+        + 'display:flex;flex-direction:column;align-items:center;gap:12px;'
+        + 'box-shadow:0 10px 30px rgba(0,0,0,.25);';
+      var sp = document.createElement('div');
+      sp.id = '_busySpin';
+      sp.style.cssText = 'width:30px;height:30px;border-radius:50%;border:3px solid #ddd5c6;'
+        + 'border-top-color:#b8965a;animation:_busySpin .9s linear infinite;';
+      var tx = document.createElement('div');
+      tx.id = '_busyTxt';
+      tx.style.cssText = 'font-size:14px;color:#1b2a47;letter-spacing:.02em;text-align:center;';
+      var st = document.createElement('style');
+      st.textContent = '@keyframes _busySpin{to{transform:rotate(360deg)}}'
+        + '@media (prefers-reduced-motion: reduce){#_busySpin{animation-duration:2.4s}}';
+      box.appendChild(sp); box.appendChild(tx);
+      _busyEl.appendChild(st); _busyEl.appendChild(box);
+      document.body.appendChild(_busyEl);
+    }
+    var t = document.getElementById('_busyTxt');
+    if (t) t.textContent = (msg || '') + '…';
+    _busyEl.hidden = false;
+  }
+  function _busyHide(){
+    _busyCount = Math.max(0, _busyCount - 1);
+    if (_busyCount === 0 && _busyEl) _busyEl.hidden = true;
+  }
+
   function api(params){
-    if (!EDGE_ON) return _apiGas(params);
-    var t = _edgeTry(params);
-    if (!t) return _apiGas(params);
-    return t.then(function(res){ return res ? res : _apiGas(params); });
+    var plain = String(params.action || '').replace(/^line_/, '');
+    var isWrite = EDGE_WRITE_ACTIONS.test(plain);
+    if (isWrite) _busyShow(_busyMsg(plain));
+
+    var p;
+    if (!EDGE_ON) p = _apiGas(params);
+    else {
+      var t = _edgeTry(params);
+      p = t ? t.then(function(res){ return res ? res : _apiGas(params); }) : _apiGas(params);
+    }
+    if (!isWrite) return p;
+    // 成功でも失敗でも必ず消す（消し忘れると画面が操作できなくなる）
+    return p.then(function(r){ _busyHide(); return r; },
+                  function(e){ _busyHide(); throw e; });
   }
 
   function _apiGas(params){
