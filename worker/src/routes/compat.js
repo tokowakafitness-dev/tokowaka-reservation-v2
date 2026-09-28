@@ -210,6 +210,81 @@ export async function compatBookingOptions({ env, who, body }) {
 }
 
 // ---------------------------------------------------------------
+// getMyReservations と同じ形（会員のマイ予約）
+//
+//   今後のご予約  … status=confirmed かつ未来
+//   これまでの記録 … 過去のconfirmed（実施済み）と consumed（当日キャンセル＝消化）
+//   cancelled（前日までの無料取消）と changed は記録に出さない。消化していないため。
+// ---------------------------------------------------------------
+const ST = {
+  st_transfer_done:    { ja: '振替・実施済み', en: 'Transfer · done', zh: '改期・已完成', 'zh-Hant': '改期・已完成' },
+  st_done:             { ja: '実施済み', en: 'Done', zh: '已完成', 'zh-Hant': '已完成' },
+  st_transfer_sameday: { ja: '振替セッション（当日キャンセル）', en: 'Transfer session (same-day cancel)',
+                         zh: '改期课程（当天取消）', 'zh-Hant': '改期課程（當天取消）' },
+  st_sameday_used:     { ja: '当日キャンセル（消化）', en: 'Same-day cancel (used)',
+                         zh: '当天取消（已消耗）', 'zh-Hant': '當天取消（已消耗）' },
+};
+function st(key, lang) {
+  const e = ST[key] || {};
+  return e[lang] || e.ja || '';
+}
+
+export async function compatMyReservations({ env, who, body }) {
+  if (!who.customerId) return { _fallback: true };
+  const lang = String(body.lang || 'ja');
+  const now = Date.now();
+
+  const [rows, trainers] = await Promise.all([
+    env.DB.prepare(
+      `SELECT reservation_id, trainer_id, start_at, status, channel, book_type
+         FROM reservations WHERE customer_id = ? ORDER BY start_at`
+    ).bind(who.customerId).all(),
+    env.DB.prepare('SELECT trainer_id, name, name_en FROM trainers').all(),
+  ]);
+
+  const nameOf = {};
+  for (const t of (trainers.results || [])) {
+    nameOf[String(t.trainer_id)] = (lang === 'en' && t.name_en) ? t.name_en : (t.name || '');
+  }
+
+  const upcoming = [], history = [];
+  for (const r of (rows.results || [])) {
+    const isTransfer = String(r.channel || '') === 'transfer';
+    const trainerName = nameOf[String(r.trainer_id)] || '';
+    const label = resvLabel(r.start_at, lang);
+
+    if (r.status === 'booked' && r.start_at >= now) {
+      upcoming.push({
+        reservationId: String(r.reservation_id),
+        trainerId: String(r.trainer_id || ''),
+        dateLabel: label,
+        trainerName,
+        status: 'confirmed',                       // 画面はGASの値を見るのでそろえる
+        startISO: new Date(r.start_at).toISOString(),
+        freeCancel: isFreeCancel(r.start_at, now),
+        transfer: isTransfer,
+        bookType: String(r.book_type || ''),
+        _sort: r.start_at,
+      });
+    } else if (r.status === 'booked' && r.start_at < now) {
+      history.push({ dateLabel: label, trainerName,
+        statusLabel: st(isTransfer ? 'st_transfer_done' : 'st_done', lang), _sort: r.start_at });
+    } else if (r.status === 'consumed') {
+      history.push({ dateLabel: label, trainerName,
+        statusLabel: st(isTransfer ? 'st_transfer_sameday' : 'st_sameday_used', lang), _sort: r.start_at });
+    }
+    // cancelled / changed は出さない
+  }
+
+  upcoming.sort((a, b) => a._sort - b._sort);      // 近い順
+  history.sort((a, b) => b._sort - a._sort);       // 新しい順
+  upcoming.forEach((o) => { delete o._sort; });
+  history.forEach((o) => { delete o._sort; });
+
+  return { reservations: upcoming, history };
+}
+
+// ---------------------------------------------------------------
 // getTrainerSlots と同じ形
 // ---------------------------------------------------------------
 export async function compatTrainerSlots({ env, body, who }) {

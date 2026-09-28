@@ -33,6 +33,7 @@ const TABLE = {
   'c_trainers':            ['customer', 'trainer', 'owner'],
   'c_trainerSlots':        ['customer', 'trainer', 'owner'],
   'c_bookingOptions':      ['customer', 'trainer', 'owner'],
+  'c_myReservations':      ['customer'],   // 会員本人のマイ予約
   'c_trainerReservations': ['trainer'],
   'c_customerHome':        ['trainer'],
   'c_recurringList':       ['trainer'],

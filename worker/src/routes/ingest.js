@@ -35,7 +35,8 @@ const TABLES = {
     table: 'reservations',
     key: 'reservation_id',
     cols: ['reservation_id', 'customer_id', 'customer_name', 'trainer_id', 'start_at', 'end_at',
-           'kind', 'attendee_count', 'status', 'calendar_event_id', 'channel', 'created_by', 'created_at'],
+           'kind', 'book_type', 'attendee_count', 'status', 'calendar_event_id', 'channel',
+           'created_by', 'created_at'],
   },
   recurring: {
     table: 'recurring_patterns',

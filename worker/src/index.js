@@ -15,7 +15,7 @@ import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
-         compatTrainerSlots } from './routes/compat.js';
+         compatTrainerSlots, compatMyReservations } from './routes/compat.js';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
@@ -37,6 +37,7 @@ const HANDLERS = {
   c_trainers:            compatTrainers,
   c_trainerSlots:        compatTrainerSlots,
   c_bookingOptions:      compatBookingOptions,
+  c_myReservations:      compatMyReservations,
   c_trainerReservations: compatTrainerReservations,
   c_customerHome:        compatCustomerHome,
   c_recurringList:       compatRecurringList,

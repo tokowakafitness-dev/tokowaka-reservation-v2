@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS reservations (
   start_at           INTEGER NOT NULL,      -- epoch ms
   end_at             INTEGER NOT NULL,
   kind               TEXT NOT NULL,         -- normal | trial | transfer | block
+  book_type          TEXT,                  -- 台帳の「種別」そのまま（画面のラベル表示に使う）
   attendee_count     INTEGER NOT NULL DEFAULT 1,
   status             TEXT NOT NULL DEFAULT 'booked',   -- booked | cancelled | done
   -- 消化先の確定（第2段階で書き込む）
