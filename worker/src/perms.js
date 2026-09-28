@@ -125,5 +125,46 @@ export function canActOnOther(role) {
   return role === 'trainer' || role === 'owner';
 }
 
+// 「どの顧客を見てよいか」（2026-09-29 オーナー決定）
+//   トレーナー … 自分が担当の顧客＋担当が決まっていない顧客
+//   オーナー   … 全員
+//   担当が決まっていない顧客は指名ではないので、どのトレーナーが見てもよい。
+//   逆に、他のトレーナーの担当顧客は見せない。トレーナーごとに報酬割合が異なり、
+//   契約行からそれが読めてしまうため。
+export function customerScopeSql(who, alias) {
+  const a = alias ? alias + '.' : '';
+  if (who.role === 'owner') return { where: '', args: [] };
+  return {
+    where: `(${a}default_trainer_id = ? OR ${a}default_trainer_id IS NULL OR ${a}default_trainer_id = '')`,
+    args: [String(who.trainerId || '')],
+  };
+}
+
+// 1人の顧客に触れてよいかを確かめる。触れてよくなければ false。
+export async function canSeeCustomer(env, who, customerId) {
+  if (!customerId) return false;
+  if (who.role === 'owner') return true;
+  if (who.role === 'customer') return String(customerId) === String(who.customerId);
+  if (who.role !== 'trainer') return false;
+  const row = await env.DB.prepare(
+    'SELECT default_trainer_id FROM customers WHERE customer_id = ?'
+  ).bind(String(customerId)).first();
+  if (!row) return false;
+  const t = String(row.default_trainer_id || '');
+  return t === '' || t === String(who.trainerId || '');
+}
+
+// 契約行のうち、自分の担当ぶん以外は報酬に関する項目を落とす。
+//   担当なしの顧客でも、過去の契約行には別のトレーナーの報酬割合が入りうる。
+export function redactContractForViewer(contract, who) {
+  if (who.role === 'owner') return contract;
+  const mine = String(contract.trainerId || '') === String(who.trainerId || '');
+  if (mine) return contract;
+  const c = { ...contract };
+  delete c.rewardRate;
+  delete c.trainerPay;
+  return c;
+}
+
 export const _TABLE_FOR_TEST = TABLE;
 export const _REDACT_FOR_TEST = REDACT;

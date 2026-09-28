@@ -150,6 +150,9 @@ export default {
 
     // 写しを持っていない／古すぎる場合は「答えない」。画面はGASに聞き直す。
     //   間違った残数や古い枠を返すより、遅いほうがよい。
+    if (result && result._forbidden) {
+      return json({ success: false, code: 'FORBIDDEN' }, origin, 403);
+    }
     if (result && result._fallback) {
       return json({ success: false, code: 'FALLBACK' }, origin, 200,
                   { 'X-Worker-Ms': String(Date.now() - t0) });

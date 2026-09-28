@@ -8,6 +8,8 @@
 // 日時はすべて日本時間で扱う。ここを取り違えると、前日17時の締め切りや
 // 「M月d日(曜)」の表示が1日ずれる。
 
+import { canSeeCustomer, customerScopeSql } from '../perms.js';
+
 const JST = 9 * 3600 * 1000;
 const DOW = { ja: ['日', '月', '火', '水', '木', '金', '土'],
               en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -106,11 +108,13 @@ export async function compatTrainerReservations({ env, who, body }) {
   const lang = String(body.lang || 'ja');
   const now = Date.now();
 
+  // 担当の顧客＋担当が決まっていない顧客（オーナーは全員）
+  const scope = customerScopeSql(who);
   const custSql = owner
     ? `SELECT customer_id, name FROM customers
         WHERE contract_status IS NULL OR contract_status <> '退会' ORDER BY name`
     : `SELECT customer_id, name FROM customers
-        WHERE default_trainer_id = ? AND (contract_status IS NULL OR contract_status <> '退会')
+        WHERE ${scope.where} AND (contract_status IS NULL OR contract_status <> '退会')
         ORDER BY name`;
   const resvSql = owner
     ? `SELECT reservation_id, customer_id, customer_name, start_at, channel
@@ -120,7 +124,7 @@ export async function compatTrainerReservations({ env, who, body }) {
          ORDER BY start_at`;
 
   const [custs, resv] = await Promise.all([
-    owner ? env.DB.prepare(custSql).all() : env.DB.prepare(custSql).bind(who.trainerId).all(),
+    owner ? env.DB.prepare(custSql).all() : env.DB.prepare(custSql).bind(...scope.args).all(),
     owner ? env.DB.prepare(resvSql).bind(now).all()
           : env.DB.prepare(resvSql).bind(now, who.trainerId).all(),
   ]);
@@ -150,9 +154,10 @@ export async function compatTrainerReservations({ env, who, body }) {
 // ---------------------------------------------------------------
 // getCustomerHome と同じ形
 // ---------------------------------------------------------------
-export async function compatCustomerHome({ env, body }) {
+export async function compatCustomerHome({ env, body, who }) {
   const customerId = String(body.customerId || '');
   if (!customerId) return { _fallback: true };
+  if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
   const [cust, home] = await Promise.all([
     env.DB.prepare('SELECT name FROM customers WHERE customer_id = ?').bind(customerId).first(),
     readHomeSafe(env, customerId),
@@ -164,9 +169,10 @@ export async function compatCustomerHome({ env, body }) {
 // ---------------------------------------------------------------
 // listRecurringPatternsByTrainer と同じ形
 // ---------------------------------------------------------------
-export async function compatRecurringList({ env, body }) {
+export async function compatRecurringList({ env, body, who }) {
   const customerId = String(body.customerId || '');
   if (!customerId) return { patterns: [] };
+  if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
   const r = await env.DB.prepare(
     `SELECT pattern_id, customer_id, trainer_id, weekday, time
        FROM recurring_patterns WHERE customer_id = ? AND active = 1

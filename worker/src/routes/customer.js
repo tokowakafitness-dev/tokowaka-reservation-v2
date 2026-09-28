@@ -2,10 +2,13 @@
 //   いまGASで4回・16.7秒かかっている範囲（InBody・残数・固定枠・名簿）を1回にまとめる。
 
 import { readHome } from './boot.js';
+import { canSeeCustomer, redactContractForViewer } from '../perms.js';
 
 export async function routeCustomerDetail({ body, env, who }) {
   const customerId = String(body.customerId || (who.role === 'customer' ? who.customerId : ''));
   if (!customerId) return { code: 'BAD_REQUEST', customer: null };
+  // 担当の顧客と、担当が決まっていない顧客だけ（オーナーは全員）
+  if (!(await canSeeCustomer(env, who, customerId))) return { code: 'FORBIDDEN', customer: null };
 
   const [cust, home, bodyRows, recur, resv] = await Promise.all([
     env.DB.prepare(
@@ -48,6 +51,7 @@ export async function routeCustomerDetail({ body, env, who }) {
 export async function routeContractList({ body, env, who }) {
   const customerId = String(body.customerId || '');
   if (!customerId) return { code: 'BAD_REQUEST', contracts: [] };
+  if (!(await canSeeCustomer(env, who, customerId))) return { code: 'FORBIDDEN', contracts: [] };
 
   const r = await env.DB.prepare(
     `SELECT contract_id, course, mode, freq, tickets, unit_price AS unitPrice,
@@ -76,5 +80,8 @@ export async function routeContractList({ body, env, who }) {
     };
   });
 
-  return { contracts: withMargin };
+  // ★他のトレーナーが担当した契約行からは、報酬に関する項目を落とす。
+  //   担当なしの顧客でも、過去の契約には別のトレーナーの報酬割合が入りうる。
+  //   トレーナーごとに割合が異なるため、見えてはいけない。
+  return { contracts: withMargin.map((c) => redactContractForViewer(c, who)) };
 }

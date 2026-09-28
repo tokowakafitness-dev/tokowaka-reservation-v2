@@ -8,6 +8,8 @@
 //   Allocate.js をWorkerへ移してD1から直接計算する。
 //   stale（鮮度）を必ず返し、古ければ画面側が「更新中」を出せるようにする。
 
+import { customerScopeSql } from '../perms.js';
+
 const HOME_TTL_WARN_MS = 10 * 60 * 1000;   // 10分より古ければ鮮度を疑う
 // ★これより古い写しは答えない（GASに聞き直す）。
 //   端末の保護（書き込み後35分）は、別の端末や別の人の予約までは知らない。
@@ -98,14 +100,14 @@ export async function routeBoot({ env, who }) {
          FROM customers c
          LEFT JOIN reservations r
            ON r.customer_id = c.customer_id AND r.start_at >= ? AND r.status = 'booked'
-        WHERE c.default_trainer_id = ?
+        WHERE ${customerScopeSql(who, 'c').where}
           AND (c.contract_status IS NULL OR c.contract_status <> '退会')
         GROUP BY c.customer_id
         ORDER BY upcoming DESC, c.kana`;
 
   const stmt = owner
     ? env.DB.prepare(sql).bind(now)
-    : env.DB.prepare(sql).bind(now, who.trainerId);
+    : env.DB.prepare(sql).bind(now, ...customerScopeSql(who, 'c').args);
   const customers = await stmt.all();
 
   let pending = 0;
