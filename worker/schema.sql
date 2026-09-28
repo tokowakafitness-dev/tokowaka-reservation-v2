@@ -159,3 +159,27 @@ CREATE TABLE IF NOT EXISTS sync_state (
   ok          INTEGER NOT NULL DEFAULT 1,
   message     TEXT
 );
+
+-- ============================================================
+-- 写しの置き場（GASが計算した結果をそのまま持つ）
+--   2026-09-28：当初KVに置く設計だったが、KVの書き込みは1日1,000回までで
+--   会員40名を15分ごとに更新すると超える。D1は1日10万回まで無料。
+--   加えて、このD1はAPACにあるため日本からはKVより近い。
+--   「一人ひとり違うものはD1」という当初の方針にも、こちらのほうが合う。
+-- ============================================================
+
+-- 残数（Allocate.js の計算結果）。第2段階で計算そのものをWorkerへ移したら不要になる。
+CREATE TABLE IF NOT EXISTS member_home (
+  customer_id  TEXT PRIMARY KEY,
+  payload      TEXT NOT NULL,          -- _lbBuildHome の戻りをそのままJSONで
+  computed_at  INTEGER NOT NULL,
+  synced_at    INTEGER
+);
+
+-- 空き枠（吸着方式でGASが作ったもの）
+CREATE TABLE IF NOT EXISTS slots_cache (
+  trainer_id   TEXT PRIMARY KEY,
+  payload      TEXT NOT NULL,          -- { slots: [...], rules: {...} }
+  computed_at  INTEGER NOT NULL,
+  synced_at    INTEGER
+);

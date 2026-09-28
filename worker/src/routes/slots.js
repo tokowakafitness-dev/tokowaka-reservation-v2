@@ -3,9 +3,11 @@
 //   枠の中身（出勤シフト − 予約 = 空きブロックを端から60分刻み）はGASの吸着方式のまま。
 //   ここでは「作る」ことはせず、押し出されたものを配るだけにする＝エッジで20〜40ms。
 //
-//   ★表示はKV、確定はD1（第2段階）。KVは書いてから各拠点に行き渡るまで数秒かかるため、
-//     二重予約の判定に使ってはいけない。この分担は現在のGAS（キャッシュ表示＋
-//     カレンダーのリアルタイム照合）と同じ考え方で、照合先が速くなるだけ。
+//   ★これは「表示用の写し」であって、二重予約の判定には使わない。
+//     確定の判定は第2段階でD1の予約表に対して行う。現在のGAS（キャッシュ表示＋
+//     カレンダーのリアルタイム照合）と同じ分担で、照合先が速くなるだけ。
+//   ★当初KVに置く設計だったが、KVの書き込みは1日1,000回まで。
+//     4名を5分ごとに更新すると1,152回で超えるため、D1に置いた（1日10万回まで無料）。
 
 function jstParts(ms) {
   const d = new Date(ms + 9 * 3600 * 1000);
@@ -30,8 +32,13 @@ export async function routeSlots({ body, env, who }) {
   const trainerId = String(body.trainerId || who.trainerId || '');
   if (!trainerId) return { code: 'BAD_REQUEST', slots: [] };
 
-  const raw = await env.KV.get('slots:' + trainerId, 'json');
-  if (!raw) return { slots: [], stale: true, computedAt: null };
+  const row = await env.DB.prepare(
+    'SELECT payload, computed_at FROM slots_cache WHERE trainer_id = ?'
+  ).bind(trainerId).first();
+  if (!row) return { slots: [], stale: true, computedAt: null };
+  let raw;
+  try { raw = JSON.parse(row.payload); } catch (_) { return { slots: [], stale: true, computedAt: null }; }
+  raw.computedAt = row.computed_at;
 
   const now = Date.now();
   const cfg = raw.rules || { leadMinutes: 180, morningUntilHour: 12, prevDeadlineHour: 22 };

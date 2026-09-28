@@ -41,6 +41,19 @@ const TABLES = {
     key: 'pattern_id',
     cols: ['pattern_id', 'customer_id', 'trainer_id', 'weekday', 'time', 'active', 'created_at'],
   },
+  // 写し。GASが計算した結果をそのまま持つ（第2段階で計算をWorkerへ移したら不要になる）
+  home: {
+    table: 'member_home',
+    key: 'customer_id',
+    cols: ['customer_id', 'payload', 'computed_at'],
+    keepStale: true,    // 押し出しに含まれない会員の残数を消さない（部分更新を許す）
+  },
+  slots: {
+    table: 'slots_cache',
+    key: 'trainer_id',
+    cols: ['trainer_id', 'payload', 'computed_at'],
+    keepStale: true,
+  },
 };
 
 const MAX_ROWS = 500;          // 1回の押し出しで受ける行数の上限
@@ -122,13 +135,18 @@ export async function handleIngest(request, env) {
   }
 
   let removed = 0;
-  if (body.final) {
+  // keepStale の表は、今回含まれなかった行を消さない。
+  //   残数や枠は「会員の一部だけを更新する」使い方をするため、
+  //   含まれなかった＝消えた、ではない。
+  if (body.final && !conf.keepStale) {
     // この押し出しに含まれなかった＝Google側から消えた行を落とす。
     // final を受け取ったときだけ実行するので、途中で切れても消えない。
     const del = await env.DB.prepare(
       `DELETE FROM ${conf.table} WHERE synced_at IS NULL OR synced_at < ?`
     ).bind(batchId).run();
     removed = (del.meta && del.meta.changes) || 0;
+    await stampSync(env, kind, batchId, null);
+  } else if (body.final) {
     await stampSync(env, kind, batchId, null);
   }
 

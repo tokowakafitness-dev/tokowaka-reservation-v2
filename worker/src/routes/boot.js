@@ -21,10 +21,14 @@ export async function readTrainers(env) {
 
 export async function readHome(env, customerId) {
   if (!customerId) return null;
-  const home = await env.KV.get('home:' + customerId, 'json');
-  if (!home) return null;
-  const age = Date.now() - (home.computedAt || 0);
-  return { ...home, stale: age > HOME_TTL_WARN_MS, ageMs: age };
+  const row = await env.DB.prepare(
+    'SELECT payload, computed_at FROM member_home WHERE customer_id = ?'
+  ).bind(customerId).first();
+  if (!row) return null;
+  let home;
+  try { home = JSON.parse(row.payload); } catch (_) { return null; }
+  const age = Date.now() - (row.computed_at || 0);
+  return { ...home, computedAt: row.computed_at, stale: age > HOME_TTL_WARN_MS, ageMs: age };
 }
 
 export async function routeBoot({ env, who }) {

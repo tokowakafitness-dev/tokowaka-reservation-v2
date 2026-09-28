@@ -138,10 +138,34 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 // ---------- 9. 表に載っている種類だけが書ける先を持つ ----------
 {
   const allowed = Object.values(_TABLES_FOR_TEST).map((t) => t.table).sort();
-  eq('★書き込み先は5つの表だけ', allowed,
-     ['contracts', 'customers', 'recurring_patterns', 'reservations', 'trainers']);
+  eq('★書き込み先は決めた表だけ', allowed,
+     ['contracts', 'customers', 'member_home', 'recurring_patterns', 'reservations', 'slots_cache', 'trainers']);
   const hasKey = Object.values(_TABLES_FOR_TEST).every((t) => t.cols.includes(t.key));
   eq('★どの表も主キーを列に持つ', hasKey, true);
+}
+
+// ---------- 10. 写し（残数・枠）は、含まれなかった行を消さない ----------
+//   残数は会員ごとに独立していて、GASが時間切れで一部しか送れないことがある。
+//   「今回含まれなかった＝辞めた」ではないので、消してはいけない。
+{
+  const env = makeEnv();
+  await handleIngest(req({
+    kind: 'home', batchId: 200, final: true,
+    rows: [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 200 }],
+  }, 'TEST-SECRET'), env);
+  eq('★残数はfinalでも削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
+  eq('同期の記録は残す', env._sql.some((x) => /sync_state/.test(x.q)), true);
+}
+{
+  const env = makeEnv();
+  await handleIngest(req({ kind: 'slots', batchId: 201, final: true, rows: [] }, 'TEST-SECRET'), env);
+  eq('★枠もfinalで削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
+}
+// 一方、顧客や予約は消えたら消す（Google側が正）
+{
+  const env = makeEnv();
+  await handleIngest(req({ kind: 'customers', batchId: 202, final: true, rows: [] }, 'TEST-SECRET'), env);
+  eq('★顧客はfinalで古い行を消す', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), true);
 }
 
 console.log(`\n取り込み口 検証: ${pass} passed / ${fail} failed`);
