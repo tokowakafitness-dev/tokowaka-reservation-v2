@@ -122,6 +122,10 @@ export async function compatTrainerReservations({ env, who, body }) {
   ]);
 
   const reservations = (resv.results || []).map((r) => ({
+    // ★この値は、画面がそのままGASへ渡してキャンセル・変更に使う。
+    //   GASは予約シートの備考欄でこの値を照合するので、
+    //   押し出し側（PushToEdge.js）が備考欄のresIdを reservation_id に入れている。
+    //   ここで別の値に差し替えてはいけない。
     reservationId: String(r.reservation_id),
     dateLabel: resvLabel(r.start_at, lang),
     customerName: String(r.customer_name || ''),
