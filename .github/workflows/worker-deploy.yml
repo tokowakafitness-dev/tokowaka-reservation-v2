@@ -72,7 +72,11 @@ jobs:
         run: npx wrangler d1 execute "$D1_NAME" --remote --file=schema.sql
 
       - name: デプロイ
-        run: npx wrangler deploy 2>&1 | tee deploy.log
+        run: |
+          # ★pipefail が無いと、終了状態が tee のもの（常に成功）になり、
+          #   wrangler が失敗しても緑で通ってしまう。2026-09-28 に実際に起きた。
+          set -o pipefail
+          npx wrangler deploy 2>&1 | tee deploy.log
 
       - name: 公開先を表示
         run: |
