@@ -145,7 +145,8 @@ CREATE TABLE IF NOT EXISTS body_records (
   body_fat_pct  REAL,
   muscle_kg     REAL,
   note          TEXT,
-  created_at    INTEGER NOT NULL
+  created_at    INTEGER NOT NULL,
+  synced_at     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_body_cust ON body_records(customer_id, measured_at);
 
