@@ -1,0 +1,133 @@
+// TOKOWAKA 予約・契約 API（Cloudflare Workers）
+//
+// 入口はここ1本だけ。すべてのリクエストが
+//   ① ID Tokenの署名検証 → ② 役割の確定 → ③ 許可表の照合 → ④ 処理 → ⑤ 応答から機密を落とす
+// を必ず通る。個々の処理に権限チェックを書かないので、書き忘れによる穴ができない。
+//
+// 第1段階の方針：読み取りだけをここで受ける。書き込み（予約・契約）は当面GASのまま。
+//   未実装の操作は NOT_IMPLEMENTED を返し、フロントはGASへ落とす。
+
+import { verifyIdToken, resolveRole } from './auth.js';
+import { isAllowed, redact, canActOnOther } from './perms.js';
+import { routeBoot } from './routes/boot.js';
+import { routeCustomerDetail, routeContractList } from './routes/customer.js';
+import { routeSlots } from './routes/slots.js';
+
+// このオリジンからだけ受ける。ワイルドカードは使わない。
+const ALLOWED_ORIGINS = [
+  'https://reservation.tokowaka-gym.com',
+  'https://tokowakafitness-dev.github.io',
+];
+
+// 読み取り操作 → 実装
+const HANDLERS = {
+  boot:           routeBoot,
+  customerDetail: routeCustomerDetail,
+  contractList:   routeContractList,
+  slots:          routeSlots,
+  mySlots:        routeSlots,
+};
+
+function corsHeaders(origin) {
+  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
+  };
+}
+
+function json(body, origin, status = 200, extra = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      ...corsHeaders(origin),
+      ...extra,
+    },
+  });
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const origin = request.headers.get('Origin') || '';
+    const t0 = Date.now();
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    }
+
+    const url = new URL(request.url);
+    if (url.pathname === '/health') {
+      // 同期の鮮度だけ返す。認証不要・個人情報なし。
+      let sync = [];
+      try {
+        const r = await env.DB.prepare('SELECT key, synced_at, rows, ok FROM sync_state').all();
+        sync = r.results || [];
+      } catch (_) {}
+      return json({ ok: true, now: Date.now(), sync }, origin);
+    }
+
+    if (request.method !== 'POST') {
+      return json({ success: false, code: 'METHOD_NOT_ALLOWED' }, origin, 405);
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch (_) {
+      return json({ success: false, code: 'BAD_JSON' }, origin, 400);
+    }
+
+    const action = String(body.action || '');
+    if (!action) return json({ success: false, code: 'NO_ACTION' }, origin, 400);
+
+    // ① 署名検証
+    const auth = await verifyIdToken(body.idToken, env);
+    if (!auth.ok) {
+      // 期限切れはフロントが取り直せるよう、他の失敗と区別して返す
+      const status = auth.code === 'EXPIRED' ? 401 : 401;
+      return json({ success: false, code: auth.code === 'EXPIRED' ? 'UNAUTHORIZED' : 'FORBIDDEN', detail: auth.code }, origin, status);
+    }
+
+    // ② 役割の確定
+    let who;
+    try {
+      who = await resolveRole(auth.lineUserId, env);
+    } catch (_) {
+      return json({ success: false, code: 'DB_UNAVAILABLE' }, origin, 503);
+    }
+
+    // ③ 許可表の照合（表に無い組み合わせはここで終わる）
+    if (!isAllowed(action, who.role)) {
+      return json({ success: false, code: 'FORBIDDEN' }, origin, 403);
+    }
+
+    // 他人の顧客IDを指定できるのは trainer / owner だけ
+    if (body.customerId && !canActOnOther(who.role) && body.customerId !== who.customerId) {
+      return json({ success: false, code: 'FORBIDDEN' }, origin, 403);
+    }
+
+    // ④ 処理
+    const handler = HANDLERS[action];
+    if (!handler) {
+      // 表には載っているが、まだWorkerに移していない操作。フロントはGASへ落とす。
+      return json({ success: false, code: 'NOT_IMPLEMENTED' }, origin, 501);
+    }
+
+    let result;
+    try {
+      result = await handler({ body, env, ctx, who, lineUserId: auth.lineUserId });
+    } catch (e) {
+      console.error(action, e && e.message);
+      return json({ success: false, code: 'INTERNAL' }, origin, 500);
+    }
+
+    // ⑤ 役割に応じて応答から落とす（粗利・他人の連絡先など）
+    const safe = redact(result, who.role);
+    return json({ success: true, ...safe }, origin, 200, { 'X-Worker-Ms': String(Date.now() - t0) });
+  },
+};

@@ -1,0 +1,21 @@
+# TOKOWAKA 予約・契約 API
+#   デプロイは GitHub Actions が行う（ローカルの wrangler login はしない方針・memory.md 参照）。
+name = "tokowaka-api"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# LINEのチャネルID。ID Tokenの aud を照合するのに使う（公開情報・機密ではない）
+[vars]
+LINE_CHANNEL_ID = "2010827953"
+
+# 契約・顧客・予約。正確さが要るものを置く
+[[d1_databases]]
+binding = "DB"
+database_name = "tokowaka"
+database_id = "PASTE_D1_ID_HERE"    # setup ワークフローの出力を貼る
+
+# トレーナー名簿・空き枠・残数の写し。みんなが同じものを読むものを置く
+[[kv_namespaces]]
+binding = "KV"
+id = "PASTE_KV_ID_HERE"             # setup ワークフローの出力を貼る
