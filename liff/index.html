@@ -468,7 +468,7 @@
     LANG = l; try { localStorage.setItem('tkw_lang', l); } catch(e){}
     applyI18n();
     if (typeof state !== 'undefined' && state._repaint) { try { state._repaint(); } catch(e){} }
-    try { api({ action:'line_setLang', lang: l }); } catch(e){}   // 通知言語をサーバに保存（失敗しても致命でない）
+    _syncLang(l);   // 通知言語をサーバに保存（変わったときだけ・失敗しても致命でない）
   }
 
   var BUSINESS_START = 7, BUSINESS_END = 24;
@@ -735,6 +735,23 @@
     });
   }
 
+  // 通知言語の保存は、前回送った値と違うときだけにする。
+  //   毎回の起動で送っていたが、この処理はGAS側で6秒前後かかることがあり、
+  //   起動のたびにサーバーを1回余計に起こしていた。言語はめったに変わらない。
+  //   端末を変えたときは記録が無いので1回だけ送られる。
+  function _syncLang(l){
+    var lang = String(l || '');
+    if (!lang) return;
+    try {
+      if (localStorage.getItem('lb_lang_sent') === lang) return;   // 前回と同じ＝送らない
+    } catch (e) { /* 記録が使えない端末では毎回送る（従来どおり） */ }
+    try {
+      api({ action: 'line_setLang', lang: lang }).then(function (r) {
+        if (r && r.success) { try { localStorage.setItem('lb_lang_sent', lang); } catch (e) {} }
+      }, function () {});
+    } catch (e) {}
+  }
+
   function boot(){
     try {
       dbg('起動 / LIFF_ID=' + (LIFF_ID ? 'あり' : 'なし'));
@@ -756,7 +773,7 @@
             if (_nl === 'zh' || _nl === 'zh-Hant') zhVariant = _nl;   // LINEアプリ言語から簡/繁を確定
             if (_nl !== LANG) { LANG = _nl; applyI18n(); }
           }
-          api({ action:'line_setLang', lang: LANG });   // 登録済みなら通知言語を保存（未登録はサーバ側で無視／登録時に確定）
+          _syncLang(LANG);   // 変わったときだけ送る（起動のたびには送らない）
         } catch(e){}
         try { if (location.href.indexOf('whoami') >= 0) sessionStorage.setItem('_whoami','1'); } catch(e){}
         var _isWhoami = false; try { _isWhoami = (location.href.indexOf('whoami')>=0) || (sessionStorage.getItem('_whoami')==='1'); } catch(e){ _isWhoami = location.href.indexOf('whoami')>=0; }
