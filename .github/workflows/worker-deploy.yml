@@ -76,5 +76,18 @@ jobs:
 
       - name: 公開先を表示
         run: |
-          grep -Eo 'https://[a-zA-Z0-9.-]+workers\.dev' deploy.log | head -1 \
-            || echo "URLはデプロイのログを参照してください"
+          # wrangler の出力には色の制御文字が混ざるため、先に取り除いてから探す
+          url="$(sed -e 's/\x1b\[[0-9;]*m//g' deploy.log \
+                 | grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' | head -1)"
+          if [ -n "$url" ]; then
+            echo "公開先: $url"
+            echo "状態の確認: $url/health"
+            {
+              echo "### Worker を公開しました"
+              echo ""
+              echo "- 公開先: $url"
+              echo "- 状態の確認: [$url/health]($url/health)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "URLを取り出せませんでした。上の「デプロイ」ステップのログを参照してください。"
+          fi
