@@ -562,7 +562,68 @@
 
   // ID Token失効(UNAUTHORIZED)を自動回復：まず getIDToken() で取り直して1回リトライ、
   // それでもダメなら1回だけリロードして liff.init を再実行（無限ループは sessionStorage で防止）。
+  // ============================================================
+  // Cloudflare Worker へ先に聞く層（2026-09-28）
+  //
+  //   画面の描画コードは一切変えない。GASと同じ形で返るので、呼び出し側から見て違いが無い。
+  //   Workerが答えられないとき（写しが無い・古い・通信失敗）は、そのままGASへ落ちる。
+  //   ★予約の作成・変更・取消は必ずGAS。Workerは読むだけ。
+  //
+  //   有効にするには URL に ?edge=1 を付ける。?edge=0 で戻る。
+  //   （確かめ終わるまでお客様には影響しない）
+  // ============================================================
+  var EDGE_URL = 'https://tokowaka-api.tokowaka-fitness.workers.dev';
+  var EDGE_ON = false;
+  try {
+    if (/[?&#]edge=0/.test(location.href)) { localStorage.removeItem('lb_edge'); }
+    else if (/[?&#]edge=1/.test(location.href)) { localStorage.setItem('lb_edge', '1'); }
+    EDGE_ON = localStorage.getItem('lb_edge') === '1';
+  } catch (e) { EDGE_ON = /[?&#]edge=1/.test(location.href); }
+
+  // GASの操作名 → Workerの窓口。ここに無いものは全てGASへ行く（読み取りだけを載せる）
+  var EDGE_MAP = {
+    getMemberStatus:              'c_memberStatus',
+    getTrainers:                  'c_trainers',
+    getTrainerSlots:              'c_trainerSlots',
+    getBookingOptions:            'c_bookingOptions',
+    getTrainerReservations:       'c_trainerReservations',
+    getCustomerHome:              'c_customerHome',
+    listRecurringPatternsByTrainer:'c_recurringList'
+  };
+
+  function _edgeTry(params){
+    var plain = String(params.action || '').replace(/^line_/, '');
+    var act = EDGE_MAP[plain];
+    if (!act) return null;                       // 載っていない＝GASへ
+
+    var body = { action: act, idToken: idToken, lang: LANG };
+    for (var k in params) if (k !== 'action' && k !== 'idToken') body[k] = params[k];
+
+    var t0 = _nowMs();
+    var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 4000);   // 4秒で見切ってGASへ
+
+    return fetch(EDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctl ? ctl.signal : undefined
+    }).then(function(r){ return r.json(); }).then(function(j){
+      clearTimeout(timer);
+      if (!j || j.success !== true) return null;   // FALLBACK も FORBIDDEN もGASへ
+      _perfAdd('edge:' + plain, _nowMs() - t0);
+      return j;
+    }).catch(function(){ clearTimeout(timer); return null; });
+  }
+
   function api(params){
+    if (!EDGE_ON) return _apiGas(params);
+    var t = _edgeTry(params);
+    if (!t) return _apiGas(params);
+    return t.then(function(res){ return res ? res : _apiGas(params); });
+  }
+
+  function _apiGas(params){
     return _apiOnce(params).then(function(res){
       if (res && res.code === 'UNAUTHORIZED') {
         var fresh = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : '';

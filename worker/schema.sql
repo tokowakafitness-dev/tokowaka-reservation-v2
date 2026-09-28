@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS customers (
   line_user_id       TEXT UNIQUE,
   default_trainer_id TEXT,
   contract_status    TEXT,                  -- 在籍 / 休会 / 退会
+  contract_type      TEXT,                  -- 通常 / レンタル / モニター など
   lang               TEXT DEFAULT 'ja',
   goal               TEXT,
   note               TEXT,

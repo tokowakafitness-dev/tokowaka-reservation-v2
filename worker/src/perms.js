@@ -26,6 +26,16 @@ const TABLE = {
   'myHome':            ['customer'],                       // 自分の残数・契約の「回数と期限」のみ
   'mySlots':           ['customer', 'trainer', 'owner'],
   'bookingOptions':    ['customer', 'trainer', 'owner'],   // 予約する日時の残数と消化先
+
+  // ---- GAS互換（画面の描画コードを変えずに通信先だけ差し替えるための窓口）----
+  //   中身はD1から、形はGASのまま返す。役割の判定はこの表に従う。
+  'c_memberStatus':        ['guest', 'customer', 'trainer', 'owner'],
+  'c_trainers':            ['customer', 'trainer', 'owner'],
+  'c_trainerSlots':        ['customer', 'trainer', 'owner'],
+  'c_bookingOptions':      ['customer', 'trainer', 'owner'],
+  'c_trainerReservations': ['trainer'],
+  'c_customerHome':        ['trainer'],
+  'c_recurringList':       ['trainer'],
   'myReservations':    ['customer'],
   'book':              ['customer', 'trainer', 'owner'],
   'cancelReservation': ['customer', 'trainer', 'owner'],

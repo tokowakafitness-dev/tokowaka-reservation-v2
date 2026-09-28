@@ -21,7 +21,8 @@ const TABLES = {
     table: 'customers',
     key: 'customer_id',
     cols: ['customer_id', 'name', 'kana', 'phone', 'email', 'birthday', 'line_user_id',
-           'default_trainer_id', 'contract_status', 'lang', 'goal', 'note', 'created_at', 'updated_at'],
+           'default_trainer_id', 'contract_status', 'contract_type', 'lang', 'goal', 'note',
+           'created_at', 'updated_at'],
   },
   contracts: {
     table: 'contracts',

@@ -13,6 +13,9 @@ import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
 import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
+import { compatMemberStatus, compatTrainers, compatTrainerReservations,
+         compatCustomerHome, compatRecurringList, compatBookingOptions,
+         compatTrainerSlots } from './routes/compat.js';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
@@ -28,6 +31,15 @@ const HANDLERS = {
   slots:          routeSlots,
   mySlots:        routeSlots,
   bookingOptions: routeBookingOptions,
+
+  // GAS互換の窓口（画面はこれを呼ぶ）
+  c_memberStatus:        compatMemberStatus,
+  c_trainers:            compatTrainers,
+  c_trainerSlots:        compatTrainerSlots,
+  c_bookingOptions:      compatBookingOptions,
+  c_trainerReservations: compatTrainerReservations,
+  c_customerHome:        compatCustomerHome,
+  c_recurringList:       compatRecurringList,
 };
 
 function corsHeaders(origin) {
@@ -133,6 +145,13 @@ export default {
     } catch (e) {
       console.error(action, e && e.message);
       return json({ success: false, code: 'INTERNAL' }, origin, 500);
+    }
+
+    // 写しを持っていない／古すぎる場合は「答えない」。画面はGASに聞き直す。
+    //   間違った残数や古い枠を返すより、遅いほうがよい。
+    if (result && result._fallback) {
+      return json({ success: false, code: 'FALLBACK' }, origin, 200,
+                  { 'X-Worker-Ms': String(Date.now() - t0) });
     }
 
     // ⑤ 役割に応じて応答から落とす（粗利・他人の連絡先など）
