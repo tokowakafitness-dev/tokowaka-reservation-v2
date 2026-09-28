@@ -139,7 +139,8 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 {
   const allowed = Object.values(_TABLES_FOR_TEST).map((t) => t.table).sort();
   eq('★書き込み先は決めた表だけ', allowed,
-     ['contracts', 'customers', 'member_home', 'recurring_patterns', 'reservations', 'slots_cache', 'trainers']);
+     ['body_records', 'contracts', 'customers', 'member_home', 'recurring_patterns',
+      'reservations', 'slots_cache', 'trainers']);
   const hasKey = Object.values(_TABLES_FOR_TEST).every((t) => t.cols.includes(t.key));
   eq('★どの表も主キーを列に持つ', hasKey, true);
 }
@@ -160,6 +161,12 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
   const env = makeEnv();
   await handleIngest(req({ kind: 'slots', batchId: 201, final: true, rows: [] }, 'TEST-SECRET'), env);
   eq('★枠もfinalで削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
+}
+{
+  const env = makeEnv();
+  await handleIngest(req({ kind: 'body', batchId: 203, final: true, rows: [] }, 'TEST-SECRET'), env);
+  eq('★InBodyもfinalで削除しない（直近ぶんしか送らないため）',
+     env._sql.some((x) => /DELETE/.test(x.q)), false);
 }
 // 一方、顧客や予約は消えたら消す（Google側が正）
 {

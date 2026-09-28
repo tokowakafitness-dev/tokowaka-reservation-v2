@@ -28,6 +28,8 @@ function isOpen(startMs, now, cfg) {
   return now < deadline;
 }
 
+import { readHome } from './boot.js';
+
 export async function routeSlots({ body, env, who }) {
   const trainerId = String(body.trainerId || who.trainerId || '');
   if (!trainerId) return { code: 'BAD_REQUEST', slots: [] };
@@ -55,7 +57,44 @@ export async function routeSlots({ body, env, who }) {
     slots,
     computedAt: raw.computedAt || null,
     ageMs: raw.computedAt ? now - raw.computedAt : null,
-    // 予約画面が続けて必要とするもの（GASでは getBookingOptions として別通信だった）
-    options: raw.optionsByCustomer && who.customerId ? (raw.optionsByCustomer[who.customerId] || null) : null,
+  };
+}
+
+/**
+ * 「この日時に予約するとき、何から消化されるか」を返す。
+ *   GASでは getBookingOptions として別に5.1秒かけていた通信。
+ *   残数は予約する日の月で決まるため、その月の写しから組み立てる。
+ *   持っていない月なら null を返し、画面はGASに聞き直す（間違った選択肢を出さない）。
+ */
+export async function routeBookingOptions({ body, env, who }) {
+  const customerId = String(body.customerId || who.customerId || '');
+  if (!customerId) return { code: 'BAD_REQUEST', options: null };
+
+  const startMs = Number(body.startMs || 0);
+  if (!startMs) return { code: 'BAD_REQUEST', options: null };
+
+  const home = await readHome(env, customerId, startMs);
+  if (!home) return { options: null, fallback: true };   // その月を持っていない＝GASに聞いて
+
+  const monthlyLeft = home.monthlyRemaining != null ? home.monthlyRemaining : 0;
+  const pairLeft = home.pairRemaining || 0;
+  const normalTicketLeft = home.normalTicketRemaining || 0;
+
+  return {
+    options: {
+      month: home.month,
+      hasNormalRoute: !!home.hasNormalRoute,
+      monthlyRemaining: monthlyLeft,
+      ticketRemaining: home.ticketRemaining != null ? home.ticketRemaining : 0,
+      pairRemaining: pairLeft,
+      pairPackMax: home.pairPackMax || 0,
+      normalTicketRemaining: normalTicketLeft,
+      isPair: pairLeft > 0,
+      carryover: home.carryover || 0,
+      quota: home.quota || 0,
+      transferCredits: home.transferCredits || null,
+    },
+    stale: home.stale,
+    computedAt: home.computedAt,
   };
 }

@@ -25,6 +25,7 @@ const TABLE = {
   'boot':              ['customer', 'trainer', 'owner'],   // 起動時の一括取得。役割で中身が変わる
   'myHome':            ['customer'],                       // 自分の残数・契約の「回数と期限」のみ
   'mySlots':           ['customer', 'trainer', 'owner'],
+  'bookingOptions':    ['customer', 'trainer', 'owner'],   // 予約する日時の残数と消化先
   'myReservations':    ['customer'],
   'book':              ['customer', 'trainer', 'owner'],
   'cancelReservation': ['customer', 'trainer', 'owner'],

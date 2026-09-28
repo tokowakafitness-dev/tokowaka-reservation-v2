@@ -19,16 +19,38 @@ export async function readTrainers(env) {
   return r.results || [];
 }
 
-export async function readHome(env, customerId) {
+function monthKeyJst(ms) {
+  const d = new Date(ms + 9 * 3600 * 1000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+}
+
+/**
+ * 残数を返す。targetMs（予約しようとしている日時）を渡すと、その月の残数を返す。
+ *   25日以降は翌月の枠が開くため、9月の残数と10月の残数は別物になる。
+ *   GASが「今月分」と「翌月分」の2つを押し出しているので、そこから選ぶ。
+ *   どちらの月でもないとき（翌々月など）は null を返す＝画面はGASに聞き直す。
+ */
+export async function readHome(env, customerId, targetMs) {
   if (!customerId) return null;
   const row = await env.DB.prepare(
     'SELECT payload, computed_at FROM member_home WHERE customer_id = ?'
   ).bind(customerId).first();
   if (!row) return null;
-  let home;
-  try { home = JSON.parse(row.payload); } catch (_) { return null; }
+  let p;
+  try { p = JSON.parse(row.payload); } catch (_) { return null; }
+
+  let home = p.current;
+  let month = p.currentMonth;
+  if (targetMs) {
+    const want = monthKeyJst(targetMs);
+    if (want === p.currentMonth) { home = p.current; month = p.currentMonth; }
+    else if (want === p.nextMonth && p.next) { home = p.next; month = p.nextMonth; }
+    else return null;                      // 持っていない月＝答えない（間違った残数を返さない）
+  }
+  if (!home) return null;
+
   const age = Date.now() - (row.computed_at || 0);
-  return { ...home, computedAt: row.computed_at, stale: age > HOME_TTL_WARN_MS, ageMs: age };
+  return { ...home, month, computedAt: row.computed_at, stale: age > HOME_TTL_WARN_MS, ageMs: age };
 }
 
 export async function routeBoot({ env, who }) {

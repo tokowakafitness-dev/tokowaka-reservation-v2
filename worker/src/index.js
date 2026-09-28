@@ -11,7 +11,7 @@ import { verifyIdToken, resolveRole } from './auth.js';
 import { isAllowed, redact, canActOnOther } from './perms.js';
 import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
-import { routeSlots } from './routes/slots.js';
+import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
@@ -27,6 +27,7 @@ const HANDLERS = {
   contractList:   routeContractList,
   slots:          routeSlots,
   mySlots:        routeSlots,
+  bookingOptions: routeBookingOptions,
 };
 
 function corsHeaders(origin) {

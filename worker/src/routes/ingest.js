@@ -54,6 +54,12 @@ const TABLES = {
     cols: ['trainer_id', 'payload', 'computed_at'],
     keepStale: true,
   },
+  body: {
+    table: 'body_records',
+    key: 'record_id',
+    cols: ['record_id', 'customer_id', 'measured_at', 'weight_kg', 'body_fat_pct', 'muscle_kg', 'note', 'created_at'],
+    keepStale: true,   // 直近ぶんだけを送るので、含まれない過去の記録を消してはいけない
+  },
 };
 
 const MAX_ROWS = 500;          // 1回の押し出しで受ける行数の上限
