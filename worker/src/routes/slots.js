@@ -9,26 +9,12 @@
 //   ★当初KVに置く設計だったが、KVの書き込みは1日1,000回まで。
 //     4名を5分ごとに更新すると1,152回で超えるため、D1に置いた（1日10万回まで無料）。
 
-function jstParts(ms) {
-  const d = new Date(ms + 9 * 3600 * 1000);
-  return { y: d.getUTCFullYear(), mo: d.getUTCMonth(), d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes() };
-}
-
-// 午前枠は前日22時で締め切る（2026-09-24 オーナー決定）。表示からも落とす。
-function isOpen(startMs, now, cfg) {
-  const lead = (cfg.leadMinutes || 180) * 60 * 1000;
-  let deadline = startMs - lead;
-  const p = jstParts(startMs);
-  if (p.h < (cfg.morningUntilHour || 12)) {
-    // 前日の22時
-    const prev = new Date(Date.UTC(p.y, p.mo, p.d, cfg.prevDeadlineHour || 22, 0) - 9 * 3600 * 1000);
-    prev.setUTCDate(prev.getUTCDate() - 1);
-    deadline = Math.min(deadline, prev.getTime());
-  }
-  return now < deadline;
-}
-
-import { readHome } from './boot.js';
+// 締め切りの判定は compat.js に一本化する。
+//   以前はここにも同じ判定があり、設定値の解釈が違っていた
+//   （0 を「無効」とみなすか「前日0時」とみなすか）。同じ枠でも経路によって
+//   表示可否が変わるため、判定は1つだけにする。
+import { _forTest as _rules } from './compat.js';
+const isOpen = (startMs, now, cfg) => _rules.isSlotOpen(startMs, now, cfg);
 
 export async function routeSlots({ body, env, who }) {
   const trainerId = String(body.trainerId || who.trainerId || '');

@@ -109,21 +109,11 @@ async function ingest(request, env) {
   const batchId = Number(body.batchId || 0);
   if (!batchId) return jsonRes({ success: false, code: 'NO_BATCH_ID' }, 400);
 
-  // ---- KVへの押し出し（枠・残数・名簿） ----
-  if (kind === 'kv') {
-    const entries = Array.isArray(body.entries) ? body.entries : [];
-    if (entries.length > MAX_KV_ENTRIES) return jsonRes({ success: false, code: 'TOO_MANY' }, 413);
-    let n = 0;
-    for (const e of entries) {
-      const k = String(e.key || '');
-      if (!k) continue;
-      const opts = e.ttl ? { expirationTtl: Math.max(60, Number(e.ttl)) } : undefined;
-      await env.KV.put(k, JSON.stringify(e.value), opts);
-      n++;
-    }
-    if (body.final) await stampSync(env, 'kv:' + (body.label || 'misc'), batchId, n);
-    return jsonRes({ success: true, written: n });
-  }
+  // ★KVへの取り込みは廃止した（2026-09-28）。
+  //   残数も枠もD1へ移したので業務では使わない。受け口を残すと、合言葉が漏れたときに
+  //   認証で使う公開鍵（jwks:line）を上書きされ、偽のIDトークンを通される恐れがある。
+  //   KVはWorkerが自分で書く公開鍵の置き場としてのみ使う。
+  if (kind === 'kv') return jsonRes({ success: false, code: 'KV_INGEST_DISABLED' }, 400);
 
   // ---- D1への押し出し ----
   const conf = TABLES[kind];
@@ -136,8 +126,18 @@ async function ingest(request, env) {
   const placeholders = cols.map(() => '?').join(', ');
   // 主キーが同じなら中身を入れ替える（同じ押し出しを2回流しても結果が変わらない）
   const updates = cols.filter((c) => c !== conf.key).map((c) => `${c} = excluded.${c}`).join(', ');
+  // 行ごとにも世代を見る。古い内容で新しい行を上書きしない。
   const sql = `INSERT INTO ${conf.table} (${cols.join(', ')}) VALUES (${placeholders})
-               ON CONFLICT(${conf.key}) DO UPDATE SET ${updates}`;
+               ON CONFLICT(${conf.key}) DO UPDATE SET ${updates}
+               WHERE ${conf.table}.synced_at IS NULL OR excluded.synced_at >= ${conf.table}.synced_at`;
+
+  // 古いバッチが遅れて届いても、新しい内容を巻き戻さない。
+  //   押し出しが重なったとき、先に走った古い方が後から完了すると、
+  //   新しい行を古い内容で上書きし、消えたはずの行を復活させてしまう。
+  const seen = await env.DB.prepare('SELECT synced_at FROM sync_state WHERE key = ?').bind(kind).first();
+  if (seen && Number(seen.synced_at) > batchId) {
+    return jsonRes({ success: false, code: 'STALE_BATCH', detail: 'newer batch already applied' }, 409);
+  }
 
   const stmts = [];
   for (const r of rows) {
@@ -154,6 +154,12 @@ async function ingest(request, env) {
   }
 
   let removed = 0;
+  // ★0件で final を受けても消さない。元のシートが一時的に読めなかっただけの可能性がある。
+  //   顧客や予約がまるごと消えると、会員が「未登録」に見え、予約も全部消える。
+  if (body.final && !conf.keepStale && rows.length === 0 && body.allowEmpty !== true) {
+    await stampSync(env, kind, batchId, null);
+    return jsonRes({ success: true, written: 0, removed: 0, skippedDelete: 'EMPTY_SOURCE' });
+  }
   // keepStale の表は、今回含まれなかった行を消さない。
   //   残数や枠は「会員の一部だけを更新する」使い方をするため、
   //   含まれなかった＝消えた、ではない。

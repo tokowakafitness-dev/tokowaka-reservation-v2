@@ -75,9 +75,13 @@ export async function compatMemberStatus({ env, who }) {
   };
 }
 
+// 写しが古すぎるときは null を返す＝画面はGASに聞き直す。
 async function readHomeSafe(env, customerId, targetMs) {
-  const { readHome } = await import('./boot.js');
-  return readHome(env, customerId, targetMs);
+  const { readHome, HOME_TTL_HARD_MS } = await import('./boot.js');
+  const home = await readHome(env, customerId, targetMs);
+  if (!home) return null;
+  if (home.ageMs != null && home.ageMs > HOME_TTL_HARD_MS) return null;
+  return home;
 }
 
 // ---------------------------------------------------------------

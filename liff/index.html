@@ -595,18 +595,30 @@
   // 残数は「写し」なので、30分ごとにしか更新されない。
   //   予約・取消をした直後は、その写しがまだ古い。
   //   書き込みをしたら、残数まわりはしばらくGASに直接聞く（正しさを優先）。
-  var EDGE_STALE_UNTIL = 0;
+  //   ★期限は端末に残す。画面を閉じたり再読み込みすると変数は消えるが、
+  //     写しが新しくなるわけではないので、古い残数がまた出てしまう。
   var EDGE_WRITE_ACTIONS = /^(makeReservation|makeRecurring|makeBatch|makeTransfer|changeReservation|cancelReservation|makeAdminBooking|makeBlock|linkUnlinked|addTicketRefill|addRecurringPatternByTrainer|deleteRecurringPattern|deleteAdminSlot|selfRegister)/;
-  var EDGE_HOME_ACTIONS = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1 };
+  //   枠も対象にする。自分が取った枠が「まだ空いている」と見えるのを防ぐ。
+  var EDGE_HOME_ACTIONS = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1,
+                            getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1 };
+  function _edgeStaleUntil(){
+    try { return Number(localStorage.getItem('lb_edge_stale') || 0) || 0; } catch (e) { return _edgeStaleMem; }
+  }
+  var _edgeStaleMem = 0;
+  function _edgeMarkStale(){
+    var until = Date.now() + 35 * 60 * 1000;
+    _edgeStaleMem = until;
+    try { localStorage.setItem('lb_edge_stale', String(until)); } catch (e) {}
+  }
 
   function _edgeTry(params){
     var plain = String(params.action || '').replace(/^line_/, '');
 
     // 書き込みは必ずGAS。あわせて、残数の写しを「しばらく信用しない」印を付ける。
-    if (EDGE_WRITE_ACTIONS.test(plain)) { EDGE_STALE_UNTIL = Date.now() + 35 * 60 * 1000; return null; }
+    if (EDGE_WRITE_ACTIONS.test(plain)) { _edgeMarkStale(); return null; }
 
-    // 書き込み直後は、残数まわりだけGASに聞く（枠や名簿は写しのままでよい）
-    if (EDGE_HOME_ACTIONS[plain] && Date.now() < EDGE_STALE_UNTIL) return null;
+    // 書き込み直後は、残数と枠だけGASに聞く（名簿は写しのままでよい）
+    if (EDGE_HOME_ACTIONS[plain] && Date.now() < _edgeStaleUntil()) return null;
 
     var act = EDGE_MAP[plain];
     if (!act) return null;                       // 載っていない＝GASへ

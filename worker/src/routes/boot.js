@@ -9,6 +9,10 @@
 //   stale（鮮度）を必ず返し、古ければ画面側が「更新中」を出せるようにする。
 
 const HOME_TTL_WARN_MS = 10 * 60 * 1000;   // 10分より古ければ鮮度を疑う
+// ★これより古い写しは答えない（GASに聞き直す）。
+//   端末の保護（書き込み後35分）は、別の端末や別の人の予約までは知らない。
+//   古い残数を見せるより、遅くても正しいほうがよい。
+export const HOME_TTL_HARD_MS = 40 * 60 * 1000;
 
 export async function readTrainers(env) {
   const cached = await env.KV.get('trainers', 'json');

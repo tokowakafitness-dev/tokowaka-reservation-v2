@@ -86,7 +86,8 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
   const [, b] = await json(await handleIngest(req({ kind: 'trainers', batchId: 100, rows }, 'TEST-SECRET'), env));
   eq('2件書いた', b.written, 2);
   eq('★finalでなければ削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
-  eq('★finalでなければ同期の記録も残さない', env._sql.some((x) => /sync_state/.test(x.q)), false);
+  eq('★finalでなければ同期の記録を書かない',
+     env._sql.some((x) => /INSERT INTO sync_state/.test(x.q)), false);
 }
 
 // ---------- 5. final を受けたら、古い行だけを落とす ----------
@@ -99,7 +100,7 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
   eq('★消すのは今回より古い行だけ', /synced_at IS NULL OR synced_at < \?/.test(del.q), true);
   eq('★その境目は今回のbatchId', del.args, [100]);
   eq('削除件数を返す', b.removed, 3);
-  eq('同期の記録を残す', env._sql.some((x) => /sync_state/.test(x.q)), true);
+  eq('同期の記録を残す', env._sql.some((x) => /INSERT INTO sync_state/.test(x.q)), true);
 }
 
 // ---------- 6. 同じ押し出しを2回流しても結果が変わらない ----------
@@ -122,17 +123,58 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
   eq('★IDの無い行は書かない', b.written, 1);
 }
 
-// ---------- 8. KVへの押し出し ----------
+// ---------- 8. KVへの取り込みは受け付けない ----------
+//   ★合言葉が漏れたとき、認証に使う公開鍵（jwks:line）を上書きされ、
+//     偽のIDトークンを通されるのを防ぐ。残数も枠もD1へ移したので業務では使わない。
 {
   const env = makeEnv();
   const [s, b] = await json(await handleIngest(req({
-    kind: 'kv', batchId: 5, label: 'slots', final: true,
-    entries: [{ key: 'slots:t1', value: { slots: [1, 2] }, ttl: 1800 }, { key: '', value: { x: 1 } }],
+    kind: 'kv', batchId: 5, final: true,
+    entries: [{ key: 'jwks:line', value: { keys: [{ kid: 'evil' }] } }],
   }, 'TEST-SECRET'), env));
-  eq('KVは通る', s, 200);
-  eq('★鍵の無いものは書かない', b.written, 1);
-  eq('値が入っている', await env.KV.get('slots:t1'), { slots: [1, 2] });
-  eq('期限を渡している', env._kv.get('slots:t1').o, { expirationTtl: 1800 });
+  eq('★KVへの取り込みは断る', [s, b.code], [400, 'KV_INGEST_DISABLED']);
+  eq('★公開鍵は書き換えられない', env._kv.get('jwks:line'), undefined);
+}
+
+// ---------- 11. 0件でまるごと消さない ----------
+//   元のシートが一時的に読めなかっただけの可能性がある。顧客や予約が全部消えると、
+//   会員が「未登録」に見え、予約も全部消える。
+{
+  const env = makeEnv();
+  const [, b] = await json(await handleIngest(req({
+    kind: 'customers', batchId: 300, rows: [], final: true,
+  }, 'TEST-SECRET'), env));
+  eq('★0件のfinalでは削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
+  eq('理由を返す', b.skippedDelete, 'EMPTY_SOURCE');
+}
+{
+  // 本当に0件にしたいときは、明示すれば消せる
+  const env = makeEnv();
+  await handleIngest(req({ kind: 'customers', batchId: 301, rows: [], final: true, allowEmpty: true },
+    'TEST-SECRET'), env);
+  eq('明示すれば消せる', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), true);
+}
+
+// ---------- 12. 古いバッチの遅着で巻き戻さない ----------
+{
+  const env = makeEnv();
+  env.DB.prepare = ((orig) => (q) => {
+    const st = orig(q);
+    if (/FROM sync_state/.test(q)) st.first = async () => ({ synced_at: 500 });
+    return st;
+  })(env.DB.prepare);
+
+  const [s, b] = await json(await handleIngest(req({
+    kind: 'customers', batchId: 400, rows: [{ customer_id: 'c1', name: '古い' }],
+  }, 'TEST-SECRET'), env));
+  eq('★新しいバッチが済んでいれば古いものは断る', [s, b.code], [409, 'STALE_BATCH']);
+}
+{
+  const env = makeEnv();
+  await handleIngest(req({ kind: 'customers', batchId: 600, rows: [{ customer_id: 'c1', name: 'x' }] },
+    'TEST-SECRET'), env);
+  const ins = env._sql.find((x) => /INSERT INTO customers/.test(x.q));
+  eq('★行ごとにも世代を見る', /excluded\.synced_at >= customers\.synced_at/.test(ins.q), true);
 }
 
 // ---------- 9. 表に載っている種類だけが書ける先を持つ ----------
@@ -155,7 +197,7 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
     rows: [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 200 }],
   }, 'TEST-SECRET'), env);
   eq('★残数はfinalでも削除しない', env._sql.some((x) => /DELETE/.test(x.q)), false);
-  eq('同期の記録は残す', env._sql.some((x) => /sync_state/.test(x.q)), true);
+  eq('同期の記録は残す', env._sql.some((x) => /INSERT INTO sync_state/.test(x.q)), true);
 }
 {
   const env = makeEnv();
@@ -171,7 +213,8 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 // 一方、顧客や予約は消えたら消す（Google側が正）
 {
   const env = makeEnv();
-  await handleIngest(req({ kind: 'customers', batchId: 202, final: true, rows: [] }, 'TEST-SECRET'), env);
+  await handleIngest(req({ kind: 'customers', batchId: 202, final: true,
+    rows: [{ customer_id: 'c1', name: '残る人' }] }, 'TEST-SECRET'), env);
   eq('★顧客はfinalで古い行を消す', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), true);
 }
 
