@@ -54,17 +54,13 @@ jobs:
             echo "::error::KV「$KV_TITLE」が見つかりません。先に「Worker セットアップ」を実行してください。"; exit 1
           fi
 
-          # D1の場所を確認する。apac 以外だと日本からの応答が遅くなるため警告する。
-          region="$(printf '%s' "$d1_json" | jq -r --arg n "$D1_NAME" '.[] | select(.name==$n) | (.region // .location // "unknown")' | head -1)"
-          echo "D1 の場所: $region"
-          case "$region" in
-            APAC|apac|unknown) : ;;
-            *) echo "::warning::D1が $region にあります。日本から遠いため、セットアップを recreate_d1=true で流し直すことを検討してください。" ;;
-          esac
-
           sed -i "s|PASTE_D1_ID_HERE|$D1_ID|" wrangler.toml
           sed -i "s|PASTE_KV_ID_HERE|$KV_ID|" wrangler.toml
           echo "IDを設定に差し込みました（IDは機密ではありませんが、ログには出しません）"
+
+      - name: D1の設置場所を表示する
+        # list は場所を返さないため info を使う。ここは判定せず、事実をそのまま出す。
+        run: npx wrangler d1 info "$D1_NAME" || echo "場所を取得できませんでした"
 
       - name: 差し込み漏れがないか確かめる
         run: |
