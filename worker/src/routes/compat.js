@@ -101,9 +101,32 @@ export async function compatTrainers({ env, who }) {
 }
 
 // ---------------------------------------------------------------
+// 一覧ものの鮮度（2026-09-29）
+//
+//   予約は15分ごと、固定枠は15分ごとに押し出している。
+//   「同期がN分前」なら保証できるのは「直近N分の書き込みが写しに無い」ことだけ。
+//   Nが大きくなったら答えない。押し出しが止まったまま古い一覧を返し続けると、
+//   取り消した予約が残る／新しい予約が出ない、が起きる。
+//   ★いつ同期したか分からないときも答えない（記録が無い＝信用できない）。
+// ---------------------------------------------------------------
+const LIST_TTL_MS = {
+  reservations: 20 * 60 * 1000,
+  recurring:    30 * 60 * 1000,
+};
+async function listTooOld(env, key) {
+  try {
+    const r = await env.DB.prepare('SELECT synced_at FROM sync_state WHERE key = ?').bind(key).first();
+    const at = Number((r && r.synced_at) || 0);
+    if (!at) return true;
+    return (Date.now() - at) > (LIST_TTL_MS[key] || 20 * 60 * 1000);
+  } catch (_) { return true; }
+}
+
+// ---------------------------------------------------------------
 // getTrainerReservations と同じ形（担当予約の管理）
 // ---------------------------------------------------------------
 export async function compatTrainerReservations({ env, who, body }) {
+  if (await listTooOld(env, 'reservations')) return { _fallback: true };
   const owner = who.role === 'owner';
   const lang = String(body.lang || 'ja');
   const now = Date.now();
@@ -173,6 +196,7 @@ export async function compatRecurringList({ env, body, who }) {
   const customerId = String(body.customerId || '');
   if (!customerId) return { patterns: [] };
   if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
+  if (await listTooOld(env, 'recurring')) return { _fallback: true };
   const r = await env.DB.prepare(
     `SELECT pattern_id, customer_id, trainer_id, weekday, time
        FROM recurring_patterns WHERE customer_id = ? AND active = 1
@@ -199,6 +223,9 @@ export async function compatBookingOptions({ env, who, body }) {
   const startISO = String(body.startISO || '');
   const startMs = startISO ? new Date(startISO).getTime() : Number(body.startMs || 0);
   if (!customerId || !startMs || isNaN(startMs)) return { _fallback: true };
+  // ★閲覧範囲の確認。ここが抜けていて、トレーナーが顧客IDを指定すれば
+  //   担当外の顧客のチケット残数・期限・ペア残数を取得できた（2026-09-29）。
+  if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
 
   const home = await readHomeSafe(env, customerId, startMs);
   if (!home) return { _fallback: true };          // その月を持っていない＝GASに聞き直す
@@ -241,6 +268,7 @@ function st(key, lang) {
 
 export async function compatMyReservations({ env, who, body }) {
   if (!who.customerId) return { _fallback: true };
+  if (await listTooOld(env, 'reservations')) return { _fallback: true };
   const lang = String(body.lang || 'ja');
   const now = Date.now();
 
@@ -300,22 +328,18 @@ export async function compatMyReservations({ env, who, body }) {
 export async function compatTrainerSlots({ env, body, who }) {
   const trainerId = String(body.trainerId || who.trainerId || '');
   if (!trainerId) return { _fallback: true };
-  // 鮮度は「枠を最後に押し出した時刻」で見る（行ごとの時刻ではない）。
-  //   行ごとの時刻で見ると、中身が変わっていない枠も毎回書き直す必要がある。
-  const [row, sync] = await Promise.all([
-    env.DB.prepare('SELECT payload, computed_at FROM slots_cache WHERE trainer_id = ?')
-      .bind(trainerId).first(),
-    env.DB.prepare("SELECT synced_at FROM sync_state WHERE key = 'slots'").first(),
-  ]);
+  // ★鮮度はその行が計算された時刻だけで見る（残数と同じ理由・2026-09-29）。
+  const row = await env.DB.prepare('SELECT payload, computed_at FROM slots_cache WHERE trainer_id = ?')
+    .bind(trainerId).first();
   if (!row) return { _fallback: true };
   let raw;
   try { raw = JSON.parse(row.payload); } catch (_) { return { _fallback: true }; }
 
   // 写しが古すぎるときは答えない。空き枠は予約で変わるため、古い枠を見せると
   // 「表示されているのに取れない」が起きる。
-  const refreshedAt = Math.max(Number(row.computed_at || 0), Number((sync && sync.synced_at) || 0));
-  const age = Date.now() - refreshedAt;
-  if (age > 20 * 60 * 1000) return { _fallback: true };
+  const computedAt = Number(row.computed_at || 0);
+  if (!computedAt) return { _fallback: true };
+  if (Date.now() - computedAt > 20 * 60 * 1000) return { _fallback: true };
 
   const now = Date.now();
   const cfg = raw.rules || { leadMinutes: 180, morningUntilHour: 12, prevDeadlineHour: 22 };

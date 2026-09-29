@@ -49,17 +49,17 @@ const TABLES = {
     key: 'customer_id',
     cols: ['customer_id', 'payload', 'computed_at'],
     keepStale: true,    // 押し出しに含まれない会員の残数を消さない（部分更新を許す）
-    // ★computed_at は押し出すたびに変わるので、変更の有無の判定からは外す。
-    //   含めると中身が同じでも毎回書き直すことになる。
-    //   鮮度は sync_state（最後に押し出した時刻）で見るので、これで困らない。
-    skipCompare: ['computed_at'],
+    // ★computed_at は毎回書き直す（skipCompare にしない）。
+    //   鮮度は「その行がいつ計算されたか」で見るため、ここを省くと
+    //   押し出しが届かなかった会員の古い行と区別がつかなくなる。
+    //   39行なので、D1の書き込み枠（1日10万行）から見れば無視できる量。
   },
   slots: {
     table: 'slots_cache',
     key: 'trainer_id',
     cols: ['trainer_id', 'payload', 'computed_at'],
     keepStale: true,
-    skipCompare: ['computed_at'],
+    // ★枠も毎回 computed_at を書き直す（3行だけ）。理由は home と同じ。
   },
   // ---- 残数計算のための「入力の写し」（列に変換せず行のまま）----
   calcContracts: {

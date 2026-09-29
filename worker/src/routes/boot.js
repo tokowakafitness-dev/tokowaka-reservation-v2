@@ -38,15 +38,8 @@ function monthKeyJst(ms) {
  */
 export async function readHome(env, customerId, targetMs) {
   if (!customerId) return null;
-  // ★鮮度は「その行の時刻」ではなく「残数を最後に押し出した時刻」で見る。
-  //   行ごとの時刻で見ると、中身が変わっていない会員の行も毎回書き直す必要があり、
-  //   D1の書き込み枠（1日10万行）を無駄に使う。押し出しは全員ぶんをまとめて行うので、
-  //   最後に押し出した時刻が分かれば鮮度は判定できる。
-  const [row, sync] = await Promise.all([
-    env.DB.prepare('SELECT payload, computed_at FROM member_home WHERE customer_id = ?')
-      .bind(customerId).first(),
-    env.DB.prepare("SELECT synced_at FROM sync_state WHERE key = 'home'").first(),
-  ]);
+  const row = await env.DB.prepare('SELECT payload, computed_at FROM member_home WHERE customer_id = ?')
+    .bind(customerId).first();
   if (!row) return null;
   let p;
   try { p = JSON.parse(row.payload); } catch (_) { return null; }
@@ -61,9 +54,17 @@ export async function readHome(env, customerId, targetMs) {
   }
   if (!home) return null;
 
-  const refreshedAt = Math.max(Number(row.computed_at || 0), Number((sync && sync.synced_at) || 0));
-  const age = Date.now() - refreshedAt;
-  return { ...home, month, computedAt: refreshedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age };
+  // ★鮮度は「その行がいつ計算されたか」だけで見る。
+  //   全体の同期時刻と大きい方を取ってはいけない。押し出しは6分で打ち切られ、
+  //   計算に失敗した会員は飛ばされる。全体の時刻で見ると、届かなかった会員の
+  //   古い行まで「たった今の情報」に若返り、40分の安全弁が働かなくなる
+  //   （2026-09-29 に本番で見つかった穴）。
+  //   代わりに、押し出しのたびに全員ぶんの computed_at を書き直している
+  //   （39行なのでD1の書き込み枠には影響しない）。
+  const computedAt = Number(row.computed_at || 0);
+  if (!computedAt) return null;                 // 計算時刻の無い行は信用しない
+  const age = Date.now() - computedAt;
+  return { ...home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age };
 }
 
 export async function routeBoot({ env, who }) {

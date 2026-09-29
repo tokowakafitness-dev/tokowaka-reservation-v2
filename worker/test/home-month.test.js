@@ -100,21 +100,31 @@ const jst = (y, m, d, h = 12) => Date.UTC(y, m - 1, d, h - 9);
   eq('★30分前は古いと伝える', old.stale, true);
 }
 
-// ---------- 9. 鮮度は「最後に押し出した時刻」で見る ----------
-//   中身が変わっていない会員の行は書き直さないため、行の時刻は古いままになる。
-//   それを理由に「古い」と判断すると、変わっていないだけの会員が毎回GASへ落ちてしまう。
+// ---------- 9. 鮮度は「その行がいつ計算されたか」で見る ----------
+//   ★2026-09-29 に方針を反転させた。
+//     もとは「中身が変わらない行は書き直さないので、全体の押し出し時刻で見る」としていたが、
+//     押し出しは6分で打ち切られ、計算に失敗した会員は飛ばされる。
+//     全体の時刻で見ると、届かなかった会員の古い行まで「たった今の情報」に若返り、
+//     40分の安全弁が働かなかった（本番で見つかった穴）。
+//     いまは押し出しのたびに全員ぶんの computed_at を書き直している（39行）。
 {
-  const rowOld = Date.now() - 6 * 60 * 60 * 1000;      // 行は6時間前のまま
-  const pushedJustNow = Date.now() - 30 * 1000;        // でも30秒前に押し出している
+  const rowOld = Date.now() - 6 * 60 * 60 * 1000;      // この会員の行は6時間前
+  const pushedJustNow = Date.now() - 30 * 1000;        // 全体の押し出しは30秒前
   const h = await readHome(envWith(payload, rowOld, pushedJustNow), 'c1');
-  eq('★行が古くても、押し出しが新しければ新しい扱い', h.stale, false);
-  eq('★返す時刻も押し出した時刻', h.computedAt, pushedJustNow);
+  eq('★行が古ければ、全体が新しくても古いと判断する', h.stale, true);
+  eq('★返す時刻はその行の時刻', h.computedAt, rowOld);
 }
 {
-  // 押し出しが止まっていれば、ちゃんと古いと判断する
+  // 押し出しが止まっていれば、当然ながら古いと判断する
   const stopped = Date.now() - 3 * 60 * 60 * 1000;
   const h = await readHome(envWith(payload, stopped, stopped), 'c1');
   eq('★押し出しが止まっていれば古いと判断する', h.stale, true);
+}
+{
+  // 行が新しければ答える（誤検知で毎回GASへ落ちないこと）
+  const fresh = Date.now() - 60 * 1000;
+  const h = await readHome(envWith(payload, fresh, fresh), 'c1');
+  eq('★行が新しければ新しい扱い', h.stale, false);
 }
 
 console.log(`\n残数の月選び 検証: ${pass} passed / ${fail} failed`);

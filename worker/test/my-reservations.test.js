@@ -17,6 +17,12 @@ function envWith(rows) {
       prepare(q) {
         return {
           bind() { return this; },
+          // 一覧の鮮度を見るようになったので、写しは新しいものとして答える
+          // （鮮度そのものの検証は list-staleness.test.js）
+          async first() {
+            if (/sync_state/.test(q)) return { synced_at: Date.now() - 60000 };
+            return null;
+          },
           async all() {
             if (/FROM trainers/.test(q)) {
               return { results: [{ trainer_id: 't1', name: '鈴木', name_en: 'Suzuki' }] };

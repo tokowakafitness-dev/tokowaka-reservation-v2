@@ -276,9 +276,11 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 }
 
 // ---------- 15. 押し出すたびに変わる時刻は、見比べの対象にしない ----------
-//   残数と枠は「押し出した時刻」を一緒に持つ。これを見比べに含めると、
-//   中身が同じでも毎回書き直すことになり、書き込み枠を使い切る。
-//   鮮度は sync_state（最後に押し出した時刻）で見るので、これで困らない。
+//   ★2026-09-29 に方針を反転させた。
+//     残数と枠の「計算した時刻」は毎回書き直す。書かないと、押し出しが届かなかった
+//     会員の古い行と、中身が変わっていないだけの行を区別できず、
+//     古い残数を「たった今の情報」として返してしまう（本番で見つかった穴）。
+//     残数39行＋枠3行なので、1日10万行の枠から見れば無視できる。
 {
   const cur = [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 111 }];
   const env = makeEnv('TEST-SECRET', cur);
@@ -286,7 +288,7 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
     kind: 'home', batchId: 1000,
     rows: [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 999 }],   // 時刻だけ違う
   }, 'TEST-SECRET'), env));
-  eq('★残数：時刻しか違わない行は書かない', [b.written, b.skipped], [0, 1]);
+  eq('★残数：時刻だけ違っても書く（鮮度の判定に使うため）', [b.written, b.skipped], [1, 0]);
 }
 {
   const cur = [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 111 }];
@@ -304,7 +306,7 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
     kind: 'slots', batchId: 1002,
     rows: [{ trainer_id: 't1', payload: '{"slots":[]}', computed_at: 999 }],
   }, 'TEST-SECRET'), env));
-  eq('★枠：時刻しか違わない行は書かない', [b.written, b.skipped], [0, 1]);
+  eq('★枠：時刻だけ違っても書く（鮮度の判定に使うため）', [b.written, b.skipped], [1, 0]);
 }
 
 console.log(`\n取り込み口 検証: ${pass} passed / ${fail} failed`);
