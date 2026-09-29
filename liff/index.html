@@ -581,7 +581,13 @@
   //   全員を止めるには、この EDGE_ON の既定を false にして push する（1分ほどで反映）。
   // ============================================================
   var EDGE_URL = 'https://tokowaka-api.tokowaka-fitness.workers.dev';
-  var EDGE_ON = true;
+  //   ★2026-09-29 いったん false に戻した（Codexの敵対的レビューで穴が3つ出たため）。
+  //     (1) 鮮度を Math.max(行の時刻, 全体の同期時刻) で見ていた。押し出しが
+  //         その顧客まで届かなくても、全体の同期時刻で「新しい」と判定されてしまう。
+  //     (2) getBookingOptions に閲覧範囲の確認が無く、担当外の顧客の残数を引けた。
+  //     (3) 予約一覧・固定枠には鮮度の判定そのものが無い。
+  //     いずれも「遅くなるだけ」ではなく「誤った数字が出る」経路。塞いでから戻す。
+  var EDGE_ON = false;
   try {
     if (/[?&#]edge=0/.test(location.href)) { localStorage.setItem('lb_edge', '0'); }
     else if (/[?&#]edge=1/.test(location.href)) { localStorage.removeItem('lb_edge'); }
