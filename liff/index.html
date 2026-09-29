@@ -569,16 +569,24 @@
   //   Workerが答えられないとき（写しが無い・古い・通信失敗）は、そのままGASへ落ちる。
   //   ★予約の作成・変更・取消は必ずGAS。Workerは読むだけ。
   //
-  //   有効にするには URL に ?edge=1 を付ける。?edge=0 で戻る。
-  //   （確かめ終わるまでお客様には影響しない）
+  //   ★2026-09-29 から既定で有効（第1段階）。
+  //     ここで速くなるのは「読む」だけ。残数の数字はGASが計算して押し出したものを
+  //     そのまま運んでいるだけなので、数字は今までと変わらない。
+  //     写しが40分より古ければWorkerは答えず、自動でGASに落ちる。
+  //     つまり最悪の失敗は「遅くなる（今までと同じ速度に戻る）」であって、
+  //     間違った残数を出すことではない。
+  //     残数の計算そのものをWorkerへ移すのは第2段階（月替わりの確認後）。
+  //
+  //   一人だけ元に戻すには URL に ?edge=0 を付ける（その端末に残る）。?edge=1 で戻す。
+  //   全員を止めるには、この EDGE_ON の既定を false にして push する（1分ほどで反映）。
   // ============================================================
   var EDGE_URL = 'https://tokowaka-api.tokowaka-fitness.workers.dev';
-  var EDGE_ON = false;
+  var EDGE_ON = true;
   try {
-    if (/[?&#]edge=0/.test(location.href)) { localStorage.removeItem('lb_edge'); }
-    else if (/[?&#]edge=1/.test(location.href)) { localStorage.setItem('lb_edge', '1'); }
-    EDGE_ON = localStorage.getItem('lb_edge') === '1';
-  } catch (e) { EDGE_ON = /[?&#]edge=1/.test(location.href); }
+    if (/[?&#]edge=0/.test(location.href)) { localStorage.setItem('lb_edge', '0'); }
+    else if (/[?&#]edge=1/.test(location.href)) { localStorage.removeItem('lb_edge'); }
+    EDGE_ON = localStorage.getItem('lb_edge') !== '0';
+  } catch (e) { EDGE_ON = !/[?&#]edge=0/.test(location.href); }
 
   // GASの操作名 → Workerの窓口。ここに無いものは全てGASへ行く（読み取りだけを載せる）
   var EDGE_MAP = {
