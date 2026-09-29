@@ -64,6 +64,9 @@ function _ejRun(op, args) {
     case 'verify':         return verifyEdgeRemainingText();          // 元から氏名を出さない作りにする
     case 'previewMerge':   return _ejScrub(previewMemberMergeText());
     case 'testConnection': return _ejScrub(testEdgeConnectionText());
+    // 残数が合わない会員を、オーナーの手を借りずに調べられるようにする（2026-09-29）。
+    //   args = { name: '部分一致の氏名' }。読み取りだけ。氏名や電話は出さない。
+    case 'remaining':      return _ejScrub(remainingDebugText((args && args.name) || ''));
     case 'pushAll':        return _ejScrub(pushToEdgeAllText());
     default: throw new Error('許可されていない作業です：' + op);
   }

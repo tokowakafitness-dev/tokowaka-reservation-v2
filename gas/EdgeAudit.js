@@ -263,3 +263,96 @@ function auditForEdgeMigrationText() {
 }
 
 function auditForEdgeMigration() { Logger.log(auditForEdgeMigrationText()); }
+
+// ============================================================
+// 残数が合わない会員を調べる（2026-09-29）
+//
+//   きっかけ：月4回契約の会員が5回予約できた。
+//   原因を確かめるには、その会員の契約行・枠・消化・繰越を並べて見るしかない。
+//   これまではオーナーにGASエディタで関数を実行してもらう必要があった。
+//   作業依頼から呼べるようにして、オーナーの手を借りずに調べられるようにする。
+//
+//   ★読み取りだけ。氏名・電話・LINE IDは出さない（結果は作業番号を知っていれば読めるため）。
+// ============================================================
+function remainingDebugText(namePart) {
+  var log = [];
+  function say(s) { log.push(s); }
+  if (!namePart) return '調べる会員の名前（部分一致）を args.name で渡してください。';
+
+  try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e) {}
+
+  var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!map || map.getLastRow() < 2) return '会員名簿が読めません。';
+  var target = _lbNormName(namePart);
+  var vals = map.getRange(2, 1, map.getLastRow() - 1, Math.max(MAP_COL.NOTE, map.getLastColumn())).getValues();
+  var hits = [];
+  for (var i = 0; i < vals.length; i++) {
+    if (_lbNormName(vals[i][MAP_COL.NAME - 1]).indexOf(target) >= 0) hits.push(vals[i]);
+  }
+  if (!hits.length) return '「' + namePart + '」に一致する会員が名簿にいません。';
+  if (hits.length > 1) say('※ ' + hits.length + '件一致しました。1件目で調べます。');
+
+  var hit = hits[0];
+  var customerId = String(hit[MAP_COL.CUSTOMER_ID - 1] || '');
+  var name = String(hit[MAP_COL.NAME - 1] || '');
+  var who = '会員#' + customerId.slice(-4);
+
+  say('===== 残数の内訳：' + who + ' =====');
+  say('照合状態=' + String(hit[MAP_COL.AUTH_STATE - 1] || '(空)')
+      + ' / 契約状況=' + String(hit[MAP_COL.CONTRACT_STAT - 1] || '(空)'));
+
+  var rows = _lbContractRowsAll(name, _lbPhoneByCustomerId(customerId), false, customerId);
+  if (!rows || !rows.length) return log.join('\n') + '\n⛔ 有効な契約行がありません。';
+  if (rows.migrationGap) say('⚠️ ID移行が未完了の行があります（残数は要確認扱い）。');
+
+  say('');
+  say('■ 有効な契約行 ' + rows.length + '件');
+  for (var r = 0; r < rows.length; r++) {
+    var rr = rows[r], cc = rr.cols, row = rr.row;
+    var f = function (k) { return (cc[k] >= 0 && cc[k] != null) ? String(row[cc[k]]) : '(列なし)'; };
+    var d = function (x) { return x ? Utilities.formatDate(x, SETTINGS.TIMEZONE, 'yyyy/MM/dd') : '(なし)'; };
+    say('  ' + (r + 1) + ') 種別=' + f('type') + ' / 残数方式=' + f('method')
+        + ' / 頻度=' + f('freq') + ' / チケット枚数=' + f('ticket'));
+    say('     繰越上限=' + f('carryCap') + ' / 繰越率=' + f('carry')
+        + ' / 期間=' + d(rr.start) + '〜' + d(rr.end));
+  }
+
+  var sp = _lbSplitRemaining(rows, customerId);
+  if (sp._ok === false) say('⚠️ 割当器が「要確認」と判定: ' + JSON.stringify(sp._issues || []));
+
+  say('');
+  say('■ いまの残数');
+  say('  月額の枠（頻度＋繰越）= ' + sp.avail + ' → 月額残 = ' + sp.monthlyRem);
+  say('  チケット残 = ' + sp.ticketRem);
+  say('  ▶ 予約できる残り = ' + ((sp.monthlyRem || 0) + (sp.ticketRem || 0)));
+
+  var sess = _lbResvSessions(customerId);
+  say('');
+  if (sess === null) { say('■ 予約：読み取れませんでした（残数は不明扱い）'); return log.join('\n'); }
+  say('■ 計上している予約 ' + sess.length + '件');
+  var byMonth = {};
+  for (var s2 = 0; s2 < sess.length; s2++) {
+    var ss = sess[s2];
+    var mk = _lbMonthKeyJst(ss.startAt);
+    (byMonth[mk] = byMonth[mk] || []).push(ss);
+  }
+  var keys = Object.keys(byMonth).sort();
+  for (var k = 0; k < keys.length; k++) {
+    var list = byMonth[keys[k]];
+    say('  ' + keys[k] + '：' + list.length + '件');
+    for (var li = 0; li < list.length; li++) {
+      var x = list[li];
+      say('     ・' + Utilities.formatDate(new Date(x.startAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm')
+          + ' / 消化先=' + (x.consumptionMode || '(自動)')
+          + ' / 種類=' + (x.packKind || '通常')
+          + ' / 人数=' + (x.units == null ? 1 : x.units));
+    }
+  }
+  say('');
+  say('※ 今月の枠を超えて予約できている場合、見るべきは');
+  say('   (1) 契約行が2件以上ないか（過去行のコピペが残っていないか）');
+  say('   (2) 頻度の列を正しく読めているか（列の並びが変わっていないか）');
+  say('   (3) 翌月ぶんの予約が混ざっていないか（25日以降は翌月が開く）');
+  say('   (4) チケットやペアが月額とは別に引かれていないか');
+  return log.join('\n');
+}
