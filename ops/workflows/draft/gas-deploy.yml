@@ -158,13 +158,16 @@ jobs:
           set -euo pipefail
           node -e 'const m=+process.versions.node.split(".")[0]; if(m<20){console.error("::error::Node "+process.versions.node+" は古すぎます");process.exit(1)} console.log("Node "+process.versions.node)'
           mkdir -p "$RUNNER_TEMP/clasptool"
-          # 取得元を公式に固定し、リポジトリ側の npm 設定を読ませない
+          # 取得元を公式に固定し、リポジトリ側の npm 設定を読ませない。
+          # ★userconfig と globalconfig に同じファイルを渡すと npm が二重読み込みを拒否するので、
+          #   中身は同じでも別のファイルにする。
           printf 'registry=https://registry.npmjs.org/\naudit=false\nfund=false\nignore-scripts=true\n' \
-            > "$RUNNER_TEMP/npmrc-trusted"
+            > "$RUNNER_TEMP/npmrc-user"
+          cp "$RUNNER_TEMP/npmrc-user" "$RUNNER_TEMP/npmrc-global"
           cd "$RUNNER_TEMP"
           npm install --prefix "$RUNNER_TEMP/clasptool" \
-            --userconfig "$RUNNER_TEMP/npmrc-trusted" \
-            --globalconfig "$RUNNER_TEMP/npmrc-trusted" \
+            --userconfig "$RUNNER_TEMP/npmrc-user" \
+            --globalconfig "$RUNNER_TEMP/npmrc-global" \
             --ignore-scripts --no-fund --no-audit \
             "@google/clasp@${CLASP_VERSION}"
           CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp"
