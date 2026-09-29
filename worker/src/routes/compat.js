@@ -356,7 +356,7 @@ export async function compatTrainerSlots({ env, body, who }) {
     trainerName: s.trainerName, trainerId: s.trainerId, trialOk: s.trialOk,
   }));
 
-  return { slots, computedAt: refreshedAt, ageMs: age };
+  return { slots, computedAt, ageMs: Date.now() - computedAt };
 }
 
 // 午前枠は前日22時で締め切る（GASの BookingRules.js と同じ規則）

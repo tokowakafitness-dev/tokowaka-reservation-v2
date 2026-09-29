@@ -228,14 +228,14 @@ function handleLineGet(params) {
   Logger.log('[perf] verifyLineIdToken: ' + (new Date().getTime() - _tv) + 'ms (' + action + ')');
   if (!auth.ok) return { success: false, code: 'UNAUTHORIZED' };
 
-  var res = _lbDispatch(params, action, auth.lineUserId);
+  var res = _lbDispatch(params, action, auth.lineUserId, auth);
 
   // 写しを直す。ここで何が起きても、返す答えは変えない。
   try { edgeAfterWrite(action, params, res, auth.lineUserId); } catch (e) {}
   return res;
 }
 
-function _lbDispatch(params, action, lineUserId) {
+function _lbDispatch(params, action, lineUserId, auth) {
   switch (action) {
     case 'line_getMemberStatus':    return getMemberStatus(lineUserId);
     case 'line_verifyMembership':   return verifyMembership(lineUserId, params.code);
