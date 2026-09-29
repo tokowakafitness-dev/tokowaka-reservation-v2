@@ -112,26 +112,47 @@ function _verifyEdgeRemaining(mask) {
   say('繰越率 ' + carryRate + ' ／ 今の月 ' + nowKey);
 
   var msh = _lbSheet(LINE_BOOKING.MAP_SHEET);
-  if (!msh || msh.getLastRow() < 2) { Logger.log('会員名簿が読めません'); return; }
-  var mv = msh.getRange(2, 1, msh.getLastRow() - 1, MAP_COL.NAME).getValues();
+  if (!msh || msh.getLastRow() < 2) {
+    say('');
+    say('❌ 会員名簿が読めません（' + LINE_BOOKING.MAP_SHEET + '）。突合できていません。');
+    return log.join('\n');
+  }
+  // ★氏名の列までしか読んでいなかったため、8列目の照合状態が undefined になり、
+  //   「照合済みでない」と判定されて全員が除外されていた（0名で✅が出た真因）。
+  //   参照する一番右の列まで確実に読む。
+  var ncol = Math.max(MAP_COL.NAME, MAP_COL.AUTH_STATE, MAP_COL.CUSTOMER_ID, msh.getLastColumn());
+  var mv = msh.getRange(2, 1, msh.getLastRow() - 1, ncol).getValues();
 
-  var members = [];
+  // ★対象は「押し出しが送ったのと同じ集合」でなければならない。
+  //   以前は auth_state==='verified' だけを見ていたが、_edgeCustomers() は
+  //   照合状態に関係なく全行を送っている。LINE連携がまだ始まっていないため
+  //   verified は0名で、突合は0名を比べて「全員一致」と出していた。
+  //   検証の対象が押し出しの対象とずれると、緑が何も意味しなくなる。
+  var members = [], unverified = 0, noName = 0;
   for (var i = 0; i < mv.length; i++) {
-    if (String(mv[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;   // 照合済みだけ
     var cid = String(mv[i][MAP_COL.CUSTOMER_ID - 1] || '');
     var nm = String(mv[i][MAP_COL.NAME - 1] || '');
-    if (cid && nm) members.push({ id: cid, name: nm });
+    if (!cid) continue;
+    if (!nm) { noName++; continue; }
+    if (String(mv[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') unverified++;
+    members.push({ id: cid, name: nm });
   }
-  say('対象 ' + members.length + '名');
+  say('対象 ' + members.length + '名（うちLINE未照合 ' + unverified + '名／氏名なしで除外 ' + noName + '名）');
+  if (!members.length) {
+    say('');
+    say('❌ 比べる相手が1人もいません。名簿の読み方が押し出しとずれています。');
+    say('   （押し出しは _edgeCustomers() が同じシートの全行を送っています）');
+    return log.join('\n');
+  }
 
-  var okCount = 0, ngCount = 0, skipCount = 0, points = 0;
+  var okCount = 0, ngCount = 0, skipCount = 0, points = 0, truncated = false;
   var ngDetail = [];
 
   // シートの読み込みは1回にまとめる（会員ごとに読み直すと6分で終わらない）
   _edgeWithSheetCache(function () {
   _edgeWithResvCache(function () {
     for (var m = 0; m < members.length; m++) {
-      if (Date.now() - t0 > EV.BUDGET_MS) { say('⏱ 時間切れ。' + m + '名まで確認しました'); break; }
+      if (Date.now() - t0 > EV.BUDGET_MS) { truncated = true; say('⏱ 時間切れ。' + m + '名まで確認しました'); break; }
       var cid2 = members[m].id, nm2 = members[m].name;
 
       var rows, sessions, opening;
@@ -202,8 +223,14 @@ function _verifyEdgeRemaining(mask) {
     if (ngDetail.length > 60) say('  …ほか ' + (ngDetail.length - 60) + '行');
   }
   say('');
-  say(ngCount === 0 && skipCount === 0
-      ? '✅ 全員一致しました。切り替えの前提が整っています。'
-      : '⚠ 食い違い、または確認できない会員がいます。切り替えないでください。');
+  // ★「一致0名・食い違い0名」で緑にしてはいけない。何も比べていないのと同じ。
+  //   全員を最後まで見て、全員が一致したときだけ緑にする。
+  var allGood = !truncated && members.length > 0 && okCount === members.length
+                && ngCount === 0 && skipCount === 0;
+  say(allGood
+      ? '✅ 全員一致しました（' + okCount + '名・' + points + '時点）。切り替えの前提が整っています。'
+      : '⚠ 切り替えないでください。'
+        + (truncated ? '時間切れで最後まで見ていません。' : '')
+        + (okCount !== members.length ? '確認できたのは ' + okCount + '/' + members.length + '名です。' : ''));
   return log.join('\n');
 }
