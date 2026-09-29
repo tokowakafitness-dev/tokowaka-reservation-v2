@@ -433,8 +433,7 @@ function _edgeWithSheetCache(fn) {
       getLastColumn: function () { return c.lastCol; },
       getName: function () { return name; },
       getRange: fakeRange,
-      getDataRange: function () { return fakeRange(1, 1, c.lastRow, c.lastCol); },
-      _real: c.real
+      getDataRange: function () { return fakeRange(1, 1, c.lastRow, c.lastCol); }
     };
     return new Proxy(fakeSheet, {
       get: function (t, k) {

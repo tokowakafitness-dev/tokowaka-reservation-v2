@@ -62,20 +62,33 @@ function _lbReadOnly(fn) {
   //   _lbSheet だけ包んでも、_lbContractSheet や MealAi の maOpenSs_ は
   //   SpreadsheetApp.openById() から直接シートを取るため素通しになる。
   //   まとめ取得が通る入口はすべて包む（Codex指摘 2026-09-29）。
-  var GATES = ['_lbSheet', '_lbSs', '_lbContractSheet', 'maOpenSs_', 'maSheet_'];
-
+  //
+  //   ★名前への直接代入で差し替える。globalThis 経由にしないのは、
+  //     Apps Script で globalThis のプロパティと識別子の束縛が同じかを
+  //     確かめられていないため。直接代入は _edgeWithSheetCache が
+  //     すでに本番で使っており、動くことが分かっている書き方である。
   return _edgeWithSheetCache(function () {
-    var saved = {};
-    for (var i = 0; i < GATES.length; i++) {
-      var g = GATES[i];
-      if (typeof globalThis[g] !== 'function') continue;
-      saved[g] = globalThis[g];
-      (function (name, orig) {
-        globalThis[name] = function () { return readOnly(orig.apply(null, arguments), name); };
-      })(g, globalThis[g]);
+    var o1 = _lbSheet;
+    var o2 = (typeof _lbSs === 'function') ? _lbSs : null;
+    var o3 = (typeof _lbContractSheet === 'function') ? _lbContractSheet : null;
+    var o4 = (typeof maOpenSs_ === 'function') ? maOpenSs_ : null;
+    var o5 = (typeof maSheet_ === 'function') ? maSheet_ : null;
+    // ★差し替えの途中で転んでも戻せるよう、代入も try の中に入れる。
+    try {
+      _lbSheet = function (n) { return readOnly(o1(n), '_lbSheet'); };
+      if (o2) _lbSs = function () { return readOnly(o2.apply(null, arguments), '_lbSs'); };
+      if (o3) _lbContractSheet = function () { return readOnly(o3.apply(null, arguments), '_lbContractSheet'); };
+      if (o4) maOpenSs_ = function () { return readOnly(o4.apply(null, arguments), 'maOpenSs_'); };
+      if (o5) maSheet_ = function () { return readOnly(o5.apply(null, arguments), 'maSheet_'); };
+      return fn();
+    } finally {
+      // 1つ戻せなくても、残りは戻す
+      try { _lbSheet = o1; } catch (e) {}
+      if (o2) { try { _lbSs = o2; } catch (e) {} }
+      if (o3) { try { _lbContractSheet = o3; } catch (e) {} }
+      if (o4) { try { maOpenSs_ = o4; } catch (e) {} }
+      if (o5) { try { maSheet_ = o5; } catch (e) {} }
     }
-    try { return fn(); }
-    finally { for (var k in saved) globalThis[k] = saved[k]; }
   });
 }
 
