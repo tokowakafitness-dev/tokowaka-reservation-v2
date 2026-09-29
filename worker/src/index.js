@@ -13,6 +13,7 @@ import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
 import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
+import { handleCalc } from './routes/verify.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
          compatTrainerSlots, compatMyReservations } from './routes/compat.js';
@@ -91,6 +92,15 @@ export default {
     if (url.pathname === '/ingest') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
       return handleIngest(request, env);
+    }
+
+    // 照合専用の入口。GASの計算結果と突き合わせるためだけに使う。
+    //   ID Tokenではなく合言葉で確かめる（お客様のブラウザからは呼ばせない）。
+    //   nowKey・繰越率・時点はすべてGASから受け取る。こちらで決めると、
+    //   時計のずれや既定値の違いが「実装の差」に見えてしまう。
+    if (url.pathname === '/calc') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return handleCalc(request, env);
     }
 
     if (request.method !== 'POST') {
