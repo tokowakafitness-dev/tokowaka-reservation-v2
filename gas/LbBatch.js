@@ -29,6 +29,42 @@
 // 起動時に要るものを1回で返す。
 //   トレーナー … 会員状態・担当予約・トレーナー一覧
 //   会員       … 会員状態・残数・自分の予約・トレーナー一覧
+// まとめ取得の間は読み取りだけに縛る。
+//   _edgeWithSheetCache は最初に読んだ内容を配る仕組みなので、
+//   途中で書き込むと「書いたのに古い値を読む」が静かに起きる。
+//   いまの中身は読み取りだけだが、あとから誰かが保存処理を足したときに
+//   気づけるよう、書き込みを試みたらその場で止める。
+function _lbReadOnly(fn) {
+  return _edgeWithSheetCache(function () {
+    var orig = _lbSheet;
+    _lbSheet = function (name) {
+      var sh = orig(name);
+      if (!sh) return sh;
+      return new Proxy(sh, {
+        get: function (t, k) {
+          if (k === 'appendRow' || k === 'deleteRow' || k === 'insertRowAfter' || k === 'clear') {
+            throw new Error('まとめ取得の中で書き込もうとしました（' + String(k) + '）');
+          }
+          var v = t[k];
+          if (typeof v !== 'function') return v;
+          return function () {
+            var r = v.apply(t, arguments);
+            if (k !== 'getRange') return r;
+            return new Proxy(r, { get: function (t2, k2) {
+              if (String(k2).indexOf('set') === 0) {
+                throw new Error('まとめ取得の中で書き込もうとしました（' + String(k2) + '）');
+              }
+              var v2 = t2[k2];
+              return (typeof v2 === 'function') ? v2.bind(t2) : v2;
+            } });
+          };
+        },
+      });
+    };
+    try { return fn(); } finally { _lbSheet = orig; }
+  });
+}
+
 function lbBoot(lineUserId) {
   var t0 = new Date().getTime();
   var out = { success: true, parts: {} };
@@ -44,10 +80,13 @@ function lbBoot(lineUserId) {
     Logger.log('[perf][boot] ' + name + ': ' + (new Date().getTime() - t) + 'ms');
   }
 
-  _edgeWithSheetCache(function () {
+  _lbReadOnly(function () {
     part('memberStatus', function () { return getMemberStatus(lineUserId); });
     var ms = out.parts.memberStatus;
-    if (!ms || ms.success !== true) return;
+    // ★会員状態はまとめの前提。ここが転んだら、まとめ全体を失敗として返す。
+    //   success:true のまま転んだ中身を返すと、画面がそれを会員状態として
+    //   解釈して起動できなくなる（2026-09-29 Codex指摘）。
+    if (!ms || ms.success !== true) { out.success = false; out.code = 'BOOT_MEMBER_FAILED'; return; }
 
     if (ms.role === 'trainer') {
       part('trainerReservations', function () { return getTrainerReservations(lineUserId); });
@@ -69,6 +108,10 @@ function lbCustomerCard(lineUserId, customerId) {
   var t0 = new Date().getTime();
   var out = { success: true, parts: {} };
   if (!customerId) return { success: false, code: 'NO_CUSTOMER' };
+  // ★先頭で1回だけ確かめる。中の3つも各自で確かめるが、
+  //   トレーナーでない人に3つとも走らせる意味がない。
+  var pic = requireTrainer(lineUserId);
+  if (!pic) return { success: false, code: 'FORBIDDEN' };
 
   function part(name, fn) {
     var t = new Date().getTime();
@@ -80,12 +123,10 @@ function lbCustomerCard(lineUserId, customerId) {
     Logger.log('[perf][card] ' + name + ': ' + (new Date().getTime() - t) + 'ms');
   }
 
-  _edgeWithSheetCache(function () {
+  _lbReadOnly(function () {
     part('customerHome', function () { return getCustomerHomeForTrainer(lineUserId, customerId); });
     part('recurring',    function () { return listRecurringPatternsByTrainer(lineUserId, customerId); });
     part('inBody',       function () {
-      var pic = requireTrainer(lineUserId);
-      if (!pic) return { success: false, code: 'FORBIDDEN' };
       // meal-ai は別系統。止まっていても予約の画面を巻き込まない。
       try { return maInBodyCard_(pic, customerId); }
       catch (e) { return { success: false, code: 'UNAVAILABLE' }; }

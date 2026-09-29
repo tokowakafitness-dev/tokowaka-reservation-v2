@@ -747,7 +747,30 @@
   var BATCH_CARD = { getCustomerHome:'customerHome', maInBodyCard:'inBody',
                      listRecurringPatternsByTrainer:'recurring' };
 
+  // まとめ取得が飛んでいる最中の約束。同じ相手なら1本に束ねる。
+  var _bootPending = null;
+  var _cardPending = { customerId: '', p: null };
+
   function _batchFresh(b){ return b.parts && (_nowMs() - b.at) < BATCH_TTL_MS; }
+
+  // 書き込みのあとは、受け皿をすべて捨てる。
+  //   「10秒しか持たない」では足りない。書き込みとの因果で捨てる。
+  function _batchDrop(){
+    _bootBatch = { at: 0, parts: null };
+    _cardBatch = { at: 0, parts: null, customerId: '' };
+    _bootPending = null;
+    _cardPending = { customerId: '', p: null };
+  }
+
+  // まだ受け取っていないだけなら、その約束を返す（待てば受け皿に入る）
+  function _batchPending(plain, params){
+    if (_bootPending && BATCH_BOOT[plain]) return _bootPending;
+    if (_cardPending.p && BATCH_CARD[plain]
+        && String((params && params.customerId) || '') === String(_cardPending.customerId)) {
+      return _cardPending.p;
+    }
+    return null;
+  }
 
   function _batchTake(plain, params){
     var k;
@@ -772,7 +795,7 @@
     try { return _fetchBoot(t0); } catch (e) { return _apiGas({ action:'line_getMemberStatus' }); }
   }
   function _fetchBoot(t0){
-    return _apiGas({ action:'line_boot' }).then(function(res){
+    var p = _apiGas({ action:'line_boot' }).then(function(res){
       _perfAdd('line_boot', _nowMs() - t0);
       var ms = res && res.parts && res.parts.memberStatus;
       // ★まとめ取得が使えないときは、必ず従来の1件取得に戻る。
@@ -785,29 +808,68 @@
       _bootBatch = { at: _nowMs(), parts: res.parts };
       return ms;
     }).catch(function(){ return _apiGas({ action:'line_getMemberStatus' }); });
+    // 待っている人が同じ約束を掴めるようにしておく
+    _bootPending = p;
+    return p.then(function(r){ _bootPending = null; return r; },
+                  function(e){ _bootPending = null; throw e; });
   }
 
   function fetchCustomerCard(customerId){
+    var cid = String(customerId || '');
+    // ★同じ顧客を同時に何度も取りに行かない。1本に束ねる。
+    if (_cardPending.p && _cardPending.customerId === cid) return _cardPending.p;
+    if (_batchFresh(_cardBatch) && _cardBatch.customerId === cid) return Promise.resolve(null);
     var t0 = _nowMs();
-    try { return _fetchCustomerCard(t0, customerId); } catch (e) { return Promise.resolve(null); }
+    try { return _fetchCustomerCard(t0, cid); } catch (e) { return Promise.resolve(null); }
   }
   function _fetchCustomerCard(t0, customerId){
-    return _apiGas({ action:'line_customerCard', customerId: customerId }).then(function(res){
+    var p = _apiGas({ action:'line_customerCard', customerId: customerId }).then(function(res){
       _perfAdd('line_customerCard', _nowMs() - t0);
-      if (res && res.success === true && res.parts) {
+      // ★あとから届いた古い応答で、いま見ている顧客の受け皿を上書きしない
+      if (res && res.success === true && res.parts
+          && _cardPending.customerId === String(customerId)) {
         _cardBatch = { at: _nowMs(), parts: res.parts, customerId: String(customerId) };
       }
       return res;
     }).catch(function(){ return null; });
+    _cardPending = { customerId: String(customerId), p: p };
+    return p.then(function(r){
+      if (_cardPending.p === p) _cardPending = { customerId: '', p: null };
+      return r;
+    }, function(e){
+      if (_cardPending.p === p) _cardPending = { customerId: '', p: null };
+      throw e;
+    });
   }
 
   function api(params){
     var plain = String(params.action || '').replace(/^line_/, '');
 
+    // ★書き込みをしたら受け皿を捨てる。
+    //   時間で切るだけでは足りない。固定枠を足した直後に一覧を描き直すと、
+    //   期限内なら「足す前」を返してしまい、成功したのに出てこない＝
+    //   もう一度足して二重登録、という事故になる（2026-09-29 Codex指摘）。
+    if (EDGE_WRITE_ACTIONS.test(plain)) _batchDrop();
+
     // まとめて受け取った中に在れば、通信しない（GASは1回2.3秒かかる）
     var got = _batchTake(plain, params);
     if (got) { _perfAdd('batch:' + plain, 0); return Promise.resolve(got); }
 
+    // ★まとめ取得がまだ飛んでいる最中なら、それを待ってからもう一度見る。
+    //   待たないと、受け皿が空のまま個別に取りに行ってしまい、
+    //   「3回を1回に」どころか1回増える（2026-09-29 Codex指摘）。
+    var pend = _batchPending(plain, params);
+    if (pend) {
+      return pend.then(function(){
+        var g = _batchTake(plain, params);
+        return g ? (_perfAdd('batch:' + plain, 0), g) : _apiSend(params, plain);
+      }, function(){ return _apiSend(params, plain); });
+    }
+
+    return _apiSend(params, plain);
+  }
+
+  function _apiSend(params, plain){
     var isWrite = EDGE_WRITE_ACTIONS.test(plain);
     if (isWrite) _busyShow(_busyMsg(plain));
 
@@ -1388,14 +1450,10 @@
     if (!cardEl) return;
     var _seq = (state._custHomeSeq = (state._custHomeSeq || 0) + 1);
     cardEl.innerHTML = '<span class="muted">残数を取得中…</span>';
-    // ★残数・固定枠・体組成を1回でまとめて取る。あとの2つは受け皿から配られる。
-    fetchCustomerCard(customerId).then(function(){
-    if (_seq !== state._custHomeSeq) return;
     api({ action:'line_getCustomerHome', customerId: customerId }).then(function(res){
       if (_seq !== state._custHomeSeq) return;   // 古い応答は捨てる
       cardEl.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : ('<span class="muted">残数情報を取得できませんでした（' + ((res && res.code) || '通信') + '）。</span>');
     }).catch(function(e){ if (_seq !== state._custHomeSeq) return; cardEl.innerHTML = '<span class="muted">残数情報の取得に失敗しました：' + e + '</span>'; });
-    });
   }
   // ── InBody記録（meal-ai）────────────────────────────────
   //   セッション直後、顧客を開いた画面から数字を打つだけで終わる形にする。
@@ -1505,6 +1563,11 @@
 
   // 選んだ顧客の予約（変更・キャンセル）
   function renderCustomerDetail(customerId, name){
+    // ★残数・固定枠・体組成は1回でまとめて取る。
+    //   ここで先に始めておかないと、下の3つが同時に個別へ取りに行き、
+    //   受け皿が空のまま通信回数が減らない（むしろ1回増える）。
+    //   下の3つは api() の中でこの約束を待ってから受け皿を見る。
+    fetchCustomerCard(customerId);
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = name + ' 様のご予約';
     var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
