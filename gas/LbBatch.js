@@ -82,12 +82,13 @@ function _lbReadOnly(fn) {
       if (o5) maSheet_ = function () { return readOnly(o5.apply(null, arguments), 'maSheet_'); };
       return fn();
     } finally {
-      // 1つ戻せなくても、残りは戻す
-      try { _lbSheet = o1; } catch (e) {}
-      if (o2) { try { _lbSs = o2; } catch (e) {} }
-      if (o3) { try { _lbContractSheet = o3; } catch (e) {} }
-      if (o4) { try { maOpenSs_ = o4; } catch (e) {} }
-      if (o5) { try { maSheet_ = o5; } catch (e) {} }
+      // 1つ戻せなくても、残りは戻す。握り潰すと、あとで原因が追えないので必ず記録する。
+      function back(name, fn2) { try { fn2(); } catch (e) { Logger.log('[batch] ' + name + ' を戻せませんでした: ' + (e && e.message)); } }
+      back('_lbSheet', function () { _lbSheet = o1; });
+      if (o2) back('_lbSs', function () { _lbSs = o2; });
+      if (o3) back('_lbContractSheet', function () { _lbContractSheet = o3; });
+      if (o4) back('maOpenSs_', function () { maOpenSs_ = o4; });
+      if (o5) back('maSheet_', function () { maSheet_ = o5; });
     }
   });
 }
