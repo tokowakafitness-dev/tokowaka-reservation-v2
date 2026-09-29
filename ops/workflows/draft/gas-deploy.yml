@@ -1,93 +1,160 @@
 name: GASを反映する
 
-# gas/ が変わったときだけ動く。
-#   ★予約システムの本体（GAS）を本番へ反映する。壊れると予約が止まる。
+# 予約システムの本体（GAS）を本番へ反映する。壊れると予約が止まる。
+#
+#   ★最初のうちは手動起動だけにする。実際に通ることを確かめてから、
+#     下の push: のコメントを外して自動反映を有効にする。
 #   ★claspの認証はGitHub Secretsの中だけにあり、開発者は値を見ない。
+#     開発者のトークンにはワークフローを書く権限が無いため、Secretsに手が届かない。
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'gas/**'
-      - '.github/workflows/gas-deploy.yml'
   workflow_dispatch:
+  # push:
+  #   branches: [main]
+  #   paths: ['gas/**']
 
 permissions:
   contents: read
 
 concurrency:
-  group: gas-deploy          # 同時に2つ走らせない（反映が混ざるため）
+  group: gas-deploy          # 同時に2つ走らせない（反映が混ざる）
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production-gas      # 本番の資格情報はここにだけ置く
     defaults:
       run:
         working-directory: gas
     env:
-      # /exec のURLに含まれるデプロイID（変わったら差し替える）
       DEPLOY_ID: AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ
+      SCRIPT_ID: 1iQyWD9ysH2zrdc6wn5j9wHUV_busRmZWOHFhigNNI9bIFuoGL9Cu3kab
+      MIN_VERSIONS_LEFT: '10'        # 残りがこれ未満なら反映しない
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: 中身がJavaScriptとして壊れていないか確かめる
-        # 反映してから気づくと予約が止まる。先に構文だけ見る。
+      # ───── 反映の前に確かめる（いまの手動 deploy.sh には1つも無い）─────
+
+      - name: 1. 構文が壊れていないか
         run: |
           set -euo pipefail
           for f in *.js; do
             node --check "$f" || { echo "::error::$f の構文が壊れています"; exit 1; }
           done
-          node -e "JSON.parse(require('fs').readFileSync('appsscript.json','utf8'))" \
-            || { echo "::error::appsscript.json が壊れています"; exit 1; }
+          node -e "JSON.parse(require('fs').readFileSync('appsscript.json','utf8'))"
           echo "構文OK（$(ls *.js | wc -l | tr -d ' ')ファイル）"
 
-      - name: clasp を入れる
-        run: npm install --no-fund --no-audit @google/clasp@3
-
-      - name: 認証を置く
-        env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      - name: 2. 権限設定が変わっていないか
+        # 権限の追加や公開範囲の変更は構文では分からない。緩むと誰でも叩ける／権限が広がる。
         run: |
           set -euo pipefail
-          set +x                      # 認証情報がログに出ないようにする
-          if [ -z "${CLASPRC_JSON:-}" ]; then
-            echo "::error::CLASPRC_JSON が未登録です"; exit 1
-          fi
-          # clasp の版によって読む場所が違うため、両方に置く
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
-          mkdir -p "$HOME/.config/clasp"
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.config/clasp/.clasprc.json"
-          chmod 600 "$HOME/.clasprc.json" "$HOME/.config/clasp/.clasprc.json"
+          node -e '
+            const fs = require("fs");
+            const now = JSON.parse(fs.readFileSync("appsscript.json", "utf8"));
+            const ok = JSON.parse(fs.readFileSync("appsscript.approved.json", "utf8"));
+            const diff = [];
+            if (now.timeZone !== ok.timeZone) diff.push("timeZone");
+            if (now.runtimeVersion !== ok.runtimeVersion) diff.push("runtimeVersion");
+            for (const k of ["executeAs", "access"]) {
+              if ((now.webapp || {})[k] !== (ok.webapp || {})[k]) diff.push("webapp." + k);
+            }
+            const a = [...(now.oauthScopes || [])].sort();
+            const b = [...(ok.oauthScopes || [])].sort();
+            if (JSON.stringify(a) !== JSON.stringify(b)) diff.push("oauthScopes");
+            if (diff.length) {
+              console.error("::error::権限設定が許可値と違います: " + diff.join(", "));
+              console.error("意図した変更なら gas/appsscript.approved.json も一緒に更新してください");
+              process.exit(1);
+            }
+            console.log("権限設定OK（変更なし）");
+          '
+
+      - name: 3. clasp を入れる（版を固定する）
+        run: npm install --no-fund --no-audit --no-save @google/clasp@3.3.0
+
+      - name: 4. 認証を置く
+        env:
+          CLASP_AUTH: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          set -euo pipefail
+          set +x
+          [ -n "${CLASP_AUTH:-}" ] || { echo "::error::CLASPRC_JSON が未登録です"; exit 1; }
+          printf '%s' "$CLASP_AUTH" > "$RUNNER_TEMP/clasprc.json"
+          chmod 600 "$RUNNER_TEMP/clasprc.json"
+          node -e 'JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/clasprc.json", "utf8"))' \
+            || { echo "::error::登録された認証情報がJSONとして壊れています"; exit 1; }
           echo "認証を置きました"
 
-      - name: 反映する（push → /exec の更新）
+      - name: 5. 反映先とバージョン残数を確かめる
         run: |
           set -euo pipefail
-          npx clasp push --force
-          npx clasp update-deployment "$DEPLOY_ID" -d "auto (${GITHUB_SHA::7})"
+          CLASP="npx --no-install clasp --auth $RUNNER_TEMP/clasprc.json"
+
+          node -e '
+            const c = JSON.parse(require("fs").readFileSync(".clasp.json", "utf8"));
+            if (c.scriptId !== process.env.SCRIPT_ID) {
+              console.error("::error::反映先のスクリプトが想定と違います");
+              process.exit(1);
+            }
+            console.log("反映先OK");
+          '
+
+          # 指定したデプロイが実在するか（消えていると別物を作ってしまう）
+          $CLASP deployments > /tmp/deps.txt 2>&1 || { cat /tmp/deps.txt; exit 1; }
+          grep -q "$DEPLOY_ID" /tmp/deps.txt \
+            || { echo "::error::指定したデプロイが見つかりません"; exit 1; }
+          echo "デプロイ先OK"
+
+          # ★バージョン残数は「反映の前」に見る。200に達すると反映できなくなるため。
+          total="$($CLASP versions 2>/dev/null | grep -cE '^[[:space:]]*[0-9]+' || echo 0)"
+          left=$((200 - total))
+          echo "バージョン ${total}/200（残り ${left} 本）"
+          if [ "$left" -lt "$MIN_VERSIONS_LEFT" ]; then
+            echo "::error::バージョンの残りが ${left} 本しかありません。GASエディタのプロジェクト履歴から古いものを削除してください。"
+            exit 1
+          fi
+
+      - name: 6. 反映する
+        run: |
+          set -euo pipefail
+          CLASP="npx --no-install clasp --auth $RUNNER_TEMP/clasprc.json"
+          $CLASP push --force
+          $CLASP update-deployment "$DEPLOY_ID" -d "auto ${GITHUB_SHA::7}"
           echo "反映しました"
 
-      - name: バージョンの残りを見る
-        # Apps Script は1プロジェクト200バージョンが上限。上限に達すると反映できなくなる。
+      - name: 7. 生きているか確かめる
+        # 反映は通ったが動かない、を検出する。
         run: |
-          set +e
-          out="$(npx clasp versions 2>/dev/null)"
-          total="$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*[0-9]+')"
-          case "$total" in
-            ''|*[!0-9]*) echo "バージョン数を数えられませんでした" ;;
-            *)
-              left=$((200 - total))
-              echo "バージョン ${total}/200（残り ${left} 本）"
-              {
-                echo "### GASを反映しました"
-                echo ""
-                echo "- バージョン: ${total}/200（残り ${left} 本）"
-              } >> "$GITHUB_STEP_SUMMARY"
-              if [ "$left" -le 20 ]; then
-                echo "::warning::バージョンの残りが ${left} 本です。GASエディタのプロジェクト履歴から古いものを削除してください。"
-              fi
-              ;;
-          esac
+          set -euo pipefail
+          # action=ping は認証の要らない既存の入口。doGet が生きていれば {"ok":true} を返す。
+          # どのファイルに構文エラーがあってもプロジェクト全体が動かなくなるため、これで十分に検出できる。
+          # -L は必須（GASは googleusercontent へ転送する）。
+          url="https://script.google.com/macros/s/${DEPLOY_ID}/exec?action=ping"
+          body="$RUNNER_TEMP/health.txt"
+          code=000
+          for i in 1 2 3; do
+            code="$(curl -sS -L -o "$body" -w '%{http_code}' --max-time 30 "$url" || echo 000)"
+            [ "$code" = "200" ] && break
+            echo "応答 HTTP $code（${i}回目）— 反映直後は少し待つ"
+            sleep 5
+          done
+          echo "応答: HTTP $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::反映後の生存確認に失敗しました（HTTP $code）"
+            echo "戻し方: 直前の正常なコミットに戻し、このワークフローを手動で再実行してください。"
+            exit 1
+          fi
+          # 200でも中身がエラーJSONのことがある（GASは例外を200で返す）
+          grep -q '"ok":true' "$body" || {
+            echo "::error::応答が想定と違います:"; head -c 300 "$body"
+            echo "戻し方: 直前の正常なコミットに戻し、このワークフローを手動で再実行してください。"
+            exit 1
+          }
+          echo "生きています"
+
+      - name: 8. 後片付け
+        if: always()
+        run: rm -f "$RUNNER_TEMP/clasprc.json" "$RUNNER_TEMP/health.txt"
