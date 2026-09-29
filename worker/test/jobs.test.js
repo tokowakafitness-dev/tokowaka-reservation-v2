@@ -75,6 +75,17 @@ eq('正しければ登録できる',
   eq('★同じ作業が2つ待っていれば断る', [s, b.code], [429, 'TOO_MANY_PENDING']);
 }
 
+// ---------- 4b. 疎通の確認は仕事を取らない ----------
+//   設定を確かめるつもりで claim を使うと、仕事を1つ取って捨ててしまう。
+{
+  const env = makeEnv([{ request_id: ID, op: 'audit', args: null, status: 'pending' }]);
+  const [s, b] = await j(await handleJobs(post({ action: 'ping' }, 'S'), env));
+  eq('疎通の確認は通る', [s, b.pong], [200, true]);
+  eq('★疎通の確認では仕事を取らない',
+     env._sql.some((x) => /UPDATE jobs SET status = 'running'/.test(x.q)), false);
+  eq('★合言葉は必要', (await j(await handleJobs(post({ action: 'ping' }), env)))[0], 403);
+}
+
 // ---------- 5. 受け取りは1つだけ（取り合いにならない）----------
 {
   const env = makeEnv([{ request_id: ID, op: 'audit', args: null, status: 'pending' }]);

@@ -70,6 +70,11 @@ export async function handleJobs(request, env) {
       return json({ success: true, requestId: id, op });
     }
 
+    // ---- 疎通の確認だけ（仕事は取らない）----
+    //   設定が正しいかを確かめるために使う。claim を使うと仕事を1つ取って
+    //   捨ててしまう（2026-09-29 実際にやってしまった）。
+    if (action === 'ping') return json({ success: true, pong: true });
+
     // ---- 受け取り（GASが1分ごとに聞きに来る）----
     if (action === 'claim') {
       const now = Date.now();

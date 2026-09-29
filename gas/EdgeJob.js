@@ -143,8 +143,9 @@ function setupEdgeJobTrigger() {
     Logger.log('❌ EDGE_URL / EDGE_SECRET が未設定です。スクリプトプロパティに登録してから実行してください。');
     return;
   }
-  // 実際に届くかを先に確かめる
-  try { _ejPost({ action: 'claim' }); }
+  // 実際に届くかを先に確かめる。
+  //   ★claim を使ってはいけない。仕事を1つ取って捨ててしまう（2026-09-29 実際にやった）。
+  try { _ejPost({ action: 'ping' }); }
   catch (e) {
     Logger.log('❌ Workerに届きませんでした（' + (e && e.message) + '）。EDGE_URL / EDGE_SECRET を確認してください。');
     return;
