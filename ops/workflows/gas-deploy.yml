@@ -1,0 +1,93 @@
+name: GASを反映する
+
+# gas/ が変わったときだけ動く。
+#   ★予約システムの本体（GAS）を本番へ反映する。壊れると予約が止まる。
+#   ★claspの認証はGitHub Secretsの中だけにあり、開発者は値を見ない。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gas/**'
+      - '.github/workflows/gas-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gas-deploy          # 同時に2つ走らせない（反映が混ざるため）
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gas
+    env:
+      # /exec のURLに含まれるデプロイID（変わったら差し替える）
+      DEPLOY_ID: AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 中身がJavaScriptとして壊れていないか確かめる
+        # 反映してから気づくと予約が止まる。先に構文だけ見る。
+        run: |
+          set -euo pipefail
+          for f in *.js; do
+            node --check "$f" || { echo "::error::$f の構文が壊れています"; exit 1; }
+          done
+          node -e "JSON.parse(require('fs').readFileSync('appsscript.json','utf8'))" \
+            || { echo "::error::appsscript.json が壊れています"; exit 1; }
+          echo "構文OK（$(ls *.js | wc -l | tr -d ' ')ファイル）"
+
+      - name: clasp を入れる
+        run: npm install --no-fund --no-audit @google/clasp@3
+
+      - name: 認証を置く
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          set -euo pipefail
+          set +x                      # 認証情報がログに出ないようにする
+          if [ -z "${CLASPRC_JSON:-}" ]; then
+            echo "::error::CLASPRC_JSON が未登録です"; exit 1
+          fi
+          # clasp の版によって読む場所が違うため、両方に置く
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          mkdir -p "$HOME/.config/clasp"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.config/clasp/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json" "$HOME/.config/clasp/.clasprc.json"
+          echo "認証を置きました"
+
+      - name: 反映する（push → /exec の更新）
+        run: |
+          set -euo pipefail
+          npx clasp push --force
+          npx clasp update-deployment "$DEPLOY_ID" -d "auto (${GITHUB_SHA::7})"
+          echo "反映しました"
+
+      - name: バージョンの残りを見る
+        # Apps Script は1プロジェクト200バージョンが上限。上限に達すると反映できなくなる。
+        run: |
+          set +e
+          out="$(npx clasp versions 2>/dev/null)"
+          total="$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*[0-9]+')"
+          case "$total" in
+            ''|*[!0-9]*) echo "バージョン数を数えられませんでした" ;;
+            *)
+              left=$((200 - total))
+              echo "バージョン ${total}/200（残り ${left} 本）"
+              {
+                echo "### GASを反映しました"
+                echo ""
+                echo "- バージョン: ${total}/200（残り ${left} 本）"
+              } >> "$GITHUB_STEP_SUMMARY"
+              if [ "$left" -le 20 ]; then
+                echo "::warning::バージョンの残りが ${left} 本です。GASエディタのプロジェクト履歴から古いものを削除してください。"
+              fi
+              ;;
+          esac
