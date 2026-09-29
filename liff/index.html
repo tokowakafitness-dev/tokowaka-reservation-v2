@@ -218,7 +218,7 @@
       done_recurring:'{trainer}／{date} {time}〜 を毎週 {created} 件予約しました', done_recurring_skip:'（{skipped} 件は空き/残数の都合でスキップ）',
       done_tag_transfer:'（振替・5,500円）', done_tag_change:'（変更）', done_tag_proxy:'（代行予約）', done_cust_sep:' 様／', done_sep:'／',
       until_wrap:'（{e}まで）', month_detail:'{used} 回 ／ {quota}{carry}', pack_line:'{n}枚（{e}まで）',
-      bd_label:'内訳', bd_carry:'繰越 残{n}回（今月末まで）', bd_month:'今月 残{n}回', bd_pack:'残{n}回（{e}まで）', bd_pack_noexp:'残{n}回（期限なし）', bd_total:'合計',
+      bd_label:'内訳', bd_carry:'繰越 残{n}回（今月末まで）', bd_month:'今月 残{n}回', bd_lent:'翌月へ繰越 {n}回（今月は使えません）', bd_pack:'残{n}回（{e}まで）', bd_pack_noexp:'残{n}回（期限なし）', bd_total:'合計',
       err_title:'エラー', err_member_status:'会員状態の取得に失敗しました（コード：{code}）。',
       err_init:'初期化に失敗しました：{msg}', err_trainers:'トレーナー情報の取得に失敗しました。',
       err_slots:'空き枠の取得に失敗しました。', err_myres:'予約の取得に失敗しました（コード：{code}）。',
@@ -280,7 +280,7 @@
       done_recurring:'Booked {trainer} / {date} {time}〜 weekly, {created} sessions', done_recurring_skip:' ({skipped} skipped due to availability/balance)',
       done_tag_transfer:' (Transfer · ¥5,500)', done_tag_change:' (Changed)', done_tag_proxy:' (Booked by trainer)', done_cust_sep:' / ', done_sep:' / ',
       until_wrap:' (until {e})', month_detail:'{used} / {quota}{carry}', pack_line:'{n} (until {e})',
-      bd_label:'Breakdown', bd_carry:'Carried over: {n} left (until end of month)', bd_month:'This month: {n} left', bd_pack:'{n} left (until {e})', bd_pack_noexp:'{n} left (no expiry)', bd_total:'Total',
+      bd_label:'Breakdown', bd_carry:'Carried over: {n} left (until end of month)', bd_month:'This month: {n} left', bd_lent:'Moved to next month: {n} (not usable this month)', bd_pack:'{n} left (until {e})', bd_pack_noexp:'{n} left (no expiry)', bd_total:'Total',
       err_title:'Error', err_member_status:'Failed to get member status (code: {code}).',
       err_init:'Initialization failed: {msg}', err_trainers:'Failed to get trainer information.',
       err_slots:'Failed to get available slots.', err_myres:'Failed to get bookings (code: {code}).',
@@ -342,7 +342,7 @@
       done_recurring:'已预约 {trainer} / {date} {time}〜 每周，共{created}次', done_recurring_skip:'（{skipped}次因空位/次数不足已跳过）',
       done_tag_transfer:'（改期・5,500日元）', done_tag_change:'（更改）', done_tag_proxy:'（代预约）', done_cust_sep:' ／ ', done_sep:'／',
       until_wrap:'（{e}前）', month_detail:'{used} 次 ／ {quota}{carry}', pack_line:'{n}张（{e}前）',
-      bd_label:'明细', bd_carry:'结转 剩{n}次（本月底前）', bd_month:'本月 剩{n}次', bd_pack:'剩{n}次（{e}前）', bd_pack_noexp:'剩{n}次（无期限）', bd_total:'合计',
+      bd_label:'明细', bd_carry:'结转 剩{n}次（本月底前）', bd_month:'本月 剩{n}次', bd_lent:'结转至下月 {n}次（本月不可用）', bd_pack:'剩{n}次（{e}前）', bd_pack_noexp:'剩{n}次（无期限）', bd_total:'合计',
       err_title:'错误', err_member_status:'获取会员状态失败（代码：{code}）。',
       err_init:'初始化失败：{msg}', err_trainers:'获取教练信息失败。',
       err_slots:'获取可预约时段失败。', err_myres:'获取预约失败（代码：{code}）。',
@@ -404,7 +404,7 @@
       done_recurring:'已預約 {trainer} / {date} {time}〜 每週，共{created}次', done_recurring_skip:'（{skipped}次因名額／次數不足已跳過）',
       done_tag_transfer:'（改期・5,500日圓）', done_tag_change:'（變更）', done_tag_proxy:'（代預約）', done_cust_sep:' ／ ', done_sep:'／',
       until_wrap:'（{e}前）', month_detail:'{used} 次 ／ {quota}{carry}', pack_line:'{n}張（{e}前）',
-      bd_label:'明細', bd_carry:'結轉 剩{n}次（本月底前）', bd_month:'本月 剩{n}次', bd_pack:'剩{n}次（{e}前）', bd_pack_noexp:'剩{n}次（無期限）', bd_total:'合計',
+      bd_label:'明細', bd_carry:'結轉 剩{n}次（本月底前）', bd_month:'本月 剩{n}次', bd_lent:'結轉至下月 {n}次（本月不可用）', bd_pack:'剩{n}次（{e}前）', bd_pack_noexp:'剩{n}次（無期限）', bd_total:'合計',
       err_title:'錯誤', err_member_status:'取得會員狀態失敗（代碼：{code}）。',
       err_init:'初始化失敗：{msg}', err_trainers:'取得教練資訊失敗。',
       err_slots:'取得可預約時段失敗。', err_myres:'取得預約失敗（代碼：{code}）。',
@@ -1735,14 +1735,28 @@
       var monthRemain = Math.max(0, q - Math.max(0, tm - co));
       var auth = (h.monthlyRemaining !== null && h.monthlyRemaining !== undefined) ? h.monthlyRemaining
                : (h.remaining !== null && h.remaining !== undefined) ? h.remaining : null;
-      var total = (auth !== null) ? auth : (carryRemain + monthRemain);
-      return { carryRemain: carryRemain, monthRemain: monthRemain, total: total, hasCarry: co > 0 };
+      var naive = carryRemain + monthRemain;
+      var total = Math.max(0, (auth !== null) ? auth : naive);
+
+      // ★内訳は「合計から割る」。画面側で別の式を立てて引き算すると必ずどこかでずれる。
+      //   実際、ここを独自に計算していたため、25日以降に翌月ぶんを先に取った人で
+      //   「今月残り0回」と「内訳：今月 残1回」が同時に出ていた（2026-09-29 オーナー報告）。
+      //   先に期限が切れる繰越から埋め、残りを今月分とする。これで内訳の合計は必ず合計に一致する。
+      carryRemain = Math.min(carryRemain, total);
+      monthRemain = total - carryRemain;
+
+      // 翌月の枠は「今月の余りを繰り越したもの」なので、回した分は今月では使えない。
+      //   その差を黙って消すのではなく「翌月へ繰越 n回」として見せる。
+      var lentToNext = Math.max(0, naive - total);
+      return { carryRemain: carryRemain, monthRemain: monthRemain, total: total,
+               hasCarry: co > 0, lentToNext: lentToNext };
     }
     // 月額の内訳行（繰越 残n回 ／ 今月 残n回）。繰越が無い契約では繰越を出さない。
     function monthlyBreakdownRow(p){
       var parts = [];
       if (p.hasCarry) parts.push(t('bd_carry', { n: p.carryRemain }));
       parts.push(t('bd_month', { n: p.monthRemain }));
+      if (p.lentToNext > 0) parts.push(t('bd_lent', { n: p.lentToNext }));
       return '<div class="home-row"><span class="k">' + t('bd_label') + '</span><span class="v" style="font-size:13px;line-height:1.6;">'
         + parts.join(' ／ ') + '</span></div>';
     }

@@ -61,16 +61,29 @@ function auditForEdgeMigrationText() {
   if (cols && vals.length) {
     var noName = 0, noStart = 0, noEnd = 0, noCustId = 0, noPackId = 0, ticketRows = 0;
     var oldest = null, names = {}, dupName = 0;
+    // 終了日が空の行を、あとで一覧にするために控える（★行番号で示す＝氏名を出さずに直せる）
+    var openEnded = [], rowsByName = {};
     for (var i = 0; i < vals.length; i++) {
       var r = vals[i];
       var nm = String(cols.name >= 0 ? r[cols.name] : '').replace(/^\s+|\s+$/g, '');
       if (!nm) { noName++; continue; }
       names[nm] = (names[nm] || 0) + 1;
+      (rowsByName[nm] = rowsByName[nm] || []).push(i + 2);   // 見出し1行ぶんを足す＝シートの行番号
       var st = cols.start >= 0 ? _lbParseResvDate(r[cols.start]) : null;
       if (!st || isNaN(st.getTime())) noStart++;
       else if (!oldest || st.getTime() < oldest) oldest = st.getTime();
       var en = cols.end >= 0 ? _lbParseResvDate(r[cols.end]) : null;
-      if (!en || isNaN(en.getTime())) noEnd++;
+      if (!en || isNaN(en.getTime())) {
+        noEnd++;
+        openEnded.push({
+          row: i + 2, name: nm,
+          type: String(cols.type >= 0 ? r[cols.type] : ''),
+          method: String(cols.method >= 0 ? r[cols.method] : ''),
+          freq: String(cols.freq >= 0 ? r[cols.freq] : ''),
+          ticket: String(cols.ticket >= 0 ? r[cols.ticket] : ''),
+          start: (st && !isNaN(st.getTime())) ? Utilities.formatDate(st, SETTINGS.TIMEZONE, 'yyyy/MM/dd') : '(読めない)'
+        });
+      }
       if (cols.custId >= 0 && !String(r[cols.custId] || '').replace(/^\s+|\s+$/g, '')) noCustId++;
       var method = String(cols.method >= 0 ? r[cols.method] : '');
       if (method.indexOf('チケット') >= 0) {
@@ -86,6 +99,28 @@ function auditForEdgeMigrationText() {
     say('  顧客ID列 … ' + (cols.custId >= 0 ? ('あり／空欄 ' + noCustId + '件') : '（strictモードが off のため未使用）'));
     say('  pack_id列 … ' + (cols.packId >= 0 ? ('あり／チケット行で空欄 ' + noPackId + '件') : '（strictモードが off のため未使用）'));
     say('  同じ氏名が複数行にある人 … ' + dupName + '名（契約更新なら正常。別人の同名なら要注意）');
+
+    // ★終了日が空の行の一覧。
+    //   終了日が空＝ずっと有効。古い行の終了日を入れ忘れると、新旧2つの契約が
+    //   同時に生き、枠が二重になる（過去行をコピペして更新する運用と直結する）。
+    //   氏名は出さず、シートの行番号で示す。オーナーはその行を開けば分かる。
+    if (openEnded.length) {
+      say('');
+      say('  ■ 終了日が空の行 ' + openEnded.length + '件（行番号で示します）');
+      openEnded.sort(function (a, b) { return a.row - b.row; });
+      for (var oi = 0; oi < openEnded.length; oi++) {
+        var o = openEnded[oi];
+        var same = (rowsByName[o.name] || []).filter(function (x) { return x !== o.row; });
+        say('    ' + o.row + '行目：' + o.type + ' / ' + o.method
+            + ' / 頻度' + (o.freq || '-') + ' / チケット' + (o.ticket || '-')
+            + ' / 開始 ' + o.start
+            + (same.length ? '  ⚠ 同じ方の他の行: ' + same.join(',') + '行目' : '  （この方は1行のみ）'));
+      }
+      say('');
+      say('    ⚠ の付いた行は、同じ方に別の契約行があります。');
+      say('      古い方の終了日が空のままなら、2つの契約が同時に生きて枠が二重になります。');
+      say('      「この方は1行のみ」は継続契約として正常です（今別府様もこちら）。');
+    }
     say('  いちばん古い契約開始日 … ' + (oldest ? Utilities.formatDate(new Date(oldest), 'Asia/Tokyo', 'yyyy/MM/dd') : '不明'));
   } else say('  （読めませんでした）');
 
