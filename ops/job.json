@@ -1,6 +1,6 @@
 {
-  "note": "ここに書いて push すると、GASが1分以内に拾って実行し、結果をWorkerへ返します。",
+  "note": "ここを書き換えて push すると、GASが1分以内に拾って実行し、結果をWorkerへ返します。",
   "op": "testConnection",
-  "requestId": "PLACEHOLDER-REPLACE-BEFORE-USE",
+  "requestId": "job-20260929130852-HArQjWPZH5mV",
   "args": null
 }
