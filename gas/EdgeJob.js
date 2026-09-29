@@ -68,13 +68,28 @@ function _ejRun(op, args) {
 /** 1分ごとに呼ばれる。作業が無ければすぐ終わる（0.3〜0.5秒） */
 function edgeJobPoll() {
   if (!_ejOn()) return;                       // 開発中だけ動かす
+
+  // ★設定が無いまま回すと、1分ごとに失敗し続けてGASの実行枠を無駄に使う。
+  //   その場合は見回り自体を止める（気づかないまま枠を消費しないため）。
+  if (!_edgeProp('EDGE_URL') || !_edgeProp('EDGE_SECRET')) {
+    PropertiesService.getScriptProperties().setProperty(EJ.ENABLED_PROP, '0');
+    Logger.log('[job] EDGE_URL / EDGE_SECRET が未設定のため見回りを止めました。設定後に setupEdgeJobTrigger を実行してください。');
+    return;
+  }
+
   var claimed = null;
   try {
     var r = _ejPost({ action: 'claim' });
-    if (!r || !r.success || !r.job) return;   // 何も無い＝即終了
+    if (!r || !r.success || !r.job) { _ejNoteOk(); return; }   // 何も無い＝即終了
     claimed = r.job;
+    _ejNoteOk();
   } catch (e) {
-    return;                                    // 通信できないだけ。記録もしない（負荷を増やさない）
+    // 続けて失敗するなら、通信先か合言葉が間違っている。回り続けても直らないので止める。
+    if (_ejNoteFail() >= 20) {
+      PropertiesService.getScriptProperties().setProperty(EJ.ENABLED_PROP, '0');
+      Logger.log('[job] 連続して届かないため見回りを止めました。EDGE_URL / EDGE_SECRET を確認してください。');
+    }
+    return;
   }
 
   // 写しを書き換える作業は、ほかの押し出しと重ならないようにする
@@ -106,14 +121,38 @@ function edgeJobPoll() {
   } catch (e4) { Logger.log('[job] 報告に失敗: ' + (e4 && e4.message)); }
 }
 
+// 連続失敗の回数を覚える（届かない設定のまま回り続けないため）
+function _ejNoteFail() {
+  var n = Number(_edgeProp('EDGE_JOB_FAILS') || 0) + 1;
+  try { PropertiesService.getScriptProperties().setProperty('EDGE_JOB_FAILS', String(n)); } catch (e) {}
+  return n;
+}
+function _ejNoteOk() {
+  if (_edgeProp('EDGE_JOB_FAILS')) {
+    try { PropertiesService.getScriptProperties().setProperty('EDGE_JOB_FAILS', '0'); } catch (e) {}
+  }
+}
+
 function setupEdgeJobTrigger() {
   var all = ScriptApp.getProjectTriggers();
   for (var i = 0; i < all.length; i++) {
     if (all[i].getHandlerFunction() === 'edgeJobPoll') ScriptApp.deleteTrigger(all[i]);
   }
+  // ★設定が揃っていなければ始めない。1分ごとに失敗し続けるのを防ぐ。
+  if (!_edgeProp('EDGE_URL') || !_edgeProp('EDGE_SECRET')) {
+    Logger.log('❌ EDGE_URL / EDGE_SECRET が未設定です。スクリプトプロパティに登録してから実行してください。');
+    return;
+  }
+  // 実際に届くかを先に確かめる
+  try { _ejPost({ action: 'claim' }); }
+  catch (e) {
+    Logger.log('❌ Workerに届きませんでした（' + (e && e.message) + '）。EDGE_URL / EDGE_SECRET を確認してください。');
+    return;
+  }
   ScriptApp.newTrigger('edgeJobPoll').timeBased().everyMinutes(1).create();
   PropertiesService.getScriptProperties().setProperty(EJ.ENABLED_PROP, '1');
-  Logger.log('1分ごとの見回りを設定し、有効にしました。止めるときは stopEdgeJobPolling() を実行してください。');
+  PropertiesService.getScriptProperties().setProperty('EDGE_JOB_FAILS', '0');
+  Logger.log('✅ 届くことを確認し、1分ごとの見回りを設定しました。止めるときは stopEdgeJobPolling() を実行してください。');
 }
 
 function stopEdgeJobPolling() {
