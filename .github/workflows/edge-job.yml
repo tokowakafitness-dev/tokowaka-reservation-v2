@@ -1,0 +1,72 @@
+name: 点検を実行する
+
+# ops/job.json を書き換えて push すると、その内容をWorkerへ登録する。
+# GASが1分ごとに聞きに来て実行し、結果をWorkerへ返す。
+#   ★GASに新しい公開入口は作っていない。外からGASは呼べない。
+#   ★Secretを使うので、手動実行と main への push だけに限る（fork経由の注入を防ぐ）。
+on:
+  push:
+    branches: [main]
+    paths: ['ops/job.json']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-job
+  cancel-in-progress: false
+
+jobs:
+  enqueue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 登録する
+        env:
+          EDGE_URL: ${{ secrets.EDGE_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: |
+          set -euo pipefail
+          set +x                      # 合言葉がログに出ないようにする
+
+          if [ -z "${EDGE_URL:-}" ] || [ -z "${SHARED_SECRET:-}" ]; then
+            echo "::error::EDGE_URL / SHARED_SECRET が未登録です"; exit 1
+          fi
+
+          op="$(jq -r '.op' ops/job.json)"
+          rid="$(jq -r '.requestId' ops/job.json)"
+          args="$(jq -c '.args' ops/job.json)"
+
+          case "$op" in
+            audit|verify|previewMerge|testConnection|pushAll) : ;;
+            *) echo "::error::許可されていない作業です: $op"; exit 1 ;;
+          esac
+          if ! printf '%s' "$rid" | grep -Eq '^[A-Za-z0-9_-]{24,64}$'; then
+            echo "::error::作業番号の形が不正です"; exit 1
+          fi
+
+          # 合言葉はヘッダで渡す。コマンド行には展開しない。
+          body="$(jq -n --arg op "$op" --arg rid "$rid" --argjson args "$args" \
+                  '{action:"enqueue", op:$op, requestId:$rid, args:$args}')"
+          code="$(printf '%s' "$body" \
+            | curl -sS -o /tmp/res.json -w '%{http_code}' \
+                -X POST "$EDGE_URL/jobs" \
+                -H 'Content-Type: application/json' \
+                -H "X-Ingest-Secret: $SHARED_SECRET" \
+                --data-binary @-)"
+
+          if [ "$code" != "200" ]; then
+            echo "::error::登録に失敗しました（HTTP $code）"
+            jq -r '.code // "?"' /tmp/res.json || true    # 中身は出さない
+            exit 1
+          fi
+          echo "登録しました：$op"
+          echo "結果は 1〜2分後に $EDGE_URL/jobs/$rid で読めます"
+          {
+            echo "### 点検を登録しました"
+            echo ""
+            echo "- 作業: \`$op\`"
+            echo "- 結果: $EDGE_URL/jobs/$rid"
+          } >> "$GITHUB_STEP_SUMMARY"

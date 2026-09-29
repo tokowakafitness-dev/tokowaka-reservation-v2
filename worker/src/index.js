@@ -14,6 +14,7 @@ import { routeCustomerDetail, routeContractList } from './routes/customer.js';
 import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
 import { handleCalc } from './routes/verify.js';
+import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
          compatTrainerSlots, compatMyReservations } from './routes/compat.js';
@@ -98,6 +99,16 @@ export default {
     //   ID Tokenではなく合言葉で確かめる（お客様のブラウザからは呼ばせない）。
     //   nowKey・繰越率・時点はすべてGASから受け取る。こちらで決めると、
     //   時計のずれや既定値の違いが「実装の差」に見えてしまう。
+    // 作業の受け渡し。結果を読むのは request_id を知っていることが鍵（合言葉は不要）。
+    if (url.pathname.startsWith('/jobs/')) {
+      if (request.method !== 'GET') return new Response('Method Not Allowed', { status: 405 });
+      return handleJobRead(request, env, url.pathname.slice('/jobs/'.length));
+    }
+    if (url.pathname === '/jobs') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return handleJobs(request, env);
+    }
+
     if (url.pathname === '/calc') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
       return handleCalc(request, env);

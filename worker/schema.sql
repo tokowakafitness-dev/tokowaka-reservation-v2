@@ -235,3 +235,27 @@ CREATE TABLE IF NOT EXISTS calc_meta (
   payload      TEXT NOT NULL,
   synced_at    INTEGER
 );
+
+-- ============================================================
+-- 作業の受け渡し（2026-09-29）
+--
+--   開発中、GASの点検を実行するのにオーナーの手を借りていた（1日20往復）。
+--   GASに新しい公開入口を作ると、匿名で叩かれてGASの実行枠を食い潰され、
+--   お客様の予約が止まりうる。そこで「GASから聞きに行く」形にする。
+--
+--   登録は合言葉が要る（GitHub Actionsが行う）。
+--   結果を読むのは request_id を知っていることが鍵（長い乱数＝知らなければ読めない）。
+--   ★結果に個人情報を入れない。読み取りに合言葉が要らないため。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS jobs (
+  request_id   TEXT PRIMARY KEY,       -- 長い乱数。これを知っていることが結果を読む鍵
+  op           TEXT NOT NULL,          -- 実行する作業の名前（許可した名前だけ）
+  args         TEXT,
+  status       TEXT NOT NULL,          -- pending / running / done / failed
+  enqueued_at  INTEGER NOT NULL,
+  claimed_at   INTEGER,
+  finished_at  INTEGER,
+  result       TEXT,                   -- 個人情報を含まない要約
+  error        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, enqueued_at);
