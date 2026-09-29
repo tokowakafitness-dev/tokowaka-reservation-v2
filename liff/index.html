@@ -822,8 +822,10 @@
     }).catch(function(){ return _apiGas({ action:'line_getMemberStatus' }); });
     // 待っている人が同じ約束を掴めるようにしておく
     _bootPending = p;
-    return p.then(function(r){ _bootPending = null; return r; },
-                  function(e){ _bootPending = null; throw e; });
+    // ★同じ約束のときだけ後始末する。捨てたあとに始まった新しい取得を
+    //   古い応答が消してしまうと、待っている人が個別に取りに行ってしまう。
+    return p.then(function(r){ if (_bootPending === p) _bootPending = null; return r; },
+                  function(e){ if (_bootPending === p) _bootPending = null; throw e; });
   }
 
   function fetchCustomerCard(customerId){

@@ -58,10 +58,24 @@ function _lbReadOnly(fn) {
     });
   }
 
+  // ★シートを手に入れる入口は1つではない。
+  //   _lbSheet だけ包んでも、_lbContractSheet や MealAi の maOpenSs_ は
+  //   SpreadsheetApp.openById() から直接シートを取るため素通しになる。
+  //   まとめ取得が通る入口はすべて包む（Codex指摘 2026-09-29）。
+  var GATES = ['_lbSheet', '_lbSs', '_lbContractSheet', 'maOpenSs_', 'maSheet_'];
+
   return _edgeWithSheetCache(function () {
-    var orig = _lbSheet;
-    _lbSheet = function (name) { return readOnly(orig(name), 'sheet'); };
-    try { return fn(); } finally { _lbSheet = orig; }
+    var saved = {};
+    for (var i = 0; i < GATES.length; i++) {
+      var g = GATES[i];
+      if (typeof globalThis[g] !== 'function') continue;
+      saved[g] = globalThis[g];
+      (function (name, orig) {
+        globalThis[name] = function () { return readOnly(orig.apply(null, arguments), name); };
+      })(g, globalThis[g]);
+    }
+    try { return fn(); }
+    finally { for (var k in saved) globalThis[k] = saved[k]; }
   });
 }
 
