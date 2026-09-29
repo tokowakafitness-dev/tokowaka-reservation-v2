@@ -523,7 +523,9 @@
     return new Promise(function(resolve, reject){
       var cb = 'jcb_' + (++_seq) + '_' + new Date().getTime();
       var s = document.createElement('script');
-      var timer = setTimeout(function(){ cleanup(); reject('サーバー応答がタイムアウトしました'); }, 20000);
+      // まとめ取得は数回ぶんを1回で行うので、待ち切りを長めに取る。
+      var limit = /^line_(boot|customerCard)$/.test(String(params.action || '')) ? BATCH_TIMEOUT_MS : 20000;
+      var timer = setTimeout(function(){ cleanup(); reject('サーバー応答がタイムアウトしました'); }, limit);
       function cleanup(){ clearTimeout(timer); try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
       var _t0 = _nowMs();
       window[cb] = function(data){ cleanup(); _perfAdd(params.action, _nowMs() - _t0); resolve(data); };
@@ -736,12 +738,14 @@
   //   ★写しではない。その場でシートから読んだ、そのときの正しい値である。
   //   ★数秒しか持たない。画面を描き終えるまでの間だけの受け皿。
   // ============================================================
-  //   ★2026-09-29 いったん止めた。
-  //     GASが1回19秒かかる状態になっており、3回ぶんをまとめると
-  //     画面側の20秒の待ち切りを超えて必ず失敗する。
-  //     失敗しても従来の取得に戻るが、20秒を捨ててから戻るので
-  //     かえって遅い。GASが遅い原因を潰してから戻す。
-  var BATCH_ON = false;
+  //   ★2026-09-29 実測で有効と確認したため有効にする。
+  //     画面が開くまで 58.7秒 → 9.3秒（通信13回 → 1回）。
+  //     ただし一度目の計測では line_boot が20秒の待ち切りに掛かって失敗し、
+  //     20秒を捨ててから従来の取得に戻っていた。まとめ取得は数回ぶんを
+  //     1回で行うので、1回ぶんと同じ待ち切りでは短すぎる。
+  //     → まとめ取得だけ待ち切りを延ばす（下の BATCH_TIMEOUT_MS）。
+  var BATCH_ON = true;
+  var BATCH_TIMEOUT_MS = 45000;
   var BATCH_TTL_MS = 10000;
   var _bootBatch = { at: 0, parts: null };
   var _cardBatch = { at: 0, parts: null, customerId: '' };
@@ -815,7 +819,6 @@
   function _fetchBoot(t0){
     var gen = _batchGen;
     var p = _apiGas({ action:'line_boot' }).then(function(res){
-      _perfAdd('line_boot', _nowMs() - t0);
       var ms = res && res.parts && res.parts.memberStatus;
       // ★まとめ取得が使えないときは、必ず従来の1件取得に戻る。
       //   ここを怠ると、GAS側がまだ新しくない間、画面が開けなくなる。
@@ -848,7 +851,6 @@
     var gen = _batchGen;
     var p;
     p = _apiGas({ action:'line_customerCard', customerId: customerId }).then(function(res){
-      _perfAdd('line_customerCard', _nowMs() - t0);
       // ★あとから届いた古い応答で、いま見ている顧客の受け皿を上書きしない
       // ★捨てられたあと／別の取得に入れ替わったあとの応答は、受け皿に入れない
       if (res && res.success === true && res.parts
