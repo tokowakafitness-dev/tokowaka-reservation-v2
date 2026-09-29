@@ -240,25 +240,10 @@ jobs:
           echo "反映しました（@${new:-?}）"
 
       - name: 10. 生きているか確かめる
-        working-directory: gas
+        id: health
+        # ★ここが「本番が動いているか」の判定。落ちたときだけ前の版へ戻す。
         run: |
           set -euo pipefail
-          # (a) 本番のデプロイが新しいバージョンを指しているか（反映が空振りしていないか）
-          CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp --auth $RUNNER_TEMP/clasprc.json"
-          $CLASP deployments --json > "$RUNNER_TEMP/deps2.json"
-          node -e '
-            const d = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/deps2.json", "utf8"));
-            const list = Array.isArray(d) ? d : (d.deployments || []);
-            const hit = list.find((x) => x.deploymentId === process.env.DEPLOY_ID);
-            const want = process.env.NEW_VERSION;
-            if (!hit || String(hit.versionNumber) !== String(want)) {
-              console.error(`::error::本番が新しいバージョンを指していません（いま @${hit && hit.versionNumber}／期待 @${want}）`);
-              process.exit(1);
-            }
-            console.log(`本番は @${want} を指しています`);
-          '
-
-          # (b) 公開の入口が応答するか。
           #   action=ping は認証の要らない既存の入口。doGet が動かなければ落ちる。
           #   ★これは「動いている」ことの証明にはならない（予約が作れるかは見ていない）。
           #     どのファイルに構文エラーがあっても全体が落ちるので、その検出が目的。
@@ -287,9 +272,44 @@ jobs:
             console.log("生きています");
           '
 
-      - name: 11. だめなら前のバージョンに戻す
-        # 反映は通ったが生存確認で落ちた、という一番危ない形を自動で戻す。
-        if: failure() && steps.push.outcome == 'success' && env.PREV_VERSION != ''
+      - name: 11. 反映が本当に切り替わったか
+        # 「push は通ったがデプロイが古い版のまま」という空振りを検出する。
+        #
+        # ★ここでは前の版に戻さない。
+        #   Google側は書いた直後の一覧に古い版を返すことがある（読み取りの遅れ）。
+        #   一度きりの照合で食い違いと決めつけて戻すと、通った反映を自分で取り消してしまう
+        #   （2026-09-29 に実際に起きた：@236 を反映したのに一覧が @235 を返し、巻き戻した）。
+        #   何度か待っても切り替わらないなら、それは本当に反映されていないので止める。
+        #   ただし本番は前の版で生きているため、戻す操作は不要。
+        working-directory: gas
+        run: |
+          set -euo pipefail
+          CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp --auth $RUNNER_TEMP/clasprc.json"
+          seen=""
+          for i in 1 2 3 4 5 6; do
+            $CLASP deployments --json > "$RUNNER_TEMP/deps2.json"
+            seen="$(node -e '
+              const d = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/deps2.json", "utf8"));
+              const list = Array.isArray(d) ? d : (d.deployments || []);
+              const hit = list.find((x) => x.deploymentId === process.env.DEPLOY_ID);
+              process.stdout.write(String((hit && hit.versionNumber) || ""));
+            ')"
+            if [ "$seen" = "$NEW_VERSION" ]; then
+              echo "本番は @$NEW_VERSION を指しています（${i}回目）"
+              exit 0
+            fi
+            echo "まだ @${seen:-?}（期待 @$NEW_VERSION・${i}回目）— 反映の伝わりを待つ"
+            sleep 10
+          done
+          echo "::error::反映が切り替わりませんでした（いま @${seen:-?}／期待 @$NEW_VERSION）"
+          echo "本番は前の版のまま動いています。戻す操作は不要です。"
+          echo "GASエディタのデプロイ設定を確認してから、もう一度実行してください。"
+          exit 1
+
+      - name: 12. 生存確認が落ちたら前のバージョンに戻す
+        # 反映は通ったが本番が動かなくなった、という一番危ない形だけを自動で戻す。
+        # ★バージョンの照合が合わないだけでは戻さない（本番は前の版で生きているため）。
+        if: failure() && steps.push.outcome == 'success' && steps.health.outcome == 'failure' && env.PREV_VERSION != ''
         working-directory: gas
         run: |
           set -euo pipefail
@@ -297,10 +317,15 @@ jobs:
           echo "::warning::本番を @$PREV_VERSION に戻します"
           $CLASP update-deployment "$DEPLOY_ID" -V "$PREV_VERSION" -d "rollback to @$PREV_VERSION"
           url="https://script.google.com/macros/s/${DEPLOY_ID}/exec?action=ping"
-          code="$(curl -sS -L -o /dev/null -w '%{http_code}' --max-time 30 "$url" || echo 000)"
+          code=000
+          for i in 1 2 3; do
+            code="$(curl -sS -L -o /dev/null -w '%{http_code}' --max-time 30 "$url" || echo 000)"
+            [ "$code" = "200" ] && break
+            sleep 10
+          done
           echo "戻したあとの応答: HTTP $code"
           [ "$code" = "200" ] || echo "::error::戻しても応答しません。GASエディタから手当てしてください。"
 
-      - name: 12. 後片付け
+      - name: 13. 後片付け
         if: always()
         run: rm -f "$RUNNER_TEMP/clasprc.json" "$RUNNER_TEMP/health.txt"
