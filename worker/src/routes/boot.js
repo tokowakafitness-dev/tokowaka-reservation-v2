@@ -38,9 +38,15 @@ function monthKeyJst(ms) {
  */
 export async function readHome(env, customerId, targetMs) {
   if (!customerId) return null;
-  const row = await env.DB.prepare(
-    'SELECT payload, computed_at FROM member_home WHERE customer_id = ?'
-  ).bind(customerId).first();
+  // ★鮮度は「その行の時刻」ではなく「残数を最後に押し出した時刻」で見る。
+  //   行ごとの時刻で見ると、中身が変わっていない会員の行も毎回書き直す必要があり、
+  //   D1の書き込み枠（1日10万行）を無駄に使う。押し出しは全員ぶんをまとめて行うので、
+  //   最後に押し出した時刻が分かれば鮮度は判定できる。
+  const [row, sync] = await Promise.all([
+    env.DB.prepare('SELECT payload, computed_at FROM member_home WHERE customer_id = ?')
+      .bind(customerId).first(),
+    env.DB.prepare("SELECT synced_at FROM sync_state WHERE key = 'home'").first(),
+  ]);
   if (!row) return null;
   let p;
   try { p = JSON.parse(row.payload); } catch (_) { return null; }
@@ -55,8 +61,9 @@ export async function readHome(env, customerId, targetMs) {
   }
   if (!home) return null;
 
-  const age = Date.now() - (row.computed_at || 0);
-  return { ...home, month, computedAt: row.computed_at, stale: age > HOME_TTL_WARN_MS, ageMs: age };
+  const refreshedAt = Math.max(Number(row.computed_at || 0), Number((sync && sync.synced_at) || 0));
+  const age = Date.now() - refreshedAt;
+  return { ...home, month, computedAt: refreshedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age };
 }
 
 export async function routeBoot({ env, who }) {

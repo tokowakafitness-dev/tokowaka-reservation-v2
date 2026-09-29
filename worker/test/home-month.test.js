@@ -18,11 +18,19 @@ const payload = JSON.stringify({
   next:    { type: 'monthly', quota: 6, monthlyRemaining: 6, carryover: 1 },
 });
 
-function envWith(p, computedAt = Date.now()) {
+// syncedAt を省くと computedAt と同じ扱い（＝押し出し直後）
+function envWith(p, computedAt = Date.now(), syncedAt) {
   return {
     DB: {
-      prepare() {
-        return { bind() { return this; }, async first() { return p ? { payload: p, computed_at: computedAt } : null; } };
+      prepare(q) {
+        const isSync = /sync_state/.test(q);
+        return {
+          bind() { return this; },
+          async first() {
+            if (isSync) return { synced_at: syncedAt === undefined ? computedAt : syncedAt };
+            return p ? { payload: p, computed_at: computedAt } : null;
+          },
+        };
       },
     },
   };
@@ -90,6 +98,23 @@ const jst = (y, m, d, h = 12) => Date.UTC(y, m - 1, d, h - 9);
   eq('1分前は新しい', fresh.stale, false);
   const old = await readHome(envWith(payload, Date.now() - 30 * 60 * 1000), 'c1');
   eq('★30分前は古いと伝える', old.stale, true);
+}
+
+// ---------- 9. 鮮度は「最後に押し出した時刻」で見る ----------
+//   中身が変わっていない会員の行は書き直さないため、行の時刻は古いままになる。
+//   それを理由に「古い」と判断すると、変わっていないだけの会員が毎回GASへ落ちてしまう。
+{
+  const rowOld = Date.now() - 6 * 60 * 60 * 1000;      // 行は6時間前のまま
+  const pushedJustNow = Date.now() - 30 * 1000;        // でも30秒前に押し出している
+  const h = await readHome(envWith(payload, rowOld, pushedJustNow), 'c1');
+  eq('★行が古くても、押し出しが新しければ新しい扱い', h.stale, false);
+  eq('★返す時刻も押し出した時刻', h.computedAt, pushedJustNow);
+}
+{
+  // 押し出しが止まっていれば、ちゃんと古いと判断する
+  const stopped = Date.now() - 3 * 60 * 60 * 1000;
+  const h = await readHome(envWith(payload, stopped, stopped), 'c1');
+  eq('★押し出しが止まっていれば古いと判断する', h.stale, true);
 }
 
 console.log(`\n残数の月選び 検証: ${pass} passed / ${fail} failed`);

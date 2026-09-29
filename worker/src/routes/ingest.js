@@ -49,12 +49,17 @@ const TABLES = {
     key: 'customer_id',
     cols: ['customer_id', 'payload', 'computed_at'],
     keepStale: true,    // 押し出しに含まれない会員の残数を消さない（部分更新を許す）
+    // ★computed_at は押し出すたびに変わるので、変更の有無の判定からは外す。
+    //   含めると中身が同じでも毎回書き直すことになる。
+    //   鮮度は sync_state（最後に押し出した時刻）で見るので、これで困らない。
+    skipCompare: ['computed_at'],
   },
   slots: {
     table: 'slots_cache',
     key: 'trainer_id',
     cols: ['trainer_id', 'payload', 'computed_at'],
     keepStale: true,
+    skipCompare: ['computed_at'],
   },
   body: {
     table: 'body_records',
@@ -156,9 +161,11 @@ async function ingest(request, env) {
       for (const row of (cur.results || [])) existing[String(row[conf.key])] = row;
     } catch (_) { existing = {}; }   // 読めなければ全部書く（安全側）
   }
+  const skipCmp = new Set(conf.skipCompare || []);
   const same = (a, b) => {
     if (!b) return false;
     for (const c of conf.cols) {
+      if (skipCmp.has(c)) continue;
       const x = a[c] === undefined ? null : a[c];
       const y = b[c] === undefined ? null : b[c];
       if (x === null && y === null) continue;

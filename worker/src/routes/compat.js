@@ -300,16 +300,21 @@ export async function compatMyReservations({ env, who, body }) {
 export async function compatTrainerSlots({ env, body, who }) {
   const trainerId = String(body.trainerId || who.trainerId || '');
   if (!trainerId) return { _fallback: true };
-  const row = await env.DB.prepare(
-    'SELECT payload, computed_at FROM slots_cache WHERE trainer_id = ?'
-  ).bind(trainerId).first();
+  // 鮮度は「枠を最後に押し出した時刻」で見る（行ごとの時刻ではない）。
+  //   行ごとの時刻で見ると、中身が変わっていない枠も毎回書き直す必要がある。
+  const [row, sync] = await Promise.all([
+    env.DB.prepare('SELECT payload, computed_at FROM slots_cache WHERE trainer_id = ?')
+      .bind(trainerId).first(),
+    env.DB.prepare("SELECT synced_at FROM sync_state WHERE key = 'slots'").first(),
+  ]);
   if (!row) return { _fallback: true };
   let raw;
   try { raw = JSON.parse(row.payload); } catch (_) { return { _fallback: true }; }
 
   // 写しが古すぎるときは答えない。空き枠は予約で変わるため、古い枠を見せると
   // 「表示されているのに取れない」が起きる。
-  const age = Date.now() - (row.computed_at || 0);
+  const refreshedAt = Math.max(Number(row.computed_at || 0), Number((sync && sync.synced_at) || 0));
+  const age = Date.now() - refreshedAt;
   if (age > 20 * 60 * 1000) return { _fallback: true };
 
   const now = Date.now();
@@ -327,7 +332,7 @@ export async function compatTrainerSlots({ env, body, who }) {
     trainerName: s.trainerName, trainerId: s.trainerId, trialOk: s.trialOk,
   }));
 
-  return { slots, computedAt: row.computed_at, ageMs: age };
+  return { slots, computedAt: refreshedAt, ageMs: age };
 }
 
 // 午前枠は前日22時で締め切る（GASの BookingRules.js と同じ規則）

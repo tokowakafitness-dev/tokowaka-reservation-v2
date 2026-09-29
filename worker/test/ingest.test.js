@@ -274,5 +274,37 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
   eq('やり方を返す', b.mode, 'full');
 }
 
+// ---------- 15. 押し出すたびに変わる時刻は、見比べの対象にしない ----------
+//   残数と枠は「押し出した時刻」を一緒に持つ。これを見比べに含めると、
+//   中身が同じでも毎回書き直すことになり、書き込み枠を使い切る。
+//   鮮度は sync_state（最後に押し出した時刻）で見るので、これで困らない。
+{
+  const cur = [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 111 }];
+  const env = makeEnv('TEST-SECRET', cur);
+  const [, b] = await json(await handleIngest(req({
+    kind: 'home', batchId: 1000,
+    rows: [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 999 }],   // 時刻だけ違う
+  }, 'TEST-SECRET'), env));
+  eq('★残数：時刻しか違わない行は書かない', [b.written, b.skipped], [0, 1]);
+}
+{
+  const cur = [{ customer_id: 'c1', payload: '{"quota":6}', computed_at: 111 }];
+  const env = makeEnv('TEST-SECRET', cur);
+  const [, b] = await json(await handleIngest(req({
+    kind: 'home', batchId: 1001,
+    rows: [{ customer_id: 'c1', payload: '{"quota":5}', computed_at: 999 }],   // 残数が変わった
+  }, 'TEST-SECRET'), env));
+  eq('★残数が変わったら書く', b.written, 1);
+}
+{
+  const cur = [{ trainer_id: 't1', payload: '{"slots":[]}', computed_at: 111 }];
+  const env = makeEnv('TEST-SECRET', cur);
+  const [, b] = await json(await handleIngest(req({
+    kind: 'slots', batchId: 1002,
+    rows: [{ trainer_id: 't1', payload: '{"slots":[]}', computed_at: 999 }],
+  }, 'TEST-SECRET'), env));
+  eq('★枠：時刻しか違わない行は書かない', [b.written, b.skipped], [0, 1]);
+}
+
 console.log(`\n取り込み口 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
