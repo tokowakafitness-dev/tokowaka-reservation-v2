@@ -1,6 +1,6 @@
 {
   "note": "ここを書き換えて push すると、GASが1分以内に拾って実行し、結果をWorkerへ返します。",
-  "op": "testConnection",
-  "requestId": "job-20260929130852-HArQjWPZH5mV",
+  "op": "verify",
+  "requestId": "job-20260929153036-7UKqjbm4Dill",
   "args": null
 }
