@@ -4,11 +4,15 @@
 ワークフローを書けるということは、Secretsの中身を取り出せるということだからです。
 そのため、ここに置いたものを**オーナーが `.github/workflows/` へ取り付けます**。
 
+**`draft/` の中身は未完成です。取り付けないでください。**
+
 ## 取り付け方
 
 ```
 cd /Users/ryunosukennakano/龍之介会社/30_projects/personal-training/tokowaka-reservation-v2
-cp ops/workflows/*.yml .github/workflows/
+# ★ワイルドカードを使わず、名前を指定してコピーする（既存を黙って上書きしないため）
+cp ops/workflows/<ファイル名>.yml .github/workflows/
+git diff -- .github/workflows/
 git add .github/workflows && git commit -m "chore(ci): ワークフローを更新" && git push origin main
 ```
 
