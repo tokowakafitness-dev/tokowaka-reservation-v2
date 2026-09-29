@@ -44,13 +44,16 @@ function _evTimePoints(rows) {
   function endOfDayJst(ms) { return (Math.floor((ms + JST) / 86400000) * 86400000 - JST) + 86399999; }
   function monthEnd(ms) { var d = new Date(ms + JST); return endOfDayJst(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 12) - JST); }
 
-  add(now, '今');
-  add(monthEnd(now), '今月末');
-  add(monthEnd(now) + 1, '翌月に入った瞬間');
+  var fixed = [];
+  function addFixed(ms, label) { add(ms, label); if (ms != null && isFinite(ms)) fixed.push(Math.round(ms)); }
+
+  addFixed(now, '今');
+  addFixed(monthEnd(now), '今月末');
+  addFixed(monthEnd(now) + 1, '翌月に入った瞬間');
   var nx = new Date(now + JST); nx = Date.UTC(nx.getUTCFullYear(), nx.getUTCMonth() + 1, 15, 12) - JST;
-  add(nx, '翌月なかば');
+  addFixed(nx, '翌月なかば');
   var nn = new Date(now + JST); nn = Date.UTC(nn.getUTCFullYear(), nn.getUTCMonth() + 2, 15, 12) - JST;
-  add(nn, '翌々月なかば');
+  addFixed(nn, '翌々月なかば');
 
   for (var i = 0; i < rows.length; i++) {
     var st = rows[i].start ? rows[i].start.getTime() : null;
@@ -58,10 +61,24 @@ function _evTimePoints(rows) {
     if (st != null) { add(st - 1, '契約開始の直前'); add(st, '契約開始'); }
     if (en != null) { add(endOfDayJst(en), '終了日の終わり'); add(endOfDayJst(en) + 1, '終了日の翌日'); }
   }
+  // ★上限にかかったとき、何を捨てるかが効いてくる。
+  //   時点は昇順に並ぶため、単に先頭から切ると「今・翌月・翌々月」という
+  //   一番大事な時点が落ち、過去の契約の境目だけを比べて安心してしまう。
+  //   固定の5点は必ず残し、残りの枠を契約の境目で埋める。
   var out = [];
   for (var k in t) out.push({ ms: Number(k), label: t[k] });
   out.sort(function (a, b) { return a.ms - b.ms; });
-  return out.slice(0, EV.MAX_TIMES);
+  if (out.length <= EV.MAX_TIMES) return out;
+
+  var keep = {}, kept = [];
+  for (var f = 0; f < fixed.length; f++) keep[String(fixed[f])] = 1;
+  for (var o = 0; o < out.length; o++) if (keep[String(out[o].ms)]) kept.push(out[o]);
+  // 残り枠は、今に近い境目から順に入れる（遠い過去より、いま効く境目を優先する）
+  var rest = out.filter(function (x) { return !keep[String(x.ms)]; });
+  rest.sort(function (a, b) { return Math.abs(a.ms - now) - Math.abs(b.ms - now); });
+  for (var r = 0; r < rest.length && kept.length < EV.MAX_TIMES; r++) kept.push(rest[r]);
+  kept.sort(function (a, b) { return a.ms - b.ms; });
+  return kept;
 }
 
 function _evPost(payload) {
