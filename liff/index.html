@@ -736,6 +736,12 @@
   //   ★写しではない。その場でシートから読んだ、そのときの正しい値である。
   //   ★数秒しか持たない。画面を描き終えるまでの間だけの受け皿。
   // ============================================================
+  //   ★2026-09-29 いったん止めた。
+  //     GASが1回19秒かかる状態になっており、3回ぶんをまとめると
+  //     画面側の20秒の待ち切りを超えて必ず失敗する。
+  //     失敗しても従来の取得に戻るが、20秒を捨ててから戻るので
+  //     かえって遅い。GASが遅い原因を潰してから戻す。
+  var BATCH_ON = false;
   var BATCH_TTL_MS = 10000;
   var _bootBatch = { at: 0, parts: null };
   var _cardBatch = { at: 0, parts: null, customerId: '' };
@@ -801,6 +807,7 @@
 
   // まとめて取りに行く。失敗しても何も壊れない（受け皿が空のままになるだけ）。
   function fetchBoot(){
+    if (!BATCH_ON) return _apiGas({ action:'line_getMemberStatus' });
     var t0 = _nowMs();
     // ★同期的に投げられても起動を止めない（受け皿は「あれば使う」ものでしかない）
     try { return _fetchBoot(t0); } catch (e) { return _apiGas({ action:'line_getMemberStatus' }); }
@@ -829,6 +836,7 @@
   }
 
   function fetchCustomerCard(customerId){
+    if (!BATCH_ON) return Promise.resolve(null);
     var cid = String(customerId || '');
     // ★同じ顧客を同時に何度も取りに行かない。1本に束ねる。
     if (_cardPending.p && _cardPending.customerId === cid) return _cardPending.p;
