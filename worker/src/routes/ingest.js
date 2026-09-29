@@ -61,6 +61,27 @@ const TABLES = {
     keepStale: true,
     skipCompare: ['computed_at'],
   },
+  // ---- 残数計算のための「入力の写し」（列に変換せず行のまま）----
+  calcContracts: {
+    table: 'calc_contract_rows',
+    key: 'row_key',
+    cols: ['row_key', 'customer_id', 'idx', 'row_json', 'start_ms', 'end_ms'],
+  },
+  calcReservations: {
+    table: 'calc_reservation_rows',
+    key: 'row_key',
+    cols: ['row_key', 'customer_id', 'row_json'],
+  },
+  opening: {
+    table: 'member_opening',
+    key: 'customer_id',
+    cols: ['customer_id', 'payload'],
+  },
+  calcMeta: {
+    table: 'calc_meta',
+    key: 'key',
+    cols: ['key', 'payload'],
+  },
   body: {
     table: 'body_records',
     key: 'record_id',

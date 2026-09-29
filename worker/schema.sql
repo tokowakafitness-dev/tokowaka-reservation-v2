@@ -186,3 +186,52 @@ CREATE TABLE IF NOT EXISTS slots_cache (
   computed_at  INTEGER NOT NULL,
   synced_at    INTEGER
 );
+
+-- ============================================================
+-- 残数計算のための「入力の写し」（2026-09-29）
+--
+--   ★列に変換して持たない。契約シートの行と予約台帳の行を、そのまま写す。
+--     変換すると、そのたびに意味がずれる余地ができる（終了日の空欄・繰越率の列なし・
+--     pack_idの有無など）。GASとWorkerで同じ関数に同じ形を渡せば、出力は必ず一致する。
+--
+--   ★チケットの束の見分け方が「契約シートの行順」に依存している。
+--     行順（idx）を必ず保存し、同じ順で復元する。ここがずれると
+--     どのチケットを何枚使ったかが入れ替わる。
+-- ============================================================
+
+-- 契約シートの行（そのまま）
+CREATE TABLE IF NOT EXISTS calc_contract_rows (
+  row_key      TEXT PRIMARY KEY,       -- customer_id + '#' + idx
+  customer_id  TEXT NOT NULL,
+  idx          INTEGER NOT NULL,       -- 契約シートの行順（チケットの見分けに使う）
+  row_json     TEXT NOT NULL,          -- 行の値をそのまま
+  start_ms     INTEGER,                -- 開始日（GASが解釈した結果）
+  end_ms       INTEGER,                -- 契約終了日。空欄なら NULL（＝継続契約）
+  synced_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_ccr_cust ON calc_contract_rows(customer_id, idx);
+
+-- 予約台帳の行（そのまま）
+CREATE TABLE IF NOT EXISTS calc_reservation_rows (
+  row_key      TEXT PRIMARY KEY,       -- 予約の識別子
+  customer_id  TEXT,
+  row_json     TEXT NOT NULL,
+  synced_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_crr_cust ON calc_reservation_rows(customer_id);
+
+-- 棚卸し（繰越の初期値）。39名中31名がこれに依存している。
+--   契約は2026年3月から、予約台帳は2026年8月から。その間の消化を埋めている。
+CREATE TABLE IF NOT EXISTS member_opening (
+  customer_id  TEXT PRIMARY KEY,
+  payload      TEXT NOT NULL,          -- _lbMemberOpeningWithFloor の戻りをそのまま
+  synced_at    INTEGER
+);
+
+-- 契約シートの列の位置と、見出しの構成。
+--   見出しが変わったら計算が変わるので、構成が変わったことに気づけるようにする。
+CREATE TABLE IF NOT EXISTS calc_meta (
+  key          TEXT PRIMARY KEY,       -- 'contract_cols' など
+  payload      TEXT NOT NULL,
+  synced_at    INTEGER
+);

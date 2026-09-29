@@ -188,8 +188,9 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
 {
   const allowed = Object.values(_TABLES_FOR_TEST).map((t) => t.table).sort();
   eq('★書き込み先は決めた表だけ', allowed,
-     ['body_records', 'contracts', 'customers', 'member_home', 'recurring_patterns',
-      'reservations', 'slots_cache', 'trainers']);
+     ['body_records', 'calc_contract_rows', 'calc_meta', 'calc_reservation_rows',
+      'contracts', 'customers', 'member_home', 'member_opening',
+      'recurring_patterns', 'reservations', 'slots_cache', 'trainers']);
   const hasKey = Object.values(_TABLES_FOR_TEST).every((t) => t.cols.includes(t.key));
   eq('★どの表も主キーを列に持つ', hasKey, true);
 }
