@@ -774,8 +774,16 @@
   function _fetchBoot(t0){
     return _apiGas({ action:'line_boot' }).then(function(res){
       _perfAdd('line_boot', _nowMs() - t0);
-      if (res && res.success === true && res.parts) { _bootBatch = { at: _nowMs(), parts: res.parts }; }
-      return (res && res.parts && res.parts.memberStatus) || (res || {});
+      var ms = res && res.parts && res.parts.memberStatus;
+      // ★まとめ取得が使えないときは、必ず従来の1件取得に戻る。
+      //   ここを怠ると、GAS側がまだ新しくない間、画面が開けなくなる。
+      //   - まだ line_boot を知らないGAS（UNKNOWN_ACTION）
+      //   - 会員状態の取得だけが転んだ（PART_FAILED）
+      if (!res || res.success !== true || !ms || ms.code === 'PART_FAILED') {
+        return _apiGas({ action:'line_getMemberStatus' });
+      }
+      _bootBatch = { at: _nowMs(), parts: res.parts };
+      return ms;
     }).catch(function(){ return _apiGas({ action:'line_getMemberStatus' }); });
   }
 

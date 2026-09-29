@@ -237,6 +237,10 @@ function handleLineGet(params) {
 
 function _lbDispatch(params, action, lineUserId, auth) {
   switch (action) {
+    // ★まとめ取得。起動時の複数回を1回にする（LbBatch.js）。
+    //   中身は下の個別の case と同じ関数を呼ぶ。答えの形も変えていない。
+    case 'line_boot':               return lbBoot(lineUserId);
+    case 'line_customerCard':       return lbCustomerCard(lineUserId, params.customerId);
     case 'line_getMemberStatus':    return getMemberStatus(lineUserId);
     case 'line_verifyMembership':   return verifyMembership(lineUserId, params.code);
     case 'line_selfRegister':       return selfRegister(lineUserId, { name: params.name, phone: params.phone, email: params.email, birthday: params.birthday, goal: params.goal, lang: params.lang });

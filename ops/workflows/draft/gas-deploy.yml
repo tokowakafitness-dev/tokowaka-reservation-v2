@@ -71,7 +71,7 @@ jobs:
           // ★許可するファイル。増減させるときはこのワークフローも直す（＝人間のレビューが入る）。
           const allowed = [
             'Allocate.js', 'BookingRules.js', 'EdgeAudit.js', 'EdgeJob.js', 'EdgeVerify.js',
-            'LineBooking.js', 'MealAi.js', 'MemberMerge.js', 'PushToEdge.js', 'コード.js',
+            'LbBatch.js', 'LineBooking.js', 'MealAi.js', 'MemberMerge.js', 'PushToEdge.js', 'コード.js',
             'LiffApp.html', 'appsscript.json',
           ].sort();
           const pushable = (name) => /\.(js|gs|ts|html)$/i.test(name) || name === 'appsscript.json';
