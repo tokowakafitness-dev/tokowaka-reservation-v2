@@ -35,32 +35,32 @@
 //   いまの中身は読み取りだけだが、あとから誰かが保存処理を足したときに
 //   気づけるよう、書き込みを試みたらその場で止める。
 function _lbReadOnly(fn) {
+  // ★禁止するものを並べるのではなく、許すものだけを並べる。
+  //   禁止の列挙は必ず漏れる（deleteRows・clearContents・copyTo・
+  //   createTextFinder().replaceAllWith() など、書ける経路は非常に多い）。
+  //   漏れたときに「静かに書けてしまう」のではなく「止まる」側へ倒す。
+  function readOnly(obj, what) {
+    if (!obj || typeof obj !== 'object') return obj;
+    return new Proxy(obj, {
+      get: function (t, k) {
+        var name = String(k);
+        var v = t[k];
+        if (typeof v !== 'function') return v;
+        // 読み取りとして許すもの（get* と、値を変えない数少ないもの）
+        var allowed = (name.indexOf('get') === 0) || name === 'toString' || name === 'valueOf';
+        if (!allowed) {
+          throw new Error('まとめ取得の中は読み取りだけです（' + what + '.' + name + ' は使えません）');
+        }
+        return function () {
+          return readOnly(v.apply(t, arguments), what + '.' + name);
+        };
+      },
+    });
+  }
+
   return _edgeWithSheetCache(function () {
     var orig = _lbSheet;
-    _lbSheet = function (name) {
-      var sh = orig(name);
-      if (!sh) return sh;
-      return new Proxy(sh, {
-        get: function (t, k) {
-          if (k === 'appendRow' || k === 'deleteRow' || k === 'insertRowAfter' || k === 'clear') {
-            throw new Error('まとめ取得の中で書き込もうとしました（' + String(k) + '）');
-          }
-          var v = t[k];
-          if (typeof v !== 'function') return v;
-          return function () {
-            var r = v.apply(t, arguments);
-            if (k !== 'getRange') return r;
-            return new Proxy(r, { get: function (t2, k2) {
-              if (String(k2).indexOf('set') === 0) {
-                throw new Error('まとめ取得の中で書き込もうとしました（' + String(k2) + '）');
-              }
-              var v2 = t2[k2];
-              return (typeof v2 === 'function') ? v2.bind(t2) : v2;
-            } });
-          };
-        },
-      });
-    };
+    _lbSheet = function (name) { return readOnly(orig(name), 'sheet'); };
     try { return fn(); } finally { _lbSheet = orig; }
   });
 }

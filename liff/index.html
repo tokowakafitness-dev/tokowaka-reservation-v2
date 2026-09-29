@@ -751,11 +751,22 @@
   var _bootPending = null;
   var _cardPending = { customerId: '', p: null };
 
+  // 受け皿を残してよい＝画面の状態を変えない操作。これ以外は全部捨てる。
+  var BATCH_READ_ONLY = {
+    boot:1, customerCard:1, whoami:1,
+    getMemberStatus:1, getTrainers:1, getAllTrainers:1, getTrainerSlots:1,
+    getBookingOptions:1, getCustomerHome:1, getMyReservations:1,
+    getTrainerReservations:1, getPaceBoard:1, getHealthBoard:1, getUnlinked:1,
+    listAdminSlots:1, listRecurringPatternsByTrainer:1, maInBodyCard:1
+  };
+
   function _batchFresh(b){ return b.parts && (_nowMs() - b.at) < BATCH_TTL_MS; }
 
   // 書き込みのあとは、受け皿をすべて捨てる。
   //   「10秒しか持たない」では足りない。書き込みとの因果で捨てる。
+  var _batchGen = 0;
   function _batchDrop(){
+    _batchGen++;                    // ★これ以前に始まった応答は、もう受け皿に入れない
     _bootBatch = { at: 0, parts: null };
     _cardBatch = { at: 0, parts: null, customerId: '' };
     _bootPending = null;
@@ -795,6 +806,7 @@
     try { return _fetchBoot(t0); } catch (e) { return _apiGas({ action:'line_getMemberStatus' }); }
   }
   function _fetchBoot(t0){
+    var gen = _batchGen;
     var p = _apiGas({ action:'line_boot' }).then(function(res){
       _perfAdd('line_boot', _nowMs() - t0);
       var ms = res && res.parts && res.parts.memberStatus;
@@ -805,7 +817,7 @@
       if (!res || res.success !== true || !ms || ms.code === 'PART_FAILED') {
         return _apiGas({ action:'line_getMemberStatus' });
       }
-      _bootBatch = { at: _nowMs(), parts: res.parts };
+      if (gen === _batchGen) _bootBatch = { at: _nowMs(), parts: res.parts };
       return ms;
     }).catch(function(){ return _apiGas({ action:'line_getMemberStatus' }); });
     // 待っている人が同じ約束を掴めるようにしておく
@@ -823,10 +835,14 @@
     try { return _fetchCustomerCard(t0, cid); } catch (e) { return Promise.resolve(null); }
   }
   function _fetchCustomerCard(t0, customerId){
-    var p = _apiGas({ action:'line_customerCard', customerId: customerId }).then(function(res){
+    var gen = _batchGen;
+    var p;
+    p = _apiGas({ action:'line_customerCard', customerId: customerId }).then(function(res){
       _perfAdd('line_customerCard', _nowMs() - t0);
       // ★あとから届いた古い応答で、いま見ている顧客の受け皿を上書きしない
+      // ★捨てられたあと／別の取得に入れ替わったあとの応答は、受け皿に入れない
       if (res && res.success === true && res.parts
+          && gen === _batchGen && _cardPending.p === p
           && _cardPending.customerId === String(customerId)) {
         _cardBatch = { at: _nowMs(), parts: res.parts, customerId: String(customerId) };
       }
@@ -845,11 +861,14 @@
   function api(params){
     var plain = String(params.action || '').replace(/^line_/, '');
 
-    // ★書き込みをしたら受け皿を捨てる。
+    // ★読み取りと分かっているもの以外は、受け皿を捨てる。
     //   時間で切るだけでは足りない。固定枠を足した直後に一覧を描き直すと、
     //   期限内なら「足す前」を返してしまい、成功したのに出てこない＝
     //   もう一度足して二重登録、という事故になる（2026-09-29 Codex指摘）。
-    if (EDGE_WRITE_ACTIONS.test(plain)) _batchDrop();
+    //   ★「書き込みの一覧」で判定してはいけない。足し忘れがそのまま事故になる。
+    //     実際 maSaveInBody が漏れており、体組成を保存した直後に
+    //     保存前の値が返る状態だった。知らない操作は捨てる側に倒す。
+    if (!BATCH_READ_ONLY[plain]) _batchDrop();
 
     // まとめて受け取った中に在れば、通信しない（GASは1回2.3秒かかる）
     var got = _batchTake(plain, params);
