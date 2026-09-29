@@ -607,6 +607,101 @@ function pushToEdgeHomeFor(customerId, customerName) {
   } catch (e) { Logger.log('[edge] 残数の即時更新に失敗: ' + (e && e.message)); }
 }
 
+// ============================================================
+// 書き込みの直後に、その会員ぶんだけ写しを直す（2026-09-29）
+//
+//   写しは残数30分・予約15分・枠10分ごとにしか更新されない。
+//   その間に予約や取消をすると、写しは古いままになる。
+//   画面側にも「書き込み後35分はGASに聞く」印があるが、これは
+//   書き込みをした端末にしか付かない。
+//   スマホで予約してPCで開いた人、トレーナーが代行で予約した顧客には
+//   印が付かず、予約前の残数や予約前の空き枠が見えてしまう。
+//   だから端末ではなくサーバー側で直す。
+//
+//   ★ここで失敗しても、予約そのものは成功している。
+//     例外は決して外へ出さない（写しの都合で予約を落とさない）。
+// ============================================================
+
+// 写しを直す必要がある操作。読み取りは入れない。
+var EDGE_AFTER_WRITE = {
+  line_makeReservationLine: 1, line_makeReservationLineProxy: 1,
+  line_makeRecurringReservation: 1, line_makeBatchReservation: 1,
+  line_makeBatchReservationProxy: 1, line_makeTransferReservation: 1,
+  line_cancelReservation: 1, line_changeReservation: 1,
+  line_makeAdminBooking: 1, line_makeBlock: 1, line_deleteAdminSlot: 1,
+  line_addTicketRefill: 1, line_linkUnlinked: 1, line_selfRegister: 1,
+  line_addRecurringPatternByTrainer: 1, line_deleteRecurringPattern: 1
+};
+
+function _edgeNameByCustomerId(customerId) {
+  try {
+    var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
+    if (!sh || sh.getLastRow() < 2) return '';
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(MAP_COL.NAME, sh.getLastColumn())).getValues();
+    for (var i = 0; i < v.length; i++) {
+      if (String(v[i][MAP_COL.CUSTOMER_ID - 1] || '') === String(customerId)) {
+        return String(v[i][MAP_COL.NAME - 1] || '');
+      }
+    }
+  } catch (e) {}
+  return '';
+}
+
+// その会員の予約だけを送り直す。含まれない行は消えない（削除は1日1回の完全同期だけ）。
+function _edgePushReservationsFor(customerId) {
+  var all = _edgeReservations();
+  if (all == null) return 0;                      // 読めなかった＝送らない
+  var mine = [];
+  for (var i = 0; i < all.length; i++) {
+    if (String(all[i].customer_id || '') === String(customerId)) mine.push(all[i]);
+  }
+  if (!mine.length) return 0;
+  return _edgePushRows('reservations', mine, Date.now());
+}
+
+// そのトレーナーの枠だけを送り直す。
+function _edgePushSlotsFor(trainerId) {
+  var all = _edgeSlotRows();
+  if (all == null) return 0;
+  var mine = [];
+  for (var i = 0; i < all.length; i++) {
+    if (String(all[i].trainer_id || '') === String(trainerId)) mine.push(all[i]);
+  }
+  if (!mine.length) return 0;
+  return _edgePushRows('slots', mine, Date.now());
+}
+
+// 振り分けの出口から呼ぶ。書き込みが成功したときだけ働く。
+function edgeAfterWrite(action, params, res, lineUserId) {
+  try {
+    if (!_edgeEnabled()) return;
+    if (!EDGE_AFTER_WRITE[String(action || '')]) return;
+    if (!res || res.success !== true) return;     // 失敗した書き込みでは何も変わっていない
+
+    params = params || {};
+    var cid = String(res.customerId || params.customerId || '');
+    var nm  = String(res.customerName || '');
+    if (!cid && lineUserId) {
+      var m = getCustomerByLine(lineUserId);
+      if (m) {
+        cid = String(m.data[MAP_COL.CUSTOMER_ID - 1] || '');
+        nm  = String(m.data[MAP_COL.NAME - 1] || '');
+      }
+    }
+    if (!cid) { Logger.log('[edge] 書き込み後：会員が特定できず写しを直せません（' + action + '）'); return; }
+    if (!nm) nm = _edgeNameByCustomerId(cid);
+
+    pushToEdgeHomeFor(cid, nm);                   // 残数
+    _edgePushReservationsFor(cid);                // その人の予約
+
+    var tid = String(res.trainerId || params.trainerId || '');
+    if (tid) _edgePushSlotsFor(tid);              // 空き枠
+  } catch (e) {
+    // ★予約は成功している。写しの都合で失敗にしてはいけない。
+    Logger.log('[edge] 書き込み後の写し更新に失敗: ' + (e && e.message));
+  }
+}
+
 // 押し出し同士が重ならないようにする。
 //   定期実行と手動実行が重なると、古い方が後から完了して新しい内容を巻き戻しうる。
 function _edgeLocked(fn) {

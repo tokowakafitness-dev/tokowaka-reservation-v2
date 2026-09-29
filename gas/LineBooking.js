@@ -218,13 +218,24 @@ function liffApi(payloadJson) {
 //   入口で必ず verifyLineIdToken を通し lineUserId を確定（body/paramのidは信用しない）。
 //   注意：JSONPはGETのため idToken がURLに載る（短命JWT・aud検証必須で影響限定・実行ログに残る点はdecisions/0033補遺に記録）。
 // ============================================================
+// 窓口。ここを1つの出口にして、書き込みが成功したら写しを直す。
+//   ★各 case に個別に書き足さない。足し忘れがそのまま
+//     「古い残数が見える」につながるため、必ずここを通す。
 function handleLineGet(params) {
-  var action = params.action || '';
+  var action = String((params && params.action) || '');
   var _tv = new Date().getTime();
-  var auth = verifyLineIdToken(params.idToken);
+  var auth = verifyLineIdToken(params && params.idToken);
   Logger.log('[perf] verifyLineIdToken: ' + (new Date().getTime() - _tv) + 'ms (' + action + ')');
   if (!auth.ok) return { success: false, code: 'UNAUTHORIZED' };
-  var lineUserId = auth.lineUserId;
+
+  var res = _lbDispatch(params, action, auth.lineUserId);
+
+  // 写しを直す。ここで何が起きても、返す答えは変えない。
+  try { edgeAfterWrite(action, params, res, auth.lineUserId); } catch (e) {}
+  return res;
+}
+
+function _lbDispatch(params, action, lineUserId) {
   switch (action) {
     case 'line_getMemberStatus':    return getMemberStatus(lineUserId);
     case 'line_verifyMembership':   return verifyMembership(lineUserId, params.code);
