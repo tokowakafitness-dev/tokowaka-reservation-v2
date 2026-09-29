@@ -587,12 +587,17 @@
   //     (2) getBookingOptions に閲覧範囲の確認が無く、担当外の顧客の残数を引けた。
   //     (3) 予約一覧・固定枠には鮮度の判定そのものが無い。
   //     いずれも「遅くなるだけ」ではなく「誤った数字が出る」経路。塞いでから戻す。
+  //   ★止めるときは「既定を false にする」だけでは足りない。
+  //     以前ここで `EDGE_ON = localStorage.getItem('lb_edge') !== '0'` と書いていたため、
+  //     var EDGE_ON = false; の直後に true で上書きされていた（鍵が無い端末は '0' ではないため）。
+  //     止めたつもりで止まっていなかった（2026-09-29）。
+  //     いまは「?edge=1 を明示した端末だけ有効」にしてある。既定は必ず無効。
   var EDGE_ON = false;
   try {
-    if (/[?&#]edge=0/.test(location.href)) { localStorage.setItem('lb_edge', '0'); }
-    else if (/[?&#]edge=1/.test(location.href)) { localStorage.removeItem('lb_edge'); }
-    EDGE_ON = localStorage.getItem('lb_edge') !== '0';
-  } catch (e) { EDGE_ON = !/[?&#]edge=0/.test(location.href); }
+    if (/[?&#]edge=1/.test(location.href)) { localStorage.setItem('lb_edge', '1'); }
+    else if (/[?&#]edge=0/.test(location.href)) { localStorage.removeItem('lb_edge'); }
+    EDGE_ON = (localStorage.getItem('lb_edge') === '1');
+  } catch (e) { EDGE_ON = /[?&#]edge=1/.test(location.href); }
 
   // GASの操作名 → Workerの窓口。ここに無いものは全てGASへ行く（読み取りだけを載せる）
   var EDGE_MAP = {
@@ -717,8 +722,84 @@
     if (_busyCount === 0 && _busyEl) _busyEl.hidden = true;
   }
 
+  // ============================================================
+  // まとめ取得の受け皿（2026-09-29）
+  //
+  //   GASは1回呼ぶだけで最低2.3秒かかる（745KB・11,000行を毎回読み込み直すため）。
+  //   2026-09-28の実測では、読み取り11回45.8秒のうち約25秒が「起動しているだけ」だった。
+  //   だから速くする一番の手は、処理を速くすることではなく呼ぶ回数を減らすこと。
+  //
+  //   line_boot / line_customerCard で一度に受け取り、ここに置く。
+  //   個別の api() はここから取るので、**描画のコードは一切変えなくてよい**。
+  //   置いたものが無ければ、そのまま従来どおり個別に取りに行く。
+  //
+  //   ★写しではない。その場でシートから読んだ、そのときの正しい値である。
+  //   ★数秒しか持たない。画面を描き終えるまでの間だけの受け皿。
+  // ============================================================
+  var BATCH_TTL_MS = 10000;
+  var _bootBatch = { at: 0, parts: null };
+  var _cardBatch = { at: 0, parts: null, customerId: '' };
+
+  // 起動のまとめに入っているもの
+  var BATCH_BOOT = { getMemberStatus:'memberStatus', getTrainerReservations:'trainerReservations',
+                     getTrainers:'trainers', getMyReservations:'myReservations' };
+  // 顧客カードのまとめに入っているもの（★顧客ごとに違うので、相手が一致するときだけ使う）
+  var BATCH_CARD = { getCustomerHome:'customerHome', maInBodyCard:'inBody',
+                     listRecurringPatternsByTrainer:'recurring' };
+
+  function _batchFresh(b){ return b.parts && (_nowMs() - b.at) < BATCH_TTL_MS; }
+
+  function _batchTake(plain, params){
+    var k;
+    if (_batchFresh(_bootBatch) && (k = BATCH_BOOT[plain])) {
+      var v = _bootBatch.parts[k];
+      if (v && v.code !== 'PART_FAILED') return v;
+    }
+    if (_batchFresh(_cardBatch) && (k = BATCH_CARD[plain])) {
+      // ★別の顧客の値を返してはいけない
+      if (String((params && params.customerId) || '') === String(_cardBatch.customerId)) {
+        var w = _cardBatch.parts[k];
+        if (w && w.code !== 'PART_FAILED') return w;
+      }
+    }
+    return null;
+  }
+
+  // まとめて取りに行く。失敗しても何も壊れない（受け皿が空のままになるだけ）。
+  function fetchBoot(){
+    var t0 = _nowMs();
+    // ★同期的に投げられても起動を止めない（受け皿は「あれば使う」ものでしかない）
+    try { return _fetchBoot(t0); } catch (e) { return _apiGas({ action:'line_getMemberStatus' }); }
+  }
+  function _fetchBoot(t0){
+    return _apiGas({ action:'line_boot' }).then(function(res){
+      _perfAdd('line_boot', _nowMs() - t0);
+      if (res && res.success === true && res.parts) { _bootBatch = { at: _nowMs(), parts: res.parts }; }
+      return (res && res.parts && res.parts.memberStatus) || (res || {});
+    }).catch(function(){ return _apiGas({ action:'line_getMemberStatus' }); });
+  }
+
+  function fetchCustomerCard(customerId){
+    var t0 = _nowMs();
+    try { return _fetchCustomerCard(t0, customerId); } catch (e) { return Promise.resolve(null); }
+  }
+  function _fetchCustomerCard(t0, customerId){
+    return _apiGas({ action:'line_customerCard', customerId: customerId }).then(function(res){
+      _perfAdd('line_customerCard', _nowMs() - t0);
+      if (res && res.success === true && res.parts) {
+        _cardBatch = { at: _nowMs(), parts: res.parts, customerId: String(customerId) };
+      }
+      return res;
+    }).catch(function(){ return null; });
+  }
+
   function api(params){
     var plain = String(params.action || '').replace(/^line_/, '');
+
+    // まとめて受け取った中に在れば、通信しない（GASは1回2.3秒かかる）
+    var got = _batchTake(plain, params);
+    if (got) { _perfAdd('batch:' + plain, 0); return Promise.resolve(got); }
+
     var isWrite = EDGE_WRITE_ACTIONS.test(plain);
     if (isWrite) _busyShow(_busyMsg(plain));
 
@@ -812,7 +893,9 @@
           return api({ action:'line_whoami' }).then(showWhoami);
         }
         dbg(t('loading'));
-        return api({ action:'line_getMemberStatus' });
+        // ★1回で受け取る。後続の getTrainers / 予約一覧 はここから配られるので
+        //   このあとの描画コードは一切変えていない。
+        return fetchBoot();
       }).then(function(res){
         if (!res) return;
         if (res.success) { try { sessionStorage.removeItem('_reauthTried'); } catch(e){} }
@@ -1297,10 +1380,14 @@
     if (!cardEl) return;
     var _seq = (state._custHomeSeq = (state._custHomeSeq || 0) + 1);
     cardEl.innerHTML = '<span class="muted">残数を取得中…</span>';
+    // ★残数・固定枠・体組成を1回でまとめて取る。あとの2つは受け皿から配られる。
+    fetchCustomerCard(customerId).then(function(){
+    if (_seq !== state._custHomeSeq) return;
     api({ action:'line_getCustomerHome', customerId: customerId }).then(function(res){
       if (_seq !== state._custHomeSeq) return;   // 古い応答は捨てる
       cardEl.innerHTML = (res && res.success && res.home) ? homeInfoHtml(res.home, false) : ('<span class="muted">残数情報を取得できませんでした（' + ((res && res.code) || '通信') + '）。</span>');
     }).catch(function(e){ if (_seq !== state._custHomeSeq) return; cardEl.innerHTML = '<span class="muted">残数情報の取得に失敗しました：' + e + '</span>'; });
+    });
   }
   // ── InBody記録（meal-ai）────────────────────────────────
   //   セッション直後、顧客を開いた画面から数字を打つだけで終わる形にする。
