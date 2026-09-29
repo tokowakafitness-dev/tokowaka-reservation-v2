@@ -691,7 +691,28 @@ function _pushToEdgeSlotsImpl() {
 }
 
 // 残数を含まない押し出し。10秒程度で終わるので短い間隔で回せる。
-function pushToEdgeLight() { pushToEdgeAll(false); }
+function pushToEdgeLight() {
+  pushToEdgeAll(false);
+  _edgeHealJobTrigger();   // ついでに、見回りが止まっていたら戻す
+}
+
+// 見回り（1分ごと）が消えていたら作り直す。
+//   見回りは連続して届かないと自分を止める（実行枠を守るため）。
+//   そのままだと再開に人の手が要るので、既に動いているこの押し出しから戻す。
+//   ★新しい入口は増えない。既存のトリガーから動くだけ。
+function _edgeHealJobTrigger() {
+  try {
+    if (_edgeProp('EDGE_JOB_ON') !== '1') return;      // そもそも使っていない
+    if (!_edgeProp('EDGE_URL') || !_edgeProp('EDGE_SECRET')) return;   // 設定が無ければ戻さない
+    var all = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getHandlerFunction() === 'edgeJobPoll') return;       // 生きている
+    }
+    ScriptApp.newTrigger('edgeJobPoll').timeBased().everyMinutes(1).create();
+    PropertiesService.getScriptProperties().setProperty('EDGE_JOB_FAILS', '0');
+    Logger.log('[edge] 見回りが止まっていたので戻しました');
+  } catch (e) { /* 戻せなくても押し出しは止めない */ }
+}
 
 // 残数だけ
 function pushToEdgeHome() {
