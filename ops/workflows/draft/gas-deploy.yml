@@ -2,15 +2,25 @@ name: GASを反映する
 
 # 予約システムの本体（GAS）を本番へ反映する。壊れると予約が止まる。
 #
-#   ★最初のうちは手動起動だけにする。実際に通ることを確かめてから、
-#     下の push: のコメントを外して自動反映を有効にする。
-#   ★claspの認証はGitHub Secretsの中だけにあり、開発者は値を見ない。
-#     開発者のトークンにはワークフローを書く権限が無いため、Secretsに手が届かない。
+# ★このワークフロー自身が信頼の境界である。
+#   gas/ 配下は Contents 権限だけで書き換えられる。つまり
+#   「ワークフローを書けない者でも、ワークフローが読み込む入力を書ける」。
+#   よって gas/ の中身は信頼せず、反映の前に以下をこのファイル側で照合する：
+#     - 押し出す対象のファイル一覧（新しいファイルが増えていたら止める）
+#     - 権限設定（appsscript.json）の全文
+#     - clasp の設定（.clasp.json）の全文
+#   許可値は gas/ には置かない。置けば攻撃者が同時に書き換えられて検査の意味が消える。
+#
+# ★残るリスク（CIでは塞げない）：
+#   gas/*.js の中身そのものを書き換えられれば、反映後に本番の権限で任意のコードが動く。
+#   これを止められるのは人間のレビューだけなので、
+#   Environment `production-gas` に承認者（オーナー）を必ず設定すること。
+#   承認はスマホのGitHubアプリからでも押せる。
+#
+# ★push による自動反映は有効にしない。
+#   有効にすると「gas/ に書ける＝本番でコードを実行できる」が無条件に成立する。
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  #   paths: ['gas/**']
 
 permissions:
   contents: read
@@ -21,61 +31,151 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    environment: production-gas      # 本番の資格情報はここにだけ置く
-    defaults:
-      run:
-        working-directory: gas
+    runs-on: ubuntu-24.04    # latest にしない（実行環境が黙って変わる）
+    environment: production-gas      # 本番の資格情報と承認者はここにだけ置く
     env:
       DEPLOY_ID: AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ
       SCRIPT_ID: 1iQyWD9ysH2zrdc6wn5j9wHUV_busRmZWOHFhigNNI9bIFuoGL9Cu3kab
-      MIN_VERSIONS_LEFT: '10'        # 残りがこれ未満なら反映しない
+      CLASP_VERSION: 3.3.0
+      MIN_VERSIONS_LEFT: '12'        # 残りがこれ以下なら反映しない（戻す分も要る）
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # SHAで固定する。タグは動かせるため、タグ指定は固定になっていない。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          node-version: '22'
+          persist-credentials: false   # .git/config に資格情報を残さない
 
-      # ───── 反映の前に確かめる（いまの手動 deploy.sh には1つも無い）─────
+      # ───── 反映の前に確かめる ─────
 
-      - name: 1. 構文が壊れていないか
+      - name: 1. 余計な仕掛けが置かれていないか
+        # npm は cwd から上へ .npmrc / package.json を探す。gas/ に置かれると
+        # 取得元の差し替えやインストール時スクリプトで認証情報を持ち出せる。
+        # clasp 本体はリポジトリ外で入れるが、念のためここでも止める。
+        run: |
+          set -euo pipefail
+          bad=0
+          for f in gas/package.json gas/package-lock.json gas/npm-shrinkwrap.json \
+                   gas/.npmrc gas/.yarnrc gas/.yarnrc.yml gas/node_modules \
+                   gas/.claspignore .claspignore gas/.npmignore; do
+            if [ -e "$f" ]; then echo "::error::$f があります（想定外）"; bad=1; fi
+          done
+          [ "$bad" = 0 ] || { echo "反映を中止します。身に覚えがなければ攻撃を疑ってください。"; exit 1; }
+          echo "余計な仕掛けなし"
+
+      - name: 2. 押し出す対象のファイルが想定どおりか
+        # clasp は .js/.gs/.ts/.html/appsscript.json だけを押し出す。
+        # 増えていれば知らないコードが本番で動く。減っていれば本番から関数が消える。
+        run: |
+          set -euo pipefail
+          node - <<'JS'
+          const fs = require('fs');
+          // ★許可するファイル。増減させるときはこのワークフローも直す（＝人間のレビューが入る）。
+          const allowed = [
+            'Allocate.js', 'BookingRules.js', 'EdgeAudit.js', 'EdgeJob.js', 'EdgeVerify.js',
+            'LineBooking.js', 'MealAi.js', 'MemberMerge.js', 'PushToEdge.js', 'コード.js',
+            'LiffApp.html', 'appsscript.json',
+          ].sort();
+          const pushable = (name) => /\.(js|gs|ts|html)$/i.test(name) || name === 'appsscript.json';
+          const walk = (dir, base = '') => fs.readdirSync(dir, { withFileTypes: true })
+            .flatMap((e) => e.isDirectory() ? walk(`${dir}/${e.name}`, `${base}${e.name}/`) : [`${base}${e.name}`]);
+          const found = walk('gas').filter(pushable).sort();
+          const extra = found.filter((f) => !allowed.includes(f));
+          const missing = allowed.filter((f) => !found.includes(f));
+          if (extra.length)   console.error('::error::想定外のファイルがあります: ' + extra.join(', '));
+          if (missing.length) console.error('::error::あるはずのファイルがありません: ' + missing.join(', '));
+          if (extra.length || missing.length) process.exit(1);
+          console.log(`押し出す対象OK（${found.length}ファイル）`);
+          JS
+
+      - name: 3. 構文が壊れていないか
+        working-directory: gas
         run: |
           set -euo pipefail
           for f in *.js; do
             node --check "$f" || { echo "::error::$f の構文が壊れています"; exit 1; }
           done
           node -e "JSON.parse(require('fs').readFileSync('appsscript.json','utf8'))"
-          echo "構文OK（$(ls *.js | wc -l | tr -d ' ')ファイル）"
+          echo "構文OK"
 
-      - name: 2. 権限設定が変わっていないか
-        # 権限の追加や公開範囲の変更は構文では分からない。緩むと誰でも叩ける／権限が広がる。
+      - name: 4. 権限設定が変わっていないか
+        # 許可値はこのファイルの中に置く（gas/ に置くと同時に書き換えられる）。
+        # 見ていないキーを足されないよう、全文を正規化して完全一致で見る。
         run: |
           set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const now = JSON.parse(fs.readFileSync("appsscript.json", "utf8"));
-            const ok = JSON.parse(fs.readFileSync("appsscript.approved.json", "utf8"));
-            const diff = [];
-            if (now.timeZone !== ok.timeZone) diff.push("timeZone");
-            if (now.runtimeVersion !== ok.runtimeVersion) diff.push("runtimeVersion");
-            for (const k of ["executeAs", "access"]) {
-              if ((now.webapp || {})[k] !== (ok.webapp || {})[k]) diff.push("webapp." + k);
-            }
-            const a = [...(now.oauthScopes || [])].sort();
-            const b = [...(ok.oauthScopes || [])].sort();
-            if (JSON.stringify(a) !== JSON.stringify(b)) diff.push("oauthScopes");
-            if (diff.length) {
-              console.error("::error::権限設定が許可値と違います: " + diff.join(", "));
-              console.error("意図した変更なら gas/appsscript.approved.json も一緒に更新してください");
-              process.exit(1);
-            }
-            console.log("権限設定OK（変更なし）");
-          '
+          node - <<'JS'
+          const fs = require('fs');
+          // ★2026-09-29 時点で承認済みの権限設定。変えるときはオーナーの承認を取る。
+          const approved = {
+            timeZone: 'Asia/Tokyo',
+            exceptionLogging: 'STACKDRIVER',
+            runtimeVersion: 'V8',
+            webapp: { executeAs: 'USER_DEPLOYING', access: 'ANYONE_ANONYMOUS' },
+            oauthScopes: [
+              'https://www.googleapis.com/auth/calendar',
+              'https://www.googleapis.com/auth/gmail.send',
+              'https://www.googleapis.com/auth/spreadsheets',
+              'https://www.googleapis.com/auth/script.external_request',
+              'https://www.googleapis.com/auth/script.scriptapp',
+            ],
+          };
+          const canon = (v) => Array.isArray(v) ? [...v].map(canon).sort()
+            : (v && typeof v === 'object')
+              ? Object.keys(v).sort().reduce((o, k) => (o[k] = canon(v[k]), o), {})
+              : v;
+          const now = JSON.parse(fs.readFileSync('gas/appsscript.json', 'utf8'));
+          const a = JSON.stringify(canon(now)), b = JSON.stringify(canon(approved));
+          if (a !== b) {
+            console.error('::error::権限設定が承認済みの内容と違います');
+            console.error('  いま  : ' + a);
+            console.error('  承認済: ' + b);
+            console.error('意図した変更なら、このワークフローの approved も一緒に直してください（レビューが入ります）');
+            process.exit(1);
+          }
+          console.log('権限設定OK（変更なし）');
+          JS
 
-      - name: 3. clasp を入れる（版を固定する）
-        run: npm install --no-fund --no-audit --no-save @google/clasp@3.3.0
+      - name: 5. clasp の設定が変わっていないか
+        # scriptId だけ見ても足りない。rootDir を変えれば別のファイル集合が押し出される。
+        run: |
+          set -euo pipefail
+          node - <<'JS'
+          const fs = require('fs');
+          const approved = { scriptId: process.env.SCRIPT_ID, rootDir: '.' };
+          const now = JSON.parse(fs.readFileSync('gas/.clasp.json', 'utf8'));
+          const canon = (o) => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] = o[k], a), {}));
+          if (canon(now) !== canon(approved)) {
+            console.error('::error::.clasp.json が承認済みの内容と違います');
+            console.error('  いま  : ' + canon(now));
+            console.error('  承認済: ' + canon(approved));
+            process.exit(1);
+          }
+          console.log('clasp設定OK');
+          JS
 
-      - name: 4. 認証を置く
+      - name: 6. clasp を入れる（リポジトリの外に・スクリプトを走らせない）
+        # ★gas/ の中で npm install してはいけない。
+        #   インストール時スクリプトや取得元の差し替えで認証情報を持ち出せる。
+        run: |
+          set -euo pipefail
+          node -e 'const m=+process.versions.node.split(".")[0]; if(m<20){console.error("::error::Node "+process.versions.node+" は古すぎます");process.exit(1)} console.log("Node "+process.versions.node)'
+          mkdir -p "$RUNNER_TEMP/clasptool"
+          # 取得元を公式に固定し、リポジトリ側の npm 設定を読ませない
+          printf 'registry=https://registry.npmjs.org/\naudit=false\nfund=false\nignore-scripts=true\n' \
+            > "$RUNNER_TEMP/npmrc-trusted"
+          cd "$RUNNER_TEMP"
+          npm install --prefix "$RUNNER_TEMP/clasptool" \
+            --userconfig "$RUNNER_TEMP/npmrc-trusted" \
+            --globalconfig "$RUNNER_TEMP/npmrc-trusted" \
+            --ignore-scripts --no-fund --no-audit \
+            "@google/clasp@${CLASP_VERSION}"
+          CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp"
+          test -x "$CLASP" || { echo "::error::clasp が入っていません"; exit 1; }
+          got="$("$CLASP" --version)"
+          case "$got" in
+            *"$CLASP_VERSION"*) echo "clasp $got" ;;
+            *) echo "::error::claspの版が想定と違います: $got"; exit 1 ;;
+          esac
+
+      - name: 7. 認証を置く
         env:
           CLASP_AUTH: ${{ secrets.CLASPRC_JSON }}
         run: |
@@ -88,73 +188,116 @@ jobs:
             || { echo "::error::登録された認証情報がJSONとして壊れています"; exit 1; }
           echo "認証を置きました"
 
-      - name: 5. 反映先とバージョン残数を確かめる
+      - name: 8. 反映先・いまのバージョン・残数を確かめる
+        working-directory: gas
         run: |
           set -euo pipefail
-          CLASP="npx --no-install clasp --auth $RUNNER_TEMP/clasprc.json"
+          CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp --auth $RUNNER_TEMP/clasprc.json"
 
+          # 指定したデプロイが実在するか＋いまのバージョン番号（戻すときに使う）
+          $CLASP deployments --json > "$RUNNER_TEMP/deps.json"
+          prev="$(node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/deps.json", "utf8"));
+            const list = Array.isArray(d) ? d : (d.deployments || []);
+            const hit = list.find((x) => x.deploymentId === process.env.DEPLOY_ID);
+            if (!hit) { console.error("::error::指定したデプロイが見つかりません"); process.exit(1); }
+            process.stdout.write(String(hit.versionNumber || ""));
+          ')"
+          echo "PREV_VERSION=$prev" >> "$GITHUB_ENV"
+          echo "いまの本番バージョン: @${prev:-HEAD}"
+
+          # ★バージョン残数は「反映の前」に見る。200に達すると反映も戻しもできなくなる。
+          $CLASP versions --json > "$RUNNER_TEMP/vers.json"
           node -e '
-            const c = JSON.parse(require("fs").readFileSync(".clasp.json", "utf8"));
-            if (c.scriptId !== process.env.SCRIPT_ID) {
-              console.error("::error::反映先のスクリプトが想定と違います");
+            const d = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/vers.json", "utf8"));
+            const list = Array.isArray(d) ? d : (d.versions || []);
+            if (!Array.isArray(list)) { console.error("::error::バージョン一覧を読めませんでした"); process.exit(1); }
+            const left = 200 - list.length;
+            console.log(`バージョン ${list.length}/200（残り ${left} 本）`);
+            if (left <= Number(process.env.MIN_VERSIONS_LEFT)) {
+              console.error(`::error::残りが ${left} 本しかありません。GASエディタの「プロジェクト履歴」から古いものを削除してください。`);
               process.exit(1);
             }
-            console.log("反映先OK");
           '
 
-          # 指定したデプロイが実在するか（消えていると別物を作ってしまう）
-          $CLASP deployments > /tmp/deps.txt 2>&1 || { cat /tmp/deps.txt; exit 1; }
-          grep -q "$DEPLOY_ID" /tmp/deps.txt \
-            || { echo "::error::指定したデプロイが見つかりません"; exit 1; }
-          echo "デプロイ先OK"
-
-          # ★バージョン残数は「反映の前」に見る。200に達すると反映できなくなるため。
-          total="$($CLASP versions 2>/dev/null | grep -cE '^[[:space:]]*[0-9]+' || echo 0)"
-          left=$((200 - total))
-          echo "バージョン ${total}/200（残り ${left} 本）"
-          if [ "$left" -lt "$MIN_VERSIONS_LEFT" ]; then
-            echo "::error::バージョンの残りが ${left} 本しかありません。GASエディタのプロジェクト履歴から古いものを削除してください。"
-            exit 1
-          fi
-
-      - name: 6. 反映する
+      - name: 9. 反映する
+        id: push
+        working-directory: gas
         run: |
           set -euo pipefail
-          CLASP="npx --no-install clasp --auth $RUNNER_TEMP/clasprc.json"
+          CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp --auth $RUNNER_TEMP/clasprc.json"
           $CLASP push --force
-          $CLASP update-deployment "$DEPLOY_ID" -d "auto ${GITHUB_SHA::7}"
-          echo "反映しました"
+          $CLASP update-deployment "$DEPLOY_ID" -d "auto ${GITHUB_SHA::7}" --json \
+            > "$RUNNER_TEMP/newdep.json"
+          new="$(node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/newdep.json", "utf8"));
+            process.stdout.write(String(d.versionNumber || ""));
+          ')"
+          echo "NEW_VERSION=$new" >> "$GITHUB_ENV"
+          echo "反映しました（@${new:-?}）"
 
-      - name: 7. 生きているか確かめる
-        # 反映は通ったが動かない、を検出する。
+      - name: 10. 生きているか確かめる
+        working-directory: gas
         run: |
           set -euo pipefail
-          # action=ping は認証の要らない既存の入口。doGet が生きていれば {"ok":true} を返す。
-          # どのファイルに構文エラーがあってもプロジェクト全体が動かなくなるため、これで十分に検出できる。
-          # -L は必須（GASは googleusercontent へ転送する）。
+          # (a) 本番のデプロイが新しいバージョンを指しているか（反映が空振りしていないか）
+          CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp --auth $RUNNER_TEMP/clasprc.json"
+          $CLASP deployments --json > "$RUNNER_TEMP/deps2.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/deps2.json", "utf8"));
+            const list = Array.isArray(d) ? d : (d.deployments || []);
+            const hit = list.find((x) => x.deploymentId === process.env.DEPLOY_ID);
+            const want = process.env.NEW_VERSION;
+            if (!hit || String(hit.versionNumber) !== String(want)) {
+              console.error(`::error::本番が新しいバージョンを指していません（いま @${hit && hit.versionNumber}／期待 @${want}）`);
+              process.exit(1);
+            }
+            console.log(`本番は @${want} を指しています`);
+          '
+
+          # (b) 公開の入口が応答するか。
+          #   action=ping は認証の要らない既存の入口。doGet が動かなければ落ちる。
+          #   ★これは「動いている」ことの証明にはならない（予約が作れるかは見ていない）。
+          #     どのファイルに構文エラーがあっても全体が落ちるので、その検出が目的。
+          #   -L は必須（GASは googleusercontent へ転送する）。
           url="https://script.google.com/macros/s/${DEPLOY_ID}/exec?action=ping"
           body="$RUNNER_TEMP/health.txt"
           code=000
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             code="$(curl -sS -L -o "$body" -w '%{http_code}' --max-time 30 "$url" || echo 000)"
             [ "$code" = "200" ] && break
             echo "応答 HTTP $code（${i}回目）— 反映直後は少し待つ"
-            sleep 5
+            sleep 10
           done
           echo "応答: HTTP $code"
-          if [ "$code" != "200" ]; then
-            echo "::error::反映後の生存確認に失敗しました（HTTP $code）"
-            echo "戻し方: 直前の正常なコミットに戻し、このワークフローを手動で再実行してください。"
-            exit 1
-          fi
-          # 200でも中身がエラーJSONのことがある（GASは例外を200で返す）
-          grep -q '"ok":true' "$body" || {
-            echo "::error::応答が想定と違います:"; head -c 300 "$body"
-            echo "戻し方: 直前の正常なコミットに戻し、このワークフローを手動で再実行してください。"
-            exit 1
-          }
-          echo "生きています"
+          [ "$code" = "200" ] || { echo "::error::生存確認に失敗しました（HTTP $code）"; exit 1; }
+          # 200でも中身がエラーのことがある（GASは例外を200で返す）
+          node -e '
+            const fs = require("fs");
+            const t = fs.readFileSync(process.env.RUNNER_TEMP + "/health.txt", "utf8");
+            let j; try { j = JSON.parse(t); } catch (e) {
+              console.error("::error::応答がJSONではありません: " + t.slice(0, 200)); process.exit(1);
+            }
+            if (j.ok !== true || typeof j.ts !== "number") {
+              console.error("::error::応答が想定と違います: " + t.slice(0, 200)); process.exit(1);
+            }
+            console.log("生きています");
+          '
 
-      - name: 8. 後片付け
+      - name: 11. だめなら前のバージョンに戻す
+        # 反映は通ったが生存確認で落ちた、という一番危ない形を自動で戻す。
+        if: failure() && steps.push.outcome == 'success' && env.PREV_VERSION != ''
+        working-directory: gas
+        run: |
+          set -euo pipefail
+          CLASP="$RUNNER_TEMP/clasptool/node_modules/.bin/clasp --auth $RUNNER_TEMP/clasprc.json"
+          echo "::warning::本番を @$PREV_VERSION に戻します"
+          $CLASP update-deployment "$DEPLOY_ID" -V "$PREV_VERSION" -d "rollback to @$PREV_VERSION"
+          url="https://script.google.com/macros/s/${DEPLOY_ID}/exec?action=ping"
+          code="$(curl -sS -L -o /dev/null -w '%{http_code}' --max-time 30 "$url" || echo 000)"
+          echo "戻したあとの応答: HTTP $code"
+          [ "$code" = "200" ] || echo "::error::戻しても応答しません。GASエディタから手当てしてください。"
+
+      - name: 12. 後片付け
         if: always()
         run: rm -f "$RUNNER_TEMP/clasprc.json" "$RUNNER_TEMP/health.txt"
