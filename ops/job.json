@@ -1,8 +1,6 @@
 {
   "note": "ここを書き換えて push すると、GASが1分以内に拾って実行し、結果をWorkerへ返します。",
-  "op": "remaining",
-  "requestId": "job-20260930202248-kZSv9IfcHG82",
-  "args": {
-    "name": "松浦"
-  }
+  "op": "audit",
+  "requestId": "job-20260930203440-6KNr30hZiqpH",
+  "args": null
 }
