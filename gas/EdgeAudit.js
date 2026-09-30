@@ -402,3 +402,104 @@ function remainingDebugText(namePart) {
   say('   (4) チケットやペアが月額とは別に引かれていないか');
   return log.join('\n');
 }
+
+// ============================================================
+// ある日の予約を洗い出す（2026-09-30）
+//
+//   きっかけ：オーナー「9/29に来店は8名いる」に対し、リマインドの一覧は7名しか
+//   拾えていなかった。台帳のどの行が、どう判定されたのかを行単位で見ないと
+//   原因が特定できない。
+//
+//   ★読み取りだけ。氏名は出さない（顧客IDの下4桁と、名簿にあるかどうかだけ）。
+// ============================================================
+function dayReservationsText(dateStr) {
+  var m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '日付を YYYY-MM-DD の形で args.date に渡してください。';
+  var y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
+  var dayStart = new Date(y, mo, d, 0, 0, 0).getTime();
+  var dayEnd   = new Date(y, mo, d + 1, 0, 0, 0).getTime();
+
+  var log = [];
+  function say(s) { log.push(s); }
+  say('===== ' + m[1] + '/' + m[2] + '/' + m[3] + ' の予約（読み取りだけ）=====');
+
+  // 名簿：顧客IDごとの照合状態・契約状況を引けるようにする
+  var members = {};
+  var msh = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (msh && msh.getLastRow() >= 2) {
+    var mv = msh.getRange(2, 1, msh.getLastRow() - 1,
+             Math.max(MAP_COL.NOTE, msh.getLastColumn())).getValues();
+    for (var i = 0; i < mv.length; i++) {
+      var cid = String(mv[i][MAP_COL.CUSTOMER_ID - 1] || '');
+      if (!cid) continue;
+      members[cid] = {
+        auth: String(mv[i][MAP_COL.AUTH_STATE - 1] || '(空)'),
+        stat: String(mv[i][MAP_COL.CONTRACT_STAT - 1] || '(空)'),
+        line: String(mv[i][MAP_COL.LINE_USER_ID - 1] || '') ? 'あり' : 'なし'
+      };
+    }
+  }
+
+  var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+  if (!sh) return log.join('\n') + '\n⛔ 予約台帳が読めません。';
+  var last = sh.getLastRow();
+  if (last < 2) return log.join('\n') + '\n（台帳に行がありません）';
+
+  var vals = sh.getRange(2, 1, last - 1, Math.max(13, sh.getLastColumn())).getValues();
+  var rows = [], byStatus = {};
+  for (var r = 0; r < vals.length; r++) {
+    var v = vals[r];
+    var dt = _lbParseResvDate(v[0]);
+    if (!dt) continue;
+    var t = dt.getTime();
+    if (t < dayStart || t >= dayEnd) continue;
+    var st = String(v[6] || '(空)');
+    byStatus[st] = (byStatus[st] || 0) + 1;
+    rows.push({
+      row: r + 2,
+      time: Utilities.formatDate(dt, SETTINGS.TIMEZONE, 'HH:mm'),
+      cid: String(v[2] || ''),
+      hasName: String(v[1] || '') ? 'あり' : 'なし',
+      trainer: String(v[5] || v[4] || ''),
+      status: st,
+      channel: String(v[9] || '')
+    });
+  }
+
+  rows.sort(function (a, b) { return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0); });
+  say('台帳にこの日の行 ' + rows.length + '件');
+  var stKeys = [];
+  for (var k in byStatus) stKeys.push(k + ' ' + byStatus[k] + '件');
+  say('状態の内訳：' + (stKeys.join(' / ') || '（なし）'));
+  say('');
+
+  var counted = 0, reasons = {};
+  for (var j = 0; j < rows.length; j++) {
+    var x = rows[j];
+    var mem = x.cid ? members[x.cid] : null;
+    // リマインドが「来店」として数えるかどうかを、同じ条件で再現する
+    var why = '';
+    if (!x.cid)                              why = '顧客IDが空';
+    else if (!mem)                           why = '名簿に無い';
+    else if (mem.auth !== 'verified')        why = '未認証(' + mem.auth + ')';
+    else if (mem.stat !== 'active')          why = '契約が有効でない(' + mem.stat + ')';
+    else if (mem.line === 'なし')            why = 'LINE未連携';
+    else if (x.status !== 'confirmed' && x.status !== 'consumed') why = '状態が' + x.status;
+    if (!why) counted++; else reasons[why] = (reasons[why] || 0) + 1;
+
+    say('  ' + x.time + '  ' + (x.cid ? '会員#' + x.cid.slice(-4) : '（IDなし）')
+        + ' / 担当' + (x.trainer || '-') + ' / ' + x.status
+        + ' / ' + (x.channel || '-') + ' / 台帳' + x.row + '行'
+        + (why ? '  → 数えない：' + why : '  → 来店として数える'));
+  }
+
+  say('');
+  say('▶ 来店として数えた ' + counted + '件 ／ 数えなかった ' + (rows.length - counted) + '件');
+  var rk = [];
+  for (var k2 in reasons) rk.push(k2 + ' ' + reasons[k2] + '件');
+  if (rk.length) say('  内訳：' + rk.join(' / '));
+  say('');
+  say('※ 台帳に無い予約（カレンダーに手入力して氏名が一致しなかったもの）は、ここには出ません。');
+  say('   その場合は健康診断の「未紐付けの予約」に出ます。');
+  return log.join('\n');
+}

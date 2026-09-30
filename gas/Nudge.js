@@ -540,10 +540,15 @@ function _lbNudgeRecurIndex() {
 
 // 名簿の行が「そもそも発信していい相手か」。ここを緩めない（未認証・契約切れへは送らない）。
 function _lbNudgeEligible(m, skipped) {
-  if (!m.customerId)                { skipped.noCustomerId++; return false; }
-  if (m.authState !== 'verified')   { skipped.notVerified++;  return false; }
-  if (m.contractStat !== 'active')  { skipped.notActive++;    return false; }   // 空欄も対象外（判定不能＝送らない）
-  if (!m.lineUserId)                { skipped.noLine++;       return false; }
+  // ★人数だけでは「誰が落ちたか」を追えない。顧客IDの下4桁も控える（氏名は出さない）。
+  //   2026-09-30：オーナーの「9/29は8名来ている」と一覧の7名が合わず、
+  //   どこで誰が落ちたのかを人数からは特定できなかったため。
+  function drop(key) { (skipped._who[key] = skipped._who[key] || []).push(_lbNudgeMask(m.customerId)); }
+  if (!skipped._who) skipped._who = {};
+  if (!m.customerId)                { skipped.noCustomerId++; return false; }   // IDが無いので控えようがない
+  if (m.authState !== 'verified')   { skipped.notVerified++;  drop('notVerified'); return false; }
+  if (m.contractStat !== 'active')  { skipped.notActive++;    drop('notActive');   return false; }   // 空欄も対象外（判定不能＝送らない）
+  if (!m.lineUserId)                { skipped.noLine++;       drop('noLine');      return false; }
   return true;
 }
 
@@ -760,7 +765,11 @@ var _LB_NUDGE_SKIP_LABEL = {
 };
 function _lbNudgeSkipText(skipped) {
   var parts = [];
-  for (var k in skipped) if (skipped[k]) parts.push((_LB_NUDGE_SKIP_LABEL[k] || k) + ' ' + skipped[k] + '名');
+  for (var k in skipped) {
+    if (k === '_who' || !skipped[k]) continue;
+    var who = (skipped._who && skipped._who[k]) ? '（' + skipped._who[k].join(' ') + '）' : '';
+    parts.push((_LB_NUDGE_SKIP_LABEL[k] || k) + ' ' + skipped[k] + '名' + who);
+  }
   return parts.length ? parts.join(' / ') : 'なし';
 }
 function _lbNudgeIndent(s) { return String(s).split('\n').map(function (l) { return '      | ' + l; }).join('\n'); }

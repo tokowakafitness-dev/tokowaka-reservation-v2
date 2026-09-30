@@ -74,7 +74,12 @@ function _ejRun(op, args) {
     case 'testConnection': return _ejScrub(testEdgeConnectionText());
     // 残数が合わない会員を、オーナーの手を借りずに調べられるようにする（2026-09-29）。
     //   args = { name: '部分一致の氏名' }。読み取りだけ。氏名や電話は出さない。
-    case 'remaining':      return _ejScrub(remainingDebugText((args && args.name) || ''));
+    // args.name を渡せば会員1人の残数の内訳、args.date を渡せばその日の予約一覧。
+    //   どちらも残数まわりの調査。新しいopを足すとオーナーに許可一覧の編集を
+    //   お願いすることになるため、1つの窓口にまとめる（2026-09-30）。
+    case 'remaining':
+      if (args && args.date) return _ejScrub(dayReservationsText(args.date));
+      return _ejScrub(remainingDebugText((args && args.name) || ''));
     // リマインドの中身を、送らずに一覧する（読み取りだけ）。有効化の前に私が確認するため。
     // args.date（'2026-09-29'）を渡すと、その日を「今日」として一覧する。
     //   過去の実データで「誰に何が送られたか」を確かめるため。読み取りだけ。
