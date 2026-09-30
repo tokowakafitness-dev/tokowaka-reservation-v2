@@ -460,7 +460,15 @@ function _lbNudgeMembers() {
 
 // 予約台帳から会員ごとに「昨日の消化（＝来店 or 当日キャンセル）」と「今月の未来予約」を作る。
 //   読めなければ null（＝来店したかも未来があるかも分からない → 送らない）。
-//   未来は confirmed だけ（cancelled/changed は数えない）。昨日は consumed だけ（実施 or 当日取消）。
+//   未来は confirmed だけ（cancelled/changed は数えない）。
+//
+//   ★昨日の来店は confirmed と consumed の**両方**を数える（2026-09-30 修正）。
+//     予約台帳の実データは confirmed 253件 / consumed 6件で、来店しても状態は
+//     ほとんど confirmed のまま残る。消化の計上は、残数計算の側が
+//     「過去の confirmed も消化とみなす」（LineBooking.js の
+//     `if (st !== 'confirmed' && st !== 'consumed') continue;`）ことで成立している。
+//     ここだけ consumed に限っていたため、実際に来店された方を1人も拾えていなかった。
+//     **消化の定義はシステム全体で1つにする。**
 function _lbNudgeResvIndex(now) {
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
   if (!sh) return null;
@@ -477,7 +485,7 @@ function _lbNudgeResvIndex(now) {
     var dt = _lbParseResvDate(r[0]); if (!dt) continue;
     var t = dt.getTime(), st = String(r[6]);
     var e = idx[cid] || (idx[cid] = { yesterday: [], futureThisMonth: 0, nextRaw: null, nextMs: null });
-    if (st === 'consumed' && t >= yStart && t < yEnd) {
+    if ((st === 'confirmed' || st === 'consumed') && t >= yStart && t < yEnd) {
       e.yesterday.push(_lbNudgeResId(r[8]));   // 備考＝予約ID。振替権の source と突き合わせる
     } else if (st === 'confirmed' && t > nowMs && t <= monthEnd) {
       e.futureThisMonth++;

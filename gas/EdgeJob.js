@@ -58,6 +58,14 @@ function _ejMember(customerId) {
 //   ★オブジェクトから引くと、継承された名前（constructor など）を拾う余地がある。
 //     switch で直接呼ぶ（Codexの指摘）。
 // ============================================================
+// 'YYYY-MM-DD' を、その日の正午（JST）のミリ秒にする。未指定なら null（＝いま）。
+//   正午にするのは、日付の境目で前後の日に倒れないようにするため。
+function _ejDateMs(text) {
+  var m = String(text || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0).getTime();
+}
+
 function _ejRun(op, args) {
   switch (op) {
     case 'audit':          return _ejScrub(auditForEdgeMigrationText());
@@ -68,7 +76,9 @@ function _ejRun(op, args) {
     //   args = { name: '部分一致の氏名' }。読み取りだけ。氏名や電話は出さない。
     case 'remaining':      return _ejScrub(remainingDebugText((args && args.name) || ''));
     // リマインドの中身を、送らずに一覧する（読み取りだけ）。有効化の前に私が確認するため。
-    case 'nudgePreview':   return _ejScrub(lbNudgePreview());
+    // args.date（'2026-09-29'）を渡すと、その日を「今日」として一覧する。
+    //   過去の実データで「誰に何が送られたか」を確かめるため。読み取りだけ。
+    case 'nudgePreview':   return _ejScrub(lbNudgePreview(_ejDateMs(args && args.date)));
     case 'pushAll':        return _ejScrub(pushToEdgeAllText());
     default: throw new Error('許可されていない作業です：' + op);
   }
