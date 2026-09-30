@@ -67,6 +67,8 @@ function _ejRun(op, args) {
     // 残数が合わない会員を、オーナーの手を借りずに調べられるようにする（2026-09-29）。
     //   args = { name: '部分一致の氏名' }。読み取りだけ。氏名や電話は出さない。
     case 'remaining':      return _ejScrub(remainingDebugText((args && args.name) || ''));
+    // リマインドの中身を、送らずに一覧する（読み取りだけ）。有効化の前に私が確認するため。
+    case 'nudgePreview':   return _ejScrub(lbNudgePreview());
     case 'pushAll':        return _ejScrub(pushToEdgeAllText());
     default: throw new Error('許可されていない作業です：' + op);
   }

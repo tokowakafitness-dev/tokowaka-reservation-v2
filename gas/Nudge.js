@@ -487,11 +487,19 @@ function _lbNudgeResvIndex(now) {
   return idx;
 }
 
-// 振替権シート。読めなければ null（＝当日キャンセルと実来店を区別できない → 送らない・fail-closed）。
-//   ★このシートが無いと「当日キャンセルの方に来店翌日の文面を送る」事故が起きる。だから止める。
+// 振替権シート。
+//   ★「シートが無い」と「ブックが開けない」を分ける（2026-09-30）。
+//     - ブックが開けない → 判断できない → null（送らない・fail-closed）
+//     - ブックは開けるがシートが無い → **当日キャンセルが一度も無い**ということ。
+//       事実として「振替権0件」と分かるので、空として扱ってよい。
+//     ここを一緒くたに止めていたため、有効化の前にオーナーがGASエディタで
+//     シートを作る作業が必要になっていた。その作業を無くす。
 function _lbNudgeTcreditIndex() {
-  var sh = _lbSheet(LB_TCREDIT_SHEET);
-  if (!sh) return null;
+  var ss;
+  try { ss = _lbSs(); } catch (e) { return null; }      // ブックが開けない＝判断できない
+  if (!ss) return null;
+  var sh = ss.getSheetByName(LB_TCREDIT_SHEET);
+  if (!sh) return {};                                    // シートが無い＝振替権0件（事実）
   var last = sh.getLastRow();
   if (last < 2) return {};
   var v = sh.getRange(2, 1, last - 1, 5).getValues();
