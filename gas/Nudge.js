@@ -83,6 +83,13 @@ var _LB_NUDGE_MSG = {
     zh:        '本月还可使用 {remain}次（剩余{days}天）。',
     'zh-Hant': '本月還可使用 {remain}次（剩餘{days}天）。'
   },
+  // 「先月から○回繰り越しました」（その月に初めて送るとき・15日までだけ）
+  facts_carried_in: {
+    ja:        '先月分から {carried}回 繰り越しました。',
+    en:        '{carried} session(s) were carried over from last month.',
+    zh:        '上月结转了 {carried}次。',
+    'zh-Hant': '上月結轉了 {carried}次。'
+  },
   facts_carry: {
     ja:        'うち {carry}回 は繰り越し可能です。',
     en:        'Of these, {carry} can be carried over to next month.',
@@ -572,12 +579,30 @@ function _lbNudgeCarryCap(m, quota) {
 //     月末が近づいて初めて、繰り越せる回数が意味を持つ。
 var LB_NUDGE_CARRY_SHOW_DAYS = 10;   // 残りこの日数以内なら繰越の行を出す
 
-function _lbNudgeFactsText(lang, f) {
-  var base = _lbNudgeMsg(lang, 'facts_remain', { remain: f.remain, days: f.days });
+function _lbNudgeFactsText(lang, f, carriedIn) {
+  var lines = [];
+  // ★「先月から繰り越しました」は、その月にその方へ初めて送るとき、かつ15日までだけ。
+  //   得た感じがあるので月の前半の行動につながる。後半に言っても古い話になる。
+  //   （2026-09-30 オーナー判断：「その月にその方へ初めて送るとき、かつ15日まで」）
+  if (carriedIn > 0) lines.push(_lbNudgeMsg(lang, 'facts_carried_in', { carried: carriedIn }));
+  lines.push(_lbNudgeMsg(lang, 'facts_remain', { remain: f.remain, days: f.days }));
+  // 繰越の行は月末が近いときだけ（月初に言っても「来月に回してよい」と読める）
   if (f.carry > 0 && f.days <= LB_NUDGE_CARRY_SHOW_DAYS) {
-    return base + '\n' + _lbNudgeMsg(lang, 'facts_carry', { carry: f.carry });
+    lines.push(_lbNudgeMsg(lang, 'facts_carry', { carry: f.carry }));
   }
-  return base;
+  return lines.join('\n');
+}
+
+// その月にその方へ「まだ一度も送っていない」か。送信記録で見る。
+var LB_NUDGE_CARRIED_IN_UNTIL_DAY = 15;   // この日までなら繰越の報告を添える
+function _lbNudgeFirstOfMonth(logs, customerId, now) {
+  if (now.getDate() > LB_NUDGE_CARRIED_IN_UNTIL_DAY) return false;
+  var mk = _lbNudgeMonthKey(now);
+  for (var k = 0; k < LB_NUDGE_ORDER.length; k++) {
+    var e = logs[LB_NUDGE_ORDER[k]] && logs[LB_NUDGE_ORDER[k]][String(customerId)];
+    if (e && e.lastMs && _lbNudgeMonthKey(new Date(e.lastMs)) === mk) return false;   // 今月すでに送っている
+  }
+  return true;
 }
 
 // 共通して入れる事実（transfer を除く3種で使う）。
@@ -585,11 +610,13 @@ function _lbNudgeFactsText(lang, f) {
 //   remain が null＝残数を算出できない（degraded）＝送らない側へ倒す。
 function _lbNudgeFacts(m, now) {
   var h = _lbBuildHome(m.customerId, m.name, m.lang, now.getTime());
-  if (!h || !h.type) return { remain: null, carry: 0, days: _lbNudgeDaysLeft(now), quota: 0 };
+  if (!h || !h.type) return { remain: null, carry: 0, days: _lbNudgeDaysLeft(now), quota: 0, carriedIn: 0 };
   var remain = (h.monthlyRemaining == null) ? null : Number(h.monthlyRemaining);
   var quota = Number(h.quota || 0);
   var carry = (remain == null) ? 0 : Math.max(0, Math.min(remain, _lbNudgeCarryCap(m, quota)));
-  return { remain: remain, carry: carry, days: _lbNudgeDaysLeft(now), quota: quota };
+  // carriedIn＝今月に繰り越されてきた回数（先月の余り）。月の前半に一度だけ伝える。
+  var carriedIn = Math.max(0, Number(h.carryover || 0));
+  return { remain: remain, carry: carry, days: _lbNudgeDaysLeft(now), quota: quota, carriedIn: carriedIn };
 }
 
 // 翌月に押さえていただきたい回数（②'固定枠なしの {quota}）。翌月時点の月額残が本命、
@@ -708,7 +735,10 @@ function lbNudgePlanAll(nowMs) {
         monthLabel: _lbNudgeMonthLabel(plan.month, m.lang),
         pattern: win.pattern || '', quota: win.quota || 0,
         remain: f.remain, carry: f.carry, days: f.days,
-        facts: _lbNudgeFactsText(m.lang, f),      // 残数の一文（繰越の行は月末が近いときだけ）
+        // 残数の一文。繰越の行は月末が近いときだけ、
+        //   「先月から繰り越しました」は今月はじめての案内かつ15日までだけ。
+        facts: _lbNudgeFactsText(m.lang, f,
+                 _lbNudgeFirstOfMonth(log, m.customerId, now) ? f.carriedIn : 0),
         next: win.next || '', expire: win.expire || ''
       };
       plan.counts[win.kind]++;
