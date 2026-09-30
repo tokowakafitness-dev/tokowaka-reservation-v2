@@ -293,6 +293,17 @@ function auditForEdgeMigrationText() {
   } catch (e) { say('  ❌ ' + e.message); }
 
   say('');
+  // 予約データの健康診断もここで一緒に出す（未紐付け・契約が引けない会員・重複）。
+  //   新しい作業opを足すとオーナーに許可一覧の編集をお願いすることになるため、
+  //   既に許可されている audit に相乗りさせる（2026-09-30）。
+  say('');
+  say('■ 9. 予約データの健康診断');
+  try {
+    var hv = dataHealthText();
+    var hl = String(hv).split('\n');
+    for (var hi = 0; hi < hl.length; hi++) say('  ' + hl[hi]);
+  } catch (e) { say('  （健康診断に失敗: ' + (e && e.message) + '）'); }
+  say('');
   say('===== ここまで。何も書き換えていません =====');
   return out.join('\n');
 }

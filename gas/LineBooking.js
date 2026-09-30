@@ -2028,7 +2028,17 @@ function debugDataHealth() {
   out.push('残数を確認した会員：' + checked + '名');
   var txt = out.join('\n');
   Logger.log(txt);
+  _LB_DATA_HEALTH_TEXT = txt;   // ★文字列でも取れるようにする（作業依頼から中身を見るため）
   return { dupEv: dupEv, dupSlot: dupSlot, broken: broken, future: future, noContract: noContract, unlinked: unlinked, unlinkedList: unlinkedList, checked: checked };
+}
+
+// 健康診断の結果を文字列で返す（読み取りだけ）。
+//   エディタを開かなくても中身を確認できるようにするため（2026-09-30）。
+var _LB_DATA_HEALTH_TEXT = '';
+function dataHealthText() {
+  _LB_DATA_HEALTH_TEXT = '';
+  try { debugDataHealth(); } catch (e) { return '健康診断に失敗しました: ' + (e && e.message); }
+  return _LB_DATA_HEALTH_TEXT || '（結果を取得できませんでした）';
 }
 
 // 前日リマインドを今すぐ手動送信する（トリガー不発のリカバリ用・★実際に顧客とトレーナーへ送信されます）
