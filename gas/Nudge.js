@@ -71,11 +71,25 @@ var LB_NUDGE_LABEL = {
 // ------------------------------------------------------------
 // 文面（4言語）。ここだけ見れば全文が分かるようにしてある。
 //   ・氏名は入れない（宛先は1:1のトーク＝本人にしか届かない。出力・ログをPIIゼロに保つため）
-//   ・差し込み：{month}=翌月 / {pattern}=固定枠のラベル / {remain}=今月の残り回数 /
-//     {carry}=繰り越し可能数 / {days}=今月の残り日数 / {quota}=翌月に押さえたい回数 /
+//   ・差し込み：{facts}=残数の一文（下の _lbNudgeFactsText が組み立てる）
+//     {month}=対象の月 / {pattern}=固定枠 / {quota}=押さえていただきたい回数
 //     {next}=次のご予約の日時 / {expire}=振替の期限 / {url}=予約画面
 // ------------------------------------------------------------
 var _LB_NUDGE_MSG = {
+  // 残数の一文（{facts} に入る）。★繰越の行は月末が近いときだけ足す。
+  facts_remain: {
+    ja:        '今月はあと {remain}回 ご利用いただけます。（残り{days}日）',
+    en:        'You have {remain} session(s) left this month ({days} days remaining).',
+    zh:        '本月还可使用 {remain}次（剩余{days}天）。',
+    'zh-Hant': '本月還可使用 {remain}次（剩餘{days}天）。'
+  },
+  facts_carry: {
+    ja:        'うち {carry}回 は繰り越し可能です。',
+    en:        'Of these, {carry} can be carried over to next month.',
+    zh:        '其中 {carry}次 可结转至下月。',
+    'zh-Hant': '其中 {carry}次 可結轉至下月。'
+  },
+
   // ① 振替の案内（★残数の話は入れない。振替のことだけにする＝オーナー指示）
   transfer: {
     ja: '振替が1回ご利用いただけます。\n' +
@@ -114,8 +128,7 @@ var _LB_NUDGE_MSG = {
         'ご登録の固定枠（{pattern}）は、{month}分を自動でお取りしました。\n' +
         'ご変更が必要でしたら、下記よりお願いいたします。\n' +
         '\n' +
-        '今月はあと {remain}回 ご利用いただけます。\n' +
-        'うち {carry}回 は繰り越し可能です。（残り{days}日）\n' +
+        '{facts}\n' +
         '\n' +
         '▼ ご予約・ご変更\n' +
         '{url}',
@@ -124,8 +137,7 @@ var _LB_NUDGE_MSG = {
         'Your regular slot ({pattern}) has been booked for {month} automatically.\n' +
         'If you would like to change it, please use the link below.\n' +
         '\n' +
-        'You have {remain} session(s) available this month.\n' +
-        'Up to {carry} of them may be carried over. ({days} days left)\n' +
+        '{facts}\n' +
         '\n' +
         '▼ Book or change\n' +
         '{url}',
@@ -134,8 +146,7 @@ var _LB_NUDGE_MSG = {
         '您登记的固定时段（{pattern}），{month}的课程已自动为您预约。\n' +
         '如需变更，敬请从下方办理。\n' +
         '\n' +
-        '本月您还可使用 {remain}次。\n' +
-        '其中 {carry}次 可结转至下月。（还剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '▼ 预约・变更\n' +
         '{url}',
@@ -144,8 +155,7 @@ var _LB_NUDGE_MSG = {
         '您登記的固定時段（{pattern}），{month}的課程已自動為您預約。\n' +
         '如需變更，敬請從下方辦理。\n' +
         '\n' +
-        '本月您還可使用 {remain}次。\n' +
-        '其中 {carry}次 可結轉至下月。（還剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '▼ 預約・變更\n' +
         '{url}'
@@ -158,8 +168,7 @@ var _LB_NUDGE_MSG = {
         '徐々にご予約可能な枠が少なくなってまいりますので、\n' +
         'まずはなるべくお早めに{quota}回分お押さえいただくことをおすすめいたします。\n' +
         '\n' +
-        '今月はあと {remain}回 ご利用いただけます。\n' +
-        'うち {carry}回 は繰り越し可能です。（残り{days}日）\n' +
+        '{facts}\n' +
         '\n' +
         '▼ ご予約\n' +
         '{url}',
@@ -169,8 +178,7 @@ var _LB_NUDGE_MSG = {
         'Available slots become fewer as the days pass, so we recommend\n' +
         'securing your {quota} session(s) as early as you can.\n' +
         '\n' +
-        'You have {remain} session(s) available this month.\n' +
-        'Up to {carry} of them may be carried over. ({days} days left)\n' +
+        '{facts}\n' +
         '\n' +
         '▼ Book\n' +
         '{url}',
@@ -180,8 +188,7 @@ var _LB_NUDGE_MSG = {
         '可预约的时段会逐渐减少，\n' +
         '建议您尽早先行预约 {quota}次。\n' +
         '\n' +
-        '本月您还可使用 {remain}次。\n' +
-        '其中 {carry}次 可结转至下月。（还剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '▼ 预约\n' +
         '{url}',
@@ -191,8 +198,7 @@ var _LB_NUDGE_MSG = {
         '可預約的時段會逐漸減少，\n' +
         '建議您盡早先行預約 {quota}次。\n' +
         '\n' +
-        '本月您還可使用 {remain}次。\n' +
-        '其中 {carry}次 可結轉至下月。（還剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '▼ 預約\n' +
         '{url}'
@@ -201,8 +207,7 @@ var _LB_NUDGE_MSG = {
   visit_b: {
     ja: '昨日はお疲れさまでした。\n' +
         '\n' +
-        '今月はあと {remain}回 ご利用いただけます。\n' +
-        'うち {carry}回 は繰り越し可能です。（残り{days}日）\n' +
+        '{facts}\n' +
         '\n' +
         '次回のご予約がお決まりでなければ、下記よりお待ちしております。\n' +
         '\n' +
@@ -210,8 +215,7 @@ var _LB_NUDGE_MSG = {
         '{url}',
     en: 'Thank you for your session yesterday.\n' +
         '\n' +
-        'You have {remain} session(s) available this month.\n' +
-        'Up to {carry} of them may be carried over. ({days} days left)\n' +
+        '{facts}\n' +
         '\n' +
         'If your next session is not yet decided, we will be glad to welcome you below.\n' +
         '\n' +
@@ -219,8 +223,7 @@ var _LB_NUDGE_MSG = {
         '{url}',
     zh: '昨日辛苦了。\n' +
         '\n' +
-        '本月您还可使用 {remain}次。\n' +
-        '其中 {carry}次 可结转至下月。（还剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '若下次的预约尚未确定，敬请从下方预约，我们恭候您的光临。\n' +
         '\n' +
@@ -228,8 +231,7 @@ var _LB_NUDGE_MSG = {
         '{url}',
     'zh-Hant': '昨日辛苦了。\n' +
         '\n' +
-        '本月您還可使用 {remain}次。\n' +
-        '其中 {carry}次 可結轉至下月。（還剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '若下次的預約尚未確定，敬請從下方預約，我們恭候您的光臨。\n' +
         '\n' +
@@ -240,8 +242,7 @@ var _LB_NUDGE_MSG = {
   visit_a: {
     ja: '昨日はお疲れさまでした。\n' +
         '\n' +
-        '今月はあと {remain}回 ご利用いただけます。\n' +
-        'うち {carry}回 は繰り越し可能です。（残り{days}日）\n' +
+        '{facts}\n' +
         '\n' +
         '次のご予約は {next} に承っております。\n' +
         'もう一度、今月中にいかがでしょうか。\n' +
@@ -250,8 +251,7 @@ var _LB_NUDGE_MSG = {
         '{url}',
     en: 'Thank you for your session yesterday.\n' +
         '\n' +
-        'You have {remain} session(s) available this month.\n' +
-        'Up to {carry} of them may be carried over. ({days} days left)\n' +
+        '{facts}\n' +
         '\n' +
         'Your next session is reserved for {next}.\n' +
         'Would you care to join us once more within this month?\n' +
@@ -260,8 +260,7 @@ var _LB_NUDGE_MSG = {
         '{url}',
     zh: '昨日辛苦了。\n' +
         '\n' +
-        '本月您还可使用 {remain}次。\n' +
-        '其中 {carry}次 可结转至下月。（还剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '您的下次预约为 {next}。\n' +
         '本月要不要再来一次呢。\n' +
@@ -270,8 +269,7 @@ var _LB_NUDGE_MSG = {
         '{url}',
     'zh-Hant': '昨日辛苦了。\n' +
         '\n' +
-        '本月您還可使用 {remain}次。\n' +
-        '其中 {carry}次 可結轉至下月。（還剩{days}天）\n' +
+        '{facts}\n' +
         '\n' +
         '您的下次預約為 {next}。\n' +
         '本月要不要再來一次呢。\n' +
@@ -307,6 +305,7 @@ function _lbNudgeLiffUrl() {
 function _lbNudgeText(kind, lang, v) {
   var vars = {
     month: v.monthLabel, pattern: v.pattern, remain: v.remain, carry: v.carry, days: v.days,
+    facts: v.facts || '',                      // 残数の一文（繰越の行は月末が近いときだけ入る）
     quota: v.quota, next: v.next, expire: v.expire, url: _lbNudgeLiffUrl()
   };
   if (kind === LB_NUDGE_KIND.TRANSFER)   return _lbNudgeMsg(lang, 'transfer', vars);
@@ -566,6 +565,21 @@ function _lbNudgeCarryCap(m, quota) {
   return _lbResolveCarryCap(quota, ov, LINE_BOOKING.CARRYOVER_RATE);
 }
 
+// 残数の一文を組み立てる。
+//   ★繰越の行は「月末が近いとき」だけ出す（2026-09-30 オーナー判断）。
+//     月初に「うち1回は繰り越し可能です」と出しても行動につながらない。
+//     31日も残っているのに繰越の話をすると、むしろ「来月に回してよい」と読める。
+//     月末が近づいて初めて、繰り越せる回数が意味を持つ。
+var LB_NUDGE_CARRY_SHOW_DAYS = 10;   // 残りこの日数以内なら繰越の行を出す
+
+function _lbNudgeFactsText(lang, f) {
+  var base = _lbNudgeMsg(lang, 'facts_remain', { remain: f.remain, days: f.days });
+  if (f.carry > 0 && f.days <= LB_NUDGE_CARRY_SHOW_DAYS) {
+    return base + '\n' + _lbNudgeMsg(lang, 'facts_carry', { carry: f.carry });
+  }
+  return base;
+}
+
 // 共通して入れる事実（transfer を除く3種で使う）。
 //   remain=今月の月額残 / carry=そのうち繰り越せる回数 / days=今月の残り日数。
 //   remain が null＝残数を算出できない（degraded）＝送らない側へ倒す。
@@ -694,6 +708,7 @@ function lbNudgePlanAll(nowMs) {
         monthLabel: _lbNudgeMonthLabel(plan.month, m.lang),
         pattern: win.pattern || '', quota: win.quota || 0,
         remain: f.remain, carry: f.carry, days: f.days,
+        facts: _lbNudgeFactsText(m.lang, f),      // 残数の一文（繰越の行は月末が近いときだけ）
         next: win.next || '', expire: win.expire || ''
       };
       plan.counts[win.kind]++;
