@@ -549,8 +549,14 @@ function _lbNudgeEligible(m, skipped) {
   // ★人数だけでは「誰が落ちたか」を追えない。顧客IDの下4桁も控える（氏名は出さない）。
   //   2026-09-30：オーナーの「9/29は8名来ている」と一覧の7名が合わず、
   //   どこで誰が落ちたのかを人数からは特定できなかったため。
-  function drop(key) { (skipped._who[key] = skipped._who[key] || []).push(_lbNudgeMask(m.customerId)); }
+  function drop(key) {
+    (skipped._who[key] = skipped._who[key] || []).push(_lbNudgeMask(m.customerId));
+    // ★氏名つきはエディタで見る版だけが使う。外へ出す経路（作業依頼）では触らない。
+    (skipped._whoNamed[key] = skipped._whoNamed[key] || [])
+      .push((m.name || '(氏名なし)') + '(' + m.customerId + ')');
+  }
   if (!skipped._who) skipped._who = {};
+  if (!skipped._whoNamed) skipped._whoNamed = {};
   if (!m.customerId)                { skipped.noCustomerId++; return false; }   // IDが無いので控えようがない
   if (m.authState !== 'verified')   { skipped.notVerified++;  drop('notVerified'); return false; }
   if (m.contractStat !== 'active')  { skipped.notActive++;    drop('notActive');   return false; }   // 空欄も対象外（判定不能＝送らない）
@@ -744,6 +750,7 @@ function lbNudgePlanAll(nowMs) {
       plan.counts[win.kind]++;
       plan.targets.push({
         id: _lbNudgeMask(m.customerId), kind: win.kind, lang: m.lang,
+        _cidFull: m.customerId, _name: m.name,   // ★エディタで見る版だけが使う。外へ出す経路では触らない
         remain: (win.kind === LB_NUDGE_KIND.TRANSFER) ? null : f.remain,   // transfer に残数の話は入れない（オーナー指示）
         carry:  (win.kind === LB_NUDGE_KIND.TRANSFER) ? null : f.carry,
         days:   (win.kind === LB_NUDGE_KIND.TRANSFER) ? null : f.days,
@@ -811,7 +818,7 @@ var _LB_NUDGE_SKIP_LABEL = {
 function _lbNudgeSkipText(skipped) {
   var parts = [];
   for (var k in skipped) {
-    if (k === '_who' || !skipped[k]) continue;
+    if (k === '_who' || k === '_whoNamed' || !skipped[k]) continue;
     var who = (skipped._who && skipped._who[k]) ? '（' + skipped._who[k].join(' ') + '）' : '';
     parts.push((_LB_NUDGE_SKIP_LABEL[k] || k) + ' ' + skipped[k] + '名' + who);
   }
@@ -908,4 +915,61 @@ function setupNudgeTrigger() {
   });
   ScriptApp.newTrigger('lbNudgeDaily').timeBased().everyDays(1).atHour(10).inTimezone(SETTINGS.TIMEZONE).create();
   Logger.log('✅ 予約を促すリマインドを毎日10時に設定しました（実送信は LB_REMIND_ON=1 のときだけ）');
+}
+
+// ============================================================
+// 一覧（氏名つき）— GASエディタから実行する版
+//
+//   なぜ分けるか：
+//     作業依頼の結果は「作業番号さえ分かれば誰でも読める」URLに置かれる（合言葉が要らない）。
+//     そこへお客様の氏名を載せると、社外へ出る経路ができる。
+//     だから氏名を出す版はエディタ専用にして、Googleの外へ出さない。
+//     （EdgeVerify の verifyEdgeRemaining / verifyEdgeRemainingText と同じ考え方）
+//
+//   使い方：GASエディタでこの関数を選び、実行 → 実行ログに出ます。
+//     日付を変えたいときは下の dateStr を書き換えてください（空なら今日）。
+// ============================================================
+function lbNudgePreviewNamed() {
+  var dateStr = '';          // ← 例 '2026-10-01'。空なら今日
+  var ms = null;
+  var m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) ms = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0).getTime();
+  Logger.log(_lbNudgePreviewNamedText(ms));
+}
+
+function _lbNudgePreviewNamedText(nowMs) {
+  var ms = (nowMs != null) ? nowMs : new Date().getTime();
+  var plan = lbNudgePlanAll(ms);
+  var out = [];
+  out.push('=== 送信内容の確認（氏名つき・送信しません） ' + plan.asOf + ' ===');
+  out.push('★この出力には個人情報が含まれます。外部へ貼らないでください。');
+  out.push('実送信: ' + (_lbNudgeEnabled() ? '⚠️ 有効（LB_REMIND_ON=1）' : '無効（既定）'));
+  out.push('');
+
+  if (!plan.targets.length) {
+    out.push('送る対象はいません。');
+  } else {
+    out.push('送る対象 ' + plan.targets.length + '名');
+    out.push('');
+    for (var i = 0; i < plan.targets.length; i++) {
+      var t = plan.targets[i];
+      out.push('──────────────────────────────');
+      out.push('【' + (i + 1) + '】 ' + (t._name || '(氏名なし)') + '  顧客ID: ' + (t._cidFull || '(なし)'));
+      out.push('  種別: ' + (LB_NUDGE_LABEL[t.kind] || t.kind) + ' ／ 言語: ' + (t.lang || 'ja'));
+      out.push('  ▼ 実際に送られる文面');
+      var lines = String(t._text || '').split('\n');
+      for (var j = 0; j < lines.length; j++) out.push('    ' + lines[j]);
+      out.push('');
+    }
+  }
+
+  // 除外された方も氏名で出す（誰が落ちているかを確認できるように）
+  if (plan.skipped && plan.skipped._whoNamed) {
+    out.push('──────────────────────────────');
+    out.push('■ 対象外');
+    for (var k in plan.skipped._whoNamed) {
+      out.push('  ' + (_LB_NUDGE_SKIP_LABEL[k] || k) + '：' + plan.skipped._whoNamed[k].join(' / '));
+    }
+  }
+  return out.join('\n');
 }
