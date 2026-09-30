@@ -1,6 +1,6 @@
 {
   "note": "ここを書き換えて push すると、GASが1分以内に拾って実行し、結果をWorkerへ返します。",
-  "op": "audit",
-  "requestId": "job-20260930082151-XlL1Ij2o3pB4",
+  "op": "nudgePreview",
+  "requestId": "job-20260930180655-mTjqq1F5yKx2",
   "args": null
 }
