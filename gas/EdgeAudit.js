@@ -349,7 +349,123 @@ function remainingDebugText(namePart) {
   return out.join('\n');
 }
 
-function _remainingOneText(namePart) {
+// ============================================================
+// 氏名つきの残数の内訳 — GASエディタから実行する版（2026-10-01）
+//
+//   なぜ分けるか：作業依頼の結果は、作業番号を知っていれば合言葉なしで読めるURLに置かれる。
+//     そこへお客様の氏名を載せると、社外へ出る経路ができてしまう。
+//     だから氏名を出す版はエディタ専用にして、Googleの外へ出さない。
+//     （Nudge.js の lbNudgePreviewNamed と同じ考え方）
+//
+//   使い方：GASエディタで関数を選び、実行 → 実行ログに出ます。
+// ============================================================
+
+// ① 今日リマインドを送る方について、氏名・残数の内訳・送る文面をまとめて出す
+function remainingNamedForNudge() {
+  Logger.log(_remainingNamedForNudgeText());
+}
+
+function _remainingNamedForNudgeText(nowMs) {
+  var ms = (nowMs != null) ? nowMs : new Date().getTime();
+  var plan = lbNudgePlanAll(ms);
+  var out = [];
+  out.push('===== 今日リマインドを送る方の残数の内訳（氏名つき・読み取りだけ）' + plan.asOf + ' =====');
+  out.push('★この出力には個人情報が含まれます。外部へ貼らないでください。');
+  out.push('');
+  if (plan.code !== 'OK') { out.push('⛔ ' + plan.code + ' — 必要なシートが読めません。'); return out.join('\n'); }
+  if (!plan.targets.length) { out.push('今日の対象はいません。'); return out.join('\n'); }
+
+  for (var i = 0; i < plan.targets.length; i++) {
+    var t = plan.targets[i];
+    out.push('━━━━━━━━━━━━━ ' + (i + 1) + '/' + plan.targets.length + ' ━━━━━━━━━━━━━');
+    out.push('種別: ' + (LB_NUDGE_LABEL[t.kind] || t.kind) + ' ／ 言語: ' + (t.lang || 'ja'));
+    out.push('リマインドに出す数字: 今月残' + t.remain + '回 ／ 繰越可' + t.carry + '回');
+    out.push('');
+    out.push(_remainingOneText(t._cidFull, true));
+    out.push('');
+    out.push('▼ 送る文面');
+    var lines = String(t._text || '').split('\n');
+    for (var j = 0; j < lines.length; j++) out.push('   | ' + lines[j]);
+    out.push('');
+  }
+  return out.join('\n');
+}
+
+// ② 任意の会員を氏名つきで調べる（who を書き換えて実行）
+function remainingNamed() {
+  var who = '';   // ← 氏名の一部／顧客IDの下4桁／「,」で複数（例 '5133,4337'）
+  if (!who) { Logger.log('調べたい会員を who に書いてください（氏名の一部／顧客IDの下4桁／「,」でつないで複数）。'); return; }
+  var specs = String(who).split(',').map(function (x) { return String(x).trim(); })
+                         .filter(function (x) { return x.length > 0; });
+  var out = ['★この出力には個人情報が含まれます。外部へ貼らないでください。', ''];
+  for (var i = 0; i < specs.length; i++) { out.push(_remainingOneText(specs[i], true)); out.push(''); }
+  Logger.log(out.join('\n'));
+}
+
+// ============================================================
+// 契約の入力の食い違いを拾う（2026-10-01）
+//
+//   きっかけ：ある会員の契約が「残数方式=月額 / 頻度=4 / チケット枚数=4」だった。
+//   月額として扱われるのでチケット4枚は計算に入らない。入力ミスなら問題ないが、
+//   本当に月額＋チケットなら残数が4回少なく案内される。コードでは判定できない。
+//   だから「人が決めるべき食い違い」として表に出す。残数の計算は変えない。
+// ============================================================
+function _contractOddities(rows) {
+  var out = [];
+  if (!rows || !rows.length) return out;
+
+  function cell(rr, k) {
+    var c = rr.cols && rr.cols[k];
+    return (c != null && c >= 0) ? rr.row[c] : '';
+  }
+  function num(v) { var n = Number(v); return isFinite(n) ? n : 0; }
+  function dstr(x) { return x ? Utilities.formatDate(x, SETTINGS.TIMEZONE, 'yyyy/MM/dd') : '(なし)'; }
+
+  for (var i = 0; i < rows.length; i++) {
+    var rr = rows[i], tag = (i + 1) + ')';
+    var method = String(cell(rr, 'method') || '');
+    var freq = num(cell(rr, 'freq'));
+    var tick = num(cell(rr, 'ticket'));
+    var cap  = cell(rr, 'carryCap');
+
+    // ① 月額方式なのにチケット枚数が入っている → チケットは計算に入らない
+    if (method.indexOf('月額') >= 0 && tick > 0) {
+      out.push(tag + ' 残数方式=月額 なのにチケット枚数=' + tick
+               + '。月額として扱うのでチケット' + tick + '枚は残数に入りません。'
+               + '月額のみなら枚数を空に、月額＋チケットなら方式を見直してください。');
+    }
+    // ② チケット方式なのに頻度が入っている → 頻度は計算に入らない
+    if (method.indexOf('チケット') >= 0 && freq > 0) {
+      out.push(tag + ' 残数方式=チケット なのに頻度=' + freq
+               + '。チケットとして扱うので頻度' + freq + '回は残数に入りません。');
+    }
+    // ③ 繰越上限が頻度の既定と違う（意図した上書きかの確認用。誤りとは言わない）
+    if (cap !== '' && cap != null) {
+      var def = (typeof LB_CARRY_CAP_TABLE !== 'undefined') ? LB_CARRY_CAP_TABLE[freq] : null;
+      if (def != null && num(cap) !== num(def)) {
+        out.push(tag + ' 繰越上限=' + cap + '（頻度' + freq + 'の既定は' + def + '）。'
+                 + '意図した上書きならそのままで問題ありません。');
+      }
+    }
+    // ④ 期間が前の行と重なっている
+    for (var j = 0; j < i; j++) {
+      var pr = rows[j];
+      var aS = rr.start ? rr.start.getTime() : null, aE = rr.end ? rr.end.getTime() : null;
+      var bS = pr.start ? pr.start.getTime() : null, bE = pr.end ? pr.end.getTime() : null;
+      if (aS == null || bS == null) continue;
+      var overlap = (bE == null || aS <= bE) && (aE == null || bS <= aE);
+      if (overlap) {
+        out.push(tag + ' 期間が ' + (j + 1) + ') と重なっています（'
+                 + dstr(pr.start) + '〜' + dstr(pr.end) + ' と '
+                 + dstr(rr.start) + '〜' + dstr(rr.end) + '）。'
+                 + 'どちらの条件で数えるかが揺れます。');
+      }
+    }
+  }
+  return out;
+}
+
+function _remainingOneText(namePart, showName) {
   var log = [];
   function say(s) { log.push(s); }
   if (!namePart) return '調べる会員を args.name で渡してください。';
@@ -364,8 +480,10 @@ function _remainingOneText(namePart) {
   var target = _lbNormName(namePart);
   var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
   var hits = [];
+  var exact = String(namePart).trim();
   for (var i = 0; i < vals.length; i++) {
     var cidRow = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || '');
+    if (cidRow && cidRow === exact) { hits = [vals[i]]; break; }   // 顧客IDそのものなら一意
     if (byId) { if (cidRow && cidRow.slice(-rawId.length) === rawId) hits.push(vals[i]); }
     else if (_lbNormName(vals[i][MAP_COL.NAME - 1]).indexOf(target) >= 0) hits.push(vals[i]);
   }
@@ -376,7 +494,8 @@ function _remainingOneText(namePart) {
   var hit = hits[0];
   var customerId = String(hit[MAP_COL.CUSTOMER_ID - 1] || '');
   var name = String(hit[MAP_COL.NAME - 1] || '');
-  var who = '会員#' + customerId.slice(-4);
+  //   氏名は showName のときだけ。作業依頼（公開URL）からは showName を渡さない。
+  var who = showName ? (name + '（会員#' + customerId.slice(-4) + '）') : ('会員#' + customerId.slice(-4));
 
   say('===== 残数の内訳：' + who + ' =====');
   say('照合状態=' + String(hit[MAP_COL.AUTH_STATE - 1] || '(空)')
@@ -396,6 +515,13 @@ function _remainingOneText(namePart) {
         + ' / 頻度=' + f('freq') + ' / チケット枚数=' + f('ticket'));
     say('     繰越上限=' + f('carryCap') + ' / 繰越率=' + f('carry')
         + ' / 期間=' + d(rr.start) + '〜' + d(rr.end));
+  }
+
+  var odd = _contractOddities(rows);
+  if (odd.length) {
+    say('');
+    say('⚠️ 契約の入力に食い違いがあります（残数の解釈が揺れます）');
+    for (var o = 0; o < odd.length; o++) say('  ・' + odd[o]);
   }
 
   var sp = _lbSplitRemaining(rows, customerId);
