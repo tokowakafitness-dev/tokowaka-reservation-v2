@@ -350,6 +350,124 @@ function remainingDebugText(namePart) {
 }
 
 // ============================================================
+// 繰越が「記録のない月」から生まれていないかを点検する（2026-10-01）
+//
+//   きっかけ：ある会員の10月の残が6回だった。内訳を追うと、5〜8月の枠が
+//   「1件も予約がない＝使っていない」とみなされ、毎月繰越上限まで繰り越されていた。
+//   実際には来店されていて、予約台帳にその記録が無いだけだった。
+//
+//   残数の計算には「ここより前は記録がないので数えない」という下限（recordsFrom）があり、
+//   既定では会員の紐付け日時の月が入る。ところが紐付けが台帳の記録開始より古いと、
+//   その差の期間が「来なかった月」として繰越に化ける。
+//
+//   繰越には上限があるので、差が結果に出ないことも多い（上限で抑えられる）。
+//   だから「誰で、いくつ違うのか」を出して、人が判断できるようにする。
+//   ★読み取りだけ。残数の計算には一切触らない。氏名は出さない。
+// ============================================================
+function carryRangeImpactText() {
+  var out = [];
+  function say(x) { out.push(x); }
+  var now = new Date(), nowMs = now.getTime();
+  var nowKey = _lbMonthKeyJst(nowMs);
+  var rate = LINE_BOOKING.CARRYOVER_RATE;
+
+  var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!map || map.getLastRow() < 2) return '会員名簿が読めません。';
+  var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
+
+  say('===== 繰越が「記録のない月」から生まれていないかの点検 '
+      + Utilities.formatDate(now, SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '（読み取りだけ）=====');
+  say('※氏名は出しません。会員は顧客IDの下4桁で示します。');
+  say('');
+
+  var checked = 0, diffs = [], gaps = [], skipped = [];
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
+    var nm = String(vals[i][MAP_COL.NAME - 1] || ''); if (!nm) continue;
+    var cid = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || ''); if (!cid) continue;
+    var who = '*' + cid.slice(-4);
+    checked++;
+
+    var rows, sess, opening;
+    try {
+      rows = _lbContractRowsAll(nm, _lbPhoneByCustomerId(cid), false, cid);
+      if (!rows || !rows.length) { skipped.push(who + '(契約なし)'); continue; }
+      sess = _lbResvSessions(cid);
+      if (sess === null) { skipped.push(who + '(台帳が読めない)'); continue; }
+      opening = _lbMemberOpeningWithFloor(cid);
+    } catch (e) { skipped.push(who + '(' + e.message + ')'); continue; }
+
+    // 台帳にある最も古い予約の月。1件も無ければ当月とみなす（遡る根拠がない）
+    var oldest = null;
+    for (var s2 = 0; s2 < sess.length; s2++) {
+      var mk = _lbMonthKeyJst(sess[s2].startAt);
+      if (oldest == null || mk < oldest) oldest = mk;
+    }
+    if (oldest == null) oldest = nowKey;
+
+    // いまの下限（紐付け月など）と、台帳の記録が始まる月との差
+    var floorNow = (opening && opening.recordsFrom) ? String(opening.recordsFrom) : '(下限なし)';
+    var contractFrom = null;
+    for (var r = 0; r < rows.length; r++) {
+      if (!rows[r].start) continue;
+      var ck = _lbMonthKeyJst(rows[r].start.getTime());
+      if (contractFrom == null || ck < contractFrom) contractFrom = ck;
+    }
+
+    var a, b;
+    try {
+      a = _lbComputeRemaining(cid, rows, sess, nowKey, nowMs, rate, opening);
+      var op2 = {
+        carry: (opening && opening.carry) || {},
+        packsUsed: (opening && (opening.packsUsed || opening.packs)) || {},
+        cutoverMonth: opening ? opening.cutoverMonth : undefined,
+        recordsFrom: oldest            // 台帳に記録がある月より前は数えない
+      };
+      b = _lbComputeRemaining(cid, rows, sess, nowKey, nowMs, rate, op2);
+    } catch (e2) { skipped.push(who + '(計算できない: ' + e2.message + ')'); continue; }
+
+    var remA = (a && a.monthlyRem != null) ? Number(a.monthlyRem) : null;
+    var remB = (b && b.monthlyRem != null) ? Number(b.monthlyRem) : null;
+
+    // 記録のない期間があるか（契約開始 < 台帳の最古）
+    if (contractFrom != null && contractFrom < oldest) {
+      gaps.push(who + '（契約' + contractFrom + '〜 ／ 台帳は' + oldest + 'から ／ 下限=' + floorNow + '）');
+    }
+    if (remA !== remB) {
+      diffs.push({ who: who, now: remA, ifFloor: remB, contractFrom: contractFrom, oldest: oldest, floorNow: floorNow });
+    }
+  }
+
+  say('── 調べた会員 ' + checked + '名');
+  say('');
+  say('■ 契約の開始より後から台帳の記録が始まっている会員: ' + gaps.length + '名');
+  if (!gaps.length) say('   （該当なし。記録のない期間はありません）');
+  for (var g = 0; g < gaps.length; g++) say('   ・' + gaps[g]);
+
+  say('');
+  say('■ その期間を数えるかどうかで今月の残数が変わる会員: ' + diffs.length + '名');
+  if (!diffs.length) {
+    say('   （該当なし。繰越上限で抑えられているため、どちらで数えても同じです）');
+  } else {
+    for (var d = 0; d < diffs.length; d++) {
+      var x = diffs[d];
+      say('   ・' + x.who + '：いま ' + x.now + '回 ／ 台帳のある月だけ数えると ' + x.ifFloor + '回'
+          + '（差 ' + (x.now - x.ifFloor) + '回）');
+      say('       契約' + x.contractFrom + '〜 ／ 台帳は' + x.oldest + 'から ／ いまの下限=' + x.floorNow);
+    }
+    say('');
+    say('   ※ 差がプラス＝記録のない月のぶん、残数が多く出ています。');
+    say('      その月に実際に来店されていたなら、多い分は本来ありません。');
+    say('      来店されていなかったなら、いまの数字が正しいです。');
+  }
+
+  if (skipped.length) { say(''); say('■ 調べられなかった会員: ' + skipped.join(' / ')); }
+  say('');
+  say('===== ここまで。何も書き換えていません =====');
+  return out.join('\n');
+}
+
+// ============================================================
 // 氏名つきの残数の内訳 — GASエディタから実行する版（2026-10-01）
 //
 //   なぜ分けるか：作業依頼の結果は、作業番号を知っていれば合言葉なしで読めるURLに置かれる。

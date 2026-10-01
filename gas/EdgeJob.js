@@ -78,6 +78,8 @@ function _ejRun(op, args) {
     //   どちらも残数まわりの調査。新しいopを足すとオーナーに許可一覧の編集を
     //   お願いすることになるため、1つの窓口にまとめる（2026-09-30）。
     case 'remaining':
+      // 繰越が「記録のない月」から生まれていないかの点検（氏名は出さない）
+      if (args && args.carryImpact) return _ejScrub(carryRangeImpactText());
       if (args && args.date) return _ejScrub(dayReservationsText(args.date));
       return _ejScrub(remainingDebugText((args && args.name) || ''));
     // リマインドの中身を、送らずに一覧する（読み取りだけ）。有効化の前に私が確認するため。
