@@ -1,8 +1,6 @@
 {
   "note": "ここを書き換えて push すると、GASが1分以内に拾って実行し、結果をWorkerへ返します。",
-  "op": "remaining",
-  "requestId": "job-20261001122233-LoFz5IK2GTQE",
-  "args": {
-    "name": "鈴木"
-  }
+  "op": "previewMerge",
+  "requestId": "job-20261001123240-vNSnIPdcHLdY",
+  "args": null
 }
