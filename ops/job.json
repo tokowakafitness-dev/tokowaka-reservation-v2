@@ -1,8 +1,8 @@
 {
   "note": "ここを書き換えて push すると、GASが1分以内に拾って実行し、結果をWorkerへ返します。",
   "op": "remaining",
-  "requestId": "job-20261001102649-o6SD61EwM7hw",
+  "requestId": "job-20261001122233-LoFz5IK2GTQE",
   "args": {
-    "name": "夏目"
+    "name": "鈴木"
   }
 }
