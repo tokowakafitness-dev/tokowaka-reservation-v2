@@ -65,6 +65,19 @@ function _lbSs() {
   return SpreadsheetApp.openById(id);
 }
 
+// 会員名簿を読む幅。
+//   ★照合状態（8列目）までは必ず読む。
+//     氏名（3列目）までしか読まずに照合状態を参照していたため、
+//     undefined が 'verified' と一致せず **静かに全員が除外される**事故が
+//     2026-09-29（残数の突合）と 2026-10-01（棚卸し）で2日続けて起きた。
+//     例外も出ず件数が0になるだけなので気づきにくい。幅は1箇所で決める。
+function _lbMapWidth(sh) {
+  // getLastColumn を持たない相手（検証用の身代わり等）でも落とさない。
+  var last = 0;
+  try { if (sh && typeof sh.getLastColumn === 'function') last = sh.getLastColumn(); } catch (e) {}
+  return Math.max(MAP_COL.NOTE || 14, MAP_COL.AUTH_STATE, last);
+}
+
 function _lbSheet(name) {
   var ss = _lbSs();
   return ss.getSheetByName(name);
@@ -3468,7 +3481,7 @@ function _lbPhoneByCustomerId(customerId) {
   if (!customerId) return '';
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh || sh.getLastRow() < 2) return '';
-  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, MAP_COL.PHONE).getValues();
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, _lbMapWidth(sh)).getValues();
   for (var i = 0; i < vals.length; i++) {
     if (String(vals[i][MAP_COL.CUSTOMER_ID - 1]) === String(customerId)) return String(vals[i][MAP_COL.PHONE - 1] || '');
   }
@@ -4589,7 +4602,7 @@ function closeAllocationMonth(monthKey, opts) {
     //   氏名は customer_line_map から補完（契約照合に必要）。契約終了者は割当器でfreq0→carryOut0＝チェーン自然終了。
     if (!opts.cutover) {
       var nameById = {}, msh = _lbSheet(LINE_BOOKING.MAP_SHEET);
-      if (msh && msh.getLastRow() >= 2) { var mvv = msh.getRange(2, 1, msh.getLastRow() - 1, MAP_COL.NAME).getValues(); for (var q = 0; q < mvv.length; q++) { var qc = String(mvv[q][MAP_COL.CUSTOMER_ID - 1] || ''); if (qc) nameById[qc] = String(mvv[q][MAP_COL.NAME - 1] || ''); } }
+      if (msh && msh.getLastRow() >= 2) { var mvv = msh.getRange(2, 1, msh.getLastRow() - 1, _lbMapWidth(msh)).getValues(); for (var q = 0; q < mvv.length; q++) { var qc = String(mvv[q][MAP_COL.CUSTOMER_ID - 1] || ''); if (qc) nameById[qc] = String(mvv[q][MAP_COL.NAME - 1] || ''); } }
       for (var pcid in prevClosings) if (prevClosings.hasOwnProperty(pcid) && !memberMap[pcid]) memberMap[pcid] = { customerId: pcid, name: nameById[pcid] || '' };
     }
     var members = []; for (var mk in memberMap) if (memberMap.hasOwnProperty(mk)) members.push(memberMap[mk]);
@@ -4689,7 +4702,7 @@ function seedShadowTest() {
 function detectDuplicateRegistrations() {
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh || sh.getLastRow() < 2) { Logger.log('detectDuplicateRegistrations: map未作成/空'); return { success: true, dups: 0 }; }
-  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, MAP_COL.PHONE).getValues();
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, _lbMapWidth(sh)).getValues();
   var byKey = {};   // 氏名+電話 → [customerId...]
   for (var i = 0; i < vals.length; i++) {
     if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
@@ -5855,7 +5868,7 @@ function setMemberLang(lineUserId, lang) {
   var l = _lbNormLang(lang);
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh || sh.getLastRow() < 2) return { success: true, saved: false };
-  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, MAP_COL.LINE_USER_ID).getValues();
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, _lbMapWidth(sh)).getValues();
   for (var i = 0; i < vals.length; i++) {
     if (String(vals[i][MAP_COL.LINE_USER_ID - 1] || '') === String(lineUserId)) {
       sh.getRange(i + 2, MAP_COL.LANG).setValue(l);
@@ -6220,7 +6233,7 @@ function _lbCustTrainerId(customerId) {
   if (!customerId) return '';
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh || sh.getLastRow() < 2) return '';
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, MAP_COL.TRAINER_ID).getValues();
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, _lbMapWidth(sh)).getValues();
   for (var i = 0; i < v.length; i++) { if (String(v[i][MAP_COL.CUSTOMER_ID - 1]) === String(customerId)) return String(v[i][MAP_COL.TRAINER_ID - 1] || ''); }
   return '';
 }

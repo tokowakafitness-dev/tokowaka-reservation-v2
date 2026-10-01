@@ -8,6 +8,16 @@
 // 使い方：GASエディタで auditForEdgeMigration() を1回実行し、ログを共有する。
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
+// 会員名簿を読む幅。
+//   ★氏名の列（3列目）までしか読まずに照合状態（8列目）を参照していたため、
+//     undefined が 'verified' と一致せず **全員が除外**されていた。
+//     8番の点検が「調べた会員0名」になっていた原因（2026-10-01）。
+//     昨日 EdgeVerify で踏んだのとまったく同じ誤り。読む幅は1箇所で決める。
+function _auditMapWidth(sh) {
+  return Math.max(MAP_COL.NOTE || 14, MAP_COL.AUTH_STATE, MAP_COL.NAME,
+                  MAP_COL.CUSTOMER_ID, MAP_COL.LINE_USER_ID, sh.getLastColumn());
+}
+
 function auditForEdgeMigrationText() {
   var out = [];
   function say(s) { out.push(s); }
@@ -187,7 +197,7 @@ function auditForEdgeMigrationText() {
     }
     var both = [];
     if (csh && csh.getLastRow() >= 2) {
-      var cv = csh.getRange(2, 1, csh.getLastRow() - 1, MAP_COL.NAME).getValues();
+      var cv = csh.getRange(2, 1, csh.getLastRow() - 1, _auditMapWidth(csh)).getValues();
       for (var c = 0; c < cv.length; c++) {
         var cid2 = String(cv[c][MAP_COL.LINE_USER_ID - 1] || '');
         if (cid2 && tIds[cid2]) both.push(tIds[cid2] + '（会員名: ' + String(cv[c][MAP_COL.NAME - 1] || '') + '）');
@@ -208,7 +218,7 @@ function auditForEdgeMigrationText() {
       var csh2 = _lbSheet(LINE_BOOKING.MAP_SHEET);
       var members = {};
       if (csh2 && csh2.getLastRow() >= 2) {
-        var cv2 = csh2.getRange(2, 1, csh2.getLastRow() - 1, MAP_COL.NAME).getValues();
+        var cv2 = csh2.getRange(2, 1, csh2.getLastRow() - 1, _auditMapWidth(csh2)).getValues();
         for (var q = 0; q < cv2.length; q++) {
           var nm2 = _lbNormName(cv2[q][MAP_COL.NAME - 1]);
           if (nm2) members[nm2] = true;
@@ -242,7 +252,7 @@ function auditForEdgeMigrationText() {
     var csh3 = _lbSheet(LINE_BOOKING.MAP_SHEET);
     if (!csh3 || csh3.getLastRow() < 2) say('  会員名簿が空です');
     else {
-      var mv3 = csh3.getRange(2, 1, csh3.getLastRow() - 1, MAP_COL.NAME).getValues();
+      var mv3 = csh3.getRange(2, 1, csh3.getLastRow() - 1, _auditMapWidth(csh3)).getValues();
       var zero = [], rowOwners = {}, totalRows = 0, seenName = {}, dupMember = [];
       var checked = 0, skipped = 0;
       for (var z = 0; z < mv3.length; z++) {

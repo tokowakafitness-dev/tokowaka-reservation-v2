@@ -1486,7 +1486,7 @@ function maCustomerName_(customerId) {
   if (hit !== null && hit !== undefined) return hit;
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh || sh.getLastRow() < 2) return '';
-  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, MAP_COL.NAME).getValues();
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, _lbMapWidth(sh)).getValues();
   for (var i = 0; i < vals.length; i++) {
     if (String(vals[i][MAP_COL.CUSTOMER_ID - 1]) === String(customerId)) {
       var nm = String(vals[i][MAP_COL.NAME - 1] || '');
