@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-01c 残数の一文/繰越の報告/氏名つき確認';
+var LB_NUDGE_BUILD = '2026-10-01d 一覧は送る文面そのものを出す';
 
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
@@ -864,9 +864,13 @@ function lbNudgePreview(nowMs) {
       if (t.next)           detail.push('次回' + t.next);
       if (t.pattern)        detail.push('固定枠' + t.pattern);
       out.push('   ・' + t.id + '（' + t.lang + (detail.length ? '・' + detail.join('・') : '') + '）');
+      // ★ここに出すのは「実際に送る文面そのもの」。
+      //   以前はテンプレートから作り直したサンプルを1人ぶんだけ出していたため、
+      //   残数の一文（facts）が抜けた文面が一覧に出て、確認そのものが成立しなかった（2026-10-01）。
+      //   作り直すと必ずまた食い違う。だから送る文面を直接見せる。
+      out.push('     ▼実際に送る文面（' + t.lang + '）');
+      out.push(_lbNudgeIndent(t._text));
     }
-    out.push('   ▼送る文面（日本語）');
-    out.push(_lbNudgeIndent(_lbNudgeSampleText(kind, plan, list[0])));
   }
 
   out.push('');
@@ -880,15 +884,6 @@ function lbNudgePreview(nowMs) {
   var txt = out.join('\n');
   Logger.log(txt);
   return txt;
-}
-
-// 一覧に載せる日本語サンプル（実際に送るのは会員ごとの言語の文面）。
-function _lbNudgeSampleText(kind, plan, t) {
-  return _lbNudgeText(kind, 'ja', {
-    monthLabel: _lbNudgeMonthLabel(plan.month, 'ja'), pattern: t.pattern || '',
-    quota: t.quota || 0, remain: t.remain, carry: t.carry, days: t.days,
-    next: t.next || '', expire: t.expire || ''
-  });
 }
 
 // ============================================================
