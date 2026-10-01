@@ -3388,6 +3388,17 @@ function _lbMemberOpening(customerId) {
   return null;
 }
 
+// 予約台帳（line_reservations）が記録を持ち始めた月。
+//   これより前は、誰についても「予約0件＝来ていない」と判断できない。
+//   8月以前の残は残数ログ（migration_balance）から引き継ぐ。
+//   （2026-10-01 オーナー確定：「下限は予約台帳に入力がある9月から」）
+var LB_RECORDS_FROM_DEFAULT = '2026-09';
+function _lbRecordsFromMonth() {
+  var v = '';
+  try { v = String(_lbProp('LB_RECORDS_FROM_MONTH') || '').trim(); } catch (e) { v = ''; }
+  return /^\d{4}-\d{2}$/.test(v) ? v : LB_RECORDS_FROM_DEFAULT;
+}
+
 // 残数計算に渡す「記録が完全な最古の月」。棚卸しがあればその月、無ければLINE会員登録の月。
 //   繰越を契約開始月から数えるようにしたため、登録より前の月を「予約0件＝来ていない」と
 //   誤判定しないための下限（2026-09-25 Codexレビュー指摘への対応）。

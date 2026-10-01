@@ -364,6 +364,14 @@ function remainingDebugText(namePart) {
 //   だから「誰で、いくつ違うのか」を出して、人が判断できるようにする。
 //   ★読み取りだけ。残数の計算には一切触らない。氏名は出さない。
 // ============================================================
+// 残数ログの繰越回数（月ごとに入っているので合計する）。表示用。
+function _lbMbCarryOf(op) {
+  if (!op || !op.carry) return 0;
+  var t = 0;
+  for (var k in op.carry) t += Number(op.carry[k]) || 0;
+  return t;
+}
+
 function carryRangeImpactText() {
   var out = [];
   function say(x) { out.push(x); }
@@ -380,7 +388,42 @@ function carryRangeImpactText() {
   say('※氏名は出しません。会員は顧客IDの下4桁で示します。');
   say('');
 
-  var checked = 0, diffs = [], gaps = [], skipped = [];
+  // ① まず「予約台帳が記録を持ち始めた月」を出す。これより前は誰についても
+  //    「予約0件＝来ていない」と判断できない。8月以前の残は残数ログから引き継ぐ。
+  var ledgerFrom = _lbRecordsFromMonth();
+
+  // ② 残数ログ（migration_balance）の状態。承認済みでなければ計算に使われない。
+  var mb = { exists: false, rows: 0, approved: 0, months: {} };
+  try {
+    var mbSh = _lbSheet(LB_MIGBAL_SHEET);
+    if (mbSh && mbSh.getLastRow() >= 2) {
+      mb.exists = true;
+      var mbv = mbSh.getRange(2, 1, mbSh.getLastRow() - 1, 7).getValues();
+      for (var q = 0; q < mbv.length; q++) {
+        if (!String(mbv[q][0] || '')) continue;
+        mb.rows++;
+        if (String(mbv[q][5] || '') && String(mbv[q][6] || '')) {
+          mb.approved++;
+          var mk0 = _lbMonthKeyCell(mbv[q][1], SETTINGS.TIMEZONE);
+          mb.months[mk0] = (mb.months[mk0] || 0) + 1;
+        }
+      }
+    } else if (mbSh) { mb.exists = true; }
+  } catch (e0) {}
+
+  say('■ 予約台帳が記録を持ち始めた月: ' + ledgerFrom + '（これより前は残数ログから引き継ぎます）');
+  if (!mb.exists) {
+    say('■ 残数ログ（' + LB_MIGBAL_SHEET + '）: ⛔ シートがありません');
+  } else {
+    var mons = [];
+    for (var mk1 in mb.months) mons.push(mk1 + '基準' + mb.months[mk1] + '名');
+    say('■ 残数ログ（' + LB_MIGBAL_SHEET + '）: ' + mb.rows + '行 ／ 承認済み ' + mb.approved + '行'
+        + (mons.length ? '（' + mons.join('・') + '）' : ''));
+    if (mb.rows > 0 && mb.approved === 0) say('   ⚠️ 承認者・承認日が未記入のため、どの行も計算に使われていません。');
+  }
+  say('');
+
+  var checked = 0, diffs = [], gaps = [], skipped = [], withLog = 0;
   for (var i = 0; i < vals.length; i++) {
     if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
     var nm = String(vals[i][MAP_COL.NAME - 1] || ''); if (!nm) continue;
@@ -388,24 +431,17 @@ function carryRangeImpactText() {
     var who = '*' + cid.slice(-4);
     checked++;
 
-    var rows, sess, opening;
+    var rows, sess, opening, logged;
     try {
       rows = _lbContractRowsAll(nm, _lbPhoneByCustomerId(cid), false, cid);
       if (!rows || !rows.length) { skipped.push(who + '(契約なし)'); continue; }
       sess = _lbResvSessions(cid);
       if (sess === null) { skipped.push(who + '(台帳が読めない)'); continue; }
-      opening = _lbMemberOpeningWithFloor(cid);
+      logged = _lbMemberOpening(cid);          // 承認済みの残数ログ（無ければ null）
+      if (logged) withLog++;
+      opening = _lbMemberOpeningWithFloor(cid); // いま本番が使っている下限つきの状態
     } catch (e) { skipped.push(who + '(' + e.message + ')'); continue; }
 
-    // 台帳にある最も古い予約の月。1件も無ければ当月とみなす（遡る根拠がない）
-    var oldest = null;
-    for (var s2 = 0; s2 < sess.length; s2++) {
-      var mk = _lbMonthKeyJst(sess[s2].startAt);
-      if (oldest == null || mk < oldest) oldest = mk;
-    }
-    if (oldest == null) oldest = nowKey;
-
-    // いまの下限（紐付け月など）と、台帳の記録が始まる月との差
     var floorNow = (opening && opening.recordsFrom) ? String(opening.recordsFrom) : '(下限なし)';
     var contractFrom = null;
     for (var r = 0; r < rows.length; r++) {
@@ -417,11 +453,14 @@ function carryRangeImpactText() {
     var a, b;
     try {
       a = _lbComputeRemaining(cid, rows, sess, nowKey, nowMs, rate, opening);
+      // 下限を「台帳の記録開始月」にした場合（残数ログがあればその月が優先される）
+      var floorWant = ledgerFrom;
+      if (logged && logged.recordsFrom) floorWant = String(logged.recordsFrom);
       var op2 = {
-        carry: (opening && opening.carry) || {},
-        packsUsed: (opening && (opening.packsUsed || opening.packs)) || {},
-        cutoverMonth: opening ? opening.cutoverMonth : undefined,
-        recordsFrom: oldest            // 台帳に記録がある月より前は数えない
+        carry: (logged && logged.carry) || {},
+        packsUsed: (logged && (logged.packsUsed || logged.packs)) || {},
+        cutoverMonth: logged ? logged.cutoverMonth : undefined,
+        recordsFrom: floorWant
       };
       b = _lbComputeRemaining(cid, rows, sess, nowKey, nowMs, rate, op2);
     } catch (e2) { skipped.push(who + '(計算できない: ' + e2.message + ')'); continue; }
@@ -429,36 +468,40 @@ function carryRangeImpactText() {
     var remA = (a && a.monthlyRem != null) ? Number(a.monthlyRem) : null;
     var remB = (b && b.monthlyRem != null) ? Number(b.monthlyRem) : null;
 
-    // 記録のない期間があるか（契約開始 < 台帳の最古）
-    if (contractFrom != null && contractFrom < oldest) {
-      gaps.push(who + '（契約' + contractFrom + '〜 ／ 台帳は' + oldest + 'から ／ 下限=' + floorNow + '）');
+    if (contractFrom != null && contractFrom < ledgerFrom) {
+      gaps.push(who + '（契約' + contractFrom + '〜 ／ いまの下限=' + floorNow
+                + ' ／ 残数ログ=' + (logged ? '有（' + (logged.recordsFrom || '?') + '基準・繰越'
+                    + _lbMbCarryOf(logged) + '回）' : '無') + '）');
     }
     if (remA !== remB) {
-      diffs.push({ who: who, now: remA, ifFloor: remB, contractFrom: contractFrom, oldest: oldest, floorNow: floorNow });
+      diffs.push({ who: who, now: remA, want: remB, contractFrom: contractFrom,
+                   floorNow: floorNow, logged: !!logged });
     }
   }
 
-  say('── 調べた会員 ' + checked + '名');
+  say('── 調べた会員 ' + checked + '名 ／ 承認済みの残数ログがある会員 ' + withLog + '名');
   say('');
-  say('■ 契約の開始より後から台帳の記録が始まっている会員: ' + gaps.length + '名');
-  if (!gaps.length) say('   （該当なし。記録のない期間はありません）');
+  say('■ 台帳の記録開始（' + ledgerFrom + '）より前に契約が始まっている会員: ' + gaps.length + '名');
+  if (!gaps.length) say('   （該当なし）');
   for (var g = 0; g < gaps.length; g++) say('   ・' + gaps[g]);
 
   say('');
-  say('■ その期間を数えるかどうかで今月の残数が変わる会員: ' + diffs.length + '名');
+  say('■ 下限を ' + ledgerFrom + ' にすると今月の残数が変わる会員: ' + diffs.length + '名');
   if (!diffs.length) {
-    say('   （該当なし。繰越上限で抑えられているため、どちらで数えても同じです）');
+    say('   （該当なし。いま下限を直しても、どなたの残数も変わりません）');
   } else {
     for (var d = 0; d < diffs.length; d++) {
       var x = diffs[d];
-      say('   ・' + x.who + '：いま ' + x.now + '回 ／ 台帳のある月だけ数えると ' + x.ifFloor + '回'
-          + '（差 ' + (x.now - x.ifFloor) + '回）');
-      say('       契約' + x.contractFrom + '〜 ／ 台帳は' + x.oldest + 'から ／ いまの下限=' + x.floorNow);
+      var sign = (x.want - x.now);
+      say('   ・' + x.who + '：いま ' + x.now + '回 → 直すと ' + x.want + '回'
+          + '（' + (sign > 0 ? '+' : '') + sign + '回）'
+          + ' ／ 契約' + x.contractFrom + '〜 ／ いまの下限=' + x.floorNow
+          + ' ／ 残数ログ=' + (x.logged ? '有' : '無'));
     }
     say('');
-    say('   ※ 差がプラス＝記録のない月のぶん、残数が多く出ています。');
-    say('      その月に実際に来店されていたなら、多い分は本来ありません。');
-    say('      来店されていなかったなら、いまの数字が正しいです。');
+    say('   ※ マイナスの方は、直すと残数が減ります。残数ログに切替時点の繰越を');
+    say('      入れておかないと、本来ある回数をお断りしてしまいます。');
+    say('      ★下限を直す前に、この方々の残数ログを埋めてください。');
   }
 
   if (skipped.length) { say(''); say('■ 調べられなかった会員: ' + skipped.join(' / ')); }
