@@ -46,6 +46,9 @@
 //   LB_NUDGE_MAX_PER_RUN    1回の実行で送る上限（既定 50・初回有効化の暴走防止）
 // ============================================================
 
+// この版の印。中身を変えたら必ず書き換える。
+var LB_NUDGE_BUILD = '2026-10-01c 残数の一文/繰越の報告/氏名つき確認';
+
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
 var LB_NUDGE_LOG_SCAN = 3000;           // 再送判定で見る直近行数（新しい行が上＝これで足りる）
@@ -832,6 +835,10 @@ function lbNudgePreview(nowMs) {
   var conf = plan.conf;
   var out = [];
   out.push('=== 予約を促すリマインド 一覧（送信しません） ' + plan.asOf + ' ===');
+  // ★どの版が本番で動いているかを出す。
+  //   「直したのに出力が変わらない」とき、反映漏れなのか不具合なのかを切り分けられない。
+  //   今日それで時間を使ったので、印を出す（2026-10-01）。
+  out.push('版: ' + LB_NUDGE_BUILD);
   out.push('実送信: ' + (_lbNudgeEnabled() ? '⚠️ 有効（LB_REMIND_ON=1）' : '無効（既定）— この一覧を見て決めてください'));
   out.push('設定: 解放日' + conf.openDay + '日（本日は' + (plan.isOpenDay ? '解放日です' : '解放日ではありません') + '）／来店翌日Aの間隔' + conf.visitADays + '日／1回上限' + conf.maxPerRun + '通');
   out.push('※氏名は出しません。会員は顧客IDの下4桁で示します。');
