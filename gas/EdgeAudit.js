@@ -330,22 +330,47 @@ function auditForEdgeMigration() { Logger.log(auditForEdgeMigrationText()); }
 //
 //   ★読み取りだけ。氏名・電話・LINE IDは出さない（結果は作業番号を知っていれば読めるため）。
 // ============================================================
+//   指定の仕方（2026-10-01 追加）：
+//     ・氏名の一部（これまでどおり）
+//     ・顧客IDの下桁（'*5133' / '5133'）… リマインドの一覧は伏せ字で示すので、
+//       そのまま貼れば氏名をやりとりせずに調べられる
+//     ・「,」でつないで、まとめて複数（'5133,4337,2038'）
 function remainingDebugText(namePart) {
+  if (!namePart) return '調べる会員を args.name で渡してください（氏名の一部、または顧客IDの下桁「*5133」。「,」でまとめて渡せます）。';
+  var specs = String(namePart).split(',').map(function (x) { return String(x).trim(); })
+                              .filter(function (x) { return x.length > 0; });
+  if (specs.length <= 1) return _remainingOneText(specs[0] || '');
+  var out = [];
+  for (var si = 0; si < specs.length; si++) {
+    out.push('━━━━━━━━━━ ' + (si + 1) + '/' + specs.length + '：' + specs[si] + ' ━━━━━━━━━━');
+    out.push(_remainingOneText(specs[si]));
+    out.push('');
+  }
+  return out.join('\n');
+}
+
+function _remainingOneText(namePart) {
   var log = [];
   function say(s) { log.push(s); }
-  if (!namePart) return '調べる会員の名前（部分一致）を args.name で渡してください。';
+  if (!namePart) return '調べる会員を args.name で渡してください。';
 
   try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e) {}
 
   var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!map || map.getLastRow() < 2) return '会員名簿が読めません。';
+  // 顧客IDの下桁で引くか、氏名の一部で引くか。数字だけなら顧客IDとして扱う。
+  var rawId = String(namePart).replace(/^\*/, '').trim();
+  var byId = /^[0-9]{3,}$/.test(rawId);
   var target = _lbNormName(namePart);
-  var vals = map.getRange(2, 1, map.getLastRow() - 1, Math.max(MAP_COL.NOTE, map.getLastColumn())).getValues();
+  var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
   var hits = [];
   for (var i = 0; i < vals.length; i++) {
-    if (_lbNormName(vals[i][MAP_COL.NAME - 1]).indexOf(target) >= 0) hits.push(vals[i]);
+    var cidRow = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || '');
+    if (byId) { if (cidRow && cidRow.slice(-rawId.length) === rawId) hits.push(vals[i]); }
+    else if (_lbNormName(vals[i][MAP_COL.NAME - 1]).indexOf(target) >= 0) hits.push(vals[i]);
   }
-  if (!hits.length) return '「' + namePart + '」に一致する会員が名簿にいません。';
+  if (!hits.length) return '「' + namePart + '」に一致する会員が名簿にいません。'
+                         + (byId ? '（顧客IDの下' + rawId.length + '桁として探しました）' : '');
   if (hits.length > 1) say('※ ' + hits.length + '件一致しました。1件目で調べます。');
 
   var hit = hits[0];
