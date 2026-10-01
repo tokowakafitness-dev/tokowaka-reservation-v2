@@ -734,16 +734,31 @@ function _remainingOneText(namePart, showName) {
 //
 //   ★読み取りだけ。氏名は出さない（顧客IDの下4桁と、名簿にあるかどうかだけ）。
 // ============================================================
+//   args.date は 'YYYY-MM-DD'（その日）または 'YYYY-MM'（その月まるごと）。
+//   月で渡せるようにしたのは、検証用に入れた予約をまとめて洗い出して
+//   消す行を決めるため（2026-10-01）。行番号を必ず添える。
 function dayReservationsText(dateStr) {
-  var m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return '日付を YYYY-MM-DD の形で args.date に渡してください。';
-  var y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
-  var dayStart = new Date(y, mo, d, 0, 0, 0).getTime();
-  var dayEnd   = new Date(y, mo, d + 1, 0, 0, 0).getTime();
+  var raw = String(dateStr || '');
+  var m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  var mm = m ? null : raw.match(/^(\d{4})-(\d{2})$/);
+  if (!m && !mm) return '日付を YYYY-MM-DD（その日）か YYYY-MM（その月）の形で args.date に渡してください。';
+
+  var y, mo, d, dayStart, dayEnd, title;
+  if (m) {
+    y = Number(m[1]); mo = Number(m[2]) - 1; d = Number(m[3]);
+    dayStart = new Date(y, mo, d, 0, 0, 0).getTime();
+    dayEnd   = new Date(y, mo, d + 1, 0, 0, 0).getTime();
+    title = m[1] + '/' + m[2] + '/' + m[3] + ' の予約';
+  } else {
+    y = Number(mm[1]); mo = Number(mm[2]) - 1;
+    dayStart = new Date(y, mo, 1, 0, 0, 0).getTime();
+    dayEnd   = new Date(y, mo + 1, 1, 0, 0, 0).getTime();
+    title = mm[1] + '/' + mm[2] + ' の予約（1ヶ月ぶん）';
+  }
 
   var log = [];
   function say(s) { log.push(s); }
-  say('===== ' + m[1] + '/' + m[2] + '/' + m[3] + ' の予約（読み取りだけ）=====');
+  say('===== ' + title + '（読み取りだけ）=====');
 
   // 名簿：顧客IDごとの照合状態・契約状況を引けるようにする
   var members = {};
@@ -779,7 +794,8 @@ function dayReservationsText(dateStr) {
     byStatus[st] = (byStatus[st] || 0) + 1;
     rows.push({
       row: r + 2,
-      time: Utilities.formatDate(dt, SETTINGS.TIMEZONE, 'HH:mm'),
+      sortKey: t,
+      time: Utilities.formatDate(dt, SETTINGS.TIMEZONE, m ? 'HH:mm' : 'MM/dd HH:mm'),
       cid: String(v[2] || ''),
       hasName: String(v[1] || '') ? 'あり' : 'なし',
       trainer: String(v[5] || v[4] || ''),
@@ -788,8 +804,8 @@ function dayReservationsText(dateStr) {
     });
   }
 
-  rows.sort(function (a, b) { return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0); });
-  say('台帳にこの日の行 ' + rows.length + '件');
+  rows.sort(function (a, b) { return a.sortKey - b.sortKey; });
+  say('台帳にこの期間の行 ' + rows.length + '件');
   var stKeys = [];
   for (var k in byStatus) stKeys.push(k + ' ' + byStatus[k] + '件');
   say('状態の内訳：' + (stKeys.join(' / ') || '（なし）'));
@@ -820,6 +836,17 @@ function dayReservationsText(dateStr) {
   var rk = [];
   for (var k2 in reasons) rk.push(k2 + ' ' + reasons[k2] + '件');
   if (rk.length) say('  内訳：' + rk.join(' / '));
+  if (!m && rows.length) {
+    var nums = [];
+    for (var n = 0; n < rows.length; n++) nums.push(rows[n].row);
+    nums.sort(function (a, b) { return a - b; });
+    say('');
+    say('■ この期間の台帳の行番号（消す判断に使えます）');
+    say('   ' + nums.join(', '));
+    say('   ※ 行を消すと、その予約は消化から外れ、残数が戻ります。');
+    say('      下から上へ（行番号の大きい方から）消してください。上から消すと番号がずれます。');
+  }
+
   say('');
   say('※ 台帳に無い予約（カレンダーに手入力して氏名が一致しなかったもの）は、ここには出ません。');
   say('   その場合は健康診断の「未紐付けの予約」に出ます。');
