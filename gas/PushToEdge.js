@@ -855,3 +855,198 @@ function testEdgeConnectionText() {
 }
 
 function testEdgeConnection() { Logger.log(testEdgeConnectionText()); }
+
+// ============================================================
+// ① カレンダー → D1（2026-10-02・設計書 ops/design/01-calendar-to-d1.md 第4版）
+//
+//   なぜGASが読むか：
+//     当初はWorkerがサービスアカウントで直接カレンダーを読む設計だったが、
+//     組織ポリシー（iam.disableServiceAccountKeyCreation）が鍵の作成を禁じていた。
+//     ポリシーは緩めない。鍵を使わない方法（Workload Identity）もCloudflare Workers
+//     からは結局自前の鍵が要るので目的を達しない。
+//     そして①は移行期間だけの仕組みで、③（予約の正本をD1へ）が終われば向きが逆になり
+//     消える。捨てるものに認証の仕組みを作り込まない。
+//
+//   顧客の速度は落ちない：
+//     速度を決めるのは「顧客が読むときの経路」。D1に誰が書くかは待ち時間に影響しない。
+//     むしろ予約直後は edgeAfterWrite が即座に押し出すので、定期取得だけの設計より速い。
+//
+//   ★ここでは分類の条件を書かない。コード.js の isShiftEvent / _lbIsBusyTitle /
+//     _lbIsSessionTitle を呼ぶ。同じ条件を2か所に書くと必ず食い違う（2026-10-02に
+//     体験予約で実際に起きた）。Worker側（worker/src/lib/calclass.js）とは
+//     ハーネス（worker/test/calclass.test.js）が答えの一致を検査する。
+// ============================================================
+
+var LB_CALSYNC_RULE_VERSION = 1;   // 分類規則の版。規則を変えたら必ず上げる（世代が作り直される）
+
+// 予定を「D1に入れる形」に直す。タイトルは入れない（会員の氏名が入るため）。
+//   戻り値は { role, effect, reason } 。effect が ignore なら送らない。
+function _calsyncClassify(role, title) {
+  var t = String(title == null ? '' : title);
+
+  if (role === 'capacity_b1' || role === 'capacity_1f') {
+    // 部屋は「[消化]で始まるか」だけ。それ以外はすべて埋まり（fail-closed）。
+    if (t.indexOf('[消化]') === 0) return { effect: 'ignore', reason: 'consumed' };
+    return { effect: 'room_busy', reason: 'room' };
+  }
+
+  // トレーナー。評価順はシフトが最優先（コード.js の buildAvailableSlots と同じ）。
+  if (isShiftEvent(t)) return { effect: 'shift', reason: 'shift' };
+  if (!_lbIsBusyTitle(t)) return { effect: 'ignore', reason: 'other' };
+  // 埋まりの内訳（なぜ埋まっているか）。タイトルは残さないので、理由だけ持つ。
+  var reason = 'reserved';
+  if (t.indexOf('休憩') >= 0) reason = 'break';
+  else if (t.indexOf('ブロック') >= 0) reason = 'block';
+  return { effect: 'busy', reason: reason };
+}
+
+// 中身が前回と同じかを判定するための印。
+//   ★並び順で変わらないようにしてから作る。カレンダーAPIの返す順は保証されない。
+function _calsyncHash(rows) {
+  var keys = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    keys.push([r.calendarId, r.eventId, r.effect, r.reason, r.startAt, r.endAt, r.allDay].join('|'));
+  }
+  keys.sort();
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,
+                                       keys.join('\n'), Utilities.Charset.UTF_8);
+  var hex = '';
+  for (var d = 0; d < digest.length; d++) {
+    var b = (digest[d] + 256) % 256;
+    hex += (b < 16 ? '0' : '') + b.toString(16);
+  }
+  return hex;
+}
+
+// 取得するカレンダーの一覧（役割つき）。構成が変わったら世代を作り直すため、送って比べる。
+function _calsyncCalendars() {
+  var list = [{ calendarId: CALENDAR_IDS.CAPACITY_B1, role: 'capacity_b1' }];
+  if (CALENDAR_IDS.CAPACITY_1F) list.push({ calendarId: CALENDAR_IDS.CAPACITY_1F, role: 'capacity_1f' });
+  for (var i = 0; i < CALENDAR_IDS.TRAINERS.length; i++) {
+    var tr = CALENDAR_IDS.TRAINERS[i];
+    list.push({ calendarId: tr.email, role: 'trainer', trainerId: tr.id });
+  }
+  return list;
+}
+
+// カレンダー全量を読んで、D1へ押し出す形を作る（読み取りだけ・送信はしない）。
+//   送る前にこの関数だけを実行すれば、何を送ることになるかを確認できる。
+function buildCalSyncPayload(nowMs) {
+  var now = (nowMs != null) ? new Date(nowMs) : new Date();
+  var horizonEnd = _lbBookingHorizonEnd(now);
+  // 地平の始まりは当日0時（設計書 §2）。過去の予定は空き枠に影響しないが、
+  //   「当日の朝からの埋まり」を取りこぼさないために0時から取る。
+  var horizonStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+  var cals = _calsyncCalendars();
+  var events = [], invalid = [];
+
+  for (var c = 0; c < cals.length; c++) {
+    var cal = null;
+    try { cal = CalendarApp.getCalendarById(cals[c].calendarId); } catch (e) { cal = null; }
+    if (!cal) {
+      // ★1つでも読めなければ、その回は送らない（部分的な世代を作らない）。
+      //   読めないカレンダーの予定が「無い」ことになると、席が空いていると誤判断する。
+      return { ok: false, code: 'CALENDAR_UNREADABLE', calendarId: cals[c].calendarId };
+    }
+    var evs;
+    try { evs = cal.getEvents(horizonStart, horizonEnd); }
+    catch (e2) { return { ok: false, code: 'CALENDAR_FETCH_FAILED', detail: String(e2.message).slice(0, 120) }; }
+
+    for (var j = 0; j < evs.length; j++) {
+      var ev = evs[j];
+      var cls = _calsyncClassify(cals[c].role, ev.getTitle());
+      if (cls.effect === 'ignore') continue;          // 空き枠に影響しないものは持たない
+
+      var s = ev.getStartTime(), e3 = ev.getEndTime();
+      var sMs = s ? s.getTime() : null, eMs = e3 ? e3.getTime() : null;
+      var id = '';
+      try { id = String(ev.getId() || ''); } catch (eId) { id = ''; }
+
+      // 壊れた予定は送らずに「壊れていた」と伝える。黙って捨てると、日時変換の
+      //   不具合が「予定が無い」に化けて席が空いていることになる。
+      if (!id) { invalid.push({ calendarId: cals[c].calendarId, eventId: '', reason: 'NO_EVENT_ID' }); continue; }
+      if (sMs == null || eMs == null || !isFinite(sMs) || !isFinite(eMs)) {
+        invalid.push({ calendarId: cals[c].calendarId, eventId: id, reason: 'NOT_INTEGER_MS' }); continue;
+      }
+      if (eMs < sMs) { invalid.push({ calendarId: cals[c].calendarId, eventId: id, reason: 'REVERSED' }); continue; }
+      if (eMs === sMs) { invalid.push({ calendarId: cals[c].calendarId, eventId: id, reason: 'ZERO_WIDTH' }); continue; }
+
+      var allDay = 0;
+      try { allDay = ev.isAllDayEvent() ? 1 : 0; } catch (eA) { allDay = 0; }
+
+      events.push({
+        calendarId: cals[c].calendarId,
+        eventId: id,
+        role: cals[c].role,
+        trainerId: cals[c].trainerId || null,
+        effect: cls.effect,
+        reason: cls.reason,
+        startAt: sMs,
+        endAt: eMs,
+        allDay: allDay
+      });
+    }
+  }
+
+  return {
+    ok: true,
+    horizonStart: horizonStart.getTime(),
+    horizonEnd: horizonEnd.getTime(),
+    ruleVersion: LB_CALSYNC_RULE_VERSION,
+    flag1f: (typeof _lb1FBlockEnabled === 'function' && _lb1FBlockEnabled()) ? 'on' : 'off',
+    calendars: cals,
+    events: events,
+    contentHash: _calsyncHash(events),
+    invalid: invalid
+  };
+}
+
+// D1へ送る。1分ごとのトリガーと、予約の確定直後から呼ぶ。
+function pushCalSync() {
+  if (!_edgeEnabled()) return { ok: false, code: 'EDGE_OFF' };
+  var p = buildCalSyncPayload();
+  if (!p.ok) { Logger.log('calsync 中止: ' + p.code + ' ' + (p.calendarId || p.detail || '')); return p; }
+
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return { ok: false, code: 'EDGE_NOT_CONFIGURED' };
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/calsync', {
+    method: 'post', contentType: 'application/json',
+    headers: { 'X-Ingest-Secret': secret },
+    payload: JSON.stringify(p), muteHttpExceptions: true
+  });
+  var code = res.getResponseCode(), text = res.getContentText();
+  if (code !== 200) { Logger.log('calsync 失敗 HTTP ' + code + ': ' + text.slice(0, 200)); return { ok: false, code: 'HTTP_' + code }; }
+  var out = {};
+  try { out = JSON.parse(text); } catch (e) { out = {}; }
+  return { ok: true, result: out, sent: p.events.length, invalid: p.invalid.length };
+}
+
+// 何を送ることになるかを、送らずに確認する（GASエディタ用）。
+function calSyncPreview() {
+  var p = buildCalSyncPayload();
+  var out = [];
+  out.push('===== カレンダー → D1 に送る内容（送信しません）=====');
+  if (!p.ok) { out.push('⛔ 中止: ' + p.code + ' ' + (p.calendarId || p.detail || '')); Logger.log(out.join('\n')); return; }
+  out.push('地平: ' + Utilities.formatDate(new Date(p.horizonStart), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm')
+           + ' 〜 ' + Utilities.formatDate(new Date(p.horizonEnd), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm'));
+  out.push('規則の版: ' + p.ruleVersion + ' ／ 1Fフラグ: ' + p.flag1f);
+  out.push('カレンダー: ' + p.calendars.length + '件');
+  out.push('送る予定: ' + p.events.length + '件');
+  var byEffect = {}, byReason = {};
+  for (var i = 0; i < p.events.length; i++) {
+    byEffect[p.events[i].effect] = (byEffect[p.events[i].effect] || 0) + 1;
+    byReason[p.events[i].reason] = (byReason[p.events[i].reason] || 0) + 1;
+  }
+  var ke = []; for (var k in byEffect) ke.push(k + ' ' + byEffect[k] + '件');
+  var kr = []; for (var k2 in byReason) kr.push(k2 + ' ' + byReason[k2] + '件');
+  out.push('  効果の内訳: ' + ke.join(' / '));
+  out.push('  理由の内訳: ' + kr.join(' / '));
+  out.push('中身の印: ' + p.contentHash.slice(0, 16) + '…');
+  out.push('壊れていた予定: ' + p.invalid.length + '件'
+           + (p.invalid.length ? '（' + p.invalid.map(function (x) { return x.reason; }).join(',') + '）' : ''));
+  out.push('');
+  out.push('※ タイトルは送りません（会員の氏名が入るため）。時刻と分類だけです。');
+  Logger.log(out.join('\n'));
+}

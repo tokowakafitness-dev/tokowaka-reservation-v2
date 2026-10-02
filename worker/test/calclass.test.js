@@ -303,5 +303,68 @@ ok('⑦D1を触らない', !/env\.DB|\.prepare\(/.test(MINE));
 ok('⑦fetchを呼ばない', !/fetch\(/.test(MINE));
 ok('⑦日時の「今」に依存しない（Date.now を使わない）', !/Date\.now\(/.test(MINE));
 
+// ------------------------------------------------------------
+// ⑧ GASの押し出し（_calsyncClassify）と、Worker側の分類が一致すること
+//
+//   GASはカレンダーを読んで「分類済みの形」をD1へ送る。Workerはそれを受け取るだけ。
+//   つまり分類はGAS側で行われる。ここがWorker側の仕様とずれると、
+//   D1に入る内容が設計と違うものになり、誰も気づけない。
+//   同じタイトルで同じ effect になることを1件ずつ突き合わせる。
+// ------------------------------------------------------------
+{
+  const PUSH = readFileSync(join(GAS, 'PushToEdge.js'), 'utf8');
+  const mc = PUSH.match(/function _calsyncClassify\(role, title\) \{[\s\S]*?\n\}/);
+  ok('⑧GASに _calsyncClassify がある', !!mc);
+  if (mc) {
+    // 判定が依存する関数（isShiftEvent / _lbIsBusyTitle）は上で評価済み
+    vm.runInContext(mc[0], ctx, { filename: 'calsync.js' });
+    const gasCls = ctx._calsyncClassify;
+
+    // Worker側の effect に合わせて比べる
+    const ROLES = [
+      ['trainer', CAL_ROLE.TRAINER],
+      ['capacity_b1', CAL_ROLE.CAPACITY_B1],
+      ['capacity_1f', CAL_ROLE.CAPACITY_1F]
+    ];
+    for (const [gasRole, workerRole] of ROLES) {
+      for (const [title] of TITLES) {
+        const g = gasCls(gasRole, title);
+        const w = classifyEvent(workerRole, title);
+        eq('⑧' + gasRole + ' / ' + JSON.stringify(title) + ' の effect が一致', g.effect, w.kind);
+      }
+    }
+
+    // 埋まりの理由が正しく分かれること（D1にはタイトルを残さないので、ここだけが手がかり）
+    eq('⑧予約の理由', gasCls('trainer', '[RESERVED] x').reason, 'reserved');
+    eq('⑧実施済みの理由', gasCls('trainer', '✅ x').reason, 'reserved');
+    eq('⑧休憩の理由', gasCls('trainer', '休憩').reason, 'break');
+    eq('⑧ブロックの理由', gasCls('trainer', 'ブロック_私用').reason, 'block');
+    eq('⑧部屋の理由', gasCls('capacity_b1', '[RESERVED] x').reason, 'room');
+    eq('⑧消化の理由', gasCls('capacity_b1', '[消化] x').reason, 'consumed');
+
+    // GASが知らない役割を渡しても、部屋扱いにしない（トレーナーとして評価される）
+    //   ★Worker側は知らない役割で落ちる。GAS側は送る前の分類なので落とさず、
+    //     代わりに「役割の一覧はGASが作る（_calsyncCalendars）」ことで守る。
+    ok('⑧GASは役割の一覧を自分で作る（外から来ない）',
+       /function _calsyncCalendars\(\)/.test(PUSH));
+    ok('⑧役割はCALENDAR_IDSから組み立てる',
+       /role: 'capacity_b1'/.test(PUSH) && /role: 'trainer'/.test(PUSH));
+    // 設計書・Worker と同じ文字列を使っていること
+    for (const r of Object.values(CAL_ROLE)) {
+      ok('⑧GASが役割 ' + r + ' を使う', PUSH.indexOf("'" + r + "'") >= 0);
+    }
+  }
+
+  // タイトルを送らないこと（会員の氏名が入るため）
+  ok('⑧送る形にタイトルを入れない',
+     !/title:\s*(ev\.getTitle|t\b|title)/.test(PUSH.slice(PUSH.indexOf('events.push('))));
+  ok('⑧壊れた予定は送らずに理由を伝える',
+     /invalid\.push\(\{[\s\S]{0,120}reason: 'REVERSED'/.test(PUSH));
+  ok('⑧カレンダーが1つでも読めなければ送らない',
+     /CALENDAR_UNREADABLE/.test(PUSH));
+  ok('⑧分類の条件をGAS側で書き写していない（コード.jsの判定を呼ぶ）',
+     /isShiftEvent\(t\)/.test(PUSH) && /_lbIsBusyTitle\(t\)/.test(PUSH));
+}
+
 console.log('\nカレンダーの分類（GASとの一致） 検証: ' + pass + ' passed / ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
