@@ -3128,7 +3128,7 @@ function _lbCheckTrainerAvailable(trainer, start, end, excludeStart) {
     var t = evs[j].getTitle();
     if (isShiftEvent(t)) {
       shifts.push({ start: evs[j].getStartTime(), end: evs[j].getEndTime() });
-    } else if (t.indexOf('[RESERVED]') === 0 || t.indexOf('✅') === 0 || t.indexOf('休憩') >= 0 || t.indexOf('ブロック') >= 0) {   // 休憩・ブロックも埋まり扱い（空き枠表示と一致・#5）
+    } else if (_lbIsBusyTitle(t)) {   // 休憩・ブロックも埋まり扱い。判定は コード.js の1か所に寄せた（2026-10-02）
       if (excludeStart && evs[j].getStartTime().getTime() === excludeStart) continue;   // 変更/振替元(自分の旧予定)は除外（問題2）
       reserved.push({ start: evs[j].getStartTime(), end: evs[j].getEndTime() });
     }

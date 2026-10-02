@@ -220,6 +220,18 @@ function warmupCache() {
   Logger.log('=== ウォームアップ完了 ===');
 }
 
+// ── 「埋まり」として扱うタイトルか判定（2026-10-02）──
+//   予約・実施済みに加えて、休憩とブロックも席を塞ぐ。
+//   表示（buildAvailableSlots）と確定（checkTrainerAvailable / _lbCheckTrainerAvailable）で
+//   条件がずれると、画面に出ない枠が確定できたり、その逆が起きる。だから1か所で決める。
+function _lbIsBusyTitle(title) {
+  var t = String(title || '');
+  return t.indexOf('[RESERVED]') === 0
+      || t.indexOf('✅') === 0
+      || t.indexOf('休憩') >= 0
+      || t.indexOf('ブロック') >= 0;
+}
+
 // ── 「出勤可能」系タイトルか判定 ──
 function isShiftEvent(title) {
   var keywords = ['出勤可能', '出勤', 'シフト', 'available', 'AVAILABLE'];
@@ -300,7 +312,7 @@ function buildAvailableSlots(excludeStartMs) {
       var title = ev.getTitle();
       if (isShiftEvent(title)) {
         shifts.push({ start: ev.getStartTime(), end: ev.getEndTime() });
-      } else if ((title.indexOf('[RESERVED]') === 0 || title.indexOf('✅') === 0 || title.indexOf('休憩') >= 0 || title.indexOf('ブロック') >= 0) && _notExcluded(ev)) {
+      } else if (_lbIsBusyTitle(title) && _notExcluded(ev)) {
         reserved.push({ start: ev.getStartTime(), end: ev.getEndTime() });   // 予約・実施済み・休憩・ブロックは「埋まり」＝空きブロックから除外（吸着で休憩後から詰まる）。変更/振替元は除外
       }
     }
@@ -506,7 +518,13 @@ function makeReservation(params) {
         var t = evs[j].getTitle();
         if (isShiftEvent(t)) {
           shifts.push({ start: evs[j].getStartTime(), end: evs[j].getEndTime() });
-        } else if (t.indexOf('[RESERVED]') === 0 || t.indexOf('✅') === 0) {
+        } else if (_lbIsBusyTitle(t)) {
+          // ★休憩・ブロックも「埋まり」（2026-10-02）。
+          //   ここが [RESERVED]/✅ だけを見ていたため、トレーナーが自分のカレンダーに
+          //   作ったブロックや休憩に新規体験が入ってしまっていた。
+          //   空き枠の表示側（buildAvailableSlots）はブロックを除外しているのに、
+          //   確定側の判定がそれより緩く、表示と確定が食い違っていた。
+          //   判定は1か所（_lbIsBusyTitle）に寄せ、表示と確定でずれないようにする。
           reserved.push({ start: evs[j].getStartTime(), end: evs[j].getEndTime() });
         }
       }
