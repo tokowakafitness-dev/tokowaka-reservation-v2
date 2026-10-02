@@ -1179,6 +1179,7 @@ function calSyncPreview() {
 // ============================================================
 
 var LB_CALSYNC = {
+  EVERY_MINUTES: 5,            // 定期の間隔（分）。無料アカウントの実行枠に合わせる
   ON_PROP:       'LB_CALSYNC_ON',        // '0' のときだけ止まる（未設定は EDGE_PUSH_ON に従う）
   LAST_OK_PROP:  'LB_CALSYNC_LAST_OK',   // 最後に成功した時刻（ミリ秒）
   FAILS_PROP:    'LB_CALSYNC_FAILS',     // 連続して失敗した回数
@@ -1323,7 +1324,16 @@ function setupCalSyncTrigger() {
     // 重複登録を防ぐ。pushCalSync を直接登録してしまった場合も外す（二重に走らせない）。
     if (h === LB_CALSYNC.TICK_HANDLER || h === 'pushCalSync') { ScriptApp.deleteTrigger(all[i]); removed++; }
   }
-  ScriptApp.newTrigger(LB_CALSYNC.TICK_HANDLER).timeBased().everyMinutes(1).create();
+  // ★5分ごと（2026-10-02 変更）。1分ごとにすると無料アカウントの実行枠を超える。
+  //   1440回/日 × 3〜5秒 ＝ 1日72〜120分。無料の上限は90分/日で、しかも
+  //   edgeJobPoll も1分ごとに動いている。枠を使い切ると**リマインド・予約通知・
+  //   残数の押し出しが全部止まる**。顧客に届く通知が止まるのが最悪なので、
+  //   同期の粒度を落とす側を選ぶ。
+  //   粗くしても実害が小さいのは、予約・変更・取消の直後は一回限りトリガーで
+  //   即座に押し出すため。定期が拾うのは「カレンダーの直接編集」だけで、
+  //   そこは最大5分の遅れを許容できる（いまのキャッシュは11分なので改善になる）。
+  ScriptApp.newTrigger(LB_CALSYNC.TICK_HANDLER).timeBased()
+    .everyMinutes(LB_CALSYNC.EVERY_MINUTES).create();
   _calsyncSetProp(LB_CALSYNC.ON_PROP, '1');
   _calsyncSetProp(LB_CALSYNC.FAILS_PROP, '0');
   Logger.log('✅ カレンダー → D1 の同期を1分ごとに設定しました（' + LB_CALSYNC.TICK_HANDLER + '）'

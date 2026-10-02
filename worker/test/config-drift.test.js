@@ -66,5 +66,48 @@ ok('④/calsync の経路が登録されている', /url\.pathname === '\/calsyn
 ok('④/calsync は POST だけ受ける', /'\/calsync'[\s\S]{0,200}request\.method !== 'POST'/.test(INDEX));
 ok('④/calsync の実装を読み込んでいる', /from '\.\/routes\/calsync\.js'/.test(INDEX));
 
+// ---------- ⑤ 同期の間隔と、鮮度の判定が食い違わないこと ----------
+//
+//   2026-10-02：GASの定期同期を1分ごとで登録したが、TOKOWAKAのGASは無料アカウントで
+//   実行枠が1日90分しかない。1440回×数秒で枠を使い切り、**リマインド・予約通知・
+//   残数の押し出しが全部止まる**ところだった。5分ごとに緩めた。
+//
+//   そのとき鮮度（FRESH_MS）を2分のままにすると、更新直後の2分しか使えず
+//   残り3分はGASへ落ちる＝D1を作った意味がなくなる。
+//   **どちらか片方だけを変えると壊れる**ので、関係を機械で止める。
+{
+  const PUSH = readFileSync(join(ROOT, 'gas/PushToEdge.js'), 'utf8');
+  const READ = readFileSync(join(ROOT, 'worker/src/lib/calread.js'), 'utf8');
+
+  const everyMin = Number((PUSH.match(/EVERY_MINUTES:\s*(\d+)/) || [])[1]);
+  const freshExpr = (READ.match(/export const FRESH_MS = ([^;]+);/) || [])[1];
+  const freshMs = freshExpr ? Function('return (' + freshExpr + ')')() : NaN;
+
+  ok('⑤同期の間隔が設定から読める', Number.isFinite(everyMin));
+  ok('⑤鮮度が設定から読める', Number.isFinite(freshMs));
+
+  // 鮮度は「間隔＋実行の揺れ」より長くないと、D1がほぼ常に使えない
+  ok('⑤鮮度は同期の間隔より長い（' + everyMin + '分 < ' + (freshMs / 60000) + '分）',
+     freshMs > everyMin * 60000);
+  // ただし長すぎると古い空き枠を見せることになる。いまのキャッシュ（11分）より短く保つ
+  ok('⑤鮮度は11分より短い（いまのキャッシュより新しい）', freshMs < 11 * 60 * 1000);
+  // 間隔の2倍までを目安にする（1回失敗しても次で拾える）
+  ok('⑤鮮度は同期の間隔の2倍以内（失敗1回は吸収し、2回続けば落とす）',
+     freshMs <= everyMin * 60000 * 2);
+
+  // 無料アカウントの実行枠に収まるか（1日90分）
+  const runsPerDay = (24 * 60) / everyMin;
+  const secPerRun = 5;                                  // 本番実測：カレンダー5本・344件で約4秒。余裕を見て5秒
+  const minPerDay = runsPerDay * secPerRun / 60;
+  ok('⑤1日の実行時間が無料枠90分に収まる（約' + Math.round(minPerDay) + '分）', minPerDay < 90);
+  // 他の処理（edgeJobPoll など）と合わせても余裕があること。半分以下を目安にする
+  ok('⑤他の定期処理と合わせても余裕がある（枠の半分以下）', minPerDay < 45);
+
+  // 1分ごとに戻していないこと（戻すと枠を超える）
+  ok('⑤1分ごとに戻していない', !/everyMinutes\(1\)\.create\(\);[\s\S]{0,80}TICK_HANDLER/.test(PUSH));
+  ok('⑤間隔は設定から読む（直書きしない）',
+     /everyMinutes\(LB_CALSYNC\.EVERY_MINUTES\)/.test(PUSH));
+}
+
 console.log('\n設定の食い違い 検証: ' + pass + ' passed / ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
