@@ -7,6 +7,12 @@
 //
 // 使い方：GASエディタで auditForEdgeMigration() を1回実行し、ログを共有する。
 
+// ★この版の印。EdgeAudit.js の中身を変えたら必ず書き換える。
+//   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
+//   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
+//   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
+var LB_AUDIT_BUILD = '2026-10-02a 版の印/契約の二重';
+
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
 //   ★氏名の列（3列目）までしか読まずに照合状態（8列目）を参照していたため、
@@ -24,6 +30,7 @@ function auditForEdgeMigrationText() {
   function head(s) { say(''); say('■ ' + s); }
 
   say('===== 残数をWorkerへ移す前の棚卸し =====');
+  say('版: ' + LB_AUDIT_BUILD);
   say('（読み取りだけ。何も書き換えません）');
 
   // ---------------------------------------------------------
@@ -133,6 +140,17 @@ function auditForEdgeMigrationText() {
     }
     say('  いちばん古い契約開始日 … ' + (oldest ? Utilities.formatDate(new Date(oldest), 'Asia/Tokyo', 'yyyy/MM/dd') : '不明'));
   } else say('  （読めませんでした）');
+
+  // ---------------------------------------------------------
+  // 3-2. 契約行が二重に効いていないか（会員ごとに「いまの実害」を見る）
+  //   上の一覧は「終了日が空の行」を挙げるだけで、いま枠が二重になっているかは分からない。
+  //   入力の不備（将来ずれる）と、いま実際にずれていることを分けて出す（2026-10-02）。
+  // ---------------------------------------------------------
+  head('3-2. 契約行が二重に効いていないか');
+  try {
+    var _ovLines = String(contractOverlapImpactText(true)).split('\n');
+    for (var _ovi = 0; _ovi < _ovLines.length; _ovi++) say('  ' + _ovLines[_ovi]);
+  } catch (eOv) { say('  （検査に失敗: ' + (eOv && eOv.message) + '）'); }
 
   // ---------------------------------------------------------
   // 4. 予約の履歴がどこまで遡れるか（写しは過去730日で切っている）
@@ -336,7 +354,8 @@ function auditForEdgeMigration() { Logger.log(auditForEdgeMigrationText()); }
 //       そのまま貼れば氏名をやりとりせずに調べられる
 //     ・「,」でつないで、まとめて複数（'5133,4337,2038'）
 function remainingDebugText(namePart) {
-  if (!namePart) return '調べる会員を args.name で渡してください（氏名の一部、または顧客IDの下桁「*5133」。「,」でまとめて渡せます）。';
+  if (!namePart) return '版: ' + LB_AUDIT_BUILD
+    + '\n調べる会員を args.name で渡してください（氏名の一部、または顧客IDの下桁「*5133」。「,」でまとめて渡せます）。';
   var specs = String(namePart).split(',').map(function (x) { return String(x).trim(); })
                               .filter(function (x) { return x.length > 0; });
   if (specs.length <= 1) return _remainingOneText(specs[0] || '');
@@ -383,11 +402,12 @@ function carryRangeImpactText() {
   var rate = LINE_BOOKING.CARRYOVER_RATE;
 
   var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
-  if (!map || map.getLastRow() < 2) return '会員名簿が読めません。';
+  if (!map || map.getLastRow() < 2) return '版: ' + LB_AUDIT_BUILD + '\n会員名簿が読めません。';
   var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
 
   say('===== 繰越が「記録のない月」から生まれていないかの点検 '
       + Utilities.formatDate(now, SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '（読み取りだけ）=====');
+  say('版: ' + LB_AUDIT_BUILD);
   say('※氏名は出しません。会員は顧客IDの下4桁で示します。');
   say('');
 
@@ -632,12 +652,12 @@ function _contractOddities(rows) {
 function _remainingOneText(namePart, showName) {
   var log = [];
   function say(s) { log.push(s); }
-  if (!namePart) return '調べる会員を args.name で渡してください。';
+  if (!namePart) return '版: ' + LB_AUDIT_BUILD + '\n調べる会員を args.name で渡してください。';
 
   try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e) {}
 
   var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
-  if (!map || map.getLastRow() < 2) return '会員名簿が読めません。';
+  if (!map || map.getLastRow() < 2) return '版: ' + LB_AUDIT_BUILD + '\n会員名簿が読めません。';
   // 顧客IDの下桁で引くか、氏名の一部で引くか。数字だけなら顧客IDとして扱う。
   var rawId = String(namePart).replace(/^\*/, '').trim();
   var byId = /^[0-9]{3,}$/.test(rawId);
@@ -651,7 +671,8 @@ function _remainingOneText(namePart, showName) {
     if (byId) { if (cidRow && cidRow.slice(-rawId.length) === rawId) hits.push(vals[i]); }
     else if (_lbNormName(vals[i][MAP_COL.NAME - 1]).indexOf(target) >= 0) hits.push(vals[i]);
   }
-  if (!hits.length) return '「' + namePart + '」に一致する会員が名簿にいません。'
+  if (!hits.length) return '版: ' + LB_AUDIT_BUILD
+                         + '\n「' + namePart + '」に一致する会員が名簿にいません。'
                          + (byId ? '（顧客IDの下' + rawId.length + '桁として探しました）' : '');
   if (hits.length > 1) say('※ ' + hits.length + '件一致しました。1件目で調べます。');
 
@@ -662,6 +683,7 @@ function _remainingOneText(namePart, showName) {
   var who = showName ? (name + '（会員#' + customerId.slice(-4) + '）') : ('会員#' + customerId.slice(-4));
 
   say('===== 残数の内訳：' + who + ' =====');
+  say('版: ' + LB_AUDIT_BUILD);
   say('照合状態=' + String(hit[MAP_COL.AUTH_STATE - 1] || '(空)')
       + ' / 契約状況=' + String(hit[MAP_COL.CONTRACT_STAT - 1] || '(空)'));
 
@@ -765,7 +787,8 @@ function dayReservationsText(dateStr) {
   var raw = String(dateStr || '');
   var m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   var mm = m ? null : raw.match(/^(\d{4})-(\d{2})$/);
-  if (!m && !mm) return '日付を YYYY-MM-DD（その日）か YYYY-MM（その月）の形で args.date に渡してください。';
+  if (!m && !mm) return '版: ' + LB_AUDIT_BUILD
+    + '\n日付を YYYY-MM-DD（その日）か YYYY-MM（その月）の形で args.date に渡してください。';
 
   var y, mo, d, dayStart, dayEnd, title;
   if (m) {
@@ -783,6 +806,7 @@ function dayReservationsText(dateStr) {
   var log = [];
   function say(s) { log.push(s); }
   say('===== ' + title + '（読み取りだけ）=====');
+  say('版: ' + LB_AUDIT_BUILD);
 
   // 名簿：顧客IDごとの照合状態・契約状況を引けるようにする
   var members = {};
@@ -876,3 +900,232 @@ function dayReservationsText(dateStr) {
   say('   その場合は健康診断の「未紐付けの予約」に出ます。');
   return log.join('\n');
 }
+
+// ============================================================
+// 契約行が二重に効いていないかの検査（2026-10-02）
+//
+//   きっかけ：棚卸しの「3. 契約行の中身」で、終了日が空の行14件のうち8件が
+//   「同じ方に別の契約行がある」と出た。古い契約行の終了日が空のままだと、
+//   新しい契約が始まっても古い行が生き続ける。2つの月額契約が同時に有効になれば
+//   頻度が合計されて枠が二重に足され、契約の回数を超えて予約できてしまう。
+//
+//   ★ただし「同時に有効な行が2つある」ことと「いま枠が二重になっている」ことは別。
+//     いまの割当器は、ある月に当てはまる月額行のうち**開始がいちばん新しい1行だけ**を
+//     採用する（Allocate.js の _lbMonthlyForMonth）。だから行が重なっていても
+//     ふつうは枠は二重にならない。入力の不備（放置すれば将来ずれる）と、
+//     いま実際にずれていることを必ず分けて出す。
+//
+//   判定（誤検知を出さないための組み立て）：
+//     ① その月に同時に有効な月額行を並べる（範囲の判定は _lbMonthlyCoverage と同じ）
+//     ② 2行以上ある会員だけを対象にする（1行なら継続契約として正常）
+//     ③ 実際に効くのは開始がいちばん新しい行。枠の上限は「その頻度 ＋ 繰越で入りうる上限」
+//     ④ 繰越で入りうる上限は**前月に効いていた行**の繰越上限で測る。
+//        頻度の少ない契約へ切り替えた月は前月の上限ぶんが繰り越されてくるので、
+//        当月の上限で測ると正当な繰越を二重と誤報する（例：頻度12→2の切替月）。
+//        棚卸しの繰越seedがある月は、そのseedも上限に含める。
+//     ⑤ いまの月額枠（_lbSplitRemaining の avail）が上限を超えていたら「二重の疑い」。
+//        超えていなければ「二重にはなっていない」と**明言する**。
+//        ここを曖昧に「疑い」と出すと、正常な契約更新まで疑わしく見えて点検が信用を失う。
+//
+//   ★読み取りだけ。氏名・電話・LINE IDは出さない。会員は顧客IDの下4桁で示す。
+// ============================================================
+
+// ある月に同時に有効な月額行を並べる。先頭＝実際に効く行（開始がいちばん新しい）。
+//   monthlyRows は _lbRowsToEntitlements が作る { frequency, carryRate, carryCap, serviceFrom, serviceTo }。
+function _auditActiveMonthly(monthlyRows, monthKey) {
+  var tOrd = _lbMonthOrd(monthKey), out = [];
+  for (var i = 0; i < (monthlyRows || []).length; i++) {
+    var mr = monthlyRows[i];
+    var fO = (mr.serviceFrom != null) ? _lbMonthOrd(_lbMonthKeyJst(mr.serviceFrom)) : -1e9;
+    var tO = (mr.serviceTo != null) ? _lbMonthOrd(_lbMonthKeyJst(mr.serviceTo)) : 1e9;
+    if (tOrd < fO || tOrd > tO) continue;
+    out.push({
+      freq: Number(mr.frequency) || 0, carryCap: mr.carryCap, carryRate: mr.carryRate,
+      fromOrd: fO, toOrd: tO,
+      from: (mr.serviceFrom != null) ? _lbMonthKeyJst(mr.serviceFrom) : '(開始なし)',
+      to: (mr.serviceTo != null) ? _lbMonthKeyJst(mr.serviceTo) : '(終了日が空)'
+    });
+  }
+  // 割当器と同じ採用順（開始が新しい方が先）。
+  out.sort(function (a, b) { return b.fromOrd - a.fromOrd; });
+  return out;
+}
+
+// 会員1人・1ヶ月ぶんの判定（純粋・シートを読まない）。
+//   rows   … _lbContractRowsAll が返す契約行
+//   avail  … _lbSplitRemaining の avail（月額の枠＝頻度＋繰越）。不明なら null
+//   openingCarry … その月の棚卸し繰越seed（無ければ null）
+function _contractDoubleCharge(rows, monthKey, avail, openingCarry) {
+  var r = { monthKey: monthKey, count: 0, rows: [], sumFreq: 0, appliedFreq: 0,
+            cap: 0, prevCap: 0, seed: null, allowCarry: 0, maxLegit: 0,
+            avail: null, suspect: false, tie: false };
+  var rate = (typeof LINE_BOOKING !== 'undefined' && LINE_BOOKING.CARRYOVER_RATE != null)
+             ? LINE_BOOKING.CARRYOVER_RATE : (1 / 3);
+  var ent = _lbRowsToEntitlements(rows || [], rate);
+  var mrows = ent.entitlements.monthlyRows;
+  var active = _auditActiveMonthly(mrows, monthKey);
+  r.count = active.length;
+  r.rows = active;
+  if (!active.length) return r;
+
+  for (var i = 0; i < active.length; i++) r.sumFreq += active[i].freq;
+  var top = active[0];
+  r.appliedFreq = top.freq;
+  r.cap = _lbResolveCarryCap(top.freq, top.carryCap, top.carryRate);   // この月から翌月へ回せる上限
+
+  // 繰越で入りうる上限は「前月に効いていた行」の上限（当月の上限ではない）。
+  var prev = _auditActiveMonthly(mrows, _lbOrdToKey(_lbMonthOrd(monthKey) - 1));
+  r.prevCap = prev.length ? _lbResolveCarryCap(prev[0].freq, prev[0].carryCap, prev[0].carryRate) : 0;
+
+  var seed = Number(openingCarry);
+  r.seed = (openingCarry != null && isFinite(seed)) ? seed : null;
+  r.allowCarry = Math.max(r.prevCap, (r.seed != null && r.seed > 0) ? r.seed : 0);
+  r.maxLegit = r.appliedFreq + r.allowCarry;
+
+  // 開始が同じ月で内容が割れている＝どちらで数えるか決まらない（割当器は REVIEW_REQUIRED にする）
+  for (var j = 1; j < active.length; j++) {
+    if (active[j].fromOrd !== top.fromOrd) continue;
+    if (active[j].freq !== top.freq ||
+        _lbResolveCarryCap(active[j].freq, active[j].carryCap, active[j].carryRate) !== r.cap) { r.tie = true; break; }
+  }
+
+  if (avail != null && isFinite(Number(avail))) {
+    r.avail = Number(avail);
+    // 2行以上あるときだけ「二重」と言う。1行なら重なっていないので判定しない。
+    if (active.length >= 2 && r.avail > r.maxLegit) r.suspect = true;
+  }
+  return r;
+}
+
+// embedded=true のときは棚卸しの一節として埋め込む（見出しと版の重複を出さない）
+function contractOverlapImpactText(embedded) {
+  var out = [];
+  function say(x) { out.push(x); }
+  var now = new Date(), nowMs = now.getTime();
+  var nowKey = _lbMonthKeyJst(nowMs);
+  // 翌月の1日・正午。25日以降は翌月の予約が開くので、翌月も見ないと手遅れになる。
+  var nextMs = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0).getTime();
+  var nextKey = _lbMonthKeyJst(nextMs);
+
+  if (!embedded) {
+    say('===== 契約行が二重に効いていないかの検査 '
+        + Utilities.formatDate(now, SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '（読み取りだけ）=====');
+    say('版: ' + LB_AUDIT_BUILD);
+    say('※氏名は出しません。会員は顧客IDの下4桁で示します。');
+  }
+  say('対象の月: ' + nowKey + '（当月）／ ' + nextKey + '（翌月）');
+  say('見方: 同時に有効な月額行が2行以上あっても、実際に効くのは開始がいちばん新しい1行です。');
+  say('      いまの月額枠がその行の「頻度＋繰越で入りうる上限」を超えていたら、枠が二重に足されています。');
+
+  var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!map || map.getLastRow() < 2) { say('⛔ 会員名簿が読めません。'); return out.join('\n'); }
+  var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
+
+  // 予約台帳は1回だけ読み、会員ごとの消化は同じ値から導く。
+  //   会員ごとに読み直すと、人数ぶん台帳を読んで6分を使い切る（棚卸しに相乗りするため）。
+  var rvals = null, rvalsOk = false;
+  try {
+    var rsh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+    if (rsh) {
+      var lastR = rsh.getLastRow();
+      rvals = (lastR < 2) ? [] : rsh.getRange(2, 1, lastR - 1, Math.max(12, rsh.getLastColumn())).getValues();
+      rvalsOk = true;
+    }
+  } catch (eR) { rvalsOk = false; }
+  if (!rvalsOk) say('⚠️ 予約台帳が読めないため、枠（avail）は出せません。行の重なりだけを出します。');
+
+  var checked = 0, overlapped = 0, suspects = 0, ties = 0, skipped = [], blocks = [];
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;   // 照合前・却下は無効な登録
+    var nm = String(vals[i][MAP_COL.NAME - 1] || ''); if (!nm) continue;
+    var cid = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || ''); if (!cid) continue;
+    var who = '*' + cid.slice(-4);
+    checked++;
+
+    var rows = null;
+    try { rows = _lbContractRowsAll(nm, _lbPhoneByCustomerId(cid), false, cid); }
+    catch (e1) { skipped.push(who + '(契約が読めない)'); continue; }
+    if (!rows || !rows.length) continue;
+
+    // まず枠を見ずに「同時に有効な月額行が2行以上あるか」だけで絞る（台帳から作る会員を最小にする）
+    var pre = {};
+    pre[nowKey] = _contractDoubleCharge(rows, nowKey, null, null);
+    pre[nextKey] = _contractDoubleCharge(rows, nextKey, null, null);
+    if (pre[nowKey].count < 2 && pre[nextKey].count < 2) continue;
+    overlapped++;
+
+    var sessions = null;
+    if (rvalsOk) {
+      try { sessions = _lbResvValsToSessions(rvals, cid, _lbParseResvDate); } catch (e2) { sessions = null; }
+    }
+    var opening = null;
+    try { opening = _lbMemberOpeningWithFloor(cid); } catch (e3) { opening = null; }
+
+    var blk = ['・' + who], keys = [nowKey, nextKey];
+    var memberSuspect = false, memberTie = false;
+    for (var k = 0; k < keys.length; k++) {
+      var mk = keys[k];
+      if (pre[mk].count < 2) {
+        blk.push('   ' + mk + '：同時に有効な月額行は ' + pre[mk].count + '行（重なっていません）');
+        continue;
+      }
+      var avail = null, note = '';
+      if (sessions === null) note = '（台帳が読めないため不明）';
+      else {
+        try {
+          var sp = _lbSplitRemaining(rows, cid, (mk === nowKey ? nowMs : nextMs), sessions);
+          if (sp && sp.avail != null) avail = Number(sp.avail);
+          if (sp && sp._ok === false) note = '（割当器が「要確認」と判定）';
+        } catch (e4) { note = '（枠を計算できない: ' + e4.message + '）'; }
+      }
+      var seed = (opening && opening.carry && opening.carry[mk] != null) ? Number(opening.carry[mk]) : null;
+      var r = _contractDoubleCharge(rows, mk, avail, seed);
+      var parts = [];
+      for (var z = 0; z < r.rows.length; z++) parts.push('頻度' + r.rows[z].freq + '：' + r.rows[z].from + '〜' + r.rows[z].to);
+      blk.push('   ' + mk + '：同時に有効な月額行 ' + r.count + '行（' + parts.join(' ／ ') + '）');
+      blk.push('     頻度の合計=' + r.sumFreq
+               + ' ／ 実際に効く頻度=' + r.appliedFreq + '（開始がいちばん新しい行）'
+               + ' ／ 繰越で入りうる上限=' + r.allowCarry + (r.seed != null ? '（棚卸しのseed=' + r.seed + '）' : '')
+               + ' ／ いまの月額枠=' + (r.avail == null ? '不明' : r.avail) + note);
+      if (r.tie) {
+        blk.push('     ⚠ 開始が同じ月の月額行で頻度・繰越上限が割れています。どちらで数えるかが決まりません。');
+        memberTie = true;
+      }
+      if (r.suspect) {
+        blk.push('     🚨 二重の疑い：枠 ' + r.avail + ' が上限 ' + r.maxLegit
+                 + '（頻度' + r.appliedFreq + '＋繰越' + r.allowCarry + '）を超えています。頻度の合計=' + r.sumFreq + '。');
+        memberSuspect = true;
+      } else if (r.avail == null) {
+        blk.push('     → 枠が読めないため、二重かどうかは判定できません。');
+      } else {
+        blk.push('     → 二重にはなっていません（枠 ' + r.avail + ' ≦ 上限 ' + r.maxLegit + '。新しい行だけが効いています）。');
+      }
+    }
+    if (memberSuspect) suspects++;
+    if (memberTie) ties++;
+    blocks.push(blk.join('\n'));
+  }
+
+  say('');
+  say('── 調べた会員 ' + checked + '名 ／ 同時に有効な月額行が2行以上ある会員 ' + overlapped + '名'
+      + ' ／ 枠が二重の疑い ' + suspects + '名 ／ 開始が同じで内容が割れている ' + ties + '名');
+  say('');
+  if (!blocks.length) {
+    say('（同時に有効な月額行が2行以上ある会員はいません）');
+  } else {
+    for (var L = 0; L < blocks.length; L++) say(blocks[L]);
+    say('');
+    if (!suspects) {
+      say('※ いま枠が二重になっている会員はいません（古い行は効いていません）。');
+      say('   ただし古い行の終了日が空のままだと、次の契約更新で二重になります。');
+      say('   古い行に終了日を入れてください（行番号は「3. 契約行の中身」の一覧に出ています）。');
+    } else {
+      say('★ 二重の疑いがある会員は、古い契約行の終了日を入れてから残数を確認してください。');
+    }
+  }
+  if (skipped.length) { say(''); say('■ 調べられなかった会員: ' + skipped.join(' / ')); }
+  if (!embedded) { say(''); say('===== ここまで。何も書き換えていません =====');}
+  return out.join('\n');
+}
+
+function contractOverlapImpact() { Logger.log(contractOverlapImpactText()); }
