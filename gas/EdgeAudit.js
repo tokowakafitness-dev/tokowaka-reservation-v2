@@ -369,6 +369,81 @@ function remainingDebugText(namePart) {
 }
 
 // ============================================================
+// LINEの用途別の送信通数を読む（2026-10-02）
+//
+//   なぜ前月を見るか：当月は予約がまだ入りきっていないため、月の見込みが立たない。
+//   実績が揃った前月を見るのが正しい（オーナー指示）。
+//   総数の正本はLINEのquota API。用途別は既存データからの再構成＝概算。
+//   ★読み取りだけ。氏名は出さない（会員単位の情報を出さないので構造的に出ない）。
+// ============================================================
+function lineUsageText(ym) {
+  var month = String(ym || '').match(/^\d{4}-\d{2}$/) ? String(ym)
+            : Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy-MM');
+  var out = [];
+  function say(x) { out.push(x); }
+  say('===== LINEの送信通数 ' + month + '（読み取りだけ）=====');
+  say('版: ' + LB_AUDIT_BUILD);
+
+  // 当月の総数はAPIから（上限・使用・残）。前月の総数はAPIでは取れないので内訳の合計で見る。
+  var nowMonth = Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy-MM');
+  try {
+    var q = _lbQuotaFetch();
+    if (q && q.ok) {
+      say('');
+      say('■ いまの枠（当月 ' + nowMonth + '・LINEが返す実数）');
+      if (q.limited) {
+        say('  上限 ' + q.limit + '通 ／ 送信済み ' + q.used + '通 ／ 残り ' + q.left + '通（' + q.pct + '%）');
+      } else {
+        say('  上限なしのプランです（送信済み ' + q.used + '通）');
+      }
+    } else {
+      say('');
+      say('■ いまの枠：読めませんでした（' + ((q && q.error) || '不明') + '）');
+    }
+  } catch (eQ) { say(''); say('■ いまの枠：読めませんでした（' + eQ.message + '）'); }
+
+  var u = null;
+  try { u = estimateLineUsage(month); } catch (eU) { return out.join('\n') + '\n⛔ 内訳を読めません: ' + eU.message; }
+
+  say('');
+  say('■ ' + month + ' の用途別（既存データからの再構成＝概算）');
+  var keys = [];
+  for (var k in u.byPurpose) keys.push(k);
+  keys.sort(function (a, b) { return u.byPurpose[b] - u.byPurpose[a]; });
+  if (!keys.length) say('  （記録がありません）');
+  for (var i = 0; i < keys.length; i++) {
+    say('  ' + _lbUsageLabel(keys[i]) + ' … ' + u.byPurpose[keys[i]] + '通');
+  }
+  say('  ───────────────');
+  say('  合計 ' + u.total + '通');
+  if (u.notes && u.notes.length) {
+    say('');
+    say('■ 読むときの注意');
+    for (var n = 0; n < u.notes.length; n++) say('  ・' + u.notes[n]);
+  }
+  say('');
+  say('※ 用途別は概算です。総数の正本はLINEが返す実数（上の「いまの枠」）です。');
+  say('   予約を促すリマインドは nudge_log の実測（sent の行だけ）を数えています。');
+  say('');
+  say('===== ここまで。何も書き換えていません =====');
+  return out.join('\n');
+}
+
+// purpose タグを日本語にする（オーナーが読むため）
+var _LB_USAGE_LABEL = {
+  booking_customer: '予約確定（顧客へ）', booking_trainer: '予約確定（担当へ）',
+  cancel_customer: 'キャンセル（顧客へ）', cancel_trainer: 'キャンセル（担当へ）',
+  change_customer: '時間変更（顧客へ）', change_trainer: '時間変更（担当へ）',
+  reminder_customer: '前日リマインド（顧客へ）', reminder_trainer: '前日リマインド（担当へ）',
+  autobook_customer: '固定枠の自動予約（顧客へ）', autobook_trainer: '固定枠の自動予約（担当へ）',
+  shift_trainer: 'シフト依頼（担当へ）', pace_trainer: '消化ペース報告（担当へ）',
+  batch_customer: '一括操作（顧客へ）', batch_trainer: '一括操作（担当へ）',
+  nudge_transfer: '予約を促す：振替の案内', nudge_month_open: '予約を促す：翌月分の解放',
+  nudge_visit_a: '予約を促す：来店翌日A', nudge_visit_b: '予約を促す：来店翌日B'
+};
+function _lbUsageLabel(k) { return (_LB_USAGE_LABEL[k] || k) + '（' + k + '）'; }
+
+// ============================================================
 // 繰越が「記録のない月」から生まれていないかを点検する（2026-10-01）
 //
 //   きっかけ：ある会員の10月の残が6回だった。内訳を追うと、5〜8月の枠が

@@ -80,6 +80,11 @@ function _ejRun(op, args) {
     case 'remaining':
       // 繰越が「記録のない月」から生まれていないかの点検（氏名は出さない）
       if (args && args.carryImpact) return _ejScrub(carryRangeImpactText());
+      // 契約行が二重に効いていないか＋会員画面にマイナスが出ていないか
+      if (args && args.overlap) return _ejScrub(contractOverlapImpactText());
+      // LINEの用途別の送信通数（args.usage='2026-09'）。当月は予約が入りきっていないので
+      //   見込みを立てるには実績が揃った前月を見る（2026-10-02 オーナー指示）。
+      if (args && args.usage) return _ejScrub(lineUsageText(String(args.usage)));
       if (args && args.date) return _ejScrub(dayReservationsText(args.date));
       return _ejScrub(remainingDebugText((args && args.name) || ''));
     // リマインドの中身を、送らずに一覧する（読み取りだけ）。有効化の前に私が確認するため。
