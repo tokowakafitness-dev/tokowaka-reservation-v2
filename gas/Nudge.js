@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-01d 一覧は送る文面そのものを出す';
+var LB_NUDGE_BUILD = '2026-10-02a 残り日数は月末が近いときだけ';
 
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
@@ -80,7 +80,15 @@ var LB_NUDGE_LABEL = {
 // ------------------------------------------------------------
 var _LB_NUDGE_MSG = {
   // 残数の一文（{facts} に入る）。★繰越の行は月末が近いときだけ足す。
+  // 残り日数は「月末が近いとき」だけ添える（下の LB_NUDGE_DAYS_SHOW_DAYS）。
+  //   月初に「残り31日」と言うと、急ぐ理由にならず逆に先延ばしを促す（2026-10-02 オーナー判断）。
   facts_remain: {
+    ja:        '今月はあと {remain}回 ご利用いただけます。',
+    en:        'You have {remain} session(s) left this month.',
+    zh:        '本月还可使用 {remain}次。',
+    'zh-Hant': '本月還可使用 {remain}次。'
+  },
+  facts_remain_days: {
     ja:        '今月はあと {remain}回 ご利用いただけます。（残り{days}日）',
     en:        'You have {remain} session(s) left this month ({days} days remaining).',
     zh:        '本月还可使用 {remain}次（剩余{days}天）。',
@@ -587,6 +595,9 @@ function _lbNudgeCarryCap(m, quota) {
 //     31日も残っているのに繰越の話をすると、むしろ「来月に回してよい」と読める。
 //     月末が近づいて初めて、繰り越せる回数が意味を持つ。
 var LB_NUDGE_CARRY_SHOW_DAYS = 10;   // 残りこの日数以内なら繰越の行を出す
+// 残りこの日数以内なら「（残り○日）」を添える。繰越の行と同じ日数にしてあるので、
+//   文面の切り替わりが月に1回で済む（2026-10-02 オーナー判断）。
+var LB_NUDGE_DAYS_SHOW_DAYS = 10;
 
 function _lbNudgeFactsText(lang, f, carriedIn) {
   var lines = [];
@@ -594,7 +605,9 @@ function _lbNudgeFactsText(lang, f, carriedIn) {
   //   得た感じがあるので月の前半の行動につながる。後半に言っても古い話になる。
   //   （2026-09-30 オーナー判断：「その月にその方へ初めて送るとき、かつ15日まで」）
   if (carriedIn > 0) lines.push(_lbNudgeMsg(lang, 'facts_carried_in', { carried: carriedIn }));
-  lines.push(_lbNudgeMsg(lang, 'facts_remain', { remain: f.remain, days: f.days }));
+  // 残り日数は月末が近いときだけ。月初の「残り31日」は急ぐ理由にならない。
+  var remainKey = (f.days <= LB_NUDGE_DAYS_SHOW_DAYS) ? 'facts_remain_days' : 'facts_remain';
+  lines.push(_lbNudgeMsg(lang, remainKey, { remain: f.remain, days: f.days }));
   // 繰越の行は月末が近いときだけ（月初に言っても「来月に回してよい」と読める）
   if (f.carry > 0 && f.days <= LB_NUDGE_CARRY_SHOW_DAYS) {
     lines.push(_lbNudgeMsg(lang, 'facts_carry', { carry: f.carry }));
