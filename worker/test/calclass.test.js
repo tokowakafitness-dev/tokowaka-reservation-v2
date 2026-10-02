@@ -154,7 +154,10 @@ eq('③B1: 「出勤」でも部屋としては埋まり扱い（役割が違う
    classifyEvent(CAL_ROLE.CAPACITY_B1, '出勤可能'), { kind: EV_KIND.ROOM_BUSY, session: false });
 eq('③B1: 本文中の[消化]では席が空かない（先頭一致）',
    classifyEvent(CAL_ROLE.CAPACITY_B1, 'メモ [消化] の件'), { kind: EV_KIND.ROOM_BUSY, session: false });
-eq('③1Fも部屋と同じ読み方',
+// ★1Fは「部屋」ではない（2026-10-02 修正）。Worker側の classifyEvent は役割だけで
+//   決める素朴な分類なので、1Fの担当判定はGAS側（_calsyncClassify）が行う。
+//   ここでは「[消化] は席が空く」という共通部分だけを確かめる。
+eq('③1Fも [消化] は席が空く',
    classifyEvent(CAL_ROLE.CAPACITY_1F, '[消化] x'), { kind: EV_KIND.IGNORE, session: false });
 
 // ------------------------------------------------------------
@@ -321,10 +324,12 @@ ok('⑦日時の「今」に依存しない（Date.now を使わない）', !/Da
     const gasCls = ctx._calsyncClassify;
 
     // Worker側の effect に合わせて比べる
+    // ★1Fは除く。GAS側は1Fについて「担当トレーナーを読む」判定を足しているので、
+    //   役割だけで決める Worker 側の素朴な分類とは一致しない（一致してはいけない）。
+    //   1Fの扱いは下の⑪で別に固定する。
     const ROLES = [
       ['trainer', CAL_ROLE.TRAINER],
-      ['capacity_b1', CAL_ROLE.CAPACITY_B1],
-      ['capacity_1f', CAL_ROLE.CAPACITY_1F]
+      ['capacity_b1', CAL_ROLE.CAPACITY_B1]
     ];
     for (const [gasRole, workerRole] of ROLES) {
       for (const [title] of TITLES) {
@@ -341,6 +346,26 @@ ok('⑦日時の「今」に依存しない（Date.now を使わない）', !/Da
     eq('⑧ブロックの理由', gasCls('trainer', 'ブロック_私用').reason, 'block');
     eq('⑧部屋の理由', gasCls('capacity_b1', '[RESERVED] x').reason, 'room');
     eq('⑧消化の理由', gasCls('capacity_b1', '[消化] x').reason, 'consumed');
+
+    // ⑪ 1Fは「担当トレーナーだけを塞ぐ」（2026-10-02 修正）
+    //
+    //   1Fはオンライン・体験用で、B1の席は使わない。塞ぐのは担当トレーナーだけ。
+    //   これを room_busy で一括りにすると、1Fのオンライン1件でB1の枠が全部消える。
+    //   GAS側の _lb1FTrainerBusy と同じ読み方になっていることを固定する。
+    eq('⑪1Fの[消化]は席が空く', gasCls('capacity_1f', '[消化] x').effect, 'ignore');
+    ok('⑪1Fは担当を読む判定を通る', /_calsync1FClassify\(t\)/.test(PUSH));
+    ok('⑪担当が分かればそのトレーナーを塞ぐ（部屋ではない）',
+       /return \{ effect: 'busy', reason: 'online', trainerId: cls1f\.trainerId \}/.test(PUSH));
+    ok('⑪担当が分からなければ全員を塞ぐ（fail-closed）',
+       /return \{ effect: 'room_busy', reason: 'online_unknown' \}/.test(PUSH));
+    ok('⑪予約として読めない1Fの予定は数えない',
+       /if \(!cls1f\.parsed\) return \{ effect: 'ignore', reason: 'other' \}/.test(PUSH));
+    ok('⑪判定はGASの _lbClassifyBooking を使う（条件を書き写さない）',
+       /_lbClassifyBooking\(String\(title\), CALENDAR_IDS\.CAPACITY_1F, copts\)/.test(PUSH));
+    ok('⑪読めないときは担当不明の予約として扱う（無視しない）',
+       /return \{ parsed: true, trainerId: '' \};/.test(PUSH));
+    ok('⑪予定ごとの担当をカレンダーの担当より優先する',
+       /trainerId: cls\.trainerId \|\| cals\[c\]\.trainerId \|\| null/.test(PUSH));
 
     // GASが知らない役割を渡しても、部屋扱いにしない（トレーナーとして評価される）
     //   ★Worker側は知らない役割で落ちる。GAS側は送る前の分類なので落とさず、

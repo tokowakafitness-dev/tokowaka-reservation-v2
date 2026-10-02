@@ -884,10 +884,25 @@ var LB_CALSYNC_RULE_VERSION = 1;   // 分類規則の版。規則を変えたら
 function _calsyncClassify(role, title) {
   var t = String(title == null ? '' : title);
 
-  if (role === 'capacity_b1' || role === 'capacity_1f') {
-    // 部屋は「[消化]で始まるか」だけ。それ以外はすべて埋まり（fail-closed）。
+  if (role === 'capacity_b1') {
+    // B1は席そのもの。「[消化]で始まるか」だけで決まり、それ以外はすべて埋まり（fail-closed）。
     if (t.indexOf('[消化]') === 0) return { effect: 'ignore', reason: 'consumed' };
     return { effect: 'room_busy', reason: 'room' };
+  }
+
+  if (role === 'capacity_1f') {
+    // ★1Fは「部屋が埋まる」ではない（2026-10-02 修正）。
+    //   1Fはオンライン・体験用で、B1の席は使わない。塞ぐのは**担当トレーナーだけ**。
+    //   GAS側の _lb1FTrainerBusy と同じ読み方にする：
+    //     ・予約として読めない予定は無視（1Fの非予約は容量に数えない）
+    //     ・担当が分かればそのトレーナーを塞ぐ
+    //     ・担当が分からなければ全員を塞ぐ（fail-closed。二重予約を作らない）
+    //   ここを room_busy で一括りにすると、1Fのオンライン1件でB1の枠が全部消える。
+    if (t.indexOf('[消化]') === 0) return { effect: 'ignore', reason: 'consumed' };
+    var cls1f = _calsync1FClassify(t);
+    if (!cls1f.parsed) return { effect: 'ignore', reason: 'other' };
+    if (cls1f.trainerId) return { effect: 'busy', reason: 'online', trainerId: cls1f.trainerId };
+    return { effect: 'room_busy', reason: 'online_unknown' };   // 担当不明＝全員を塞ぐ
   }
 
   // トレーナー。評価順はシフトが最優先（コード.js の buildAvailableSlots と同じ）。
@@ -898,6 +913,25 @@ function _calsyncClassify(role, title) {
   if (t.indexOf('休憩') >= 0) reason = 'break';
   else if (t.indexOf('ブロック') >= 0) reason = 'block';
   return { effect: 'busy', reason: reason };
+}
+
+// 1Fの予定から担当トレーナーを読む。GAS側の _lb1FTrainerBusy と同じ判定を使う
+//   （_lbClassifyBooking。条件を書き写さない）。
+function _calsync1FClassify(title) {
+  var surToId = {};
+  for (var i = 0; i < CALENDAR_IDS.TRAINERS.length; i++) {
+    var tr = CALENDAR_IDS.TRAINERS[i];
+    surToId[_lbNormTok(tr.name.split(' ')[0])] = tr.id;
+  }
+  var copts = { b1Id: CALENDAR_IDS.CAPACITY_B1, oneFId: CALENDAR_IDS.CAPACITY_1F,
+                surToId: surToId, isMember: function () { return false; } };
+  try {
+    var cls = _lbClassifyBooking(String(title), CALENDAR_IDS.CAPACITY_1F, copts);
+    return { parsed: !!cls.parsed, trainerId: cls.trainerId || '' };
+  } catch (e) {
+    // 読めなければ「担当不明の予約」として扱う＝全員を塞ぐ（fail-closed）
+    return { parsed: true, trainerId: '' };
+  }
 }
 
 // 中身が前回と同じかを判定するための印。
@@ -999,7 +1033,8 @@ function buildCalSyncPayload(nowMs) {
         calendarId: cals[c].calendarId,
         eventId: uid,
         role: cals[c].role,
-        trainerId: cals[c].trainerId || null,
+        // 1Fは予定ごとに担当が変わる。カレンダーの担当（トレーナーcal）より優先する。
+        trainerId: cls.trainerId || cals[c].trainerId || null,
         effect: cls.effect,
         reason: cls.reason,
         startAt: sMs,
