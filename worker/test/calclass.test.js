@@ -366,5 +366,26 @@ ok('⑦日時の「今」に依存しない（Date.now を使わない）', !/Da
      /isShiftEvent\(t\)/.test(PUSH) && /_lbIsBusyTitle\(t\)/.test(PUSH));
 }
 
+// ------------------------------------------------------------
+// ⑨ 1Fは「空き枠に入れる設定のとき」だけ送る（2026-10-02）
+//
+//   1Fはオンライン・体験用で、B1の席は使わない。LB_1F_TRAINER_BLOCK が off の
+//   あいだは空き枠の計算に入れない仕様。それなのにD1へ送ってしまうと、
+//   読み取り側が「room_busy なら塞がる」と素朴に書いた瞬間、off のはずの
+//   1Fの予定でB1の枠が消える。送らなければ、その誤りが起きようがない。
+// ------------------------------------------------------------
+{
+  const PUSH2 = readFileSync(join(GAS, 'PushToEdge.js'), 'utf8');
+  ok('⑨1Fはフラグを見てから送る', /if \(CALENDAR_IDS\.CAPACITY_1F && _calsyncUse1F\(\)\)/.test(PUSH2));
+  ok('⑨フラグの判定を書き写さない（コード.jsの判定を呼ぶ）',
+     /_lb1FBlockEnabled\(\)/.test(PUSH2));
+  ok('⑨B1は常に送る（席の正本なので外さない）',
+     /\{ calendarId: CALENDAR_IDS\.CAPACITY_B1, role: 'capacity_b1' \}/.test(PUSH2));
+  // フラグの値も世代の条件に入っている（on/off を切り替えたら作り直される）
+  ok('⑨フラグの値を送る', /flag1f: _calsyncUse1F\(\) \? 'on' : 'off'/.test(PUSH2));
+  // 読み終えた時刻を添える（遅れて届いた押し出しで鮮度を偽らない）
+  ok('⑨読み終えた時刻を添える', /pushedAt: now\.getTime\(\)/.test(PUSH2));
+}
+
 console.log('\nカレンダーの分類（GASとの一致） 検証: ' + pass + ' passed / ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -259,3 +259,90 @@ CREATE TABLE IF NOT EXISTS jobs (
   error        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, enqueued_at);
+
+-- ============================================================
+-- ① カレンダー → D1（2026-10-02・設計 ops/design/01-calendar-to-d1.md 第4版）
+--
+--   GASが1分ごとにカレンダー全量を読み、分類済みの形で /calsync へ押し出す。
+--   Workerはカレンダーを読まない（組織ポリシーがサービスアカウントの鍵を禁じており、
+--   ①は③が終われば消える仕組みなので、捨てるものに認証を作り込まない）。
+--
+--   ★タイトルは持たない。予約の予定には会員の氏名が入る。分類は押し出す前に済ませ、
+--     結果（effect / reason）だけを残す（設計 §4）。
+--   ★「2つの時刻」を混ぜない（設計 §4）。
+--       calendar_active.checked_at … 正常に確認できた時刻。中身が変わらなくても毎回更新
+--       calendar_snapshot.built_at … その世代を作り終えた時刻。世代を作った時だけ
+--     鮮度は checked_at で見る。built_at で見ると、2分変更が無いだけでD1が使えなくなる。
+-- ============================================================
+
+-- 世代（4カレンダーまとめて1つ）
+--   ★generation は AUTOINCREMENT で採る。MAX+1 だと押し出しが重なったときに衝突する。
+CREATE TABLE IF NOT EXISTS calendar_snapshot (
+  generation      INTEGER PRIMARY KEY AUTOINCREMENT,
+  status          TEXT NOT NULL,          -- building / ready / rejected
+  horizon_start   INTEGER NOT NULL,       -- 取得した範囲（半開区間 [start, end)）
+  horizon_end     INTEGER NOT NULL,
+  calendars       TEXT NOT NULL,          -- idと役割の対応（JSON・calendar_id順に正規化して入れる）
+                                          -- [{"calendar_id":"...","role":"trainer","trainer_id":"B"}, ...]
+                                          -- ★idの配列ではなく対応を持つ。短絡判定（§5）と
+                                          --   可否判定（§7）の両方で「いまの構成と同じか」を比べるため
+  rule_version    INTEGER NOT NULL,       -- 分類規則の版（読み取り側が今のコードと一致するか見る）
+  flag_1f         TEXT NOT NULL,          -- 取得時の LB_1F_TRAINER_BLOCK（on / off）
+  content_hash    TEXT NOT NULL,          -- GASが作る中身の印（SHA-256・16進小文字）
+  reject_reasons  TEXT,                   -- 公開を止めた理由（JSON配列）。★氏名・タイトルは入れない
+                                          --   設計 §6「落ちた世代も残す」を意味のあるものにするために置く
+  warnings        TEXT,                   -- 公開はしたが知らせること（JSON配列・設計 §6 の警告）
+  built_at        INTEGER NOT NULL,       -- この世代を作り終えた時刻
+  created_at      INTEGER NOT NULL
+);
+-- 「公開中以外の ready を新しい順に残す」削除判定（§8）と、直前の ready 世代を引くため
+CREATE INDEX IF NOT EXISTS idx_calsnap_status ON calendar_snapshot(status, generation);
+-- rejected を24時間で、放置された building を期限で掃除するため（§8）
+CREATE INDEX IF NOT EXISTS idx_calsnap_created ON calendar_snapshot(status, created_at);
+
+-- 公開中の世代（1行だけ）
+--   ここを差し替えることだけが「公開」。読み取りは必ずこの行から始める（§7）。
+CREATE TABLE IF NOT EXISTS calendar_active (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  generation  INTEGER,
+  checked_at  INTEGER
+);
+-- 1行を先に置く。無いと最初の公開が「条件付き更新」にできない。
+INSERT OR IGNORE INTO calendar_active (id, generation, checked_at) VALUES (1, NULL, NULL);
+
+-- 予定（分類の結果だけ。タイトルは持たない）
+CREATE TABLE IF NOT EXISTS calendar_events (
+  generation   INTEGER NOT NULL,
+  calendar_id  TEXT NOT NULL,
+  event_id     TEXT NOT NULL,
+  role         TEXT NOT NULL,          -- trainer / capacity_b1 / capacity_1f（calclass.js の CAL_ROLE）
+  trainer_id   TEXT,                   -- role=trainer のときだけ入る
+  effect       TEXT NOT NULL,          -- shift / busy / room_busy / ignore（calclass.js の EV_KIND）
+  reason       TEXT NOT NULL,          -- shift / reserved / break / block / consumed / room / other
+  start_at     INTEGER NOT NULL,       -- epoch ms
+  end_at       INTEGER NOT NULL,
+  all_day      INTEGER NOT NULL,
+  PRIMARY KEY (generation, calendar_id, event_id)
+);
+-- トレーナー別に時間順で引く（空き枠の計算・出勤の有無の検査）
+CREATE INDEX IF NOT EXISTS idx_calev_trainer ON calendar_events(generation, trainer_id, start_at);
+-- 効果別に時間順で引く（shiftだけ／busyだけ／部屋の埋まりだけ）
+CREATE INDEX IF NOT EXISTS idx_calev_effect  ON calendar_events(generation, effect, start_at);
+
+-- GASの答えとD1の答えの突き合わせ（設計 §12）
+--   ★氏名・タイトルは残さない。時間帯とトレーナーと世代だけ。
+CREATE TABLE IF NOT EXISTS compare_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  at          INTEGER NOT NULL,
+  generation  INTEGER,
+  trainer_id  TEXT,
+  kind        TEXT,                    -- slots など
+  gas_count   INTEGER,
+  d1_count    INTEGER,
+  diff        TEXT,                    -- 食い違った時間帯だけ
+  matched     INTEGER
+);
+-- 世代ごとの一致率を見るため
+CREATE INDEX IF NOT EXISTS idx_cmplog_gen ON compare_log(generation, at);
+-- 「連続7日間一致」を数えるため（①の完了条件）
+CREATE INDEX IF NOT EXISTS idx_cmplog_at  ON compare_log(at);

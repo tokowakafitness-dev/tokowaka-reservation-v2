@@ -13,6 +13,7 @@ import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
 import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
+import { handleCalSync } from './routes/calsync.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
@@ -93,6 +94,14 @@ export default {
     if (url.pathname === '/ingest') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
       return handleIngest(request, env);
+    }
+
+    // ① カレンダー → D1。GASが分類済みの形で押し出す（2026-10-02）。
+    //   お客様のブラウザからは呼ばせないので、CORSも許さない（Originを返さない）。
+    //   Workerはカレンダーを読まない。ここは受け取って検査して公開するだけ。
+    if (url.pathname === '/calsync') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return handleCalSync(request, env);
     }
 
     // 照合専用の入口。GASの計算結果と突き合わせるためだけに使う。

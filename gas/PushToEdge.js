@@ -922,12 +922,25 @@ function _calsyncHash(rows) {
 // 取得するカレンダーの一覧（役割つき）。構成が変わったら世代を作り直すため、送って比べる。
 function _calsyncCalendars() {
   var list = [{ calendarId: CALENDAR_IDS.CAPACITY_B1, role: 'capacity_b1' }];
-  if (CALENDAR_IDS.CAPACITY_1F) list.push({ calendarId: CALENDAR_IDS.CAPACITY_1F, role: 'capacity_1f' });
+  // ★1Fは LB_1F_TRAINER_BLOCK が on のときだけ送る（2026-10-02）。
+  //   1Fはオンライン・体験用で、B1の席は使わない。フラグが off のあいだは
+  //   空き枠の計算に入れない仕様（コード.js の buildAvailableSlots と同じ）。
+  //   なのに送ってしまうと、読み取り側が「room_busy なら塞がる」と素朴に書いた瞬間、
+  //   off のはずの1Fの予定でB1の枠が消える。送らなければその誤りが起きようがない。
+  //   フラグを on にすると flag_1f が変わるので、世代は自動で作り直される。
+  if (CALENDAR_IDS.CAPACITY_1F && _calsyncUse1F()) {
+    list.push({ calendarId: CALENDAR_IDS.CAPACITY_1F, role: 'capacity_1f' });
+  }
   for (var i = 0; i < CALENDAR_IDS.TRAINERS.length; i++) {
     var tr = CALENDAR_IDS.TRAINERS[i];
     list.push({ calendarId: tr.email, role: 'trainer', trainerId: tr.id });
   }
   return list;
+}
+
+// 1Fを空き枠の計算に入れるか。コード.js の判定をそのまま使う（条件を書き写さない）。
+function _calsyncUse1F() {
+  return (typeof _lb1FBlockEnabled === 'function') && _lb1FBlockEnabled();
 }
 
 // カレンダー全量を読んで、D1へ押し出す形を作る（読み取りだけ・送信はしない）。
@@ -995,7 +1008,10 @@ function buildCalSyncPayload(nowMs) {
     horizonStart: horizonStart.getTime(),
     horizonEnd: horizonEnd.getTime(),
     ruleVersion: LB_CALSYNC_RULE_VERSION,
-    flag1f: (typeof _lb1FBlockEnabled === 'function' && _lb1FBlockEnabled()) ? 'on' : 'off',
+    flag1f: _calsyncUse1F() ? 'on' : 'off',
+    // 読み終えた時刻。遅れて届いた押し出しで鮮度を偽らないための印。
+    //   3分前に読んだ内容がいま届くと、確認時刻が「いま」になって古い内容が新鮮に見える。
+    pushedAt: now.getTime(),
     calendars: cals,
     events: events,
     contentHash: _calsyncHash(events),
