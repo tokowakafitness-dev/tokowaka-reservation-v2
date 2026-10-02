@@ -21,7 +21,7 @@
 //       calendar_snapshot.built_at … その世代を作り終えた時刻。世代を作った時だけ
 //     鮮度は checked_at で見る。ここを取り違えると、2分変更がないだけでD1が使えなくなる。
 
-import { classifyEvent, overlaps, findInvalidIntervals, CAL_ROLE, EV_KIND } from '../lib/calclass.js';
+import { allowedEffectsFor, trainerVariesPerEvent, classifyEvent, overlaps, findInvalidIntervals, CAL_ROLE, EV_KIND } from '../lib/calclass.js';
 
 // ---- 上限と期限 -------------------------------------------------------------
 const MAX_EVENTS_TOTAL = 20000;          // 1回の押し出しで受ける予定の総数（記憶と書き込みの保険）
@@ -74,9 +74,12 @@ const PROBE_TITLES = ['出勤可能', 'シフト', '[RESERVED] x', '✅ x', '休
                       '[消化] x', 'なんでもない予定', ''];
 
 export function allowedEffects(role) {
-  const s = new Set();
-  for (const t of PROBE_TITLES) s.add(classifyEvent(role, t).kind);   // 知らない役割はここで落ちる
-  return s;
+  // ★代表タイトルを classifyEvent に通して導く方式はやめた（2026-10-02）。
+  //   1Fは送り手（GAS）が担当を読んで busy / room_busy を使い分けるが、
+  //   classifyEvent はタイトルだけで決めるので busy を返さない。
+  //   その結果、正しい押し出しを毎回 EFFECT_ROLE_MISMATCH で拒否し、
+  //   D1が永久に公開されない状態になっていた。役割ごとの一覧を直接持つ。
+  return new Set(allowedEffectsFor(role));   // 知らない役割はここで落ちる
 }
 
 // ---- カレンダー構成の正規形 --------------------------------------------------
@@ -183,7 +186,14 @@ export function inspect(p, cals, now, prevCount) {
     if (!decl) { add('UNDECLARED_CALENDAR', at); continue; }        // 一覧に無いカレンダーの予定
     if ((e.role == null ? '' : String(e.role)) !== decl.role) { add('ROLE_CONFLICT', at); continue; }
     const tid = (e.trainerId == null || e.trainerId === '') ? null : String(e.trainerId);
-    if (tid !== decl.trainer_id) { add('TRAINER_ID_CONFLICT', at); continue; }
+    // ★1Fは予定ごとに担当が変わる（オンラインの担当がタイトルに書いてある）。
+    //   カレンダーの宣言（trainer_id=null）と突き合わせると必ず食い違い、
+    //   正しい押し出しを毎回拒否してしまう。1Fだけは宣言と比べない。
+    //   代わりに「busy なら担当が要る／room_busy なら担当を持たない」を見る。
+    if (trainerVariesPerEvent(decl.role)) {
+      if (eff === EV_KIND.BUSY && !tid) { add('TRAINER_ID_MISSING', at); continue; }
+      if (eff === EV_KIND.ROOM_BUSY && tid) { add('TRAINER_ID_UNEXPECTED', at); continue; }
+    } else if (tid !== decl.trainer_id) { add('TRAINER_ID_CONFLICT', at); continue; }
 
     const bad = badIv.get(i);
     if (bad) { add('BAD_INTERVAL', Object.assign({ reason: bad }, at)); continue; }

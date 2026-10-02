@@ -20,6 +20,7 @@ import vm from 'node:vm';
 import {
   isShiftTitle, isBusyTitle, isSessionTitle, isConsumedTitle,
   classifyEvent, subtractIntervals, overlaps, findInvalidIntervals,
+  allowedEffectsFor, trainerVariesPerEvent,
   CAL_ROLE, EV_KIND
 } from '../src/lib/calclass.js';
 
@@ -449,6 +450,52 @@ ok('⑦日時の「今」に依存しない（Date.now を使わない）', !/Da
   ok('⑩同じ予定の別の回は別の識別子', mkUid(weekly, t1) !== mkUid(weekly, t2));
   ok('⑩同じ予定の同じ回は同じ識別子', mkUid(weekly, t1) === mkUid(weekly, t1));
   ok('⑩別の予定は別の識別子', mkUid('xyz@google.com', t1) !== mkUid(weekly, t1));
+}
+
+// ------------------------------------------------------------
+// ⑫ 役割ごとにありうる effect（2026-10-02・D1が永久に止まる経路だった）
+//
+//   1Fは送り手（GAS）が担当を読んで busy / room_busy を使い分ける。
+//   受け手の検査がこれを「代表タイトルを classifyEvent に通して導く」方式にしていたため、
+//   1Fの busy が「ありえない」と判定され、**正しい押し出しを毎回拒否**していた。
+//   本番は1Fが on なので、気づかなければD1は一度も公開されないまま
+//   「鮮度切れでGASに落ちる」状態が続いた（顧客被害は出ないが、移行が永久に進まない）。
+// ------------------------------------------------------------
+{
+  const eff = (r) => allowedEffectsFor(r);
+  ok('⑫トレーナーは shift / busy / ignore',
+     eff(CAL_ROLE.TRAINER).includes(EV_KIND.SHIFT) && eff(CAL_ROLE.TRAINER).includes(EV_KIND.BUSY));
+  ok('⑫トレーナーに room_busy はない', !eff(CAL_ROLE.TRAINER).includes(EV_KIND.ROOM_BUSY));
+  ok('⑫B1は room_busy / ignore', eff(CAL_ROLE.CAPACITY_B1).includes(EV_KIND.ROOM_BUSY));
+  ok('⑫B1に busy はない（部屋に担当の概念がない）', !eff(CAL_ROLE.CAPACITY_B1).includes(EV_KIND.BUSY));
+  ok('⑫★1Fは busy もありうる（担当が読めたとき）', eff(CAL_ROLE.CAPACITY_1F).includes(EV_KIND.BUSY));
+  ok('⑫1Fは room_busy もありうる（担当が読めなかったとき）',
+     eff(CAL_ROLE.CAPACITY_1F).includes(EV_KIND.ROOM_BUSY));
+  let threw = false;
+  try { eff('room'); } catch (e) { threw = /CALCLASS_UNKNOWN_ROLE/.test(e.message); }
+  ok('⑫知らない役割では落ちる', threw);
+
+  // 予定ごとに担当が変わるのは1Fだけ
+  ok('⑫1Fは予定ごとに担当が変わる', trainerVariesPerEvent(CAL_ROLE.CAPACITY_1F));
+  ok('⑫トレーナーは予定ごとに変わらない', !trainerVariesPerEvent(CAL_ROLE.TRAINER));
+  ok('⑫B1は予定ごとに変わらない', !trainerVariesPerEvent(CAL_ROLE.CAPACITY_B1));
+
+  // 受け手の検査が、この一覧を使っていること（代表タイトルから導く方式に戻らない）
+  const SYNC = readFileSync(join(HERE, '../src/routes/calsync.js'), 'utf8');
+  ok('⑫検査は役割ごとの一覧を使う', /return new Set\(allowedEffectsFor\(role\)\)/.test(SYNC));
+  ok('⑫代表タイトルから導く方式に戻っていない',
+     !/for \(const t of PROBE_TITLES\) s\.add\(classifyEvent/.test(SYNC));
+  ok('⑫1Fの担当は宣言と突き合わせない', /if \(trainerVariesPerEvent\(decl\.role\)\)/.test(SYNC));
+  ok('⑫1Fの busy には担当が要る', /add\('TRAINER_ID_MISSING'/.test(SYNC));
+  ok('⑫1Fの room_busy に担当があってはいけない', /add\('TRAINER_ID_UNEXPECTED'/.test(SYNC));
+
+  // GASが送る形と、受け手が許す形が噛み合っていること
+  const PUSH4 = readFileSync(join(GAS, 'PushToEdge.js'), 'utf8');
+  ok('⑫GASは1Fの担当つき busy を送る',
+     /return \{ effect: 'busy', reason: 'online', trainerId: cls1f\.trainerId \}/.test(PUSH4));
+  ok('⑫その effect を受け手が許している', eff(CAL_ROLE.CAPACITY_1F).includes('busy'));
+  ok('⑫GASは担当不明なら room_busy（担当なし）を送る',
+     /return \{ effect: 'room_busy', reason: 'online_unknown' \}/.test(PUSH4));
 }
 
 console.log('\nカレンダーの分類（GASとの一致） 検証: ' + pass + ' passed / ' + fail + ' failed');

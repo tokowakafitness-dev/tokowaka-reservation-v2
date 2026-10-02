@@ -80,6 +80,23 @@ export const EV_KIND = {
   IGNORE: 'ignore'          // 空き枠の計算に影響しない
 };
 
+// その役割でありうる effect の一覧。
+//   ★classifyEvent は「タイトルから決まる1つ」を返すが、1Fは送り手（GAS）が
+//     担当を読んで busy / room_busy を使い分ける。受け手の検査でここを取り違えると、
+//     正しい押し出しを毎回拒否してD1が永久に公開されなくなる（2026-10-02に実際に起きかけた）。
+export function allowedEffectsFor(role) {
+  if (role === CAL_ROLE.TRAINER) return [EV_KIND.SHIFT, EV_KIND.BUSY, EV_KIND.IGNORE];
+  if (role === CAL_ROLE.CAPACITY_B1) return [EV_KIND.ROOM_BUSY, EV_KIND.IGNORE];
+  if (role === CAL_ROLE.CAPACITY_1F) return [EV_KIND.BUSY, EV_KIND.ROOM_BUSY, EV_KIND.IGNORE];
+  throw new Error('CALCLASS_UNKNOWN_ROLE: ' + String(role));
+}
+
+// その役割で、予定ごとに担当トレーナーが変わりうるか。
+//   trainer … カレンダーの持ち主で決まる（予定ごとには変わらない）
+//   capacity_1f … **予定ごとに変わる**（オンラインの担当がタイトルに書いてある）
+//   capacity_b1 … 担当という概念がない
+export function trainerVariesPerEvent(role) { return role === CAL_ROLE.CAPACITY_1F; }
+
 // 1件の予定を分類する。
 //   返すのは { kind, session } の形。
 //     kind    … 空き枠の計算に使う区分
@@ -95,10 +112,22 @@ export function classifyEvent(role, title) {
     throw new Error('CALCLASS_UNKNOWN_ROLE: ' + String(role));
   }
 
-  if (role === CAL_ROLE.CAPACITY_B1 || role === CAL_ROLE.CAPACITY_1F) {
-    // 部屋は「[消化] で始まるかどうか」だけで決まる。それ以外はすべて埋まり。
+  if (role === CAL_ROLE.CAPACITY_B1) {
+    // B1は席そのもの。「[消化] で始まるかどうか」だけで決まり、それ以外はすべて埋まり。
     //   fail-closed：種別が読めなくても席は塞ぐ（空いていると誤判断して二重予約を作らない）。
     if (isConsumedTitle(t)) return { kind: EV_KIND.IGNORE, session: false };
+    return { kind: EV_KIND.ROOM_BUSY, session: false };
+  }
+
+  if (role === CAL_ROLE.CAPACITY_1F) {
+    // ★1Fは「部屋」ではない（2026-10-02）。オンライン・体験用で、B1の席は使わない。
+    //   塞ぐのは担当トレーナーだけ。担当が読めなければ全員（fail-closed）。
+    //   ここでタイトルから担当を読むことはしない（担当姓→IDの対応表が要るため、
+    //   GAS側の _calsyncClassify が判定して trainerId を付けて送る）。
+    //   この関数は「1Fでは busy と room_busy と ignore がありうる」ことだけを示す。
+    if (isConsumedTitle(t)) return { kind: EV_KIND.IGNORE, session: false };
+    //   タイトルだけでは担当が分からないので、ここでは最も安全な room_busy を返す。
+    //   実際の値は送り手（GAS）が決める。受け手の検査は allowedEffects1F を使う。
     return { kind: EV_KIND.ROOM_BUSY, session: false };
   }
 

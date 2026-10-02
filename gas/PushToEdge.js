@@ -677,6 +677,13 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     if (!EDGE_AFTER_WRITE[String(action || '')]) return;
     if (!res || res.success !== true) return;     // 失敗した書き込みでは何も変わっていない
 
+    // ★カレンダーが変わった操作なら、空き枠の元データ（D1のcalsync）も作り直す。
+    //   ここで直接 pushCalSync を呼ばない（カレンダー5本を読むのでお客様を数秒待たせる）。
+    //   1秒後の一回限りトリガーに逃がす。詳しくは下の「①-b 自動で回す」の節。
+    //   ★会員が特定できなくても実行する。席の埋まりは「誰の操作か」とは無関係に変わるため、
+    //     下の cid 判定より前に置く。
+    if (EDGE_CALSYNC_AFTER[String(action || '')]) _lbScheduleCalSync();
+
     params = params || {};
     var cid = String(res.customerId || params.customerId || '');
     var nm  = String(res.customerName || '');
@@ -1143,4 +1150,235 @@ function calSyncPreview() {
   out.push('');
   out.push('※ タイトルは送りません（会員の氏名が入るため）。時刻と分類だけです。');
   Logger.log(out.join('\n'));
+}
+
+// ============================================================
+// ①-b カレンダー → D1 の同期を自動で回す（2026-10-02・設計書 ops/design/01-calendar-to-d1.md 第4版）
+//
+//   誰が呼ぶか（設計書「誰が呼ぶか」）：
+//     ・1分ごとの時間主導トリガー … lbCalSyncTick（カレンダー全量を読んでD1へ押し出す）
+//     ・予約の確定・変更・取消 … edgeAfterWrite から、その場で押し出す
+//
+//   ★なぜ予約の処理の中で直接 pushCalSync を呼ばないか（顧客の待ち時間を増やさないため）：
+//     edgeAfterWrite は handleLineGet の中＝お客様が答えを待っている最中に同期で動く
+//     （LineBooking.js：res を作ったあと、return の直前）。
+//     pushCalSync はカレンダー5本を地平の終わりまで読むので数秒かかる。そこへ足すと
+//     予約の応答がそのぶん遅くなり、LIFFの20秒制限にも近づく。
+//     そこで会員登録後の同期（_lbScheduleSyncAfterRegister）と同じ作法を使う：
+//       「1秒後の一回限りトリガー」を作って別の実行に逃がす。作るのは数十ミリ秒。
+//     押し出しは1〜2秒後に別実行で走るので、顧客の応答は遅くならず、反映はほぼ即時。
+//     ★トリガーを作れなくても（上限20件・一時的な失敗）予約は通る。1分ごとの同期が
+//       最大60秒後に拾うだけ。だから作成の失敗は例外にせずログに残す。
+//
+//   止めかた（押し出し全体は止めずに、同期だけ止める）：
+//     ・LB_CALSYNC_ON を '0' にする … トリガーは残るが何もしない（すぐ戻せる）
+//     ・stopCalSyncTrigger() … トリガーごと外す
+//     ・EDGE_PUSH_ON が '1' でなければ、そもそも何も動かない（押し出し全体の元栓）
+//
+//   ★ここでは pushCalSync / buildCalSyncPayload / calSyncPreview の中身を変えない。呼ぶだけ。
+// ============================================================
+
+var LB_CALSYNC = {
+  ON_PROP:       'LB_CALSYNC_ON',        // '0' のときだけ止まる（未設定は EDGE_PUSH_ON に従う）
+  LAST_OK_PROP:  'LB_CALSYNC_LAST_OK',   // 最後に成功した時刻（ミリ秒）
+  FAILS_PROP:    'LB_CALSYNC_FAILS',     // 連続して失敗した回数
+  LAST_ERR_PROP: 'LB_CALSYNC_LAST_ERR',  // 最後の失敗の理由（個人情報は入らない）
+  TICK_HANDLER:  'lbCalSyncTick',        // 1分ごとに呼ばれる関数
+  AFTER_HANDLER: '_lbCalSyncAfterWrite', // 予約直後に一度だけ呼ばれる関数
+  STALE_MS:      15 * 60000              // 15分以上成功していなければ「止まっている」と見なす
+};
+
+// 予約の直後にカレンダー同期をやり直す操作。
+//   ★カレンダーの予定が変わるものだけを挙げる。残数や紐付けだけが変わる操作
+//     （チケット追加・会員登録・未紐付けの解消）は席の埋まりを変えないので入れない。
+//   もし取りこぼしても、1分ごとの同期が最大60秒で追いつく（安全側に倒れる）。
+var EDGE_CALSYNC_AFTER = {
+  line_makeReservationLine: 1, line_makeReservationLineProxy: 1,
+  line_makeRecurringReservation: 1, line_makeBatchReservation: 1,
+  line_makeBatchReservationProxy: 1, line_makeTransferReservation: 1,
+  line_cancelReservation: 1, line_changeReservation: 1,
+  line_makeAdminBooking: 1, line_makeBlock: 1, line_deleteAdminSlot: 1,
+  line_addRecurringPatternByTrainer: 1, line_deleteRecurringPattern: 1
+};
+
+function _calsyncSetProp(k, v) {
+  try { PropertiesService.getScriptProperties().setProperty(k, String(v)); } catch (e) {}
+}
+
+// 同期を動かしてよいか。押し出し全体の元栓（EDGE_PUSH_ON）と、同期だけの栓（LB_CALSYNC_ON）。
+function _calsyncAutoOn() {
+  if (!_edgeEnabled()) return false;                       // 押し出し全体が止まっている
+  return _edgeProp(LB_CALSYNC.ON_PROP) !== '0';            // 既定は動く（'0' のときだけ止める）
+}
+
+// ------------------------------------------------------------
+// 1分ごとの入口。トリガーからも、予約直後の一回限りトリガーからも、ここを通す。
+//   記録（成功時刻・連続失敗）と重なり防止を1か所にまとめるため。
+// ------------------------------------------------------------
+function lbCalSyncTick() {
+  if (!_edgeEnabled()) return { ok: false, code: 'EDGE_OFF' };          // 元栓が閉じている（静かに終わる）
+  if (_edgeProp(LB_CALSYNC.ON_PROP) === '0') return { ok: false, code: 'CALSYNC_OFF' };
+
+  // 同期同士が重ならないようにする（1分ごとの実行と、予約直後の実行がぶつかりうる）。
+  //   ★押し出し本体の _edgeLocked（スクリプトロック）は使わない。1分ごとに数秒握ると、
+  //     10分ごとの枠の押し出しがロック待ちで見送られる。別のロックで同期だけを直列化する。
+  var lock = null;
+  try { lock = LockService.getUserLock(); } catch (e) { lock = null; }
+  if (lock) {
+    var got = false;
+    try { got = lock.tryLock(2000); } catch (e2) { got = true; lock = null; }   // ロックが使えない環境では止めない
+    if (!got) { Logger.log('[calsync] 前の同期がまだ動いているので今回は見送ります'); return { ok: false, code: 'BUSY' }; }
+  }
+
+  var r = null;
+  try {
+    r = pushCalSync();                                     // ★中身は変えない。呼ぶだけ
+  } catch (e3) {
+    r = { ok: false, code: 'EXCEPTION', detail: String((e3 && e3.message) || e3).slice(0, 200) };
+    Logger.log('❌ calsync で例外: ' + r.detail);
+  } finally {
+    if (lock) { try { lock.releaseLock(); } catch (e4) {} }
+  }
+  _calsyncNote(r);
+  return r;
+}
+
+// 実行の記録。1分ごとに回るので「失敗が続いていること」に気づけなければ意味がない。
+function _calsyncNote(r) {
+  try {
+    if (r && r.ok) {
+      _calsyncSetProp(LB_CALSYNC.LAST_OK_PROP, Date.now());
+      if (_edgeProp(LB_CALSYNC.FAILS_PROP) && _edgeProp(LB_CALSYNC.FAILS_PROP) !== '0') {
+        _calsyncSetProp(LB_CALSYNC.FAILS_PROP, '0');
+      }
+      return;
+    }
+    var code = String((r && r.code) || 'UNKNOWN');
+    var n = Number(_edgeProp(LB_CALSYNC.FAILS_PROP) || 0) + 1;
+    _calsyncSetProp(LB_CALSYNC.FAILS_PROP, n);
+    _calsyncSetProp(LB_CALSYNC.LAST_ERR_PROP, code + ' / ' + new Date().toISOString());
+    Logger.log('[calsync] 失敗（連続' + n + '回目・理由 ' + code + '）');
+
+    // 設定が足りない失敗は、回り続けても直らない。1分ごとに失敗して実行枠を食うだけなので
+    //   同期だけ止める（押し出し全体は触らない）。setupCalSyncTrigger で再開できる。
+    if (code === 'EDGE_NOT_CONFIGURED') {
+      _calsyncSetProp(LB_CALSYNC.ON_PROP, '0');
+      Logger.log('[calsync] ⛔ EDGE_URL / EDGE_SECRET が未設定のため同期を止めました。設定後に setupCalSyncTrigger() を実行してください。');
+      return;
+    }
+    // 10回（＝約10分）連続で失敗したら、以後は60回ごとに強く出す（ログが埋まらない程度に鳴らし続ける）。
+    if (n === 10 || (n > 10 && n % 60 === 0)) {
+      Logger.log('[calsync] ⚠️ ' + n + '回続けて失敗しています。公開中の世代は古いままです（理由 ' + code + '）。'
+                 + ' calSyncStatus() で状態を確認してください。');
+    }
+  } catch (e) { /* 記録に失敗しても同期は止めない */ }
+}
+
+// ------------------------------------------------------------
+// 予約の確定・変更・取消の直後（edgeAfterWrite から呼ばれる）
+//   1秒後の一回限りトリガーに逃がす。お客様の応答を遅くしないため。
+// ------------------------------------------------------------
+function _lbCleanCalSyncAfterTriggers() {
+  try {
+    var ts = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < ts.length; i++) {
+      if (ts[i].getHandlerFunction() === LB_CALSYNC.AFTER_HANDLER) ScriptApp.deleteTrigger(ts[i]);
+    }
+  } catch (e) { Logger.log('[calsync] 予約直後トリガーの掃除に失敗: ' + (e && e.message)); }
+}
+
+function _lbCalSyncAfterWrite() {
+  try { lbCalSyncTick(); }
+  catch (e) { Logger.log('[calsync] 予約直後の同期に失敗（1分ごとの同期で追いつきます）: ' + (e && e.message)); }
+  _lbCleanCalSyncAfterTriggers();   // 役目を終えたら自分を消す（トリガー上限20件に溜めない）
+}
+
+// ★ここで例外を外へ出してはいけない。予約は既に成立している。
+function _lbScheduleCalSync() {
+  if (!_calsyncAutoOn()) return false;
+  try {
+    // 同時刻に複数の予約が入っても1本にまとめる（同期は全量を読み直すので1回で足りる）
+    _lbCleanCalSyncAfterTriggers();
+    ScriptApp.newTrigger(LB_CALSYNC.AFTER_HANDLER).timeBased().after(1000).create();
+    return true;
+  } catch (e) {
+    // 作れなくても予約は通る。1分ごとの同期が最大60秒で拾う。
+    Logger.log('[calsync] 予約直後の同期を予約できませんでした（1分ごとの同期で反映されます）: ' + (e && e.message));
+    return false;
+  }
+}
+
+// ------------------------------------------------------------
+// トリガーの登録／解除（★オーナーがGASエディタで1回実行する）
+// ------------------------------------------------------------
+function setupCalSyncTrigger() {
+  // 設定が揃っていなければ始めない。1分ごとに失敗し続けるのを防ぐ（setupEdgeJobTrigger と同じ考え方）。
+  if (!_edgeProp('EDGE_URL') || !_edgeProp('EDGE_SECRET')) {
+    Logger.log('❌ EDGE_URL / EDGE_SECRET が未設定です。スクリプト プロパティに登録してから実行してください。');
+    return;
+  }
+  var all = ScriptApp.getProjectTriggers(), removed = 0;
+  for (var i = 0; i < all.length; i++) {
+    var h = all[i].getHandlerFunction();
+    // 重複登録を防ぐ。pushCalSync を直接登録してしまった場合も外す（二重に走らせない）。
+    if (h === LB_CALSYNC.TICK_HANDLER || h === 'pushCalSync') { ScriptApp.deleteTrigger(all[i]); removed++; }
+  }
+  ScriptApp.newTrigger(LB_CALSYNC.TICK_HANDLER).timeBased().everyMinutes(1).create();
+  _calsyncSetProp(LB_CALSYNC.ON_PROP, '1');
+  _calsyncSetProp(LB_CALSYNC.FAILS_PROP, '0');
+  Logger.log('✅ カレンダー → D1 の同期を1分ごとに設定しました（' + LB_CALSYNC.TICK_HANDLER + '）'
+             + (removed ? '／古い登録 ' + removed + '件を外しました' : ''));
+  Logger.log('   予約の確定・変更・取消の直後にも、1秒後の一回限りトリガーで押し出します。');
+  Logger.log('   元栓 EDGE_PUSH_ON = ' + (_edgeEnabled() ? '1（動きます）' : '1 ではありません（このままでは何も送りません）'));
+  Logger.log('   同期だけ止めるときは LB_CALSYNC_ON を 0 に／トリガーごと外すときは stopCalSyncTrigger()。');
+  Logger.log('   状態の確認は calSyncStatus()。');
+}
+
+function stopCalSyncTrigger() {
+  _calsyncSetProp(LB_CALSYNC.ON_PROP, '0');
+  var all = ScriptApp.getProjectTriggers(), removed = 0;
+  for (var i = 0; i < all.length; i++) {
+    var h = all[i].getHandlerFunction();
+    if (h === LB_CALSYNC.TICK_HANDLER || h === LB_CALSYNC.AFTER_HANDLER) { ScriptApp.deleteTrigger(all[i]); removed++; }
+  }
+  Logger.log('カレンダー同期を止めました（外したトリガー ' + removed + '件・LB_CALSYNC_ON=0）。'
+             + '押し出し全体（EDGE_PUSH_ON）は触っていません。');
+}
+
+// ------------------------------------------------------------
+// 状態（日次点検から相乗りできる形で返す。個人情報は含まない）
+// ------------------------------------------------------------
+function calSyncHealth() {
+  var on = _calsyncAutoOn();
+  var lastOk = Number(_edgeProp(LB_CALSYNC.LAST_OK_PROP) || 0);
+  var ageMs = lastOk ? (Date.now() - lastOk) : null;
+  var alive = false;
+  try {
+    var all = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getHandlerFunction() === LB_CALSYNC.TICK_HANDLER) { alive = true; break; }
+    }
+  } catch (e) {}
+  return {
+    on: on,
+    triggerAlive: alive,
+    lastOkMs: lastOk || null,
+    ageMin: (ageMs == null) ? null : Math.round(ageMs / 60000),
+    fails: Number(_edgeProp(LB_CALSYNC.FAILS_PROP) || 0),
+    lastError: _edgeProp(LB_CALSYNC.LAST_ERR_PROP),
+    // 動かしているつもりなのに成功が途絶えている＝空き枠が古いまま配られている
+    stale: !!(on && (lastOk === 0 || (ageMs != null && ageMs > LB_CALSYNC.STALE_MS)))
+  };
+}
+
+function calSyncStatus() {
+  var h = calSyncHealth();
+  var out = ['===== カレンダー → D1 同期の状態 ====='];
+  out.push('同期: ' + (h.on ? '動かす設定' : '止めている（EDGE_PUSH_ON か LB_CALSYNC_ON）'));
+  out.push('1分ごとのトリガー: ' + (h.triggerAlive ? 'あり' : 'なし（setupCalSyncTrigger() を実行してください）'));
+  out.push('最後に成功: ' + (h.lastOkMs ? (h.ageMin + '分前') : 'まだ成功していません'));
+  out.push('連続失敗: ' + h.fails + '回' + (h.lastError ? '（最後の理由 ' + h.lastError + '）' : ''));
+  if (h.stale) out.push('⚠️ 15分以上成功していません。公開中の世代が古いままです。');
+  Logger.log(out.join('\n'));
+  return h;
 }
