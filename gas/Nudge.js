@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-02a 残り日数は月末が近いときだけ';
+var LB_NUDGE_BUILD = '2026-10-02b 正本がD1へ移ったら送らない';
 
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
@@ -654,6 +654,15 @@ function _lbNudgeNextQuota(m, now, fallbackQuota) {
 // ============================================================
 // 対象の一覧（送らない）— 4種をまとめて1回の走査で作り、1人1通に絞る
 // ============================================================
+// 予約・契約の正本がどこにあるか。'sheet'（既定）か 'd1'。
+//   D1へ移したら Script Property LB_SOURCE_OF_TRUTH を 'd1' にする。
+//   その時点でリマインドは自動的に止まる（読み先をD1に直すまで送らない）。
+function _lbNudgeSourceOfTruth() {
+  var v = '';
+  try { v = String(_lbProp('LB_SOURCE_OF_TRUTH') || '').trim().toLowerCase(); } catch (e) { v = ''; }
+  return v ? v : 'sheet';
+}
+
 function lbNudgePlanAll(nowMs) {
   var now = (nowMs != null) ? new Date(nowMs) : new Date();   // 引数はテスト／確認で「今」を固定するため。本番は省略。
   var ms = now.getTime();
@@ -668,6 +677,16 @@ function lbNudgePlanAll(nowMs) {
                transferUsed: 0, transferExpired: 0, transferNone: 0,
                monthAlreadySent: 0, visitATooSoon: 0, noRemain: 0, remainUnknown: 0, noEvent: 0 }
   };
+
+  // ★正本がD1へ移っていないか（2026-10-02）。
+  //   リマインドはスプレッドシートを読んで判定する。予約や契約の正本がD1へ移ると、
+  //   シートは消えずに「残ったまま古くなる」。既存の fail-closed はシートが読めない
+  //   ときだけ働くので、この形はすり抜けて**黙って誤った連絡を送る**。
+  //   例：D1に予約があるのにシートに無い → 「次のご予約がありません」と判定して催促する。
+  //   送信は取り返しがつかないので、正本が移ったら読み先を直すまで1通も送らない。
+  //   移行の日に切り替えを忘れても、止まるだけで事故にならない。
+  var src = _lbNudgeSourceOfTruth();
+  if (src !== 'sheet') { plan.code = 'SOURCE_MOVED_' + String(src).toUpperCase(); return plan; }
 
   var members = _lbNudgeMembers();
   if (members === null) { plan.code = 'NO_MAP_SHEET'; return plan; }
@@ -857,7 +876,15 @@ function lbNudgePreview(nowMs) {
   out.push('※氏名は出しません。会員は顧客IDの下4桁で示します。');
   if (plan.code !== 'OK') {
     out.push('');
-    out.push('⛔ 中止（fail-closed）: ' + plan.code + ' — 必要なシートが読めないため1通も出しません。');
+    if (String(plan.code).indexOf('SOURCE_MOVED') === 0) {
+      out.push('⛔ 中止: 予約・契約の正本がスプレッドシートから移っています（' + plan.code + '）。');
+      out.push('   リマインドはスプレッドシートを読んで判定します。正本が移ったまま送ると、');
+      out.push('   古いデータで「次のご予約がありません」と判断し、予約済みの方に催促してしまいます。');
+      out.push('   ★リマインドの読み先を新しい正本に直してから、再開してください。');
+      out.push('   （一時的に元へ戻すなら Script Property LB_SOURCE_OF_TRUTH を sheet に）');
+    } else {
+      out.push('⛔ 中止（fail-closed）: ' + plan.code + ' — 必要なシートが読めないため1通も出しません。');
+    }
     var stop = out.join('\n'); Logger.log(stop); return stop;
   }
   out.push('');

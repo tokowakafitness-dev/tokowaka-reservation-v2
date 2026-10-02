@@ -125,18 +125,37 @@ function auditForEdgeMigrationText() {
       say('');
       say('  ■ 終了日が空の行 ' + openEnded.length + '件（行番号で示します）');
       openEnded.sort(function (a, b) { return a.row - b.row; });
+      // 終了日が空の行だけを氏名ごとに集める（これが2行以上あるときだけ危ない）
+      var openByName = {};
+      for (var ob = 0; ob < openEnded.length; ob++) {
+        (openByName[openEnded[ob].name] = openByName[openEnded[ob].name] || []).push(openEnded[ob].row);
+      }
       for (var oi = 0; oi < openEnded.length; oi++) {
         var o = openEnded[oi];
         var same = (rowsByName[o.name] || []).filter(function (x) { return x !== o.row; });
+        // ★「同じ方に別の行がある」だけでは問題にならない。古い行に終了日が入っていれば正常な更新。
+        //   危ないのは「終了日が空の行が同じ方に2行以上ある」場合だけ。
+        //   以前はこの区別をせず、正常な更新にも ⚠ を付けていたため、読んだ私が誤解した（2026-10-02）。
+        var openSame = openByName[o.name].filter(function (x) { return x !== o.row; });
+        var mark;
+        if (openSame.length) mark = '  🚨 終了日が空の行がもう1行あります: ' + openSame.join(',') + '行目';
+        else if (same.length) mark = '  （同じ方の他の行 ' + same.join(',') + '行目 には終了日が入っています＝正常な更新）';
+        else mark = '  （この方は1行のみ）';
         say('    ' + o.row + '行目：' + o.type + ' / ' + o.method
             + ' / 頻度' + (o.freq || '-') + ' / チケット' + (o.ticket || '-')
-            + ' / 開始 ' + o.start
-            + (same.length ? '  ⚠ 同じ方の他の行: ' + same.join(',') + '行目' : '  （この方は1行のみ）'));
+            + ' / 開始 ' + o.start + mark);
       }
       say('');
-      say('    ⚠ の付いた行は、同じ方に別の契約行があります。');
-      say('      古い方の終了日が空のままなら、2つの契約が同時に生きて枠が二重になります。');
-      say('      「この方は1行のみ」は継続契約として正常です（今別府様もこちら）。');
+      var openDup = 0;
+      for (var dn in openByName) if (openByName[dn].length >= 2) openDup++;
+      if (openDup) {
+        say('    🚨 終了日が空の行が2行以上ある方が ' + openDup + '名います。');
+        say('      2つの契約が同時に生きて枠が二重になる恐れがあります。古い行に終了日を入れてください。');
+      } else {
+        say('    ✅ 終了日が空の行が2行以上ある方はいません（枠が二重になる形はありません）。');
+        say('      終了日が空の行は、継続中の契約として正常に扱われます。');
+      }
+      say('      ※「他の行には終了日が入っています」は正常な契約更新です。');
     }
     say('  いちばん古い契約開始日 … ' + (oldest ? Utilities.formatDate(new Date(oldest), 'Asia/Tokyo', 'yyyy/MM/dd') : '不明'));
   } else say('  （読めませんでした）');
