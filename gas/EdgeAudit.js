@@ -1034,7 +1034,7 @@ function contractOverlapImpactText(embedded) {
   } catch (eR) { rvalsOk = false; }
   if (!rvalsOk) say('⚠️ 予約台帳が読めないため、枠（avail）は出せません。行の重なりだけを出します。');
 
-  var checked = 0, overlapped = 0, suspects = 0, ties = 0, skipped = [], blocks = [];
+  var checked = 0, overlapped = 0, suspects = 0, ties = 0, minuses = 0, skipped = [], blocks = [];
   for (var i = 0; i < vals.length; i++) {
     if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;   // 照合前・却下は無効な登録
     var nm = String(vals[i][MAP_COL.NAME - 1] || ''); if (!nm) continue;
@@ -1062,24 +1062,36 @@ function contractOverlapImpactText(embedded) {
     try { opening = _lbMemberOpeningWithFloor(cid); } catch (e3) { opening = null; }
 
     var blk = ['・' + who], keys = [nowKey, nextKey];
-    var memberSuspect = false, memberTie = false;
+    var memberSuspect = false, memberTie = false, memberMinus = false;
     for (var k = 0; k < keys.length; k++) {
       var mk = keys[k];
       if (pre[mk].count < 2) {
         blk.push('   ' + mk + '：同時に有効な月額行は ' + pre[mk].count + '行（重なっていません）');
         continue;
       }
-      var avail = null, note = '';
+      var avail = null, note = '', spFreq = null;
       if (sessions === null) note = '（台帳が読めないため不明）';
       else {
         try {
           var sp = _lbSplitRemaining(rows, cid, (mk === nowKey ? nowMs : nextMs), sessions);
           if (sp && sp.avail != null) avail = Number(sp.avail);
+          if (sp && sp.freq != null) spFreq = Number(sp.freq);   // 会員画面に出る「月○回」
           if (sp && sp._ok === false) note = '（割当器が「要確認」と判定）';
         } catch (e4) { note = '（枠を計算できない: ' + e4.message + '）'; }
       }
       var seed = (opening && opening.carry && opening.carry[mk] != null) ? Number(opening.carry[mk]) : null;
       var r = _contractDoubleCharge(rows, mk, avail, seed);
+
+      // ★会員画面に出る数字も見る（2026-10-02）。上で計算した結果を使い回す（読み直さない）。
+      //   会員ホームは quota=「同時有効行の最大頻度」／carryover=「枠−その頻度」で表示する。
+      //   契約行が重なって、新しい行の頻度が古い行より少ないと carryover がマイナスになり、
+      //   顧客の画面に「月4回・繰越-1回」と出る。残数は正しいので予約はできるが、
+      //   顧客に見せる数字にマイナスを出してはいけない（オーナー指示）。
+      var shownQuota = null, shownCarry = null;
+      if (spFreq != null && avail != null) {
+        shownQuota = spFreq;
+        shownCarry = avail - spFreq;
+      }
       var parts = [];
       for (var z = 0; z < r.rows.length; z++) parts.push('頻度' + r.rows[z].freq + '：' + r.rows[z].from + '〜' + r.rows[z].to);
       blk.push('   ' + mk + '：同時に有効な月額行 ' + r.count + '行（' + parts.join(' ／ ') + '）');
@@ -1090,6 +1102,11 @@ function contractOverlapImpactText(embedded) {
       if (r.tie) {
         blk.push('     ⚠ 開始が同じ月の月額行で頻度・繰越上限が割れています。どちらで数えるかが決まりません。');
         memberTie = true;
+      }
+      if (shownQuota != null) {
+        blk.push('     ▶ 会員画面の表示：月' + shownQuota + '回 ／ 繰越' + shownCarry + '回'
+                 + (shownCarry < 0 ? '   🚨 顧客の画面にマイナスが出ています' : ''));
+        if (shownCarry < 0) memberMinus = true;
       }
       if (r.suspect) {
         blk.push('     🚨 二重の疑い：枠 ' + r.avail + ' が上限 ' + r.maxLegit
@@ -1103,12 +1120,15 @@ function contractOverlapImpactText(embedded) {
     }
     if (memberSuspect) suspects++;
     if (memberTie) ties++;
+    if (memberMinus) minuses++;
     blocks.push(blk.join('\n'));
   }
 
   say('');
   say('── 調べた会員 ' + checked + '名 ／ 同時に有効な月額行が2行以上ある会員 ' + overlapped + '名'
-      + ' ／ 枠が二重の疑い ' + suspects + '名 ／ 開始が同じで内容が割れている ' + ties + '名');
+      + ' ／ 枠が二重の疑い ' + suspects + '名 ／ 開始が同じで内容が割れている ' + ties + '名'
+      + (minuses ? ' ／ 🚨 顧客の画面にマイナスが出ている ' + minuses + '名'
+                 : ' ／ 顧客の画面のマイナス なし'));
   say('');
   if (!blocks.length) {
     say('（同時に有効な月額行が2行以上ある会員はいません）');
@@ -1117,10 +1137,21 @@ function contractOverlapImpactText(embedded) {
     say('');
     if (!suspects) {
       say('※ いま枠が二重になっている会員はいません（古い行は効いていません）。');
-      say('   ただし古い行の終了日が空のままだと、次の契約更新で二重になります。');
-      say('   古い行に終了日を入れてください（行番号は「3. 契約行の中身」の一覧に出ています）。');
     } else {
       say('★ 二重の疑いがある会員は、古い契約行の終了日を入れてから残数を確認してください。');
+    }
+    if (minuses) {
+      say('');
+      say('🚨 顧客の画面に「繰越-1回」のようなマイナスが出ている会員が ' + minuses + '名います。');
+      say('   残数そのものは正しく、予約はできます。表示だけが矛盾しています。');
+      say('   原因：会員画面は「同時に有効な行の最大頻度」を月の回数として出すのに、');
+      say('         枠は「開始がいちばん新しい行」で計算されるため、頻度を下げた切替で食い違います。');
+      say('   ★古い契約行に終了日を入れれば、この表示も直ります。');
+    }
+    if (overlapped) {
+      say('');
+      say('※ 古い行の終了日が空のままだと、次の契約更新で二重になります。');
+      say('   古い行に終了日を入れてください（行番号は「3. 契約行の中身」の一覧に出ています）。');
     }
   }
   if (skipped.length) { say(''); say('■ 調べられなかった会員: ' + skipped.join(' / ')); }
