@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-02b 正本がD1へ移ったら送らない';
+var LB_NUDGE_BUILD = '2026-10-02c 来店翌日Aの文面';
 
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
@@ -93,6 +93,21 @@ var _LB_NUDGE_MSG = {
     en:        'You have {remain} session(s) left this month ({days} days remaining).',
     zh:        '本月还可使用 {remain}次（剩余{days}天）。',
     'zh-Hant': '本月還可使用 {remain}次（剩餘{days}天）。'
+  },
+  // ④ 来店翌日A（すでにご予約がある方）専用。残数は既にあるご予約を引いた数なので、
+  //   「あと○回」ではなく「すでにいただいているご予約の他、○回」と言う方が正確で、
+  //   押しつけがましくない（2026-10-02 オーナー指示）。
+  facts_remain_booked: {
+    ja:        '今月はすでにいただいているご予約の他、{remain}回 ご利用いただけます。',
+    en:        'In addition to the session(s) you have booked, you have {remain} more available this month.',
+    zh:        '除已预约的课程外，本月还可使用 {remain}次。',
+    'zh-Hant': '除已預約的課程外，本月還可使用 {remain}次。'
+  },
+  facts_remain_booked_days: {
+    ja:        '今月はすでにいただいているご予約の他、{remain}回 ご利用いただけます。（残り{days}日）',
+    en:        'In addition to the session(s) you have booked, you have {remain} more available this month ({days} days remaining).',
+    zh:        '除已预约的课程外，本月还可使用 {remain}次（剩余{days}天）。',
+    'zh-Hant': '除已預約的課程外，本月還可使用 {remain}次（剩餘{days}天）。'
   },
   // 「先月から○回繰り越しました」（その月に初めて送るとき・15日までだけ）
   facts_carried_in: {
@@ -257,13 +272,17 @@ var _LB_NUDGE_MSG = {
         '{url}'
   },
   // ④ 来店翌日A（今月の予約あり）
+  //   すでにご予約がある方なので押しを弱める。合う枠が無いときの逃げ道も示す
+  //   （担当へご相談いただく）。2026-10-02 オーナー指示。
   visit_a: {
     ja: '昨日はお疲れさまでした。\n' +
         '\n' +
         '{facts}\n' +
         '\n' +
         '次のご予約は {next} に承っております。\n' +
-        'もう一度、今月中にいかがでしょうか。\n' +
+        '他日程でもいかがでしょうか。\n' +
+        '\n' +
+        'もし予約可能枠が合わなければ、担当宛にご希望の日時をご相談ください！\n' +
         '\n' +
         '▼ ご予約\n' +
         '{url}',
@@ -272,7 +291,9 @@ var _LB_NUDGE_MSG = {
         '{facts}\n' +
         '\n' +
         'Your next session is reserved for {next}.\n' +
-        'Would you care to join us once more within this month?\n' +
+        'Another day would be very welcome as well.\n' +
+        '\n' +
+        'If none of the available times suit you, please let your trainer know your preferred date and time.\n' +
         '\n' +
         '▼ Book\n' +
         '{url}',
@@ -281,7 +302,9 @@ var _LB_NUDGE_MSG = {
         '{facts}\n' +
         '\n' +
         '您的下次预约为 {next}。\n' +
-        '本月要不要再来一次呢。\n' +
+        '其他日期也十分欢迎。\n' +
+        '\n' +
+        '如果可预约的时段不合适，请将您希望的日期与时间告知您的教练！\n' +
         '\n' +
         '▼ 预约\n' +
         '{url}',
@@ -290,7 +313,9 @@ var _LB_NUDGE_MSG = {
         '{facts}\n' +
         '\n' +
         '您的下次預約為 {next}。\n' +
-        '本月要不要再來一次呢。\n' +
+        '其他日期也十分歡迎。\n' +
+        '\n' +
+        '如果可預約的時段不合適，請將您希望的日期與時間告知您的教練！\n' +
         '\n' +
         '▼ 預約\n' +
         '{url}'
@@ -599,14 +624,19 @@ var LB_NUDGE_CARRY_SHOW_DAYS = 10;   // 残りこの日数以内なら繰越の�
 //   文面の切り替わりが月に1回で済む（2026-10-02 オーナー判断）。
 var LB_NUDGE_DAYS_SHOW_DAYS = 10;
 
-function _lbNudgeFactsText(lang, f, carriedIn) {
+function _lbNudgeFactsText(lang, f, carriedIn, kind) {
   var lines = [];
   // ★「先月から繰り越しました」は、その月にその方へ初めて送るとき、かつ15日までだけ。
   //   得た感じがあるので月の前半の行動につながる。後半に言っても古い話になる。
   //   （2026-09-30 オーナー判断：「その月にその方へ初めて送るとき、かつ15日まで」）
   if (carriedIn > 0) lines.push(_lbNudgeMsg(lang, 'facts_carried_in', { carried: carriedIn }));
   // 残り日数は月末が近いときだけ。月初の「残り31日」は急ぐ理由にならない。
-  var remainKey = (f.days <= LB_NUDGE_DAYS_SHOW_DAYS) ? 'facts_remain_days' : 'facts_remain';
+  //   ④（すでにご予約がある方）だけは「あと○回」ではなく
+  //   「すでにいただいているご予約の他、○回」と言う（残数は既にある予約を引いた数）。
+  var booked = (kind === LB_NUDGE_KIND.VISIT_A);
+  var remainKey = (f.days <= LB_NUDGE_DAYS_SHOW_DAYS)
+    ? (booked ? 'facts_remain_booked_days' : 'facts_remain_days')
+    : (booked ? 'facts_remain_booked' : 'facts_remain');
   lines.push(_lbNudgeMsg(lang, remainKey, { remain: f.remain, days: f.days }));
   // 繰越の行は月末が近いときだけ（月初に言っても「来月に回してよい」と読める）
   if (f.carry > 0 && f.days <= LB_NUDGE_CARRY_SHOW_DAYS) {
@@ -779,7 +809,7 @@ function lbNudgePlanAll(nowMs) {
         // 残数の一文。繰越の行は月末が近いときだけ、
         //   「先月から繰り越しました」は今月はじめての案内かつ15日までだけ。
         facts: _lbNudgeFactsText(m.lang, f,
-                 _lbNudgeFirstOfMonth(log, m.customerId, now) ? f.carriedIn : 0),
+                 _lbNudgeFirstOfMonth(log, m.customerId, now) ? f.carriedIn : 0, win.kind),
         next: win.next || '', expire: win.expire || ''
       };
       plan.counts[win.kind]++;
