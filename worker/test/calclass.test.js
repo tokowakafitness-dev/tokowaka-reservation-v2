@@ -387,5 +387,44 @@ ok('⑦日時の「今」に依存しない（Date.now を使わない）', !/Da
   ok('⑨読み終えた時刻を添える', /pushedAt: now\.getTime\(\)/.test(PUSH2));
 }
 
+// ------------------------------------------------------------
+// ⑩ 繰り返し予定でIDが重複しないこと（2026-10-02・本番で実際に拒否された）
+//
+//   GASの getId() は、繰り返し予定の各回で**同じ値**を返す。
+//   出勤シフトを毎週の繰り返しで入れていると、全部が同じIDになり、
+//   Worker側の DUPLICATE_EVENT 検査で**世代ごと拒否される**。
+//   実際に本番で HTTP 422 REJECTED になった。
+//   開始時刻を足して回ごとに一意にする。
+// ------------------------------------------------------------
+{
+  const PUSH3 = readFileSync(join(GAS, 'PushToEdge.js'), 'utf8');
+  ok('⑩予定の識別子に開始時刻を足している',
+     /var uid = id \+ '#' \+ String\(sMs\)/.test(PUSH3));
+  ok('⑩送る識別子は uid（生のIDではない）', /eventId: uid,/.test(PUSH3));
+  // 送る予定（events.push）だけを見る。壊れた予定の報告（invalid）は、
+  //   時刻が壊れていて識別子を作れないので生のIDで正しい。
+  const sendBlock = PUSH3.slice(PUSH3.indexOf('events.push('), PUSH3.indexOf('events.push(') + 600);
+  ok('⑩送る予定には生のIDを使わない', !/eventId: id,/.test(sendBlock));
+  ok('⑩壊れた予定の報告は生のIDでよい（識別子を作れないため）',
+     /invalid\.push\(\{ calendarId: cals\[c\]\.calendarId, eventId: id, reason: 'REVERSED' \}\)/.test(PUSH3));
+  // 時刻の検査を通ってから識別子を作る（壊れた時刻で識別子を作らない）
+  const idxCheck = PUSH3.indexOf("reason: 'ZERO_WIDTH'");
+  const idxUid = PUSH3.indexOf("var uid = id + '#'");
+  ok('⑩時刻の検査を通ってから識別子を作る', idxCheck > 0 && idxUid > idxCheck);
+
+  // 送る前に重複を見つけて、送らずに知らせる
+  ok('⑩送る前に重複を見つける', /DUPLICATE_EVENTS/.test(PUSH3));
+  ok('⑩重複があれば送らない',
+     /return \{ ok: false, code: 'DUPLICATE_EVENTS'/.test(PUSH3));
+
+  // 識別子の作り方を実際に動かして確かめる
+  const mkUid = (id, sMs) => id + '#' + String(sMs);
+  const weekly = 'abc123@google.com';
+  const t1 = Date.UTC(2026, 9, 5, 1, 0), t2 = Date.UTC(2026, 9, 12, 1, 0);
+  ok('⑩同じ予定の別の回は別の識別子', mkUid(weekly, t1) !== mkUid(weekly, t2));
+  ok('⑩同じ予定の同じ回は同じ識別子', mkUid(weekly, t1) === mkUid(weekly, t1));
+  ok('⑩別の予定は別の識別子', mkUid('xyz@google.com', t1) !== mkUid(weekly, t1));
+}
+
 console.log('\nカレンダーの分類（GASとの一致） 検証: ' + pass + ' passed / ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -986,12 +986,18 @@ function buildCalSyncPayload(nowMs) {
       if (eMs < sMs) { invalid.push({ calendarId: cals[c].calendarId, eventId: id, reason: 'REVERSED' }); continue; }
       if (eMs === sMs) { invalid.push({ calendarId: cals[c].calendarId, eventId: id, reason: 'ZERO_WIDTH' }); continue; }
 
+      // ★繰り返し予定は、各回で getId() が同じ値を返す（GASの仕様）。
+      //   出勤シフトを毎週の繰り返しで入れていると、全部が同じIDになって重複する。
+      //   開始時刻を足して回ごとに一意にする。これなら「同じ予定の別の回」と
+      //   「本当に重複している予定」を区別できる（後者は Worker が DUPLICATE_EVENT で弾く）。
+      var uid = id + '#' + String(sMs);
+
       var allDay = 0;
       try { allDay = ev.isAllDayEvent() ? 1 : 0; } catch (eA) { allDay = 0; }
 
       events.push({
         calendarId: cals[c].calendarId,
-        eventId: id,
+        eventId: uid,
         role: cals[c].role,
         trainerId: cals[c].trainerId || null,
         effect: cls.effect,
@@ -1001,6 +1007,18 @@ function buildCalSyncPayload(nowMs) {
         allDay: allDay
       });
     }
+  }
+
+  // 送る前に重複を見つける。Workerに弾かれてから原因を探すより、ここで分かる方が早い。
+  var seen = {}, dups = 0;
+  for (var k = 0; k < events.length; k++) {
+    var key = events[k].calendarId + '|' + events[k].eventId;
+    if (seen[key]) { dups++; invalid.push({ calendarId: events[k].calendarId, eventId: events[k].eventId, reason: 'DUPLICATE' }); }
+    seen[key] = true;
+  }
+  if (dups) {
+    // 重複したまま送ると世代ごと拒否される。送らずに知らせる。
+    return { ok: false, code: 'DUPLICATE_EVENTS', detail: dups + '件が重複しています', invalid: invalid };
   }
 
   return {
@@ -1020,22 +1038,47 @@ function buildCalSyncPayload(nowMs) {
 }
 
 // D1へ送る。1分ごとのトリガーと、予約の確定直後から呼ぶ。
+//   ★何が起きたかを必ずログに出す。出さないとGASエディタで実行しても
+//     「実行開始／実行完了」しか出ず、成功したのか途中で止まったのか分からない。
+//     2026-10-02、まさにそれで切り分けに往復した。
 function pushCalSync() {
-  if (!_edgeEnabled()) return { ok: false, code: 'EDGE_OFF' };
+  if (!_edgeEnabled()) {
+    Logger.log('⛔ calsync 中止: EDGE_PUSH_ON が 1 ではありません'
+               + '（GASエディタ → ⚙プロジェクトの設定 → スクリプト プロパティ で確認してください）');
+    return { ok: false, code: 'EDGE_OFF' };
+  }
   var p = buildCalSyncPayload();
-  if (!p.ok) { Logger.log('calsync 中止: ' + p.code + ' ' + (p.calendarId || p.detail || '')); return p; }
+  if (!p.ok) { Logger.log('⛔ calsync 中止: ' + p.code + ' ' + (p.calendarId || p.detail || '')); return p; }
 
   var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
-  if (!url || !secret) return { ok: false, code: 'EDGE_NOT_CONFIGURED' };
+  if (!url || !secret) {
+    Logger.log('⛔ calsync 中止: EDGE_URL / EDGE_SECRET が未設定です');
+    return { ok: false, code: 'EDGE_NOT_CONFIGURED' };
+  }
+  Logger.log('calsync: ' + p.events.length + '件を送ります（壊れていた予定 ' + p.invalid.length + '件）');
   var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/calsync', {
     method: 'post', contentType: 'application/json',
     headers: { 'X-Ingest-Secret': secret },
     payload: JSON.stringify(p), muteHttpExceptions: true
   });
   var code = res.getResponseCode(), text = res.getContentText();
-  if (code !== 200) { Logger.log('calsync 失敗 HTTP ' + code + ': ' + text.slice(0, 200)); return { ok: false, code: 'HTTP_' + code }; }
+  if (code !== 200) {
+    Logger.log('❌ calsync 失敗 HTTP ' + code + ': ' + text.slice(0, 400));
+    return { ok: false, code: 'HTTP_' + code, body: text.slice(0, 400) };
+  }
   var out = {};
   try { out = JSON.parse(text); } catch (e) { out = {}; }
+  // 何が起きたかを人が読める形で出す
+  if (out.unchanged) {
+    Logger.log('✅ calsync: 中身は前回と同じ（世代は増やさず、確認時刻だけ更新）世代=' + (out.generation || '?'));
+  } else if (out.status === 'rejected') {
+    Logger.log('⚠️ calsync: 検査に引っかかって公開していません。理由=' + JSON.stringify(out.reasons || out.reason || out));
+    Logger.log('   公開中の世代はそのままです（壊れたものは出しません）。');
+  } else {
+    Logger.log('✅ calsync: 公開しました 世代=' + (out.generation || '?') + ' / 状態=' + (out.status || '?')
+               + ' / 送った予定=' + p.events.length + '件');
+    if (out.warnings && out.warnings.length) Logger.log('   ⚠ 警告: ' + JSON.stringify(out.warnings));
+  }
   return { ok: true, result: out, sent: p.events.length, invalid: p.invalid.length };
 }
 
