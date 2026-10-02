@@ -186,19 +186,19 @@ export function inspect(p, cals, now, prevCount) {
     if (!decl) { add('UNDECLARED_CALENDAR', at); continue; }        // 一覧に無いカレンダーの予定
     if ((e.role == null ? '' : String(e.role)) !== decl.role) { add('ROLE_CONFLICT', at); continue; }
     const tid = (e.trainerId == null || e.trainerId === '') ? null : String(e.trainerId);
+    const effect = e.effect == null ? '' : String(e.effect);
     // ★1Fは予定ごとに担当が変わる（オンラインの担当がタイトルに書いてある）。
     //   カレンダーの宣言（trainer_id=null）と突き合わせると必ず食い違い、
     //   正しい押し出しを毎回拒否してしまう。1Fだけは宣言と比べない。
     //   代わりに「busy なら担当が要る／room_busy なら担当を持たない」を見る。
     if (trainerVariesPerEvent(decl.role)) {
-      if (eff === EV_KIND.BUSY && !tid) { add('TRAINER_ID_MISSING', at); continue; }
-      if (eff === EV_KIND.ROOM_BUSY && tid) { add('TRAINER_ID_UNEXPECTED', at); continue; }
+      if (effect === EV_KIND.BUSY && !tid) { add('TRAINER_ID_MISSING', at); continue; }
+      if (effect === EV_KIND.ROOM_BUSY && tid) { add('TRAINER_ID_UNEXPECTED', at); continue; }
     } else if (tid !== decl.trainer_id) { add('TRAINER_ID_CONFLICT', at); continue; }
 
     const bad = badIv.get(i);
     if (bad) { add('BAD_INTERVAL', Object.assign({ reason: bad }, at)); continue; }
 
-    const effect = e.effect == null ? '' : String(e.effect);
     const allow = effByRole.get(decl.role);
     if (!allow || !allow.has(effect)) { add('EFFECT_ROLE_MISMATCH', Object.assign({ effect }, at)); continue; }
 

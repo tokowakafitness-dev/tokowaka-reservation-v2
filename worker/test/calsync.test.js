@@ -608,5 +608,133 @@ await rejectCase('全員の出勤が0件',
       { calendar_id: 'z@x', role: 'trainer', trainer_id: 'Z' }]);
 }
 
+// ============================================================
+// ★1Fカレンダーを含む押し出し（2026-10-02）
+//
+//   本番は LB_1F_TRAINER_BLOCK=on なので、1Fを含む押し出しが毎分来る。
+//   それなのに1Fを含むテストが1件も無かった。
+//   実際、1Fの分岐で宣言していない変数を参照しており、
+//   **1Fを含む押し出しが来た瞬間に 500 で全部落ちる**状態だった。
+//   本番で踏んでいなかったのは、1Fをまだ送っていなかったから。
+//
+//   1Fは「予定ごとに担当が変わる」唯一の役割なので、他と同じ検査にかけられない。
+//   ここを塞いでおかないと、1Fを有効にした瞬間にD1が永久に止まる。
+// ============================================================
+const F1 = 'f1@group.calendar.google.com';
+const CALS_1F = CALS.concat([{ calendarId: F1, role: 'capacity_1f' }]);
+
+function events1F(extra = []) {
+  return baseEvents().concat(extra);
+}
+function payload1F(over = {}) {
+  return payload(Object.assign({ calendars: CALS_1F, flag1f: 'on' }, over));
+}
+
+{
+  // ① 担当が分かるオンライン（busy + trainerId）＝通る
+  const env = makeEnv();
+  const body = payload1F({
+    events: events1F([ev({ calendarId: F1, eventId: 'f1a', role: 'capacity_1f',
+                           trainerId: 'B', effect: 'busy', reason: 'online' })]),
+    contentHash: 'c'.repeat(64)
+  });
+  const [st, b] = await send(env, body);
+  eq('★1Fの担当つきオンラインは通る', [st, b.success], [200, true]);
+  ok('★500で落ちない（宣言していない変数を参照していないか）', st !== 500);
+  ok('★拒否されていない', b.code !== 'REJECTED');
+  // 実際に公開されたこと（公開中の世代が立っている）
+  const act = one(env, 'SELECT generation FROM calendar_active WHERE id = 1');
+  ok('★公開中の世代が立つ', act && act.generation != null);
+}
+{
+  // ② 担当が分からないオンライン（room_busy + 担当なし）＝通る
+  const env = makeEnv();
+  const body = payload1F({
+    events: events1F([ev({ calendarId: F1, eventId: 'f1b', role: 'capacity_1f',
+                           trainerId: null, effect: 'room_busy', reason: 'online_unknown' })]),
+    contentHash: 'd'.repeat(64)
+  });
+  const [st, b] = await send(env, body);
+  eq('★1Fの担当不明は通る（全員を塞ぐ）', [st, b.success], [200, true]);
+  ok('★拒否されていない', b.code !== 'REJECTED');
+}
+{
+  // ③ busy なのに担当がない＝拒否（誰を塞ぐか決まらない）
+  const env = makeEnv();
+  const body = payload1F({
+    events: events1F([ev({ calendarId: F1, eventId: 'f1c', role: 'capacity_1f',
+                           trainerId: null, effect: 'busy', reason: 'online' })]),
+    contentHash: 'e'.repeat(64)
+  });
+  const [st, b] = await send(env, body);
+  eq('★1Fのbusyに担当がなければ拒否', [st, b.code], [422, 'REJECTED']);
+  ok('★理由は TRAINER_ID_MISSING',
+     (b.reasons || []).some(r => r.code === 'TRAINER_ID_MISSING'));
+}
+{
+  // ④ room_busy なのに担当がある＝拒否（全員を塞ぐのか1人なのか決まらない）
+  const env = makeEnv();
+  const body = payload1F({
+    events: events1F([ev({ calendarId: F1, eventId: 'f1d', role: 'capacity_1f',
+                           trainerId: 'B', effect: 'room_busy', reason: 'online_unknown' })]),
+    contentHash: 'f'.repeat(64)
+  });
+  const [st, b] = await send(env, body);
+  eq('★1Fのroom_busyに担当があれば拒否', [st, b.code], [422, 'REJECTED']);
+  ok('★理由は TRAINER_ID_UNEXPECTED',
+     (b.reasons || []).some(r => r.code === 'TRAINER_ID_UNEXPECTED'));
+}
+{
+  // ⑤ 1Fに shift は無い（出勤はトレーナーのカレンダーだけ）
+  const env = makeEnv();
+  const body = payload1F({
+    events: events1F([ev({ calendarId: F1, eventId: 'f1e', role: 'capacity_1f',
+                           trainerId: null, effect: 'shift', reason: 'shift' })]),
+    contentHash: '1'.repeat(64)
+  });
+  const [st, b] = await send(env, body);
+  eq('★1Fのshiftは拒否', [st, b.code], [422, 'REJECTED']);
+  ok('★理由は EFFECT_ROLE_MISMATCH',
+     (b.reasons || []).some(r => r.code === 'EFFECT_ROLE_MISMATCH'));
+}
+{
+  // ⑥ B1の担当つきは拒否（部屋に担当の概念がない）
+  const env = makeEnv();
+  const body = payload({
+    events: baseEvents().concat([ev({ calendarId: B1, eventId: 'r2', role: 'capacity_b1',
+                                      trainerId: 'B', effect: 'room_busy', reason: 'room' })]),
+    contentHash: '2'.repeat(64)
+  });
+  const [st, b] = await send(env, body);
+  eq('★B1に担当があれば拒否', [st, b.code], [422, 'REJECTED']);
+}
+{
+  // ⑦ トレーナーのカレンダーは宣言と突き合わせる（1Fだけが例外）
+  const env = makeEnv();
+  const body = payload({
+    events: baseEvents().concat([ev({ calendarId: TA, eventId: 'x1', trainerId: 'B' })]),
+    contentHash: '3'.repeat(64)
+  });
+  const [st, b] = await send(env, body);
+  eq('★トレーナーの担当が宣言と違えば拒否', [st, b.code], [422, 'REJECTED']);
+  ok('★理由は TRAINER_ID_CONFLICT',
+     (b.reasons || []).some(r => r.code === 'TRAINER_ID_CONFLICT'));
+}
+{
+  // ⑧ 1Fを含む押し出しが、実際にD1に入って読み出せる
+  const env = makeEnv();
+  const body = payload1F({
+    events: events1F([ev({ calendarId: F1, eventId: 'f1f', role: 'capacity_1f',
+                           trainerId: 'C', effect: 'busy', reason: 'online' })]),
+    contentHash: '4'.repeat(64)
+  });
+  const [st, b8] = await send(env, body);
+  eq('★1Fを含む世代が公開される', [st, b8.code !== 'REJECTED'], [200, true]);
+  const f1rows = rows(env, 'SELECT role, trainer_id, effect FROM calendar_events WHERE calendar_id = ?', F1);
+  eq('★1Fの予定が1件入る', f1rows.length, 1);
+  eq('★担当つきで入る', [f1rows[0].role, f1rows[0].trainer_id, f1rows[0].effect],
+     ['capacity_1f', 'C', 'busy']);
+}
+
 console.log(`\nカレンダー受け取り口 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
