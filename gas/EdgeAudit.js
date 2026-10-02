@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-02a 版の印/契約の二重';
+var LB_AUDIT_BUILD = '2026-10-02b 版の印/契約の二重/月額会員の残数一覧';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -726,8 +726,17 @@ function _contractOddities(rows) {
       }
     }
     // ④ 期間が前の行と重なっている
+    //   ★同じ残数方式の行どうしだけを見る（2026-10-02）。
+    //     月額とチケットは数える土台が別なので、期間が重なっても枠は揺れない。
+    //     方式を見ずに比べていたため、月額＋チケットを併用している方（正常な契約形態）が
+    //     全員「確認が要る」に入り、一覧で本当に見るべき方が埋もれていた。
+    if (method.indexOf('月額') < 0 && method.indexOf('チケット') < 0) continue;   // 方式が読めない行は比べない
     for (var j = 0; j < i; j++) {
       var pr = rows[j];
+      var pMethod = String(cell(pr, 'method') || '');
+      var sameKind = (method.indexOf('月額') >= 0 && pMethod.indexOf('月額') >= 0)
+                  || (method.indexOf('チケット') >= 0 && pMethod.indexOf('チケット') >= 0);
+      if (!sameKind) continue;   // 月額×チケットの重なりは正常（併用）
       var aS = rr.start ? rr.start.getTime() : null, aE = rr.end ? rr.end.getTime() : null;
       var bS = pr.start ? pr.start.getTime() : null, bE = pr.end ? pr.end.getTime() : null;
       if (aS == null || bS == null) continue;
@@ -736,7 +745,7 @@ function _contractOddities(rows) {
         out.push(tag + ' 期間が ' + (j + 1) + ') と重なっています（'
                  + dstr(pr.start) + '〜' + dstr(pr.end) + ' と '
                  + dstr(rr.start) + '〜' + dstr(rr.end) + '）。'
-                 + 'どちらの条件で数えるかが揺れます。');
+                 + 'どちらの条件で数えるかが揺れます。（同じ残数方式の行どうしです）');
       }
     }
   }
@@ -1254,3 +1263,244 @@ function contractOverlapImpactText(embedded) {
 }
 
 function contractOverlapImpact() { Logger.log(contractOverlapImpactText()); }
+
+// ============================================================
+// 月額会員ぜんぶの残数を、氏名つきで1回で一覧する（2026-10-02）
+//
+//   きっかけ：オーナーが全月額会員の残数を確かめるまでリマインド配信を開始しない判断をした。
+//   ところが1人ずつ調べる関数（remainingNamed）しかなく、38名を見るのに現実的でない。
+//   この一覧が配信開始を止めているボトルネックだったので、1回で出す。
+//
+//   ★GASエディタ専用。氏名を出すのはここだけ。
+//     作業依頼（EdgeJob.js）からは呼べない作りにする。作業依頼の結果は作業番号を
+//     知っていれば合言葉なしで読めるURLに置かれるため、氏名を載せると社外へ出る経路ができる。
+//     （remainingNamedForNudge / remainingNamed と同じ考え方）
+//
+//   ★読み取りだけ。何も書き換えない。
+//
+//   ★予約台帳は1回だけ読む。会員ごとに読み直すと38人ぶん台帳を読んで6分を使い切る。
+//     （contractOverlapImpactText と同じやり方）
+//
+//   使い方：GASエディタで monthlyMembersRemainingNamed を選び、実行 → 実行ログに出ます。
+// ============================================================
+
+// 実行ログは1件が長すぎると途中で切れる。会員ブロックの区切りで分けて出す。
+function _lbAuditLogChunks(text, limit) {
+  var cap = limit || 6000;
+  var lines = String(text == null ? '' : text).split('\n');
+  var buf = [], len = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var ln = lines[i];
+    if (len && (len + ln.length + 1) > cap) { Logger.log(buf.join('\n')); buf = []; len = 0; }
+    buf.push(ln); len += ln.length + 1;
+  }
+  if (buf.length) Logger.log(buf.join('\n'));
+}
+
+function monthlyMembersRemainingNamed() {
+  _lbAuditLogChunks(_monthlyMembersRemainingNamedText());
+}
+
+function _monthlyMembersRemainingNamedText(nowMs) {
+  var out = [];
+  function say(s) { out.push(s); }
+
+  var ms = (nowMs != null) ? nowMs : new Date().getTime();
+  var now = new Date(ms);
+  var nowKey = _lbMonthKeyJst(ms);
+  // 翌月の1日・正午。25日以降は翌月の予約が開くので、翌月も見ないと手遅れになる。
+  var nextMs = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0).getTime();
+  var nextKey = _lbMonthKeyJst(nextMs);
+
+  say('===== 月額会員の残数の一覧（氏名つき・読み取りだけ）'
+      + Utilities.formatDate(now, SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + ' =====');
+  say('版: ' + LB_AUDIT_BUILD);
+  say('★この出力には個人情報が含まれます。外部へ貼らないでください。');
+  say('対象の月: ' + nowKey + '（当月）／ ' + nextKey + '（翌月）');
+
+  try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (eC) {}
+
+  var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!map || map.getLastRow() < 2) { say('⛔ 会員名簿が読めません。'); return out.join('\n'); }
+  var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
+
+  // 予約台帳は1回だけ読む（会員ごとに読み直さない）
+  var rvals = null, rvalsOk = false;
+  try {
+    var rsh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+    if (rsh) {
+      var lastR = rsh.getLastRow();
+      rvals = (lastR < 2) ? [] : rsh.getRange(2, 1, lastR - 1, Math.max(12, rsh.getLastColumn())).getValues();
+      rvalsOk = true;
+    }
+  } catch (eR) { rvalsOk = false; }
+  if (!rvalsOk) say('⚠️ 予約台帳が読めません。残数はすべて「算出できない」扱いになります。');
+
+  var rate = (typeof LINE_BOOKING !== 'undefined' && LINE_BOOKING.CARRYOVER_RATE != null)
+             ? LINE_BOOKING.CARRYOVER_RATE : (1 / 3);
+
+  var checked = 0, monthly = 0, skipped = [];
+  var nUnknown = 0, nOdd = 0, nZero = 0, nOver = 0;
+  var review = [], fine = [];
+
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;   // 照合前・却下は無効な登録
+    var nm = String(vals[i][MAP_COL.NAME - 1] || ''); if (!nm) continue;
+    var cid = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || ''); if (!cid) continue;
+    checked++;
+
+    var rows = null;
+    try { rows = _lbContractRowsAll(nm, _lbPhoneByCustomerId(cid), false, cid); }
+    catch (e1) { skipped.push(nm + '（会員#' + cid.slice(-4) + '・契約が読めない）'); continue; }
+    if (!rows || !rows.length) continue;
+
+    var sessions = null;
+    if (rvalsOk) {
+      try { sessions = _lbResvValsToSessions(rvals, cid, _lbParseResvDate); } catch (e2) { sessions = null; }
+    }
+
+    // 月額を持つかどうかは契約行だけで分かる（シートを読まない純粋な判定）。
+    //   ★予約が読めないときに残数の計算へ入らないため、ここで先に判定する。
+    //     _lbSplitRemaining に予約を渡さないと、関数の中で会員ごとに台帳を読み直してしまう。
+    var entMonthly = false;
+    try { entMonthly = !!_lbRowsToEntitlements(rows, rate).hasMonthly; }
+    catch (eE) { skipped.push(nm + '（会員#' + cid.slice(-4) + '・契約を解釈できない: ' + eE.message + '）'); continue; }
+    if (!entMonthly) continue;   // ★月額契約を持つ会員だけを対象にする
+    monthly++;
+
+    var sp = null, spNext = null, calcErr = '';
+    if (sessions !== null) {
+      try {
+        sp = _lbSplitRemaining(rows, cid, ms, sessions);
+        spNext = _lbSplitRemaining(rows, cid, nextMs, sessions);
+      } catch (e3) { calcErr = e3.message; sp = null; spNext = null; }
+    }
+
+    // ---- 確認が要るかどうか ----
+    var flags = [];
+    var unknown = (sessions === null) || !sp || (sp._ok === false) || (sp.monthlyRem == null);
+    if (unknown) flags.push('残数が算出できない' + (calcErr ? '（' + calcErr + '）' : ''));
+
+    var odd = _contractOddities(rows);
+    if (odd.length) flags.push('契約の入力に食い違い');
+
+    var total = unknown ? null : ((sp.monthlyRem || 0) + (sp.ticketRem || 0));
+    if (total === 0) flags.push('残数が0');
+
+    // 残数が「頻度＋繰越上限」を超えていないか。
+    //   上限の出し方は二重検査と同じ道具を使う（_contractDoubleCharge の maxLegit）。
+    //   ただし二重検査は「月額行が2行以上」のときだけ疑うので、ここでは行数に関わらず超過を見る。
+    var opening = null;
+    try { opening = _lbMemberOpeningWithFloor(cid); } catch (e4) { opening = null; }
+    var seed = (opening && opening.carry && opening.carry[nowKey] != null) ? Number(opening.carry[nowKey]) : null;
+    var dc = null, over = false;
+    try {
+      dc = _contractDoubleCharge(rows, nowKey, (unknown ? null : sp.avail), seed);
+      if (dc && dc.count >= 1 && dc.avail != null && dc.avail > dc.maxLegit) { over = true; }
+    } catch (e5) { dc = null; }
+    if (over) flags.push('残数が頻度＋繰越上限を超えている（多すぎる）');
+
+    if (unknown) nUnknown++;
+    if (odd.length) nOdd++;
+    if (total === 0) nZero++;
+    if (over) nOver++;
+
+    // ---- 1会員のブロック（簡潔に。38名ぶん出すため罫線と必要な数字だけ） ----
+    var blk = [];
+    var who = nm + '（会員#' + cid.slice(-4) + '）';
+    blk.push('━━━━━━━━ ' + (flags.length ? '⚠ 確認が要る ' : '○ ') + who + ' ━━━━━━━━');
+    if (flags.length) blk.push('  要確認: ' + flags.join(' / '));
+
+    // 計算の前提（_remainingOneText と同じ形。数字だけ出して前提を省くと誤読する）
+    try {
+      var logged = _lbMemberOpening(cid);
+      blk.push('  前提: 台帳の記録開始=' + _lbRecordsFromMonth()
+               + ' ／ この会員の下限=' + ((opening && opening.recordsFrom) ? String(opening.recordsFrom) : '(なし＝契約開始月まで遡る)')
+               + ' ／ 残数ログ=' + (logged ? ('有（' + (logged.recordsFrom || '?') + '基準・繰越' + _lbMbCarryOf(logged) + '回'
+                   + ((logged.packsUsed && _lbCountKeys(logged.packsUsed)) ? '・チケット引継ぎ有' : '') + '）')
+                 : '無（下限は会員登録の月）'));
+    } catch (e6) { blk.push('  前提: ⚠️ 読めませんでした（' + e6.message + '）'); }
+
+    blk.push('  契約 ' + rows.length + '件' + (rows.migrationGap ? '（⚠️ ID移行が未完了の行あり）' : ''));
+    for (var r = 0; r < rows.length; r++) {
+      var rr = rows[r], cc = rr.cols, row = rr.row;
+      var f = function (k) { return (cc[k] >= 0 && cc[k] != null) ? String(row[cc[k]]) : '(列なし)'; };
+      var dd = function (x) { return x ? Utilities.formatDate(x, SETTINGS.TIMEZONE, 'yyyy/MM/dd') : '(なし)'; };
+      blk.push('    ' + (r + 1) + ') 種別=' + f('type') + ' / 方式=' + f('method') + ' / 頻度=' + f('freq')
+               + ' / 券=' + f('ticket') + ' / 繰越上限=' + f('carryCap')
+               + ' / 期間=' + dd(rr.start) + '〜' + dd(rr.end));
+    }
+    if (odd.length) for (var o = 0; o < odd.length; o++) blk.push('  ⚠ 食い違い: ' + odd[o]);
+
+    function remLine(label, mk, s) {
+      if (!s) return '  ' + label + ' ' + mk + '：計算できませんでした';
+      var mr = (s.monthlyRem == null) ? '無制限扱い（頻度の入力なし）' : s.monthlyRem;
+      var tt = (s.monthlyRem == null) ? '不明' : ((s.monthlyRem || 0) + (s.ticketRem || 0));
+      return '  ' + label + ' ' + mk + '：枠(頻度' + (s.freq == null ? '?' : s.freq) + '＋繰越)=' + s.avail
+             + ' → 月額残=' + mr + ' ／ チケット残=' + (s.ticketRem || 0) + ' ／ 合計=' + tt
+             + (s._ok === false ? '  ⚠️ 割当器が「要確認」' : '');
+    }
+    blk.push(remLine('当月', nowKey, sp));
+    blk.push(remLine('翌月', nextKey, spNext));
+    if (dc && dc.count >= 1 && dc.avail != null) {
+      blk.push('  上限の検算: 実際に効く頻度=' + dc.appliedFreq + '＋繰越で入りうる上限=' + dc.allowCarry
+               + (dc.seed != null ? '（残数ログのseed=' + dc.seed + '）' : '')
+               + ' = ' + dc.maxLegit + ' ／ いまの枠=' + dc.avail
+               + (over ? '  🚨 枠が上限を超えています' : ''));
+      if (dc.count >= 2) blk.push('  ⚠ 同時に有効な月額行が ' + dc.count + '行あります（古い行の終了日を入れてください）');
+    }
+
+    // 今月／翌月の予約（日時を並べる。25日以降は翌月が開くので分けて出す）
+    if (sessions === null) {
+      blk.push('  予約: ⚠️ 台帳が読めないため不明');
+    } else {
+      var curList = [], nextList = [], others = 0;
+      for (var s2 = 0; s2 < sessions.length; s2++) {
+        var mk2 = _lbMonthKeyJst(sessions[s2].startAt);
+        var lab = Utilities.formatDate(new Date(sessions[s2].startAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm')
+                + (sessions[s2].packKind && sessions[s2].packKind !== 'normal' ? '(' + sessions[s2].packKind + ')' : '');
+        if (mk2 === nowKey) curList.push(lab);
+        else if (mk2 === nextKey) nextList.push(lab);
+        else others++;
+      }
+      curList.sort(); nextList.sort();
+      blk.push('  当月の予約 ' + curList.length + '件' + (curList.length ? '：' + curList.join('、') : ''));
+      blk.push('  翌月の予約 ' + nextList.length + '件' + (nextList.length ? '：' + nextList.join('、') : ''));
+      if (others) blk.push('  （他の月の計上 ' + others + '件）');
+    }
+
+    (flags.length ? review : fine).push(blk.join('\n'));
+  }
+
+  // ---- 冒頭の総括（ここが一番読まれる） ----
+  var head = [];
+  head.push('');
+  head.push('── 調べた会員 ' + checked + '名 ／ 月額契約を持つ会員 ' + monthly + '名');
+  head.push('── ⚠ 確認が要る会員 ' + review.length + '名'
+            + (review.length ? '（上から ' + review.length + '名を見れば済みます）' : '（なし）'));
+  head.push('     ・残数が算出できない ' + nUnknown + '名');
+  head.push('     ・契約の入力に食い違いがある ' + nOdd + '名');
+  head.push('     ・残数が0 ' + nZero + '名');
+  head.push('     ・残数が頻度＋繰越上限を超えている（多すぎる） ' + nOver + '名');
+  head.push('── ○ 問題なし ' + fine.length + '名');
+  if (skipped.length) head.push('── 調べられなかった会員 ' + skipped.length + '名: ' + skipped.join(' / '));
+  head.push('');
+  head.push('並び順: 確認が要る会員が先、問題なしが後です。');
+  for (var h = 0; h < head.length; h++) say(head[h]);
+
+  if (!monthly) { say(''); say('（月額契約を持つ会員がいません）'); return out.join('\n'); }
+
+  say('');
+  say('========== ⚠ 確認が要る会員 ' + review.length + '名 ==========');
+  if (!review.length) say('（なし）');
+  for (var a1 = 0; a1 < review.length; a1++) say(review[a1]);
+
+  say('');
+  say('========== ○ 問題なし ' + fine.length + '名 ==========');
+  if (!fine.length) say('（なし）');
+  for (var b1 = 0; b1 < fine.length; b1++) say(fine[b1]);
+
+  say('');
+  say('===== ここまで。何も書き換えていません =====');
+  return out.join('\n');
+}
