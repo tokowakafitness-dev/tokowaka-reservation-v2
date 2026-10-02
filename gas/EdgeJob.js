@@ -82,6 +82,8 @@ function _ejRun(op, args) {
       if (args && args.carryImpact) return _ejScrub(carryRangeImpactText());
       // 契約行が二重に効いていないか＋会員画面にマイナスが出ていないか
       if (args && args.overlap) return _ejScrub(contractOverlapImpactText());
+      // トレーナーの連続セッションの実測（読み取りだけ・制限は入れない）。args.days/args.gap で条件を変える
+      if (args && args.consec) return _ejScrub(consecutiveSessionsText(args));
       // LINEの用途別の送信通数（args.usage='2026-09'）。当月は予約が入りきっていないので
       //   見込みを立てるには実績が揃った前月を見る（2026-10-02 オーナー指示）。
       if (args && args.usage) return _ejScrub(lineUsageText(String(args.usage)));

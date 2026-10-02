@@ -232,6 +232,18 @@ function _lbIsBusyTitle(title) {
       || t.indexOf('ブロック') >= 0;
 }
 
+// ── 「実際のセッション」のタイトルか判定（2026-10-02）──
+//   埋まり（_lbIsBusyTitle）とは目的が違う。
+//   埋まり＝席を塞ぐか（休憩・ブロックも塞ぐので含む）。
+//   セッション＝トレーナーが実際に施術しているか（休憩・ブロックは含まない）。
+//   連続セッションを数えるときは、休憩を挟めば質は回復するので「区切り」として扱う。
+//   ここを混ぜると「休んでいる日の前後の枠まで落ちる」制限になってしまう。
+function _lbIsSessionTitle(title) {
+  var t = String(title || '');
+  if (t.indexOf('休憩') >= 0 || t.indexOf('ブロック') >= 0) return false;   // 施術ではない
+  return t.indexOf('[RESERVED]') === 0 || t.indexOf('✅') === 0;
+}
+
 // ── 「出勤可能」系タイトルか判定 ──
 function isShiftEvent(title) {
   var keywords = ['出勤可能', '出勤', 'シフト', 'available', 'AVAILABLE'];

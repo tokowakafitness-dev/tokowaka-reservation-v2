@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-02b 版の印/契約の二重/月額会員の残数一覧';
+var LB_AUDIT_BUILD = '2026-10-02c 版の印/契約の二重/月額会員の残数一覧/連続セッションの実測';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -1504,3 +1504,426 @@ function _monthlyMembersRemainingNamedText(nowMs) {
   say('===== ここまで。何も書き換えていません =====');
   return out.join('\n');
 }
+
+// ============================================================
+// トレーナーの連続セッションの実測（2026-10-02）
+//
+// なぜ必要か：
+//   オーナーは「同じトレーナーで3セッション連続したら、その後15分は受け付けない」
+//   制限を入れたいと考えている。だが顧客が選べるトレーナーは実質2名（鈴木・沖）しかいない。
+//   制限で空き枠を落としすぎると予約が取れず、売上に直接響く。
+//   だから「3か2か」「隙間を何分とみなすか」を決める前に、いま実際にどうなっているかを測る。
+//
+//   ★ここは読み取りだけ。制限そのものは実装しない。カレンダーもシートも書き換えない。
+//   ★氏名を出さない。予定のタイトルは顧客名を含むため、一切出力しない（時刻と長さだけ）。
+//     トレーナー名は社内の人なので出す。
+//   ★カレンダーの読み出しはトレーナー3名×1回＝3回に抑える（GASは6分で止まる）。
+//
+// 使い方（作業依頼）：{ op:'remaining', args:{ consec:true, days:30, gap:15 } }
+// ============================================================
+
+// ---- 純粋関数①：時刻の正規化（Date でもミリ秒でも受ける）----
+//   vm をまたぐと instanceof Date が効かないため、getTime があるかで見る。
+function _consecMs(v) {
+  if (v == null) return NaN;
+  if (typeof v === 'number') return v;
+  if (typeof v.getTime === 'function') return v.getTime();
+  return NaN;
+}
+
+// ---- 純粋関数②：重なりを畳んだ実働の分数 ----
+function _consecBusyMinutes(items) {
+  var a = [];
+  for (var i = 0; i < (items || []).length; i++) a.push({ s: items[i].start, e: items[i].end });
+  a.sort(function (x, y) { return x.s - y.s; });
+  var total = 0, cs = null, ce = null;
+  for (var j = 0; j < a.length; j++) {
+    if (cs === null) { cs = a[j].s; ce = a[j].e; continue; }
+    if (a[j].s <= ce) { if (a[j].e > ce) ce = a[j].e; }
+    else { total += ce - cs; cs = a[j].s; ce = a[j].e; }
+  }
+  if (cs !== null) total += ce - cs;
+  return total / 60000;
+}
+
+// ---- 純粋関数③：区間を「連続の塊」に畳む ----
+//   隙間が gapMinutes 分**未満**なら同じ塊。ちょうど gapMinutes 空いていたら別の塊。
+//   返す塊： { start, end, spanMinutes, busyMinutes, parts, items }
+//     spanMinutes  … 開始〜終了の幅（間の隙間も含む）。「3時間連続」はこれで見る。
+//     busyMinutes  … 実際に予定が入っている分数。隙間で span が膨らんでいないかの確認用。
+//     parts        … 何セッション分か（まったく同じ時刻の重複は1件に数える）
+function _consecRuns(intervals, gapMinutes) {
+  var gapMs = (gapMinutes == null ? 15 : Number(gapMinutes)) * 60000;
+  if (!(gapMs >= 0)) gapMs = 0;
+  var list = [], seen = {};
+  for (var i = 0; i < (intervals || []).length; i++) {
+    var iv = intervals[i];
+    if (!iv) continue;
+    var s = _consecMs(iv.start), e = _consecMs(iv.end);
+    if (!isFinite(s) || !isFinite(e) || e <= s) continue;     // 長さ0・逆順は捨てる
+    var key = s + '/' + e;
+    if (seen[key]) continue;                                   // 同じ時刻の重複は1件として扱う
+    seen[key] = true;
+    list.push({ start: s, end: e });
+  }
+  list.sort(function (a, b) { return (a.start - b.start) || (a.end - b.end); });
+  var runs = [];
+  for (var j = 0; j < list.length; j++) {
+    var cur = runs.length ? runs[runs.length - 1] : null;
+    var diff = cur ? (list[j].start - cur.end) : null;
+    //   ★重なり・接するだけ（diff<=0）は隙間の指定が0でも常に同じ塊。
+    //     diff < gapMs だけで書くと gap=0 のとき接するものが分かれる（2026-10-02 テストで検出）。
+    if (cur && (diff <= 0 || diff < gapMs)) {
+      cur.items.push(list[j]);
+      if (list[j].end > cur.end) cur.end = list[j].end;
+    } else {
+      runs.push({ start: list[j].start, end: list[j].end, items: [list[j]] });
+    }
+  }
+  for (var k = 0; k < runs.length; k++) {
+    var r = runs[k];
+    r.parts = r.items.length;
+    r.spanMinutes = Math.round((r.end - r.start) / 60000);
+    r.busyMinutes = Math.round(_consecBusyMinutes(r.items));
+  }
+  return runs;
+}
+
+// ---- 純粋関数④：この枠を入れたら塊が何分になるか ----
+//   ★「直前が2連続か」だけを見てはいけない。既存の2連続の**前**に挟む枠・**間**に入る枠も
+//     3連続を作る。だから枠を足してから畳み直し、その枠を含む塊を返す（前後どちらも見る）。
+//   返り値は _consecRuns と同じ形の塊1つ。判定不能なら null。
+function _consecWithSlot(runs, slotStart, slotEnd, gapMinutes) {
+  var ss = _consecMs(slotStart), se = _consecMs(slotEnd);
+  if (!isFinite(ss) || !isFinite(se) || se <= ss) return null;
+  var ivs = [{ start: ss, end: se }];
+  for (var i = 0; i < (runs || []).length; i++) {
+    var r = runs[i];
+    if (!r) continue;
+    if (r.items && r.items.length) {
+      for (var j = 0; j < r.items.length; j++) ivs.push({ start: r.items[j].start, end: r.items[j].end });
+    } else {
+      ivs.push({ start: _consecMs(r.start), end: _consecMs(r.end) });
+    }
+  }
+  var merged = _consecRuns(ivs, gapMinutes);
+  for (var m = 0; m < merged.length; m++) {
+    if (merged[m].start <= ss && merged[m].end >= se) return merged[m];
+  }
+  return null;
+}
+
+// ---- 純粋関数⑤：塊の長さごとの分布を「60分 12件 ／ 120分 8件」の形にする ----
+function _consecDist(runs) {
+  var byLen = {};
+  for (var i = 0; i < (runs || []).length; i++) {
+    var L = runs[i].spanMinutes;
+    byLen[L] = (byLen[L] || 0) + 1;
+  }
+  var keys = [];
+  for (var k in byLen) keys.push(Number(k));
+  keys.sort(function (a, b) { return a - b; });
+  var parts = [];
+  for (var q = 0; q < keys.length; q++) parts.push(keys[q] + '分 ' + byLen[keys[q]] + '件');
+  return parts.length ? parts.join(' ／ ') : '（なし）';
+}
+
+// ---- 純粋関数⑥：塊の中に休憩が何件かぶっているか ----
+//   ★ここが実測の読み方を左右する。「休憩」は _lbIsBusyTitle が埋まりと見なすため、
+//     休憩をはさんだ前後のセッションが1つの塊に畳まれる。
+//     トレーナーは実際に休んでいるので、その塊は「3時間連続で働いた」ではない。
+//     予約エンジンが塞ぐ範囲としては正しい（だから主の数え方は変えない）が、
+//     疲労の実態としては過大。だから件数を添えて、読み手が割り引けるようにする。
+function _consecBreaksIn(run, breakIvs) {
+  var n = 0;
+  for (var i = 0; i < (breakIvs || []).length; i++) {
+    var b = breakIvs[i];
+    if (b.start < run.end && b.end > run.start) n++;
+  }
+  return n;
+}
+
+// ---- 表示用のこまごま（GASのAPIを使うのでここから下は純粋ではない）----
+function _consecFmtDay(ms)  { return Utilities.formatDate(new Date(ms), SETTINGS.TIMEZONE, 'yyyy/MM/dd'); }
+function _consecFmtTime(ms) { return Utilities.formatDate(new Date(ms), SETTINGS.TIMEZONE, 'HH:mm'); }
+// 時間帯の帯（7-12 / 12-18 / 18-24）。JSTの時で見るため書式から取る。
+function _consecBand(ms) {
+  var h = Number(String(_consecFmtTime(ms)).slice(0, 2));
+  if (h < 12) return '7-12時';
+  if (h < 18) return '12-18時';
+  return '18-24時';
+}
+
+// ============================================================
+// 入口：トレーナーの連続セッションの実測
+//   args = { consec:true, days:30, gap:15 }
+// ============================================================
+function consecutiveSessionsText(args) {
+  args = args || {};
+  var days = Number(args.days || 30); if (!(days > 0)) days = 30;
+  var gap  = Number(args.gap  != null ? args.gap : 15); if (!(gap >= 0)) gap = 15;
+  var COOL = 15;                       // クールダウンの分数（④で使う。制限は入れない）
+  var LIMIT3 = 180, LIMIT2 = 120;      // 3連続／2連続のしきい値（分）
+
+  var out = [];
+  function say(s) { out.push(s); }
+  function head(s) { say(''); say('■ ' + s); }
+
+  say('===== トレーナーの連続セッションの実測 =====');
+  say('版: ' + LB_AUDIT_BUILD);
+  say('（読み取りだけ。制限は入れていません。何も書き換えません）');
+  say('条件: 過去' + days + '日 ／ 隙間' + gap + '分未満を連続とみなす');
+  say('数え方: 連続に数えるのは「実際のセッション」だけです。休憩・ブロックは区切りとして扱います');
+  say('        （休憩を挟めば質は回復するため。塊に入れると休んでいる日の前後の枠まで落ちます）。');
+  say('★予定のタイトルは顧客名を含むため出しません（時刻と長さだけ）。');
+
+  var now = new Date(), nowMs = now.getTime();
+  var pastStart = new Date(nowMs - days * 86400000);
+  var horizon = _lbBookingHorizonEnd(now);
+
+  // ---------------------------------------------------------
+  // カレンダーの読み出し：トレーナー1名につき1回だけ（過去30日＋未来の地平をまとめて）
+  // ---------------------------------------------------------
+  var T = [];
+  for (var t = 0; t < CALENDAR_IDS.TRAINERS.length; t++) {
+    var tr = CALENDAR_IDS.TRAINERS[t];
+    var rec = { id: tr.id, name: tr.name, hidden: !!tr.hidden,
+                pastBusy: [], futureBusy: [], busyAll: [], shifts: [], breakByDay: {}, breaks: 0, err: '',
+                pastRuns: [], futureRuns: [], breakIvs: [] };   // ★先に空で置く。カレンダーが開けない経路でも後段が落ちない
+    //   pastBusy/futureBusy＝実際のセッションだけ（連続を数える）
+    //   busyAll＝休憩・ブロックも含む埋まり全部（席が塞がる範囲。空きブロックの計算に使う）
+    try {
+      var cal = CalendarApp.getCalendarById(tr.email);
+      if (!cal) { rec.err = 'カレンダーが開けません'; T.push(rec); continue; }
+      var evs = cal.getEvents(pastStart, horizon);     // ★ここが1回。合計3回。
+      for (var j = 0; j < evs.length; j++) {
+        var ev = evs[j], title = ev.getTitle();
+        var s = ev.getStartTime(), e = ev.getEndTime();
+        // ★判定はシフトを先に見る（出勤シフトは埋まりではない）。
+        if (isShiftEvent(title)) { rec.shifts.push({ start: s, end: e }); continue; }
+        if (!_lbIsBusyTitle(title)) continue;           // 埋まりの判定は コード.js の1か所から呼ぶ
+        // 「休憩」がシフトに入っているかの実測（②）。埋まりの判定とは別の目的なので別に数える。
+        if (String(title).indexOf('休憩') >= 0) {
+          var dk = _consecFmtDay(s.getTime());
+          rec.breakByDay[dk] = (rec.breakByDay[dk] || 0) + 1;
+          rec.breaks++;
+          rec.breakIvs.push({ start: s.getTime(), end: e.getTime() });
+        }
+        // ★連続の塊に数えるのは「実際のセッション」だけ（2026-10-02）。
+        //   休憩やブロックも埋まりなので席は塞ぐが、トレーナーは施術していない。
+        //   これを塊に入れると「セッション→休憩60分→セッション」が180分の連続に見え、
+        //   休んでいる日の前後の枠まで制限で落ちてしまう。休憩は区切りとして扱う。
+        //   空きブロック（②）の計算には埋まり全部を使う（席は実際に塞がるため）。
+        rec.busyAll.push({ start: s, end: e });
+        if (!_lbIsSessionTitle(title)) continue;
+        (s.getTime() < nowMs ? rec.pastBusy : rec.futureBusy).push({ start: s, end: e });
+      }
+    } catch (eT) { rec.err = String((eT && eT.message) || eT).slice(0, 120); }
+    rec.pastRuns   = _consecRuns(rec.pastBusy, gap);
+    rec.futureRuns = _consecRuns(rec.futureBusy, gap);
+    T.push(rec);
+  }
+
+  // ---------------------------------------------------------
+  // ① 過去に実際あった「連続の塊」
+  // ---------------------------------------------------------
+  var long3 = [], long4 = 0;
+  for (var a = 0; a < T.length; a++) {
+    for (var b = 0; b < T[a].pastRuns.length; b++) {
+      var r = T[a].pastRuns[b];
+      if (r.spanMinutes >= LIMIT3) {
+        long3.push({ name: T[a].name, run: r, brk: _consecBreaksIn(r, T[a].breakIvs) });
+        if (r.spanMinutes >= 240) long4++;
+      }
+    }
+  }
+  long3.sort(function (x, y) { return x.run.start - y.run.start; });
+
+  // ---------------------------------------------------------
+  // ③ 未来の空き枠が、制限でどれだけ落ちるか（★一番重要）
+  // ---------------------------------------------------------
+  var slots = [], slotErr = '';
+  try { slots = buildAvailableSlots() || []; }        // ★重い。1回だけ呼ぶ。
+  catch (eS) { slotErr = String((eS && eS.message) || eS).slice(0, 120); }
+
+  var byId = {};
+  for (var c = 0; c < T.length; c++) byId[T[c].id] = T[c];
+
+  var tot = 0, drop3 = 0, drop2 = 0, cool = 0, coolExtra = 0;
+  var drop3ByTrainer = {}, drop2ByTrainer = {}, drop3ByBand = {}, unknownTrainer = 0;
+  for (var d = 0; d < slots.length; d++) {
+    var sl = slots[d];
+    var rec2 = byId[String(sl.trainerId)];
+    if (!rec2) { unknownTrainer++; continue; }
+    var ss = new Date(sl.startISO).getTime(), se = new Date(sl.endISO).getTime();
+    if (!isFinite(ss) || !isFinite(se)) { unknownTrainer++; continue; }
+    tot++;
+    var merged = _consecWithSlot(rec2.futureRuns, ss, se, gap);
+    var span = merged ? merged.spanMinutes : Math.round((se - ss) / 60000);
+    var d3 = span > LIMIT3, d2 = span > LIMIT2;
+    if (d3) {
+      drop3++;
+      drop3ByTrainer[rec2.name] = (drop3ByTrainer[rec2.name] || 0) + 1;
+      var bd = _consecBand(ss);
+      drop3ByBand[bd] = (drop3ByBand[bd] || 0) + 1;
+    }
+    if (d2) { drop2++; drop2ByTrainer[rec2.name] = (drop2ByTrainer[rec2.name] || 0) + 1; }
+    // ④ 既存の「3連続以上の塊」の直後COOL分に入る枠
+    var inCool = false;
+    for (var f = 0; f < rec2.futureRuns.length; f++) {
+      var fr = rec2.futureRuns[f];
+      if (fr.spanMinutes < LIMIT3) continue;
+      if (ss >= fr.end && ss < fr.end + COOL * 60000) { inCool = true; break; }
+    }
+    if (inCool) { cool++; if (!d3) coolExtra++; }
+  }
+  function pct(n) { return tot ? (Math.round(n * 1000 / tot) / 10) + '%' : '—'; }
+  function byTrainerText(m) {
+    var ps = [];
+    for (var g = 0; g < T.length; g++) if (m[T[g].name] != null) ps.push(T[g].name + '：' + m[T[g].name] + '枠');
+    return ps.length ? ps.join(' ／ ') : '（なし）';
+  }
+
+  // ---------------------------------------------------------
+  // 結論（ここが一番読まれる）
+  // ---------------------------------------------------------
+  say('');
+  say('────── 結論 ──────');
+  var long3brk = 0;
+  for (var a2 = 0; a2 < long3.length; a2++) if (long3[a2].brk) long3brk++;
+  say('① 過去' + days + '日で ' + LIMIT3 + '分以上の連続の塊は 合計 ' + long3.length + '件'
+      + (long4 ? '（うち240分以上 ' + long4 + '件）' : '（240分以上は なし）'));
+  if (slotErr) say('③ 空き枠を取得できませんでした：' + slotErr);
+  else {
+    say('③ いまの空き枠 ' + tot + '枠 ／ ' + LIMIT3 + '分制限で落ちるのは ' + drop3 + '枠（' + pct(drop3) + '）');
+    say('   ' + LIMIT2 + '分制限にした場合は ' + drop2 + '枠（' + pct(drop2) + '）が落ちます');
+    say('④ クールダウン' + COOL + '分で追加で落ちる枠は ' + coolExtra + '枠'
+        + '（' + LIMIT3 + '分制限が既に落とす分と重なるのが ' + (cool - coolExtra) + '枠）');
+  }
+  say('★顧客が選べるトレーナーは2名（' + (function () {
+    var v = []; for (var h2 = 0; h2 < T.length; h2++) if (!T[h2].hidden) v.push(T[h2].name);
+    return v.join('・') || '—';
+  })() + '）。中野（顧客には非表示）は実測には含め、③の空き枠の数え上げにも現れます。');
+
+  // ---------------------------------------------------------
+  // 内訳
+  // ---------------------------------------------------------
+  head('① 連続の塊の長さ（過去' + days + '日・隙間' + gap + '分未満を連続とみなす）');
+  for (var i1 = 0; i1 < T.length; i1++) {
+    if (T[i1].err) { say('  ' + T[i1].name + '：❌ ' + T[i1].err); continue; }
+    say('  ' + T[i1].name + (T[i1].hidden ? '（顧客非表示）' : '') + '：' + _consecDist(T[i1].pastRuns));
+  }
+  say('  ▶ ' + LIMIT3 + '分以上の塊は 合計 ' + long3.length + '件'
+      + (long4 ? '（うち240分以上 ' + long4 + '件）' : ''));
+  if (long3.length) {
+    say('');
+    say('  ── ' + LIMIT3 + '分以上の塊の明細（本当にあったかを確認できるように）──');
+    var cap = 40;
+    for (var i2 = 0; i2 < long3.length && i2 < cap; i2++) {
+      var L = long3[i2];
+      say('   ' + _consecFmtDay(L.run.start) + ' ' + L.name
+          + ' ' + _consecFmtTime(L.run.start) + '〜' + _consecFmtTime(L.run.end)
+          + ' ' + L.run.spanMinutes + '分（' + L.run.parts + 'セッション分'
+          + (L.run.busyMinutes !== L.run.spanMinutes ? '／実働' + L.run.busyMinutes + '分' : '')
+          + '）');
+    }
+    if (long3.length > cap) say('   …ほか ' + (long3.length - cap) + '件（長いので省略）');
+  }
+
+  head('② 3時間連続が成立しうる帯（出勤シフト − 埋まり ＝ 空きブロックのうち' + LIMIT3 + '分以上）');
+  say('  ※施設（B1）の埋まりは引いていません＝「最大でここまで」の上限値です（読み出しを3回に抑えるため）。');
+  var wide = 0, wideLines = [];
+  for (var i3 = 0; i3 < T.length; i3++) {
+    var rec3 = T[i3];
+    if (rec3.err) continue;
+    // 空きブロックは「席が実際に塞がる範囲」を引く＝休憩・ブロックも含む
+    var busyAll = rec3.busyAll;
+    for (var s3 = 0; s3 < rec3.shifts.length; s3++) {
+      var free = _lbSubtractIntervals(rec3.shifts[s3], busyAll);   // コード.js の共通ヘルパーを使う
+      for (var f3 = 0; f3 < free.length; f3++) {
+        var mins = Math.round((free[f3].end.getTime() - free[f3].start.getTime()) / 60000);
+        if (mins < LIMIT3) continue;
+        wide++;
+        wideLines.push({ ms: free[f3].start.getTime(),
+          line: '   ' + _consecFmtDay(free[f3].start.getTime()) + ' ' + rec3.name
+                + ' ' + _consecFmtTime(free[f3].start.getTime()) + '〜' + _consecFmtTime(free[f3].end.getTime())
+                + ' ' + mins + '分' + (free[f3].start.getTime() < nowMs ? '（過去）' : '（今後）') });
+      }
+    }
+  }
+  wideLines.sort(function (x, y) { return x.ms - y.ms; });
+  say('  ' + LIMIT3 + '分以上の空きブロック 合計 ' + wide + '件');
+  var cap2 = 40;
+  for (var i4 = 0; i4 < wideLines.length && i4 < cap2; i4++) say(wideLines[i4].line);
+  if (wideLines.length > cap2) say('   …ほか ' + (wideLines.length - cap2) + '件（長いので省略）');
+
+  say('');
+  say('  ── 「休憩」を含む予定の件数（シフトに休憩が入っているかの実測）──');
+  for (var i5 = 0; i5 < T.length; i5++) {
+    var rec5 = T[i5];
+    if (rec5.err) continue;
+    var dkeys = [];
+    for (var dk5 in rec5.breakByDay) dkeys.push(dk5);
+    dkeys.sort();
+    say('  ' + rec5.name + '：合計 ' + rec5.breaks + '件 ／ 休憩のある日 ' + dkeys.length + '日');
+    var cap3 = 20;
+    for (var i6 = 0; i6 < dkeys.length && i6 < cap3; i6++) say('   ' + dkeys[i6] + ' ' + rec5.breakByDay[dkeys[i6]] + '件');
+    if (dkeys.length > cap3) say('   …ほか ' + (dkeys.length - cap3) + '日');
+  }
+
+  head(Math.round(LIMIT3 / 60) + '連続（' + LIMIT3 + '分）制限を入れた場合の影響（未来の空き枠）');
+  if (slotErr) say('  ❌ 空き枠を取得できませんでした：' + slotErr);
+  else {
+    say('  いまの空き枠 ' + tot + '枠');
+    say('  落ちる枠     ' + drop3 + '枠（' + pct(drop3) + '）');
+    say('    ' + byTrainerText(drop3ByTrainer));
+    say('  落ちる枠の時間帯の偏り：'
+        + '7-12時 ' + (drop3ByBand['7-12時'] || 0) + '枠 ／ '
+        + '12-18時 ' + (drop3ByBand['12-18時'] || 0) + '枠 ／ '
+        + '18-24時 ' + (drop3ByBand['18-24時'] || 0) + '枠');
+    say('  ▶ ' + Math.round(LIMIT2 / 60) + '連続（' + LIMIT2 + '分）制限にした場合は '
+        + drop2 + '枠（' + pct(drop2) + '）が落ちます');
+    say('    ' + byTrainerText(drop2ByTrainer));
+    if (unknownTrainer) say('  （トレーナーを特定できなかった枠 ' + unknownTrainer + '枠は数えていません）');
+    say('  ※各枠は「その枠だけが埋まったら」で判定しています。同じトレーナーの枠は互いに代替なので、');
+    say('    実際に同時に埋まることはありません。落ちる枠の数は「候補から消える枠」の数です。');
+
+    head('④ クールダウン' + COOL + '分の影響');
+    say('  既存の' + LIMIT3 + '分以上の塊の直後' + COOL + '分に入る枠 ' + cool + '枠');
+    say('  うち' + LIMIT3 + '分制限で既に落ちる枠 ' + (cool - coolExtra) + '枠 ／ 追加で落ちる枠 ' + coolExtra + '枠');
+    if (COOL <= gap) {
+      say('  ※クールダウン' + COOL + '分 ≦ 連続とみなす隙間' + gap + '分 のため、直後' + COOL + '分の枠は');
+      say('    そもそも同じ塊に畳まれて' + LIMIT3 + '分制限で落ちます。この設定ではクールダウンは追加の効果をほぼ持ちません。');
+    }
+  }
+
+  // ---------------------------------------------------------
+  // この数字をどう読むか
+  // ---------------------------------------------------------
+  say('');
+  say('────── この数字をどう読むか ──────');
+  if (slotErr) {
+    say('  空き枠が取得できていないため、制限の影響は判断できません。再実行が必要です。');
+  } else if (!tot) {
+    say('  空き枠が0枠です。制限の影響を測る前に、出勤シフトが入っているかを確認してください。');
+  } else {
+    var r3 = drop3 * 100 / tot;
+    if (!long3.length) {
+      say('  過去' + days + '日に' + LIMIT3 + '分以上の連続は実際には起きていません。'
+          + LIMIT3 + '分制限は「いま起きている問題」への対処ではありません。');
+    } else {
+      say('  過去' + days + '日に' + LIMIT3 + '分以上の連続が ' + long3.length + '件 実際に起きています。');
+    }
+    if (r3 < 5) say('  ' + LIMIT3 + '分制限で落ちる枠は ' + pct(drop3) + '＝5%未満。空き枠への影響は小さいと言えます。');
+    else if (r3 < 15) say('  ' + LIMIT3 + '分制限で落ちる枠は ' + pct(drop3) + '。影響は限定的ですが、時間帯の偏りを見てください。');
+    else say('  ' + LIMIT3 + '分制限で落ちる枠は ' + pct(drop3) + '＝1割超。顧客が選べるのは2名しかいないため、予約の取りにくさに直結します。');
+    say('  ' + LIMIT2 + '分制限は ' + pct(drop2) + ' を落とします（' + LIMIT3 + '分制限の '
+        + (drop3 ? (Math.round(drop2 * 10 / drop3) / 10) + '倍' : '—') + '）。');
+  }
+  say('');
+  say('===== ここまで。何も書き換えていません =====');
+  return out.join('\n');
+}
+
+// GASエディタから直接見るとき
+function consecutiveSessions() { _lbAuditLogChunks(consecutiveSessionsText({ consec: true }), 7000); }
