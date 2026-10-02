@@ -364,6 +364,9 @@ function remainingDebugText(namePart) {
 //   だから「誰で、いくつ違うのか」を出して、人が判断できるようにする。
 //   ★読み取りだけ。残数の計算には一切触らない。氏名は出さない。
 // ============================================================
+// オブジェクトのキー数（チケット引継ぎが入っているかの判定）。表示用。
+function _lbCountKeys(o) { var n = 0; for (var k in o) n++; return n; }
+
 // 残数ログの繰越回数（月ごとに入っているので合計する）。表示用。
 function _lbMbCarryOf(op) {
   if (!op || !op.carry) return 0;
@@ -661,6 +664,27 @@ function _remainingOneText(namePart, showName) {
   say('===== 残数の内訳：' + who + ' =====');
   say('照合状態=' + String(hit[MAP_COL.AUTH_STATE - 1] || '(空)')
       + ' / 契約状況=' + String(hit[MAP_COL.CONTRACT_STAT - 1] || '(空)'));
+
+  // ★計算の前提を必ず出す（2026-10-02）。
+  //   これが出ていなかったため、手元で一部の入力だけを再現して
+  //   「同じ数字が出た＝同じ計算をしている」と誤って断定した。
+  //   数字の一致は経路の一致を意味しない。前提は常に数字と並べて出す。
+  say('');
+  say('■ 計算の前提');
+  try {
+    var _op = _lbMemberOpeningWithFloor(customerId);
+    var _logged = _lbMemberOpening(customerId);
+    say('  台帳が記録を持ち始めた月 = ' + _lbRecordsFromMonth());
+    say('  この会員の下限（ここより前は数えない） = '
+        + ((_op && _op.recordsFrom) ? String(_op.recordsFrom) : '(下限なし＝契約開始月まで遡る)'));
+    if (_logged) {
+      say('  残数ログ = 有（' + (_logged.recordsFrom || '?') + '基準・繰越 '
+          + _lbMbCarryOf(_logged) + '回'
+          + (_logged.packsUsed && _lbCountKeys(_logged.packsUsed) ? '・チケット引継ぎ有' : '') + '）');
+    } else {
+      say('  残数ログ = 無（下限は会員登録の月。登録より前は数えません）');
+    }
+  } catch (ePre) { say('  ⚠️ 前提を読めませんでした: ' + ePre.message); }
 
   var rows = _lbContractRowsAll(name, _lbPhoneByCustomerId(customerId), false, customerId);
   if (!rows || !rows.length) return log.join('\n') + '\n⛔ 有効な契約行がありません。';
