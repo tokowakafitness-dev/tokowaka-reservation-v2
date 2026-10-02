@@ -6,6 +6,6 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "schema": "wrangler d1 execute tokowaka --remote --file=schema.sql"
+    "schema": "echo '手で流す必要はありません。worker/ を push すれば worker-deploy.yml が tokowaka-apac へ自動で流します。どうしても手で流すなら: npx wrangler d1 execute tokowaka-apac --remote --file=schema.sql' && exit 1"
   }
 }
