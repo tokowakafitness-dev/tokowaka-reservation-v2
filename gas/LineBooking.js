@@ -1089,6 +1089,28 @@ function estimateLineUsage(ym) {
     notes.push('予約系は台帳件数×2の概算（トレーナー未登録分は過大）');
   }
 
+  // ③ 予約を促すリマインド＝実測（nudge_log に1通1行で残る。sent の行だけ数える）
+  //   これが無いと、quota が返す総数と内訳の合計がリマインド分だけ食い違い、
+  //   「何が通数を食っているか」を内訳から判断できない（2026-10-02）。
+  try {
+    // シート名は Nudge.js で定義される。読み込み順に依存しないよう既定値を持つ。
+    var nlName = (typeof LB_NUDGE_LOG_SHEET !== 'undefined') ? LB_NUDGE_LOG_SHEET : 'nudge_log';
+    var nl = _lbSheet(nlName);
+    if (nl && nl.getLastRow() > 1) {
+      var nv = nl.getRange(2, 1, nl.getLastRow() - 1, 5).getValues();
+      var nudged = 0;
+      for (var n = 0; n < nv.length; n++) {
+        var at = String(nv[n][0] || '').replace(/\//g, '-');
+        if (at.indexOf(month) !== 0) continue;
+        if (String(nv[n][4] || '') !== 'sent') continue;      // 未達は送ったことにしない
+        var kind = String(nv[n][1] || 'nudge');
+        add(kind, 1);
+        nudged++;
+      }
+      if (!nudged) notes.push('リマインドの送信記録は当月0件');
+    } else { notes.push('リマインドの送信記録なし（まだ送っていない／シート未作成）'); }
+  } catch (eN) { notes.push('リマインドの記録を読めません: ' + eN.message); }
+
   var total = 0; for (var k in byPurpose) total += byPurpose[k];
   return { month: month, total: total, byPurpose: byPurpose, notes: notes, estimated: true };
 }
