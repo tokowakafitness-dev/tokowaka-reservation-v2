@@ -17,6 +17,7 @@
 //   実行: node worker/test/batch-entries.test.js
 
 import * as compat from '../src/routes/compat.js';
+import { homePayload } from './_home-fixture.js';
 import { redact } from '../src/perms.js';
 
 // 「わざと転ばせる」検査が warn を出すので、テストの出力は静かにしておく
@@ -30,11 +31,7 @@ function eq(name, got, want) {
 function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
 
 const now = Date.now();
-const HOME = JSON.stringify({
-  currentMonth: '2026-09', nextMonth: '2026-10',
-  current: { type: 'monthly', quota: 6, monthlyRemaining: 3, ticketPacks: [], pairRemaining: 1 },
-  next:    { type: 'monthly', quota: 6, monthlyRemaining: 6, ticketPacks: [] },
-});
+const HOME = homePayload({ current: { pairRemaining: 1 } });
 
 // opts で「どれが読めないか」を切り替えられるようにする（部分的な故障を作るため）
 function env(opts = {}) {

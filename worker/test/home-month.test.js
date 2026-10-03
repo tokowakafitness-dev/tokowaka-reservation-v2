@@ -2,6 +2,7 @@
 // のどちらかが起きる。25日以降は9月の残数と10月の残数が別物になるため、境目を機械で固定する。
 //   実行: node worker/test/home-month.test.js
 import { readHome } from '../src/routes/boot.js';
+import { homePayload } from './_home-fixture.js';
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {
@@ -11,11 +12,9 @@ function eq(name, got, want) {
 }
 
 // 9月＝月6回・残1／10月＝月6回・残6 を持っている会員
-const payload = JSON.stringify({
-  currentMonth: '2026-09',
-  nextMonth: '2026-10',
-  current: { type: 'monthly', quota: 6, monthlyRemaining: 1, carryover: 0 },
-  next:    { type: 'monthly', quota: 6, monthlyRemaining: 6, carryover: 1 },
+const payload = homePayload({
+  current: { monthlyRemaining: 1, carryover: 0 },
+  next:    { monthlyRemaining: 6, carryover: 1 },
 });
 
 // syncedAt を省くと computedAt と同じ扱い（＝押し出し直後）
@@ -77,7 +76,9 @@ const jst = (y, m, d, h = 12) => Date.UTC(y, m - 1, d, h - 9);
 {
   const p2 = JSON.stringify({
     currentMonth: '2026-09', nextMonth: '2026-10',
-    current: { type: 'monthly', quota: 6, monthlyRemaining: 1 }, next: null,
+    current: { type: 'monthly', quota: 6, monthlyRemaining: 1, active: true, carryover: 0,
+               thisMonth: 0, ticketTotal: 0, ticketRemaining: 0, pairRemaining: 0, pairPackMax: 0,
+               normalTicketRemaining: 0, hasNormalRoute: true, ticketPacks: [], remaining: 1 }, next: null,
   });
   const h = await readHome(envWith(p2), 'c1', jst(2026, 10, 5));
   eq('★翌月分が無ければ答えない', h, null);

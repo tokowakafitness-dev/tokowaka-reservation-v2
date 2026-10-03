@@ -10,6 +10,7 @@
 //
 //   実行: node worker/test/entry-perms.test.js
 import * as compat from '../src/routes/compat.js';
+import { homePayload } from './_home-fixture.js';
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {
@@ -18,11 +19,7 @@ function eq(name, got, want) {
 }
 
 const now = Date.now();
-const HOME = JSON.stringify({
-  currentMonth: '2026-09', nextMonth: '2026-10',
-  current: { type: 'monthly', quota: 6, monthlyRemaining: 3, ticketPacks: [], pairRemaining: 2 },
-  next:    { type: 'monthly', quota: 6, monthlyRemaining: 6, ticketPacks: [] },
-});
+const HOME = homePayload({ current: { pairRemaining: 2 } });
 // 担当：mine=t1 ／ others=t2 ／ none=担当なし
 const OWNER_OF = { mine: 't1', others: 't2', none: null };
 

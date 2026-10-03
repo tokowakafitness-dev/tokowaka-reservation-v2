@@ -10,6 +10,7 @@
 //
 //   実行: node worker/test/entry-smoke.test.js
 import * as compat from '../src/routes/compat.js';
+import { homePayload } from './_home-fixture.js';
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
@@ -18,11 +19,7 @@ function ok(name, cond, extra) {
 }
 
 const now = Date.now();
-const HOME = JSON.stringify({
-  currentMonth: '2026-09', nextMonth: '2026-10',
-  current: { type: 'monthly', quota: 6, monthlyRemaining: 3, ticketPacks: [], pairRemaining: 1 },
-  next:    { type: 'monthly', quota: 6, monthlyRemaining: 6, ticketPacks: [] },
-});
+const HOME = homePayload({ current: { pairRemaining: 1 } });
 const SLOTS = JSON.stringify({
   rules: { leadMinutes: 180, morningUntilHour: 12, prevDeadlineHour: 22 },
   slots: [{

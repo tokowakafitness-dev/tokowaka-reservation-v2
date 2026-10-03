@@ -10,6 +10,7 @@
 //
 //   実行: node worker/test/staleness.test.js
 import { readHome, HOME_TTL_HARD_MS } from '../src/routes/boot.js';
+import { homePayload } from './_home-fixture.js';
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {
@@ -18,11 +19,7 @@ function eq(name, got, want) {
 }
 function ok(name, cond) { cond ? pass++ : (fail++, console.log(`❌ ${name}`)); }
 
-const payload = JSON.stringify({
-  currentMonth: '2026-09', nextMonth: '2026-10',
-  current: { type: 'monthly', quota: 6, monthlyRemaining: 1 },
-  next:    { type: 'monthly', quota: 6, monthlyRemaining: 6 },
-});
+const payload = homePayload({ current: { monthlyRemaining: 1 } });
 
 function envWith({ computedAt, syncedAt }) {
   return {
