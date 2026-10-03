@@ -1392,3 +1392,184 @@ function calSyncStatus() {
   Logger.log(out.join('\n'));
   return h;
 }
+
+// ============================================================
+// ① の仕上げ：GASの空き枠とD1の空き枠を突き合わせる（2026-10-03）
+//
+//   完了条件は「GASとD1が同じ答えを出すこと」。手元のテストでは52件すべて
+//   一致しているが、本番のカレンダーには想定外の形が必ずある。
+//
+//   ★7日間待たずに済ませる（2026-10-03 オーナー提案）。
+//     いまのカレンダーのデータで「いま」をずらしながら計算すれば、
+//     本来7日かけても踏めるとは限らない状況を**狙って踏める**：
+//       ・25日の翌月解放  ・月またぎで地平が伸びる瞬間
+//       ・締め切りの境界（午前枠の前日22時／他は開始180分前）
+//     両方が同じデータ・同じ時点で計算するので、一致すべきである。
+//
+//   ★送るのは時刻とトレーナーIDだけ。氏名もタイトルも送らない。
+// ============================================================
+
+// 突き合わせを1回ぶん送る。nowMsOpt を渡すと、その時点として計算する。
+function pushCalCompare(nowMsOpt) {
+  if (!_edgeEnabled()) return { ok: false, code: 'EDGE_OFF' };
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return { ok: false, code: 'EDGE_NOT_CONFIGURED' };
+
+  var nowMs = (nowMsOpt != null) ? Number(nowMsOpt) : new Date().getTime();
+  var now = new Date(nowMs);
+  var horizonEnd = _lbBookingHorizonEnd(now);
+  var fromMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).getTime();
+  var toMs = horizonEnd.getTime();
+
+  // ★GASの答え。ここは本番と同じ関数を使う（別の実装で作ると比較の意味がない）。
+  var slots;
+  try { slots = buildAvailableSlots(null, nowMs) || []; }
+  catch (e) { Logger.log('⛔ 突き合わせ中止: 空き枠を作れません: ' + e.message); return { ok: false, code: 'BUILD_FAILED' }; }
+
+  // 送るのは3つだけ。氏名・タイトル・顧客情報は入れない。
+  var payload = {
+    fromMs: fromMs, toMs: toMs,
+    ruleVersion: LB_CALSYNC_RULE_VERSION,
+    flag1f: _calsyncUse1F() ? 'on' : 'off',
+    nowMs: nowMs,
+    trainers: CALENDAR_IDS.TRAINERS.map(function (t) { return { id: t.id, hidden: !!t.hidden }; }),
+    ownerWindow: _lbOwnerSlotWindow(),
+    requiredCalendars: _calsyncCalendars(),
+    slots: slots.map(function (s) {
+      return { startMs: new Date(s.startISO).getTime(), trainerId: s.trainerId, trialOk: s.trialOk !== false };
+    })
+  };
+
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/calcompare', {
+    method: 'post', contentType: 'application/json',
+    headers: { 'X-Ingest-Secret': secret },
+    payload: JSON.stringify(payload), muteHttpExceptions: true
+  });
+  var code = res.getResponseCode(), text = res.getContentText();
+  if (code !== 200) { Logger.log('❌ 突き合わせ失敗 HTTP ' + code + ': ' + text.slice(0, 300)); return { ok: false, code: 'HTTP_' + code }; }
+  var out = {};
+  try { out = JSON.parse(text); } catch (e) { out = {}; }
+  return { ok: true, result: out, gasSlots: slots.length };
+}
+
+// 1分ごとの同期のあとに、そのまま突き合わせる。
+//   ★押し出した直後に比べる。別のタイミングで比べると、D1が最大7分古いせいで
+//     「カレンダー変更直後の時間差」が大量の不一致として記録され、本当の実装差が埋もれる。
+function lbCalSyncAndCompare() {
+  var sync = pushCalSync();
+  if (!sync || !sync.ok) return sync;
+  var cmp = pushCalCompare();
+  if (cmp && cmp.ok && cmp.result) {
+    var r = cmp.result;
+    if (r.compared === false) Logger.log('突き合わせ: 比較できませんでした（' + r.reason + '）');
+    else Logger.log('突き合わせ: ' + (r.matched ? '✅ 一致' : '❌ 食い違い')
+                    + ' GAS ' + r.gasCount + '件 / D1 ' + r.d1Count + '件');
+  }
+  return { sync: sync, compare: cmp };
+}
+
+// ------------------------------------------------------------
+// 一括の突き合わせ（オーナーがGASエディタで1回実行する）
+//
+//   時点をずらして何度も比べる。7日間の観察の代わりになる。
+//   ★カレンダーを何度も読むので重い。GASの実行時間（6分）に収まるよう、
+//     既定では時点を絞ってある。足りなければ日を分けて実行する。
+// ------------------------------------------------------------
+function calCompareSweep() {
+  Logger.log(calCompareSweepText());
+}
+
+function calCompareSweepText() {
+  var out = [];
+  function say(x) { out.push(x); }
+  var now = new Date(), nowMs = now.getTime();
+
+  say('===== GASとD1の空き枠を、時点をずらして突き合わせます =====');
+  say('版: ' + LB_CALSYNC_RULE_VERSION + ' ／ 1Fフラグ: ' + (_calsyncUse1F() ? 'on' : 'off'));
+  say('※ 送るのは時刻とトレーナーIDだけ。氏名もタイトルも送りません。');
+  say('');
+
+  if (!_edgeEnabled()) { say('⛔ EDGE_PUSH_ON が 1 ではありません'); return out.join('\n'); }
+
+  // まず、いまの状態をD1へ押し出す。これをしないと「古いD1」と比べることになる。
+  var sync = pushCalSync();
+  if (!sync || !sync.ok) {
+    say('⛔ 先にD1へ押し出す段で止まりました: ' + ((sync && sync.code) || '不明'));
+    return out.join('\n');
+  }
+  say('D1へ押し出しました（' + (sync.sent || 0) + '件）');
+  say('');
+
+  // 狙って踏みたい時点。カレンダーのデータは「いま」のものを使い、
+  //   計算の基準時刻だけをずらす。両方が同じデータ・同じ時点で計算する。
+  var day = 24 * 60 * 60 * 1000;
+  var points = [];
+  points.push({ label: 'いま', ms: nowMs });
+  for (var d = 1; d <= 7; d++) points.push({ label: d + '日前', ms: nowMs - d * day });
+  // 月のかたちが変わる時点（25日の翌月解放・月末・月初）
+  var y = now.getFullYear(), mo = now.getMonth();
+  points.push({ label: '今月25日 10時（翌月の解放）', ms: new Date(y, mo, 25, 10, 0, 0).getTime() });
+  points.push({ label: '今月24日 10時（解放の前日）', ms: new Date(y, mo, 24, 10, 0, 0).getTime() });
+  points.push({ label: '月末 23時', ms: new Date(y, mo + 1, 0, 23, 0, 0).getTime() });
+  points.push({ label: '翌月1日 9時', ms: new Date(y, mo + 1, 1, 9, 0, 0).getTime() });
+  // 締め切りの境界（午前枠は前日22時・他は開始180分前）
+  points.push({ label: '今日 22時（午前枠の締め切り）', ms: new Date(y, mo, now.getDate(), 22, 0, 0).getTime() });
+  points.push({ label: '今日 21時59分', ms: new Date(y, mo, now.getDate(), 21, 59, 0).getTime() });
+
+  var okCount = 0, ngCount = 0, skipCount = 0, details = [];
+  for (var i = 0; i < points.length; i++) {
+    var p = points[i];
+    var cmp;
+    try { cmp = pushCalCompare(p.ms); } catch (e) { cmp = { ok: false, code: 'EXCEPTION', detail: e.message }; }
+
+    if (!cmp || !cmp.ok) {
+      ngCount++;
+      say('  ❌ ' + p.label + ' … 送れませんでした（' + ((cmp && cmp.code) || '不明') + '）');
+      continue;
+    }
+    var r = cmp.result || {};
+    if (r.compared === false) {
+      skipCount++;
+      say('  ⏭ ' + p.label + ' … 比較できず（' + r.reason + '）');
+      continue;
+    }
+    if (r.matched) {
+      okCount++;
+      say('  ✅ ' + p.label + ' … 一致（' + r.gasCount + '枠）');
+    } else {
+      ngCount++;
+      say('  ❌ ' + p.label + ' … 食い違い（GAS ' + r.gasCount + ' / D1 ' + r.d1Count + '）');
+      // どのトレーナーで、どの時間帯が違うか
+      var trs = r.trainers || [];
+      for (var t = 0; t < trs.length; t++) {
+        if (trs[t].matched) continue;
+        var c = trs[t].counts || {};
+        details.push('     ' + p.label + ' / ' + trs[t].trainerId
+          + '：GASだけ ' + (c.onlyGas || 0) + '件 ／ D1だけ ' + (c.onlyD1 || 0) + '件'
+          + ' ／ 体験の可否 ' + (c.trial || 0) + '件');
+        if ((trs[t].onlyGas || []).length) details.push('       GASだけ: ' + trs[t].onlyGas.slice(0, 5).join(' / '));
+        if ((trs[t].onlyD1 || []).length) details.push('       D1だけ: ' + trs[t].onlyD1.slice(0, 5).join(' / '));
+      }
+    }
+  }
+
+  say('');
+  say('────── 結果 ──────');
+  say('  一致 ' + okCount + ' / 食い違い ' + ngCount + ' / 比較できず ' + skipCount
+      + '（全 ' + points.length + ' 時点）');
+  if (details.length) {
+    say('');
+    say('■ 食い違いの中身');
+    for (var k = 0; k < details.length; k++) say(details[k]);
+  }
+  say('');
+  if (ngCount === 0 && skipCount === 0) {
+    say('✅ すべての時点で一致しました。読み取りをD1へ切り替える判断材料が揃っています。');
+  } else if (ngCount === 0) {
+    say('△ 食い違いはありませんが、比較できなかった時点があります（' + skipCount + '件）。');
+    say('   理由が stale なら押し出しの直後に実行し直してください。');
+  } else {
+    say('⛔ 食い違いがあります。切り替える前に、上の中身を潰してください。');
+  }
+  return out.join('\n');
+}

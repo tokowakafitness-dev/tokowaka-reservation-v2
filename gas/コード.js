@@ -278,10 +278,14 @@ function _lbSubtractIntervals(base, busyList) {
   return free;
 }
 
-function buildAvailableSlots(excludeStartMs) {
+//   nowMsOpt（省略可）… 「いま」を指定して計算する。突き合わせ専用。
+//     D1の答えと比べるとき、時点をずらして「25日の解放」「月またぎ」「締め切りの境界」を
+//     狙って踏むために使う。**省略時はこれまでどおり現在時刻**なので、既存の呼び出しは変わらない。
+//     ★本番の空き枠生成からは渡さないこと（渡すと顧客に過去や未来の枠を見せる）。
+function buildAvailableSlots(excludeStartMs, nowMsOpt) {
   var _wt = new Date().getTime();
   function _wlap(n){ Logger.log('[warmup] ' + n + ': ' + (new Date().getTime() - _wt) + 'ms'); }
-  var now     = new Date();
+  var now     = (nowMsOpt != null) ? new Date(nowMsOpt) : new Date();
   // 予約可能な窓＝【当月末まで／毎月25日以降は翌月末まで解禁】（20日シフト提出→25日翌月解禁の運用）。同期も同じ地平を共用。
   //   例：9/1〜9/24＝9月末まで／9/25〜＝10月末まで／10/25〜＝11月末まで。
   var endDate  = _lbBookingHorizonEnd(now);   // 共通ヘルパー（syncと単一ソース）
