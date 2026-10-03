@@ -216,6 +216,114 @@ function _lbEventOverlaps(ev, startMs, endMs) {
   return _lbOverlaps(s.getTime(), e.getTime(), startMs, endMs);
 }
 
+// ============================================================
+// 自動休憩：休憩の区間を決める（純粋関数・Node検証可能）— 決定0063 / 設計 ops/design/03-auto-break.md
+// ============================================================
+//
+//   ★ここに置く理由
+//     「カレンダーを読まないと確認できない形にしない」（設計§6-9）。
+//     塊の終わり・休憩の長さ・次の埋まりの開始・シフトの終わりだけを受け取り、
+//     書くべき区間を返す。カレンダーには一切触れない。
+//
+//   ★なぜ「切る」必要があるのか
+//     1. 次の埋まりに重ならないため。いまは 休憩15分 ≦ 隙間15分 なので必ず収まるが、
+//        この不変条件は設定で壊せる（休憩を30分にすると隙間15分の次の予定に重なる）。
+//        設定で壊れたときに黙って重ねない。
+//     2. シフトの終わりを越えないため。塊が退勤ちょうどに終わると休憩がシフト外に出る。
+//        空き枠は無いので実害は無いが、トレーナーのカレンダーに意味のない予定が増える。
+//
+//   ★掃除バッチも**この同じ関数を通す**（設計§6-11）。
+//     「塊の終わり＋15分」で比べると、シフト終わりで10分に切られた休憩を
+//     毎日「違う」と判断して消してしまう。切った後の区間どうしで比べる。
+
+var LB_AUTO_BREAK_DEFAULTS = { limitMin: 180, breakMin: 15, gapMin: 15 };
+
+// 時刻として読めるか。
+//   ★`Number(null)` は 0 で `isFinite` が真になる。この取り違えを何度も踏んでいる
+//     （欠損が1970年扱いになり、巨大な埋まり区間ができて枠が全部消えた）。
+//     欠けている値を 1970-01-01 として扱わないため、null・undefined・空文字は先に弾く。
+//   ★文字列の数値は通す。設定（Script Properties）は文字列で来るため。
+function _lbMsOk(v) {
+  if (v == null || v === '') return false;
+  var n = Number(v);
+  return isFinite(n);
+}
+
+// 設定が不変条件を満たすか。満たさないなら③そのものを無効にする（黙って壊れた状態で動かさない）。
+//   休憩の長さ > 隙間 だと、休憩が次のセッションに重なる（設計§6-9）。
+function _lbAutoBreakCfgCheck(cfg) {
+  var c = cfg || {};
+  var limit = Number(c.limitMin), brk = Number(c.breakMin), gap = Number(c.gapMin);
+  if (!isFinite(limit) || limit <= 0) return { ok: false, reason: 'bad_limit' };
+  if (!isFinite(brk) || brk <= 0) return { ok: false, reason: 'bad_break' };
+  if (!isFinite(gap) || gap < 0) return { ok: false, reason: 'bad_gap' };
+  if (brk > gap) return { ok: false, reason: 'break_longer_than_gap' };
+  return { ok: true, limitMin: limit, breakMin: brk, gapMin: gap };
+}
+
+// 塊が「休憩を入れるべき長さ」に達しているか。
+//   ★`>=` で判定する。`>` だと 10:00-13:00（ちょうど180分）の3連続で入らない。
+//     実測の「180分以上 6件」はこの数え方。数え方を2通りにしない（設計§5）。
+function _lbAutoBreakNeeded(spanMinutes, limitMin) {
+  var span = Number(spanMinutes);
+  var limit = Number(limitMin);
+  if (!isFinite(span) || !isFinite(limit)) return false;
+  return span >= limit;
+}
+
+// 休憩の区間を決める。入れられないなら理由を返す。
+//   opts: { runEndMs, breakMin, nextBusyMs（無ければ null）, shiftEndMs（無ければ null）}
+//   返り: { ok:true, startMs, endMs, minutes, clipped } ／ { ok:false, reason }
+function _lbAutoBreakClip(opts) {
+  var o = opts || {};
+  if (!_lbMsOk(o.runEndMs) || !_lbMsOk(o.breakMin)) return { ok: false, reason: 'bad_input' };
+  var start = Number(o.runEndMs);
+  var brkMs = Number(o.breakMin) * 60000;
+  if (brkMs <= 0) return { ok: false, reason: 'bad_input' };
+
+  var end = start + brkMs;
+  var clipped = false;
+
+  // シフトの外に出さない。**先に見る**（外に出ているなら理由はこちら）。
+  if (_lbMsOk(o.shiftEndMs)) {
+    var shift = Number(o.shiftEndMs);
+    if (shift <= start) return { ok: false, reason: 'skip_outside_shift' };
+    if (shift < end) { end = shift; clipped = true; }
+  }
+
+  // 次の埋まりに重ねない
+  if (_lbMsOk(o.nextBusyMs)) {
+    var next = Number(o.nextBusyMs);
+    if (next <= start) return { ok: false, reason: 'skip_no_room' };
+    if (next < end) { end = next; clipped = true; }
+  }
+
+  if (end <= start) return { ok: false, reason: 'skip_no_room' };
+  return { ok: true, startMs: start, endMs: end,
+           minutes: Math.round((end - start) / 60000), clipped: clipped };
+}
+
+// 冪等キー。同じ塊に対して休憩を二重に入れないための印。
+//   ★塊の終わりを含める。同じ日に2回3連続が起きる実績があるため（設計§6-2）、
+//     トレーナーIDと日付だけで作ると2つ目が入らない。
+//   ★予約IDは使わない。振替や変更で予約が入れ替わっても、塊の終わりが同じなら同じ休憩である。
+function _lbAutoBreakKey(trainerId, runEndMs) {
+  var t = String(trainerId == null ? '' : trainerId);
+  if (!t || !_lbMsOk(runEndMs)) return '';     // 欠けた時刻を 0（1970年）のキーにしない
+  return t + '#' + Number(runEndMs);
+}
+
+// 2つの休憩区間が「同じもの」か。掃除バッチが消してよいかの判定に使う。
+//   ★切った後どうしで比べる（設計§6-11）。分単位の丸めは入れない。
+function _lbAutoBreakSame(a, b) {
+  if (!a || !b) return false;
+  // ★欠けた時刻どうしを「同じ」と判定しない。Number(null) は 0 なので、
+  //   null 同士が 0===0 で一致してしまう。これは**誤って消す**側の事故になる。
+  if (!_lbMsOk(a.startMs) || !_lbMsOk(a.endMs)) return false;
+  if (!_lbMsOk(b.startMs) || !_lbMsOk(b.endMs)) return false;
+  return Number(a.startMs) === Number(b.startMs) && Number(a.endMs) === Number(b.endMs);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { _lbClassifyBooking: _lbClassifyBooking, _lbNormTok: _lbNormTok, _lbTransferCreditState: _lbTransferCreditState,
     _lbRecurringStartMs: _lbRecurringStartMs, _lbCountTicketConsumption: _lbCountTicketConsumption, _lbBookTypePrefix: _lbBookTypePrefix,
@@ -224,5 +332,8 @@ if (typeof module !== 'undefined' && module.exports) {
     _lbBookingCfg: _lbBookingCfg, _lbIsMorningSlot: _lbIsMorningSlot, _lbPrevDeadlineHourOf: _lbPrevDeadlineHourOf,
     _lbBookingDeadlineMs: _lbBookingDeadlineMs, _lbBookingOpen: _lbBookingOpen,
     _lbBookingDeadlineText: _lbBookingDeadlineText,
-    _lbOverlaps: _lbOverlaps, _lbEventOverlaps: _lbEventOverlaps };
+    _lbOverlaps: _lbOverlaps, _lbEventOverlaps: _lbEventOverlaps,
+    LB_AUTO_BREAK_DEFAULTS: LB_AUTO_BREAK_DEFAULTS, _lbAutoBreakCfgCheck: _lbAutoBreakCfgCheck,
+    _lbAutoBreakNeeded: _lbAutoBreakNeeded, _lbAutoBreakClip: _lbAutoBreakClip,
+    _lbAutoBreakSame: _lbAutoBreakSame, _lbAutoBreakKey: _lbAutoBreakKey, _lbMsOk: _lbMsOk };
 }
