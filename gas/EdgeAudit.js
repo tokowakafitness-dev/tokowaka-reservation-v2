@@ -2060,7 +2060,20 @@ function _monthlyQuotaTableText(nowMs) {
 
     // 台帳が読めないときは予約数と残りを「-」にする。0件と「分からない」を同じ見た目にしない。
     var curShow = rvalsOk ? curN : null;
+
     var nextShow = rvalsOk ? nextN : null;
+    // ★枠を超えて予約が入っていないか（2026-10-03・オーナーの指摘から）。
+    //   会員#2412 で、10月の枠8回に対して10件の予約が入っていた。
+    //   残数の計算は正しく0回を出していたが、**予約の受付が通りすぎていた。**
+    //   オーナーが気づいたのは偶然で、気づかなければそのままだった。
+    //   超過は顧客との金銭の話になるので、毎日の確認で自然に目に入るようにする。
+    //   ★原因が何であれ、ここで気づける。原因を1つ塞いでも、別の経路でまた起こりうる。
+    if (rvalsOk && avail != null && curShow != null && curShow > avail) {
+      flags.push('今月が' + (curShow - avail) + '件超過');
+    }
+    if (availNext != null && nextShow != null && nextShow > availNext) {
+      flags.push('翌月が' + (nextShow - availNext) + '件超過');
+    }
     var line = _mqPad(nm, 8) + _mqNum(freq, 5) + _mqNum(carry, 5)
              + _mqNum(avail, 5) + _mqNum(curShow, 5) + _mqNum(rem, 5)
              + '  ' + _mqNum(availNext, 5) + _mqNum(nextShow, 5)
