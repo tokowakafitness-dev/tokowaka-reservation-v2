@@ -163,6 +163,11 @@
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
+  // 版の印（2026-10-03）。
+  //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
+  //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
+  //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
+  var LIFF_BUILD = '2026-10-03d まとめ取得をWorkerへ';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -529,6 +534,7 @@
     var r = [];
     try { r.push('Worker ' + (EDGE_ON ? 'ON' : 'OFF')); } catch (e) { r.push('Worker ?'); }
     try { r.push('カレンダー計算 ' + (USE_CAL ? 'ON' : 'OFF')); } catch (e) { r.push('カレンダー計算 ?'); }
+    try { r.push('版 ' + LIFF_BUILD); } catch (e) {}
     return r.join(' ／ ');
   }
 

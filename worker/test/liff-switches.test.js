@@ -143,6 +143,9 @@ ok('⑦初回の読み込みを出す関数がある', /function\s+_perfBoot\s*\
 ok('⑦読み込みに書体の時間が入る', /_perfBoot[\s\S]{0,900}fonts\\\.\(googleapis\|gstatic\)/.test(HTML));
 ok('⑦読み込みにLINEの部品の時間が入る', /_perfBoot[\s\S]{0,900}sdk\\\.js/.test(HTML));
 ok('⑦計測パネルが経路を描いている', /_perfRender[\s\S]{0,1200}_perfRoute\(\)/.test(HTML));
+// 版の印。端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために要る。
+ok('⑦版の印が定義されている', /var LIFF_BUILD = '[^']+'/.test(CODE));
+ok('⑦経路に版の印が出る', /_perfRoute[\s\S]{0,600}LIFF_BUILD/.test(HTML));
 ok('⑦計測パネルが読み込みを描いている', /_perfRender[\s\S]{0,1200}_perfBoot\(\)/.test(HTML));
 
 console.log((fail ? '❌' : '✅') + ' liff-switches: ' + pass + '件合格' + (fail ? ' / ' + fail + '件失敗' : ''));
