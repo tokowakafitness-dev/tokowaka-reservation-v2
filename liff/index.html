@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-03e Workerを使わない理由を記録';
+  var LIFF_BUILD = '2026-10-03g 確定の照合を厳しくする';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -651,6 +651,25 @@
   //     var EDGE_ON = false; の直後に true で上書きされていた（鍵が無い端末は '0' ではないため）。
   //     止めたつもりで止まっていなかった（2026-09-29）。
   //     いまは「?edge=1 を明示した端末だけ有効」にしてある。既定は必ず無効。
+  //   ★2026-10-03 既定を true に戻した（オーナー承認）。
+  //     戻した根拠：9/29に止めた3つの穴（残数の鮮度・予約オプションの閲覧範囲・
+  //     予約一覧と固定枠の鮮度）はすべて塞がれ、機械の検査で固定されている。
+  //     そのうえで本番で測り、起動が 5,836ms → 1,703ms（約5倍）になることを確認した。
+  //   ★止める手段は2通りある。混同しない。
+  //     ・端末1台だけ戻す … URLに ?edge=0（その端末に残る。?edge=1 で戻す）
+  //     ・全員を止める   … 下の既定を false にして push（1分ほどで反映）
+  //   ★以前ここで「既定 false なのに !== '0' で上書きしていて、止めたつもりが
+  //     全員ONのままだった」事故を起こした（2026-09-29）。
+  //     いまは既定が true なので式も `!== '0'` で正しいが、**既定と式が食い違うと
+  //     また同じ事故になる。** 一致していることを liff-switches.test.js ② で検査している。
+  //   ★2026-10-03 いったん既定 true にしたが、**公開前のCodexレビューで差し戻した**。
+  //     (a) 既定を false に戻すだけでは全員を止められない（鍵の無い端末は式のほうで
+  //         true に戻る）。9/29の事故と同じ形で、止める手段が無い状態だった
+  //     (b) 予約一覧の鮮度が、1人ぶんの押し出しでも全体の同期時刻を更新するため
+  //         若返る（他の顧客の古い予約を返しうる）
+  //     (c) 写しの中身が壊れていても、JSONとして読めれば「残り0回」「空き0件」の
+  //         成功として顧客に出る経路が残っている
+  //     (a)(b)(c) を塞いでから改めて広げる。
   var EDGE_ON = false;
   try {
     if (/[?&#]edge=1/.test(location.href)) { localStorage.setItem('lb_edge', '1'); }
@@ -2442,22 +2461,53 @@
     var y = new Date(String(b || '')).getTime();
     return isFinite(x) && isFinite(y) && x === y;
   }
+  // 1回目で見つからなかったとき、どれだけ待ってから見直すか。
+  //   GASの確定は20秒で見切っているが、サーバー側の処理はそのあとも続く。
+  //   短すぎると追い越したままになり、長すぎると顧客を待たせる。
+  var VERIFY_RETRY_MS = 6000;
+
+  function _delay(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
   function _verifyBooked(req){
     var want = String(req.newStartISO || req.startISO || '');
     if (!want) return Promise.resolve(null);
     // 代行はトレーナーの予約表、本人は自分の予約表を見る。
-    //   同じトレーナーの同じ時刻に2件は入らないので、時刻の一致で足りる。
+    //   ★代行のときは**顧客まで確かめる**（2026-10-03 Codex指摘）。
+    //     以前は時刻だけで照合しており、「その時刻は別の顧客が先に取っていた」ために
+    //     自分の代行予約が失敗した場合でも、一覧にある**別の顧客の同時刻の予約**を
+    //     見つけて「完了しました」と出していた。入っていないのに完了と出る致命的な経路。
+    var wantCustomer = state.proxyMode ? String(state.proxyCustomerId || '') : '';
     var q = state.proxyMode
       ? { action:'line_getTrainerReservations' }
       : { action:'line_getMyReservations' };
-    return api(q).then(function(res){
-      if (!res || res.success !== true || !res.reservations) return null;   // 読めていない＝不明
-      var list = res.reservations;
-      for (var i = 0; i < list.length; i++) {
-        if (_sameStart(list[i] && list[i].startISO, want)) return true;
-      }
-      return false;
-    }).catch(function(){ return null; });
+
+    function look(){
+      return api(q).then(function(res){
+        if (!res || res.success !== true || !res.reservations) return null;   // 読めていない＝不明
+        var list = res.reservations;
+        for (var i = 0; i < list.length; i++) {
+          var r = list[i];
+          if (!_sameStart(r && r.startISO, want)) continue;
+          if (wantCustomer && String((r && r.customerId) || '') !== wantCustomer) continue;
+          return true;
+        }
+        return false;
+      }).catch(function(){ return null; });
+    }
+
+    // ★「いま一覧に無い」は「これからも入らない」の証明にはならない（2026-10-03 Codex指摘）。
+    //   20秒で見切ったあともサーバー側の処理は続いており、照合がそれを追い越すことがある。
+    //   そこで押し直せるようにすると、追い越した直後に成立して**二重予約**になる。
+    //   間を置いて一度だけ見直し、それでも見つからなければ **「確かめられない」に倒す。**
+    //   ＝入っていないと断定しない。顧客にはマイ予約の確認をお願いする。
+    //   手間は増えるが、二重予約のほうが取り返しがつかない。
+    return look().then(function(first){
+      if (first === true) return true;
+      if (first === null) return null;                 // 読めていない＝不明
+      return _delay(VERIFY_RETRY_MS).then(look).then(function(second){
+        return (second === true) ? true : null;        // 2回とも無ければ「確かめられない」
+      });
+    });
   }
 
   on('weekHome', goHome);

@@ -53,6 +53,25 @@ ok('②不明のときは専用の文面を出す', /cf_verify_unknown/.test(con
 const unknownTail = confirmCatch.split(/cf_verify_unknown/)[0].split(/found\s*===\s*false/)[1] || '';
 ok('②不明の枝に disabled=false が無い', !/btn\.disabled\s*=\s*false/.test(unknownTail.split('return;')[1] || ''));
 
+// ---------- ③-0 ★「一覧に無い」を失敗と断定しないこと（Codex指摘・2026-10-03） ----------
+//   20秒で見切ったあともサーバー側の処理は続いており、照合がそれを追い越すことがある。
+//   そこで押し直せるようにすると、追い越した直後に成立して二重予約になる。
+{
+  const v = (HTML.match(/function _verifyBooked\(req\)\{[\s\S]*?\n  \}/) || [])[0] || '';
+  ok('③-0 間を置いて見直す', /_delay\(VERIFY_RETRY_MS\)[\s\S]{0,40}look/.test(v));
+  ok('③-0 待ち時間が定数で定義されている', /var VERIFY_RETRY_MS = \d+;/.test(HTML));
+  ok('③-0★2回とも無ければ「確かめられない」に倒す',
+     /second === true\) \? true : null/.test(v));
+  ok('③-0★照合そのものが false を返して終わる道が無い',
+     !/return\s+first;/.test(v) && !/then\(look\)\.then\(function\(second\)\{\s*return second;/.test(v));
+
+  // ★代行は顧客まで確かめる。時刻だけだと、別の顧客の同時刻の予約を
+  //   「自分が入れたもの」と取り違えて完了画面を出す（入っていないのに完了＝致命的）。
+  ok('③-0★代行は対象の顧客を控える', /wantCustomer = state\.proxyMode/.test(v));
+  ok('③-0★顧客が違えば飛ばす', /wantCustomer && String\([\s\S]{0,40}customerId[\s\S]{0,30}!== wantCustomer\) continue/.test(v));
+  ok('③-0 本人のときは顧客で絞らない（空なら素通し）', /wantCustomer &&/.test(v));
+}
+
 // ---------- ③ 確かめ方が「読めなかった」を成功に倒していないこと ----------
 const verify = (HTML.match(/function _verifyBooked\(req\)\{[\s\S]*?\n  \}/) || [])[0] || '';
 ok('③_verifyBooked がある', !!verify);

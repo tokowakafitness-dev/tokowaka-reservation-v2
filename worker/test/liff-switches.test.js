@@ -35,19 +35,40 @@ function eq(n, g, w) {
   else { fail++; console.log('❌ ' + n + '\n   got : ' + JSON.stringify(g) + '\n   want: ' + JSON.stringify(w)); }
 }
 
-// ---------- ① 既定は必ず OFF ----------
-//   既定がONだと、確かめる前に全員に出る。
-ok('①EDGE_ON の既定は false', /var\s+EDGE_ON\s*=\s*false\s*;/.test(HTML));
+// ---------- ① 確かめていないものを既定で出さない ----------
+//   USE_CAL（空き枠をD1から計算）はまだ確認中。既定がONだと全員に出てしまう。
 ok('①USE_CAL の既定は false', /var\s+USE_CAL\s*=\s*false\s*;/.test(HTML));
 
-// ---------- ② 「鍵が無ければON」になっていない ----------
-//   2026-09-29に実際に踏んだ形。=== '1' 以外で有効にしてはいけない。
-ok('②EDGE_ON は lb_edge === \'1\' のときだけ有効',
-  /EDGE_ON\s*=\s*\(localStorage\.getItem\('lb_edge'\)\s*===\s*'1'\)/.test(HTML));
-ok('②USE_CAL は lb_cal === \'1\' のときだけ有効',
+// ---------- ② ★既定の値と、鍵の読み方が食い違っていないこと ----------
+//   2026-09-29、既定 false のつもりで `!== '0'` と書き、鍵が無い端末は '0' ではないため
+//   **全員ONのまま**だった。止めたつもりが止まっていなかった。
+//   既定と式のどちらを変えても、もう片方を変え忘れると同じ事故になる。だから対で検査する。
+{
+  const defOn = /var\s+EDGE_ON\s*=\s*true\s*;/.test(CODE);
+  const defOff = /var\s+EDGE_ON\s*=\s*false\s*;/.test(CODE);
+  ok('②EDGE_ON の既定が true か false のどちらかで書かれている', defOn !== defOff);
+
+  const byNotZero = /EDGE_ON\s*=\s*\(localStorage\.getItem\('lb_edge'\)\s*!==\s*'0'\)/.test(CODE);
+  const byIsOne   = /EDGE_ON\s*=\s*\(localStorage\.getItem\('lb_edge'\)\s*===\s*'1'\)/.test(CODE);
+  ok('②鍵の読み方が1通りに決まっている', byNotZero !== byIsOne);
+
+  // 既定ONなら「'0' でなければ有効」、既定OFFなら「'1' のときだけ有効」。
+  ok('②★既定と鍵の読み方が一致している',
+     (defOn && byNotZero) || (defOff && byIsOne),
+     `既定=${defOn ? 'ON' : 'OFF'} ／ 読み方=${byNotZero ? "!== '0'" : "=== '1'"}`);
+
+  // 既定ONのときは、止める道（?edge=0）が鍵を**書く**側でなければ効かない。
+  if (defOn) {
+    ok('②★?edge=0 が鍵を書いて止める', /edge=0[\s\S]{0,80}setItem\('lb_edge', '0'\)/.test(CODE));
+    ok('②★?edge=1 が鍵を消して戻す', /edge=1[\s\S]{0,80}removeItem\('lb_edge'\)/.test(CODE));
+    ok('②★鍵が読めない端末でも ?edge=0 が効く',
+       /catch \(e\) \{ EDGE_ON = !\/\[\?&#\]edge=0\//.test(CODE));
+  }
+}
+ok('②USE_CAL は lb_cal === \'1\' のときだけ有効（既定OFFと対）',
   /USE_CAL\s*=\s*\(localStorage\.getItem\('lb_cal'\)\s*===\s*'1'\)/.test(HTML));
-ok('②「!== \'0\'」で有効にしている箇所が無い（コメントの記録は除く）',
-  !/getItem\('lb_(edge|cal)'\)\s*!==\s*'0'/.test(CODE));
+ok('②USE_CAL を「!== \'0\'」で有効にしていない',
+  !/getItem\('lb_cal'\)\s*!==\s*'0'/.test(CODE));
 
 // ---------- ③ USE_CAL は Worker 全体の切り替えと独立に効く ----------
 //   ここが今日の空振りの正体。EDGE_ON が偽でも、枠だけは試せなければ確認できない。
@@ -102,11 +123,13 @@ eq('④?cal=1：起動のまとめ取得は行かない',    goesToWorker('boot'
 eq('④?cal=1：顧客カードのまとめ取得も行かない', goesToWorker('customerCard', calOnly), false);
 eq('④?cal=1：取消は行かない',                goesToWorker('cancelReservation', calOnly), false);
 
-// 何も付けない端末（＝顧客全員）は、1つもWorkerへ行かない
+// ★2026-10-03 既定が ON になったので、「何も付けない端末」の期待は変わった。
+//   ここで検査するのは「?edge=0 で止めた端末」＝1つもWorkerへ行かないこと。
+//   止める道が効かなくなったら、全員を元に戻す手段が無くなる。
 const plainDev = { EDGE_ON: false, USE_CAL: false, writeRecently: false };
 for (const a of ['getTrainerSlots','getMemberStatus','getBookingOptions','getMyReservations',
                  'getCustomerHome','getTrainers','makeReservation','boot','customerCard']) {
-  eq('⑤既定の端末：' + a + ' はGASのまま', goesToWorker(a, plainDev), false);
+  eq('⑤?edge=0 で止めた端末：' + a + ' はGASのまま', goesToWorker(a, plainDev), false);
 }
 
 // ---------- ⑧ まとめ取得が Worker を通る道にあること ----------
