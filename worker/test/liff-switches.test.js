@@ -193,5 +193,23 @@ ok('⑨通信が転んでも理由と時間を残す', /AbortError[\s\S]{0,160}_
 ok('⑦経路に版の印が出る', /_perfRoute[\s\S]{0,600}LIFF_BUILD/.test(HTML));
 ok('⑦計測パネルが読み込みを描いている', /_perfRender[\s\S]{0,1200}_perfBoot\(\)/.test(HTML));
 
+// ---------- ⑩ ★予約を終えた直後の待ちを縮める（2026-10-03・オーナーの指摘）----------
+//   書き込みの直後35分は、残数と枠をGASに直接聞く（自分が取った枠が
+//   「まだ空いている」と見えるのを防ぐため）。
+//   ところがサーバー側は、予約・取消の直後にその方の残数・予約・空き枠を
+//   すぐ押し直している。成功しているなら35分も待つ理由がない。
+//   待ち続けると「予約を終えた直後こそ遅い」という逆の体験になる。
+ok('⑩待つのをやめる手段がある', /function _edgeClearStale\(\)/.test(CODE));
+ok('⑩★印は memory と localStorage の両方から消す',
+  /_edgeClearStale[\s\S]{0,200}_edgeStaleMem = 0[\s\S]{0,160}removeItem\('lb_edge_stale'\)/.test(CODE));
+ok('⑩★書き込みが成功したときだけ外す',
+  /r\.success === true && r\.edgeSynced === true/.test(CODE));
+ok('⑩書き込み以外では外さない',
+  /if \(!isWrite\) return p;[\s\S]{0,260}edgeSynced === true/.test(CODE));
+// ★応答に書いていないとき（古いGAS・押し直しの失敗）は外さない＝待つ側に倒れる。
+//   ここを `!== false` などと緩めると、失敗しているのに古い残数を出す。
+ok('⑩★「書いていない」を成功と見なさない', !/edgeSynced !== false/.test(CODE));
+ok('⑩印を付けるのは書き込みを送る前のまま', /EDGE_WRITE_ACTIONS\.test\(plain\)\) \{ _edgeMarkStale\(\);/.test(CODE));
+
 console.log((fail ? '❌' : '✅') + ' liff-switches: ' + pass + '件合格' + (fail ? ' / ' + fail + '件失敗' : ''));
 process.exit(fail ? 1 : 0);

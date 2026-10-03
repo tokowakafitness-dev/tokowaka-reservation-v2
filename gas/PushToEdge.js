@@ -648,12 +648,17 @@ function _edgePushHome(customers, batchId, t0, log, full) {
 // 契約や予約が変わった会員1人分だけを、その場で押し出す。
 //   写しは15〜30分ごとに更新されるが、その間に予約すると残数がずれる。
 //   予約・取消の直後にここを呼べば、その会員だけ即座に正しくなる。
+//   ★成否を返す（2026-10-03）。画面は書き込みの直後、残数と枠をGASに直接聞く作りで、
+//     その期間をここの結果で決める。失敗を黙って握りつぶすと、画面は
+//     「写しが新しい」と信じて古い残数を出してしまう。
 function pushToEdgeHomeFor(customerId, customerName) {
-  if (!_edgeEnabled()) return;
+  if (!_edgeEnabled()) return false;
   try {
     var rows = _edgeHomeRows([{ id: String(customerId), name: String(customerName || '') }], 0);
-    if (rows.length) _edgePushRows('home', rows, Date.now(), { scope: 'partial' });
-  } catch (e) { Logger.log('[edge] 残数の即時更新に失敗: ' + (e && e.message)); }
+    if (!rows.length) return false;                 // 作れなかった＝写しは直っていない
+    _edgePushRows('home', rows, Date.now(), { scope: 'partial' });
+    return true;
+  } catch (e) { Logger.log('[edge] 残数の即時更新に失敗: ' + (e && e.message)); return false; }
 }
 
 // ============================================================
@@ -699,7 +704,7 @@ function _edgeNameByCustomerId(customerId) {
 // その会員の予約だけを送り直す。含まれない行は消えない（削除は1日1回の完全同期だけ）。
 function _edgePushReservationsFor(customerId) {
   var all = _edgeReservations();
-  if (all == null) return 0;                      // 読めなかった＝送らない
+  if (all == null) return false;                  // 読めなかった＝送らない（写しは直っていない）
   var mine = [];
   for (var i = 0; i < all.length; i++) {
     if (String(all[i].customer_id || '') === String(customerId)) mine.push(all[i]);
@@ -711,7 +716,7 @@ function _edgePushReservationsFor(customerId) {
 // そのトレーナーの枠だけを送り直す。
 function _edgePushSlotsFor(trainerId) {
   var all = _edgeSlotRows();
-  if (all == null) return 0;
+  if (all == null) return false;                  // 読めなかった＝送らない（写しは直っていない）
   var mine = [];
   for (var i = 0; i < all.length; i++) {
     if (String(all[i].trainer_id || '') === String(trainerId)) mine.push(all[i]);
@@ -747,11 +752,27 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     if (!cid) { Logger.log('[edge] 書き込み後：会員が特定できず写しを直せません（' + action + '）'); return; }
     if (!nm) nm = _edgeNameByCustomerId(cid);
 
-    pushToEdgeHomeFor(cid, nm);                   // 残数
-    _edgePushReservationsFor(cid);                // その人の予約
+    // ★押し直しが済んだかを応答に載せる（2026-10-03・オーナーの指摘から）。
+    //
+    //   画面は書き込みの直後35分、残数と枠をWorkerではなくGASに直接聞く
+    //   （自分が取った枠が「まだ空いている」と見えるのを防ぐため）。
+    //   ところがここで、その方の残数・予約・空き枠をすぐ押し直している。
+    //   **成功しているなら35分も待つ理由がない。**
+    //   予約を終えた直後こそ「残りが減った」を見たい場面なのに、
+    //   そこだけ遅いという、ちょうど逆の体験になっていた。
+    //
+    //   ★3つとも成功したときだけ真にする。1つでも落ちたら画面は待つ側に倒れる
+    //     （遅いほうが、古い残数を見せるより良い）。
+    var _syncedHome = pushToEdgeHomeFor(cid, nm);                   // 残数
+    var _syncedResv = (_edgePushReservationsFor(cid) !== false);    // その人の予約
 
     var tid = String(res.trainerId || params.trainerId || '');
-    if (tid) _edgePushSlotsFor(tid);              // 空き枠
+    var _syncedSlots = true;
+    if (tid) _syncedSlots = (_edgePushSlotsFor(tid) !== false);     // 空き枠
+
+    if (res && typeof res === 'object') {
+      res.edgeSynced = !!(_syncedHome && _syncedResv && _syncedSlots);
+    }
   } catch (e) {
     // ★予約は成功している。写しの都合で失敗にしてはいけない。
     Logger.log('[edge] 書き込み後の写し更新に失敗: ' + (e && e.message));

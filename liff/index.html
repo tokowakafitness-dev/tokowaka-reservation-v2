@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-03j Workerを既定で使う';
+  var LIFF_BUILD = '2026-10-03k 予約直後の待ちを縮める';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -743,6 +743,16 @@
     _edgeStaleMem = until;
     try { localStorage.setItem('lb_edge_stale', String(until)); } catch (e) {}
   }
+  // ★サーバーが「写しを直した」と言ってきたら、待つのをやめる（2026-10-03）。
+  //   予約・取消の直後、サーバー側はその方の残数・予約・空き枠をすぐ押し直している。
+  //   それが成功しているなら、35分も待つ理由がない。
+  //   待ち続けると、**予約を終えた直後こそ遅い**という逆の体験になる
+  //   （「残りが減った」を見たいのはまさにその瞬間）。
+  //   ★応答に書いていないとき（古いGAS・失敗）は、印を外さない＝待つ側に倒れる。
+  function _edgeClearStale(){
+    _edgeStaleMem = 0;
+    try { localStorage.removeItem('lb_edge_stale'); } catch (e) {}
+  }
 
   // Workerを使わなかった／使えなかった理由を計測に残す（2026-10-03）。
   //   ★なぜ要るのか
@@ -1073,6 +1083,11 @@
       p = t ? t.then(function(res){ return res ? res : _apiGas(params); }) : _apiGas(params);
     }
     if (!isWrite) return p;
+    // 書き込みが成功し、サーバーが写しを直したと言ってきたら、待つのをやめる。
+    p = p.then(function(r){
+      if (r && r.success === true && r.edgeSynced === true) _edgeClearStale();
+      return r;
+    });
     // 成功でも失敗でも必ず消す（消し忘れると画面が操作できなくなる）
     return p.then(function(r){ _busyHide(); return r; },
                   function(e){ _busyHide(); throw e; });

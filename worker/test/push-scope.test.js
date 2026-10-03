@@ -140,5 +140,19 @@ ok('⑦★消す指定なしでは名乗れない',
   eq('⑦名乗っているのは固定枠だけ', named, ['recurring']);
 }
 
+// ---------- 8. ★押し直しの成否を正しく伝えること（2026-10-03）----------
+//   画面はこの結果で「待つかどうか」を決める。
+//   失敗を黙って握りつぶすと、画面は「写しが新しい」と信じて古い残数を出す。
+ok('⑧残数の押し直しが成否を返す',
+  /function pushToEdgeHomeFor[\s\S]{0,500}return true;[\s\S]{0,200}return false;/.test(SRC));
+ok('⑧★作れなかったときは false', /if \(!rows\.length\) return false;/.test(SRC));
+ok('⑧予約の押し直しも読めなければ false',
+  /function _edgePushReservationsFor[\s\S]{0,200}all == null\) return false;/.test(SRC));
+ok('⑧枠の押し直しも読めなければ false',
+  /function _edgePushSlotsFor[\s\S]{0,200}all == null\) return false;/.test(SRC));
+ok('⑧★3つとも成功したときだけ真にする',
+  /_syncedHome && _syncedResv && _syncedSlots/.test(SRC));
+ok('⑧応答に結果を載せている', /res\.edgeSynced = /.test(SRC));
+
 console.log(`\n${fail ? '❌' : '✅'} 押し出しの走査範囲 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
