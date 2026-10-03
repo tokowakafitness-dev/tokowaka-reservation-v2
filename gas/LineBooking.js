@@ -4088,7 +4088,7 @@ function makeReservationLineProxy(trainer, body) {
   }
   if (!found) return { success: false, code: 'NOT_FOUND', message: '対象の会員が見つかりません。' };
   // 権限：この会員の担当トレーナーのみ代行可（担当未設定なら任意トレーナー可）。他担当への水平越権を遮断（Codex#8）。オーナーは全顧客可。
-  if (!_lbIsOwnerRole(trainer) && custTrainerId && custTrainerId !== String((trainer && trainer.trainerId) || '')) return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみ代行予約ができます。' };
+  if (!_lbTrainerMaySeeCustomer(trainer, custTrainerId)) return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみ代行予約ができます。' };   // 判定は1か所に寄せる（名簿から読んだ直後＝実在は確認済み）
   var _ctFb = custType;   // 種別＝map優先（customerId精密）。空欄は電話で同名を絞った契約から（氏名単独フォールバックはしない・Codex#2）。
   if (!_ctFb) { var _c = _lbFindContract(name, custPhone); _ctFb = (_c && _c.cols.type >= 0) ? String(_c.row[_c.cols.type] || '') : ''; }
   return _lbReserveCore({ customerId: customerId, customerName: name, lineUserId: custLine, contractType: _ctFb,
@@ -5829,7 +5829,7 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   }
   if (!name) return { success: false, code: 'NOT_FOUND', message: '会員が見つかりません。' };
   // 権限：この会員の担当トレーナーのみ補充可（担当未設定なら任意トレーナー可）。他担当への水平越権を遮断（Codex#4）。オーナーは全顧客可。
-  if (!_lbIsOwnerRole(tr) && custTrainerId && custTrainerId !== String(tr.trainerId)) return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみチケット補充ができます。' };
+  if (!_lbTrainerMaySeeCustomer(tr, custTrainerId)) return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみチケット補充ができます。' };   // 判定は1か所に寄せる（名簿から読んだ直後＝実在は確認済み）
   var contract = _lbFindContract(name, phone);   // 期限計算等の参照用（電話で同名を絞る・Codex#2）
   // 種別＝customer_line_map の契約種別（customerId精密＝同名で別会員の種別を誤採用しない・Codex#4）。
   //   空欄時は電話で絞った契約から（氏名単独フォールバックはしない・Codex#2）。
@@ -6676,7 +6676,7 @@ function makeBatchReservationLineProxy(trainer, body) {
     }
   }
   if (!found) return { success: false, code: 'NOT_FOUND', message: '対象の会員が見つかりません。' };
-  if (!_lbIsOwnerRole(trainer) && custTrainerId && custTrainerId !== String((trainer && trainer.trainerId) || '')) return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみ代行予約ができます。' };
+  if (!_lbTrainerMaySeeCustomer(trainer, custTrainerId)) return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみ代行予約ができます。' };   // 判定は1か所に寄せる（名簿から読んだ直後＝実在は確認済み）
   var _ctFb = custType;
   if (!_ctFb) { var _c = _lbFindContract(name, custPhone); _ctFb = (_c && _c.cols.type >= 0) ? String(_c.row[_c.cols.type] || '') : ''; }
   return _lbBatchReserve({ customerId: customerId, customerName: name, lineUserId: custLine, contractType: _ctFb,
