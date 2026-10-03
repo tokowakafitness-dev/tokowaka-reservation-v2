@@ -487,6 +487,39 @@
     _PERF.push({ a: String(action || '?').replace(/^line_/, ''), ms: Math.round(ms) });
     if (_PERF_ON) _perfRender();
   }
+  // 初回の読み込みの内訳（2026-10-03）
+  //   「サイトを開くのが遅い」と「枠が出るのが遅い」は原因が別。
+  //   前者はHTMLと書体とLINEの部品のダウンロード、後者はサーバーとの通信。
+  //   推測で直さないために、両方を同じ画面に出す。
+  function _perfBoot(){
+    var out = [];
+    try {
+      var navs = performance.getEntriesByType ? performance.getEntriesByType('navigation') : [];
+      var nav = navs && navs[0];
+      if (nav) {
+        out.push(['画面のHTMLを取る', nav.responseEnd - nav.requestStart]);
+        out.push(['HTMLを読み終わる', nav.domContentLoadedEventEnd - nav.startTime]);
+      }
+      var res = performance.getEntriesByType ? performance.getEntriesByType('resource') : [];
+      var font = 0, fontN = 0;
+      for (var i = 0; i < res.length; i++) {
+        var u = String(res[i].name || '');
+        if (/sdk\.js/.test(u)) { out.push(['LINEの部品(SDK)', res[i].duration]); }
+        else if (/fonts\.(googleapis|gstatic)/.test(u)) { font += res[i].duration; fontN++; }
+      }
+      if (fontN) out.push(['書体 ' + fontN + '件', font]);
+    } catch (e) {}
+    return out;
+  }
+
+  // いまどの経路で動いているか（効いていない切り替えを取り違えないため）
+  function _perfRoute(){
+    var r = [];
+    try { r.push('Worker ' + (EDGE_ON ? 'ON' : 'OFF')); } catch (e) { r.push('Worker ?'); }
+    try { r.push('カレンダー計算 ' + (USE_CAL ? 'ON' : 'OFF')); } catch (e) { r.push('カレンダー計算 ?'); }
+    return r.join(' ／ ');
+  }
+
   function _perfRender(){
     var el = document.getElementById('_perfPanel');
     if (!el) {
@@ -502,7 +535,13 @@
     var rows = _PERF.map(function(p, n){
       return (n + 1) + '. ' + p.a + ' … <b>' + p.ms.toLocaleString() + 'ms</b>';
     }).join('<br>');
-    el.innerHTML = '<div style="color:#cda86c;letter-spacing:.06em;margin-bottom:3px">通信の内訳'
+    var boot = _perfBoot().map(function(b){
+      return '・' + b[0] + ' … <b>' + Math.round(b[1]).toLocaleString() + 'ms</b>';
+    }).join('<br>');
+    el.innerHTML = '<div style="color:#cda86c;letter-spacing:.06em;margin-bottom:3px">経路 '
+      + _perfRoute() + '</div>'
+      + (boot ? '<div style="color:#9fb6dc;margin-bottom:5px">読み込み<br>' + boot + '</div>' : '')
+      + '<div style="color:#cda86c;letter-spacing:.06em;margin-bottom:3px">通信の内訳'
       + '（画面を開いてから ' + Math.round(_nowMs() - _T0).toLocaleString() + 'ms）</div>'
       + rows
       + '<div style="margin-top:5px;border-top:1px solid #37527e;padding-top:4px">通信 '
@@ -921,8 +960,24 @@
     var isWrite = EDGE_WRITE_ACTIONS.test(plain);
     if (isWrite) _busyShow(_busyMsg(plain));
 
+    // 空き枠をカレンダーから計算する確認（USE_CAL）は、Worker全体の切り替え（EDGE_ON）
+    //   とは**独立に**通す（2026-10-03）。
+    //   ★なぜ分けるのか
+    //     EDGE_ON は 2026-09-29 に false へ戻してある。戻した理由は
+    //     「残数の鮮度」「予約オプションの閲覧範囲」「予約一覧・固定枠の鮮度」の3つで、
+    //     **空き枠とは関係がない**。
+    //     それでも ?cal=1 だけでは EDGE_ON が false のため _edgeTry に入らず、
+    //     カレンダー計算が一度も試されなかった（オーナーの確認が空振りした原因）。
+    //     ここで ?edge=1 を一緒に付けて確かめると、塞いでいない3つの穴まで開く。
+    //     確かめたいのは空き枠だけなので、空き枠だけを独立に通す。
+    //   ★安全の根拠
+    //     空き枠の窓口（c_trainerSlots）は三段構えで、使えなければ写し → GAS と
+    //     自動で退避する（worker/src/routes/slots.js）。失敗の最悪は「今までの速度に戻る」。
+    //     閲覧範囲も問題にならない（空き枠は顧客がトレーナーを選ぶために見る情報）。
+    var useEdge = EDGE_ON || (USE_CAL && plain === 'getTrainerSlots');
+
     var p;
-    if (!EDGE_ON) p = _apiGas(params);
+    if (!useEdge) p = _apiGas(params);
     else {
       var t = _edgeTry(params);
       p = t ? t.then(function(res){ return res ? res : _apiGas(params); }) : _apiGas(params);
