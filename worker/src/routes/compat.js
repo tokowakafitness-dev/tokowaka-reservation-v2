@@ -324,33 +324,64 @@ export async function compatMyReservations({ env, who, body }) {
 
 // ---------------------------------------------------------------
 // getTrainerSlots と同じ形
+//
+//   ★中身は routeSlots（三段構え）に委ねる（2026-10-03）。
+//     以前はここで slots_cache を直接読んでいた。つまり**顧客の画面は②だけを見ており、
+//     ①（calendar_events から計算する経路）が1ミリも効いていなかった。**
+//     画面（liff/index.html）が呼ぶのは c_trainerSlots → ここ、の一本道なので、
+//     ここを繋ぎ変えない限り①は誰にも届かない。
+//
+//   ★この関数の責務は「形を GAS のまま保つこと」だけにする。
+//     ・空き枠を選ぶ判断（どの経路から・どの枠を落とすか）… routeSlots
+//     ・締め切りの判定                                    … 下の isSlotOpen（routeSlots が使う）
+//     ・GAS と同じ形に直す                                … ここ
+//     判断をここにも書くと、同じ枠が経路によって出たり出なかったりする。
+//
+//   ★返す形は**一切変えない**。画面は res.slots（date/startTime/endTime/startISO…）だけを
+//     読み、失敗（_fallback）は index.js が success:false + code:'FALLBACK' に直して
+//     画面がGASへ落ちる。source や stale のような新しい項目はここでは出さない。
+//     どの経路で返したかを見たいときは、同じ routeSlots を直接叩く窓口（action:'slots'）を使う。
 // ---------------------------------------------------------------
 export async function compatTrainerSlots({ env, body, who }) {
   const trainerId = String(body.trainerId || who.trainerId || '');
   if (!trainerId) return { _fallback: true };
-  // ★鮮度はその行が計算された時刻だけで見る（残数と同じ理由・2026-09-29）。
-  const row = await env.DB.prepare('SELECT payload, computed_at FROM slots_cache WHERE trainer_id = ?')
-    .bind(trainerId).first();
-  if (!row) return { _fallback: true };
-  let raw;
-  try { raw = JSON.parse(row.payload); } catch (_) { return { _fallback: true }; }
 
-  // 写しが古すぎるときは答えない。空き枠は予約で変わるため、古い枠を見せると
-  // 「表示されているのに取れない」が起きる。
-  const computedAt = Number(row.computed_at || 0);
-  if (!computedAt) return { _fallback: true };
-  if (Date.now() - computedAt > 20 * 60 * 1000) return { _fallback: true };
-
-  const now = Date.now();
-  const cfg = raw.rules || { leadMinutes: 180, morningUntilHour: 12, prevDeadlineHour: 22 };
+  // ---- 引数の違いを吸収する ----
+  //   画面は excludeStartISO（ISO文字列）を送り、routeSlots は excludeStartMs（ミリ秒）を見る。
+  //   読めない日時は 0（＝除外なし）へ。以前も new Date('...').getTime() が NaN になり、
+  //   `if (exMs && ...)` で除外なしに倒れていた。そこを変えない。
   const exISO = String(body.excludeStartISO || '');
   const exMs = exISO ? new Date(exISO).getTime() : 0;
+  const excludeStartMs = isFinite(exMs) ? exMs : 0;
 
-  const slots = (raw.slots || []).filter((s) => {
-    if (exMs && s.startMs === exMs) return true;
-    if (s.startMs <= now) return false;
-    return isSlotOpen(s.startMs, now, cfg);
-  }).map((s) => ({
+  // ★excludeStartMs は**必ずここで上書きする。**
+  //   画面が直接 excludeStartMs を送っても効かせない（以前は見ていなかった項目なので、
+  //   ここで通すと「この入口で除外できる枠」が増える＝挙動が変わる）。
+  const { routeSlots, SLOT_SOURCE } = await import('./slots.js');
+  const r = await routeSlots({ env, who, body: { ...body, trainerId, excludeStartMs } });
+
+  // ---- 「答えない」の決め方（以前の条件をそのまま移す）----
+  //   以前：写しが無い／payload が読めない／computed_at が無い／20分より古い → _fallback
+  //   いま：
+  //     source:'none'            … 写しが無い／読めない      （以前の _fallback と同じ）
+  //     source:'cache' + stale   … computed_at が無い／20分超（以前の _fallback と同じ。
+  //                                 境界も CACHE_STALE_MS = 20分で揃えてある）
+  //     source:'calendar'        … ①で計算できた。stale は立たない（鮮度は readCalendar が見る）
+  //   ★stale だけで決めない。code（trainerId が無い等）と source も見る。
+  //     routeSlots は「枠は返すが stale」という返し方をするので、ここで落とさないと
+  //     古い枠をそのまま見せてしまう（＝表示されているのに取れない）。
+  if (!r || r.code) return { _fallback: true };
+  if (r.source === SLOT_SOURCE.NONE) return { _fallback: true };
+  if (r.source === SLOT_SOURCE.CACHE && r.stale) return { _fallback: true };
+
+  // 画面に渡す computedAt は必ず数値。無ければ答えない（以前と同じ）。
+  const computedAt = Number(r.computedAt || 0);
+  if (!computedAt) return { _fallback: true };
+
+  // ★ここで締め切りをもう一度判定しない。routeSlots が keepSlot（この下の isSlotOpen）で
+  //   すでに絞っている。二重に判定すると、excludeStartISO で残した「自分の枠」まで
+  //   落としてしまう（予約変更ができなくなる）。
+  const slots = (r.slots || []).map((s) => ({
     date: s.date, dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime,
     startISO: s.startISO, endISO: s.endISO,
     trainerName: s.trainerName, trainerId: s.trainerId, trialOk: s.trialOk,

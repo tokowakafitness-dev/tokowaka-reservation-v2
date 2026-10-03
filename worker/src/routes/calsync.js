@@ -99,6 +99,56 @@ export function normalizeCalendars(list) {
   return out;
 }
 
+// ---- 固定枠の設定（ownerWindow）の正規化と検証 -------------------------------
+//
+//   GAS の OWNER_SLOT_WINDOW（_lbOwnerSlotWindow / _lbInOwnerWindow）をそのまま受ける。
+//     キー   … 曜日（'0'〜'6'。0=日）
+//     値     … { from, to }（0〜24の整数・h ∈ [from, to)）／ 'all'（カレンダー通り）
+//     キーの無い曜日 … その曜日は1枠も出さない
+//     payload に ownerWindow が無い／null … 制限なし（＝NULLで保存）
+//
+//   ★なぜ検証するのか
+//     壊れた値を保存すると、固定枠の持ち主（hidden なトレーナー）の枠が
+//     本来出ない曜日・時間帯に出る＝顧客に出す枠が壊れる。
+//     calslots.js の inOwnerWindow は、読めない値を「制限なし」に倒す
+//     （`!isFinite(from)` → true）。つまり壊れた値は**枠を広げる側**へ倒れる。
+//     だから保存する手前で落とす。
+//
+//   ★なぜ「落とす」が安全なのか
+//     ここで落ちた押し出しは公開されない。公開中の世代がそのまま使われ、
+//     7分で鮮度切れになって読み取りはGASへ落ちる。顧客に害は出ず、GASのログに⛔が出る。
+//
+//   ★GAS は 'all' の代わりに true も受け付ける（_lbInOwnerWindow）。
+//     ここでも受けて 'all' に直して保存する（拒否すると正しい設定で公開が止まる）。
+//   ★null の曜日は GAS の setOwnerSlotWindow が落とすが、来ても受ける。
+//     「その曜日はルール無し＝非表示」はキーが無いのと同じ意味なので、落として保存する。
+//   ★from >= to（例 {from:24,to:24}）は拒否しない。GAS でも「その曜日は0枠」になるだけで、
+//     枠を広げる側へは倒れない。拒否すると設定の書き間違い1つで公開が永久に止まる。
+//
+//   返す形：{ json: <保存する文字列 | null> } ／ { code: 'BAD_OWNER_WINDOW' }
+export function normalizeOwnerWindow(v) {
+  if (v === undefined || v === null) return { json: null };    // 古いGAS（送ってこない）も通す
+  if (typeof v !== 'object' || Array.isArray(v)) return { code: 'BAD_OWNER_WINDOW' };
+
+  // ★キーを曜日順に並べ、{from,to} のキーの順も固定する（normalizeCalendars と同じ理由）。
+  //   こうしておかないと、GASが同じ設定を違う順で送ってきただけで「中身が変わった」と判定され、
+  //   5分ごとに世代が作り直される（D1の書き込み枠を無駄に食う）。
+  const out = {};
+  for (const k of Object.keys(v).sort()) {
+    if (!/^[0-6]$/.test(k)) return { code: 'BAD_OWNER_WINDOW' };   // 曜日以外のキーは通さない
+    const w = v[k];
+    if (w === undefined || w === null) continue;                   // その曜日は出さない＝キー無しと同じ
+    if (w === 'all' || w === true) { out[k] = 'all'; continue; }
+    if (typeof w !== 'object' || Array.isArray(w)) return { code: 'BAD_OWNER_WINDOW' };
+    const from = w.from, to = w.to;
+    if (!isInt(from) || !isInt(to)) return { code: 'BAD_OWNER_WINDOW' };
+    if (from < 0 || from > 24 || to < 0 || to > 24) return { code: 'BAD_OWNER_WINDOW' };
+    out[k] = { from, to };
+  }
+  // ★キーが0個でも '{}' を返す（null にしない）。'{}' は「全曜日非表示」、null は「制限なし」。
+  return { json: JSON.stringify(out) };
+}
+
 // ---- 公開前の検査（§6）------------------------------------------------------
 //   reasons が1つでもあれば公開しない。warnings は公開するが記録して知らせる。
 //   ★理由にタイトル・氏名を入れない。入れるのは calendar_id / event_id / 件数だけ。
@@ -273,6 +323,11 @@ async function calsync(request, env) {
   }
   if (!Array.isArray(body.events)) return jsonRes({ success: false, code: 'EVENTS_NOT_ARRAY' }, 400);
   if (body.events.length > MAX_EVENTS_TOTAL) return jsonRes({ success: false, code: 'TOO_MANY' }, 413);
+  // 固定枠の設定（§①-固定枠）。**短絡判定（3.）より手前で見る。**
+  //   後ろに置くと、壊れた値が「中身が同じ」経路をすり抜けて保存されうる。
+  const ow = normalizeOwnerWindow(body.ownerWindow);
+  if (ow.code) return jsonRes({ success: false, code: ow.code }, 400);
+  const ownerWindowJson = ow.json;
 
   const now = Date.now();
   // 遅れて届いた押し出しで鮮度を実際より新しく見せない。
@@ -285,6 +340,7 @@ async function calsync(request, env) {
   const calsJson = JSON.stringify(cals);
   const p = {
     horizonStart, horizonEnd, ruleVersion, flag1f, contentHash,
+    ownerWindow: ownerWindowJson,
     events: body.events, invalid: body.invalid,
   };
 
@@ -294,7 +350,8 @@ async function calsync(request, env) {
     `SELECT a.generation AS generation, a.checked_at AS checked_at, s.status AS status,
             s.horizon_start AS horizon_start, s.horizon_end AS horizon_end,
             s.rule_version AS rule_version, s.flag_1f AS flag_1f,
-            s.content_hash AS content_hash, s.calendars AS calendars
+            s.content_hash AS content_hash, s.calendars AS calendars,
+            s.owner_window AS owner_window
        FROM calendar_active a LEFT JOIN calendar_snapshot s ON s.generation = a.generation
       WHERE a.id = 1`
   ).first();
@@ -313,13 +370,18 @@ async function calsync(request, env) {
   //     その範囲にまだ予定が1件も無ければ中身の印は前と同じになる。すると
   //     horizon_end が古いままなのに checked_at だけ新しくなり、翌月の要求が
   //     永久にGASへ落ち続ける。取得仕様（地平・規則の版・1Fフラグ・構成）も必ず比べる。
+  //   ★固定枠の設定（owner_window）も必ず比べる（2026-10-03）。
+  //     これを比べないと、オーナーが OWNER_SLOT_WINDOW を変えても予定が変わっていなければ
+  //     「中身が同じ」で checked_at だけが進み、**新しい設定が永久に反映されない。**
+  //     地平を比べる理由とまったく同じ罠。
   const same = prevGen != null && cur.status === 'ready'
     && String(cur.content_hash) === contentHash
     && Number(cur.horizon_start) === horizonStart
     && Number(cur.horizon_end) === horizonEnd
     && Number(cur.rule_version) === ruleVersion
     && String(cur.flag_1f) === flag1f
-    && String(cur.calendars) === calsJson;
+    && String(cur.calendars) === calsJson
+    && sameNullableText(cur.owner_window, ownerWindowJson);
 
   if (same) {
     // 更新するのは checked_at だけ（D1の書き込み1行）。built_at は触らない。
@@ -405,9 +467,10 @@ async function insertSnapshot(env, status, p, calsJson, now, reasons, warnings) 
   const r = await env.DB.prepare(
     `INSERT INTO calendar_snapshot
        (status, horizon_start, horizon_end, calendars, rule_version, flag_1f, content_hash,
-        reject_reasons, warnings, built_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        owner_window, reject_reasons, warnings, built_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(status, p.horizonStart, p.horizonEnd, calsJson, p.ruleVersion, p.flag1f, p.contentHash,
+         p.ownerWindow == null ? null : String(p.ownerWindow),
          reasons && reasons.length ? JSON.stringify(reasons) : null,
          warnings && warnings.length ? JSON.stringify(warnings) : null,
          now, now).run();
@@ -457,9 +520,18 @@ function changes(r) {
 function isInt(v) {
   return typeof v === 'number' && isFinite(v) && Math.floor(v) === v;
 }
+// NULL を含む文字列列の比較。
+//   ★String(null) は 'null' になる。設定が無い（NULL）と、文字列 'null' が
+//     保存されている状態を同じと判定しないよう、NULL は NULL とだけ等しいとする。
+function sameNullableText(a, b) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
 
 export const _forTest = {
-  safeEqual, inspect, normalizeCalendars, allowedEffects, cleanupGenerations,
+  safeEqual, inspect, normalizeCalendars, normalizeOwnerWindow, sameNullableText,
+  allowedEffects, cleanupGenerations,
   REQUIRED_TRAINER_CALENDARS, MAX_EVENTS_TOTAL, MAX_EVENTS_PER_CALENDAR,
   KEEP_READY, REJECTED_TTL_MS, BUILDING_STALE_MS, INSERT_CHUNK, MAX_PUSH_AGE_MS,
 };

@@ -86,6 +86,7 @@ SELECT a.generation   AS generation,
        s.rule_version  AS rule_version,
        s.flag_1f       AS flag_1f,
        s.calendars     AS calendars,
+       s.owner_window  AS owner_window,
        e.calendar_id  AS calendar_id,
        e.event_id     AS event_id,
        e.role         AS role,
@@ -118,8 +119,15 @@ SELECT a.generation   AS generation,
 //   nowMs              … 現在時刻（省略時は Date.now()。鮮度の境界を試験で固定するため）
 //
 // 返す形（§7）
-//   { usable: true,  events: [...], generation, checkedAt, horizonStart, horizonEnd }
+//   { usable: true,  events: [...], generation, checkedAt, horizonStart, horizonEnd,
+//     ownerWindow, ownerWindowError }
 //   { usable: false, reason: 'stale'|'horizon'|'rule'|'flag'|'missing'|'calendars', generation, ... }
+//
+//   ownerWindow       … 固定枠の設定（曜日×時間帯）。null は**制限なし**（設定していない）。
+//                       {} は「どの曜日にもルールが無い」＝固定枠の持ち主の枠を1つも出さない。
+//                       この2つは意味が違う。混ぜると出すべきでない枠が出る。
+//   ownerWindowError  … 保存されているが読めなかった（true）。**null（制限なし）に倒さない。**
+//                       呼び出し側は true なら計算せず退避する（slots.js がそうしている）。
 //
 //   events の1件
 //     { calendarId, eventId, role, trainerId, effect, reason, startAt, endAt, allDay }
@@ -221,14 +229,40 @@ export async function readCalendar(env, opts) {
     });
   }
 
+  // ---- 固定枠の設定（2026-10-03 追加）----
+  //   calslots.js の buildSlots に渡す値。**判定には使わない**（可否は上で決まっている）。
+  //   ★NULL と '{}' を混ぜない。NULL＝制限なし、'{}'＝どの曜日にもルールが無い＝1枠も出さない。
+  //   ★読めなかったときに null（＝制限なし）へ倒さない。倒すと、固定枠の持ち主の枠が
+  //     本来出ない曜日・時間帯に出る。読めなかったことを ownerWindowError で知らせ、
+  //     使うかどうかは呼び出し側（slots.js）に決めさせる。
+  //     ここで usable:false にしないのは、この関数の可否判定の意味（§7の6つ）を広げないため。
+  const ow = parseOwnerWindow(gate.owner_window);
+
   return {
     usable: true,
     generation,
     checkedAt,
     horizonStart: hS,
     horizonEnd: hE,
+    ownerWindow: ow.value,
+    ownerWindowError: ow.error,
     events,
   };
+}
+
+// owner_window（TEXT・JSON文字列 または NULL）を buildSlots に渡せる形にする。
+//   { value: null,   error: false }  … 設定なし＝制限なし
+//   { value: {...},  error: false }  … 設定あり
+//   { value: null,   error: true  }  … 保存されているが読めない（呼び出し側が判断する）
+export function parseOwnerWindow(raw) {
+  if (raw == null) return { value: null, error: false };
+  const s = String(raw);
+  if (s === '') return { value: null, error: true };        // 空文字は「設定なし」と区別できない＝読めない扱い
+  let v;
+  try { v = JSON.parse(s); } catch (_) { return { value: null, error: true }; }
+  if (v === null) return { value: null, error: false };     // 'null' が入っていたら制限なし
+  if (typeof v !== 'object' || Array.isArray(v)) return { value: null, error: true };
+  return { value: v, error: false };
 }
 
 // ============================================================
@@ -301,4 +335,4 @@ export function missingCalendars(calendarsJson, required) {
   return out;
 }
 
-export const _forTest = { normalizeRequired, missingCalendars, unusable, READ_SQL, STATUS_READY };
+export const _forTest = { normalizeRequired, missingCalendars, parseOwnerWindow, unusable, READ_SQL, STATUS_READY };

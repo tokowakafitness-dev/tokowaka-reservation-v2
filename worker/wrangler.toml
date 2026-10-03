@@ -9,6 +9,32 @@ workers_dev = true
 [vars]
 LINE_CHANNEL_ID = "2010827953"
 
+# ---- ① calendar_events から空き枠を計算する経路（2026-10-03・段階導入）-------------
+#   既定（この行を書かない）… body.useCalendar === true のときだけ①を使う。
+#                              ＝オーナーの端末だけで試す段階。
+#   SLOTS_FROM_CALENDAR = "on"  … 全員①を使う（数日見てから、ここを足す）
+#   SLOTS_FROM_CALENDAR = "off" … 誰も①を使わない。**body より強い＝止めるための一行。**
+#                                 変だと思ったらこれを足して deploy すれば②（写し）に戻る。
+#   ★"off" を書いたままだと body.useCalendar も効かない。試す段階では**書かない**。
+# SLOTS_FROM_CALENDAR = "on"
+#
+#   CAL_RULE_VERSION … 分類規則の版。**GAS の LB_CALSYNC_RULE_VERSION と同じ値にする。**
+#                      既定1。GAS側を上げたらここも上げる。
+#                      揃っていないと①は使われず、黙って②へ落ちる
+#                      （応答の fallbackReason が 'rule' になるので気づける）。
+# CAL_RULE_VERSION = "1"
+#
+#   CAL_FLAG_1F … 現在の1Fフラグ。**GAS の LB_1F_TRAINER_BLOCK と同じ値にする。**
+#                 既定 off（GASの既定と同じ）。GAS側を on にしたらここも on にする。
+#                 揃っていないと fallbackReason が 'flag' になって①が使われない。
+# CAL_FLAG_1F = "off"
+#
+#   CAL_B1_CALENDAR_ID … B1（部屋の容量）のカレンダーID。任意。
+#                        書くと「その世代にB1が入っているか」を要求ごとに確かめる。
+#                        書かなくても /calsync の検査が「ちょうど1つ」を強制しているので
+#                        公開された世代には必ず入っている（二重の確認）。
+# CAL_B1_CALENDAR_ID = ""
+
 # 契約・顧客・予約。正確さが要るものを置く
 [[d1_databases]]
 binding = "DB"

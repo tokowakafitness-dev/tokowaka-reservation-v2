@@ -289,6 +289,13 @@ CREATE TABLE IF NOT EXISTS calendar_snapshot (
   rule_version    INTEGER NOT NULL,       -- 分類規則の版（読み取り側が今のコードと一致するか見る）
   flag_1f         TEXT NOT NULL,          -- 取得時の LB_1F_TRAINER_BLOCK（on / off）
   content_hash    TEXT NOT NULL,          -- GASが作る中身の印（SHA-256・16進小文字）
+  owner_window    TEXT,                   -- 固定枠の持ち主（hidden なトレーナー）の曜日×時間帯（JSON文字列）
+                                          --   {"1":{"from":17,"to":24},"6":"all"} ／ NULL＝制限なし
+                                          -- ★これが無いと、固定枠の持ち主の枠が本来出ない曜日・
+                                          --   時間帯にも出る。Worker側に設定が無かったため追加（2026-10-03）。
+                                          -- ★NULL と '{}' は違う。NULL＝制限なし（全シフトが枠になる）、
+                                          --   '{}'＝どの曜日にもルールが無い＝1枠も出さない。
+                                          --   ここを混ぜると「出すべきでない枠が出る」側へ倒れる。
   reject_reasons  TEXT,                   -- 公開を止めた理由（JSON配列）。★氏名・タイトルは入れない
                                           --   設計 §6「落ちた世代も残す」を意味のあるものにするために置く
   warnings        TEXT,                   -- 公開はしたが知らせること（JSON配列・設計 §6 の警告）
