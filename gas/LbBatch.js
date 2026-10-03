@@ -140,6 +140,14 @@ function lbCustomerCard(lineUserId, customerId) {
   //   トレーナーでない人に3つとも走らせる意味がない。
   var pic = requireTrainer(lineUserId);
   if (!pic) return { success: false, code: 'FORBIDDEN' };
+  // ★担当外の顧客のカードを開かせない（2026-10-03・Codexの最終判定）。
+  //   中の customerHome と recurring は各自でも担当を確かめるが、
+  //   **InBody（maInBodyCard_）は顧客IDだけで体組成の記録を返す。**
+  //   ここで止めないと、他のトレーナーの担当顧客の身体データが見える。
+  //   規則は代行予約・固定枠と同じ（オーナーは全員／担当なしは誰でも／担当が他人なら不可）。
+  if (!_lbTrainerMaySeeCustomer(pic, _lbCustTrainerId(customerId))) {
+    return { success: false, code: 'FORBIDDEN', message: 'この会員は他のトレーナーの担当です。' };
+  }
 
   function part(name, fn) {
     var t = new Date().getTime();

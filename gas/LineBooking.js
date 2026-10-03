@@ -5597,18 +5597,49 @@ function _lbTrainerCustomers(trainerId) {
   return out;
 }
 
-// トレーナー用：指定顧客の残数(home)を返す。トレーナー本人のみ閲覧可（会員のhomeと同じ_lbBuildHomeを再利用）。
+// この顧客を見てよいトレーナーか（2026-10-03）。
+//   規則は代行予約の判定（makeReservationLineProxy）とそろえる：
+//     オーナー             … 全員を見てよい
+//     顧客の担当が未設定   … どのトレーナーが見てもよい（指名ではないため）
+//     顧客の担当が自分     … 見てよい
+//     顧客の担当が他の人   … **見てはいけない**
+//   他のトレーナーの担当顧客を見せない理由は、契約行から報酬割合が読めるため
+//   （2026-09-29 オーナー決定）。
+//   ★この関数は「map に載っている担当トレーナーID」を受け取る。シートを二度読まない。
+function _lbTrainerMaySeeCustomer(tr, ownerTrainerId) {
+  if (!tr) return false;
+  if (_lbIsOwnerRole(tr)) return true;
+  var owner = String(ownerTrainerId || '');
+  if (!owner) return true;                                  // 担当なし
+  return owner === String((tr && tr.trainerId) || '');
+}
+
+// トレーナー用：指定顧客の残数(home)を返す。担当トレーナー（と担当なしの顧客）のみ閲覧可。
 function getCustomerHomeForTrainer(lineUserId, customerId) {
   var tr = getTrainerByLine(lineUserId);
   if (!tr) return { success: false, code: 'FORBIDDEN', message: 'トレーナー権限が必要です。' };
   customerId = String(customerId || '');
   if (!customerId) return { success: false, code: 'BAD_REQUEST' };
-  var name = '', msh = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  var name = '', ownerTid = '', msh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (msh && msh.getLastRow() >= 2) {
     var mv = msh.getRange(2, 1, msh.getLastRow() - 1, MAP_COL.NOTE).getValues();
-    for (var i = 0; i < mv.length; i++) { if (String(mv[i][MAP_COL.CUSTOMER_ID - 1]) === customerId) { name = String(mv[i][MAP_COL.NAME - 1] || ''); break; } }
+    for (var i = 0; i < mv.length; i++) {
+      if (String(mv[i][MAP_COL.CUSTOMER_ID - 1]) === customerId) {
+        name = String(mv[i][MAP_COL.NAME - 1] || '');
+        ownerTid = String(mv[i][MAP_COL.TRAINER_ID - 1] || '');   // 担当トレーナー（空＝未設定）
+        break;
+      }
+    }
   }
   if (!name) return { success: false, code: 'NOT_FOUND', message: '顧客が見つかりません。' };
+  // ★担当外の顧客の残数を見せない（2026-10-03・Codexの最終判定で見つかった越権）。
+  //   それまでは「トレーナーであること」しか見ておらず、顧客IDを知っていれば
+  //   他のトレーナーの担当顧客の残数を取得できた。
+  //   Worker側（canSeeCustomer）は 2026-09-29 に塞いだが、**GAS側が塞がれていなかった。**
+  //   画面はWorkerが答えられないときGASへ落ちるので、両方塞がないと意味がない。
+  if (!_lbTrainerMaySeeCustomer(tr, ownerTid)) {
+    return { success: false, code: 'FORBIDDEN', message: 'この会員は他のトレーナーの担当です。' };
+  }
   return { success: true, name: name, home: _lbBuildHome(customerId, name) };
 }
 
@@ -6381,8 +6412,8 @@ function addRecurringPatternByTrainer(lineUserId, customerId, body) {
 }
 function listRecurringPatternsByTrainer(lineUserId, customerId) {
   var tr = requireTrainer(lineUserId); if (!tr) return { success: false, code: 'FORBIDDEN' };
-  var ct = _lbCustTrainerId(customerId);
-  if (!_lbIsOwnerRole(tr) && ct && ct !== String(tr.trainerId)) return { success: false, code: 'FORBIDDEN' };
+  // 判定は _lbTrainerMaySeeCustomer に一本化する（同じ規則を2通り書かない）。
+  if (!_lbTrainerMaySeeCustomer(tr, _lbCustTrainerId(customerId))) return { success: false, code: 'FORBIDDEN' };
   return { success: true, patterns: _lbListRecurFor(String(customerId), 'ja') };
 }
 
