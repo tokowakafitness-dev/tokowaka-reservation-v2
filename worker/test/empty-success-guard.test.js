@@ -40,12 +40,36 @@ function envWithHome(payload, computedAt) {
 }
 
 // ---------- 1. ★壊れた残数を「残り0回」にしない ----------
+// ★本番とまったく同じ形にする。項目は gas/LineBooking.js の _lbBuildHome の返り値から取った
+//   （type / active / quota / carryover / monthlyRemaining / ticketRemaining /
+//     pairRemaining / pairPackMax / normalTicketRemaining / hasNormalRoute / ticketPacks ...）。
+//   ここを本番より緩く作ると、「テストは通るのに本番のデータが弾かれる」ことに気づけない。
+const MONTHLY = { type: 'monthly', active: true, quota: 6, carryover: 0, thisMonth: 2,
+                  monthlyRemaining: 3, ticketTotal: 0, ticketRemaining: 0,
+                  pairRemaining: 0, pairPackMax: 0, normalTicketRemaining: 0,
+                  hasNormalRoute: true, ticketPacks: [], remaining: 3 };
 const GOOD = { currentMonth: '2026-10', nextMonth: '2026-11',
-               current: { type: 'monthly', quota: 6, monthlyRemaining: 3, ticketPacks: [], pairRemaining: 1 },
-               next: { type: 'monthly', quota: 6, monthlyRemaining: 6, ticketPacks: [] } };
+               current: MONTHLY, next: { ...MONTHLY, monthlyRemaining: 6 } };
 {
   const h = await readHome(envWithHome(GOOD), 'c1');
-  ok('①正常な写しは読める', h && h.monthlyRemaining === 3, JSON.stringify(h));
+  ok('①本番と同じ形の写しは読める', h && h.monthlyRemaining === 3, JSON.stringify(h));
+}
+// チケット会員・併用会員も通ること（締めすぎていないこと）
+{
+  const ticket = { ...MONTHLY, type: 'ticket', monthlyRemaining: null,
+                   ticketRemaining: 5, ticketPacks: [{ remaining: 5, expire: '2026-12-31', kind: 'normal' }] };
+  const h = await readHome(envWithHome({ currentMonth: '2026-10', current: ticket }), 'c1');
+  ok('①チケット会員も読める', h !== null, JSON.stringify(h));
+  const both = { ...MONTHLY, type: 'both', ticketRemaining: 2,
+                 ticketPacks: [{ remaining: 2, expire: '2026-12-31', kind: 'pair' }] };
+  const h2 = await readHome(envWithHome({ currentMonth: '2026-10', current: both }), 'c1');
+  ok('①併用会員も読める', h2 !== null, JSON.stringify(h2));
+}
+// ★月額の回数が null（上限なしの契約）は正常。キーごと無いのが異常。
+{
+  const h = await readHome(envWithHome({ currentMonth: '2026-10',
+    current: { ...MONTHLY, monthlyRemaining: null } }), 'c1');
+  ok('①回数が null（上限なし）は正常として読める', h !== null, JSON.stringify(h));
 }
 for (const [label, payload] of [
   ['中身が空（{}）',            { currentMonth: '2026-10', current: {} }],
@@ -53,13 +77,22 @@ for (const [label, payload] of [
   ['current が文字列',          { currentMonth: '2026-10', current: 'こわれた' }],
   ['current が数値',            { currentMonth: '2026-10', current: 1 }],
   ['type のキーが無い',         { currentMonth: '2026-10', current: { quota: 6, monthlyRemaining: 3 } }],
+  // ★種別だけ合っていて中身が欠けている形（Codexの2回目の指摘）。
+  //   これが素通りすると、既定値で 0 に落ちて「残り0回」として顧客に出る。
+  ['種別だけで中身が無い',      { currentMonth: '2026-10', current: { type: 'monthly' } }],
+  ['チケットの種別だけ',        { currentMonth: '2026-10', current: { type: 'ticket' } }],
+  ['知らない種別',              { currentMonth: '2026-10', current: { type: 'unknown', hasNormalRoute: true, ticketPacks: [], monthlyRemaining: 3, ticketRemaining: 0 } }],
+  ['回数のキーごと無い（月額）', { currentMonth: '2026-10', current: { type: 'monthly', hasNormalRoute: true, ticketPacks: [], ticketRemaining: 0 } }],
+  ['残枚数のキーごと無い（券）', { currentMonth: '2026-10', current: { type: 'ticket', hasNormalRoute: true, ticketPacks: [], monthlyRemaining: null } }],
+  ['チケットの一覧が配列でない', { currentMonth: '2026-10', current: { ...{ type: 'monthly', hasNormalRoute: true, monthlyRemaining: 3, ticketRemaining: 0 }, ticketPacks: null } }],
+  ['通常経路の印が真偽値でない', { currentMonth: '2026-10', current: { type: 'monthly', hasNormalRoute: 'yes', ticketPacks: [], monthlyRemaining: 3, ticketRemaining: 0 } }],
 ]) {
   const h = await readHome(envWithHome(payload), 'c1');
   eq(`①★${label} は読めなかったことにする`, h, null);
 }
 // 契約が無い会員（type:null）は**正常**。ここまで弾くと全員GASに落ちる。
 {
-  const h = await readHome(envWithHome({ currentMonth: '2026-10', current: { type: null, active: false } }), 'c1');
+  const h = await readHome(envWithHome({ currentMonth: '2026-10', current: { type: null } }), 'c1');
   ok('①契約の無い会員（type:null）は正常として読める', h !== null, JSON.stringify(h));
 }
 // JSONとして読めないものは当然null

@@ -40,7 +40,25 @@ function monthKeyJst(ms) {
 //   JSONとして読めるだけでは足りない（上の readHome の★を参照）。
 function _homeShapeOk(h) {
   if (!h || typeof h !== 'object' || Array.isArray(h)) return false;
-  return ('type' in h);
+  if (!('type' in h)) return false;
+
+  // 契約が無い会員は type:null。これは**正常**（締めすぎると全員GASに落ちる）。
+  if (h.type === null) return true;
+
+  // 知らない種別は信用しない。GASが作るのは 'monthly' / 'ticket' / 'both' のどれか。
+  if (h.type !== 'monthly' && h.type !== 'ticket' && h.type !== 'both') return false;
+
+  // ★種別だけ合っていても中身が欠けていれば、既定値で 0 に落ちて「残り0回」になる
+  //   （2026-10-03 Codex指摘。`{type:'monthly'}` が素通りしていた）。
+  //   画面が必ず読む項目が、型として揃っていることを確かめる。
+  if (typeof h.hasNormalRoute !== 'boolean') return false;
+  if (!Array.isArray(h.ticketPacks)) return false;          // 月額でも [] が入る
+  // 月額の経路があるなら回数のキーが要る。**値が null なのは正常**（上限なしの契約）。
+  //   キーごと無いのは形が壊れている。
+  if (h.type !== 'ticket' && !('monthlyRemaining' in h)) return false;
+  // チケットの経路があるなら残枚数のキーが要る。
+  if (h.type !== 'monthly' && !('ticketRemaining' in h)) return false;
+  return true;
 }
 
 export async function readHome(env, customerId, targetMs) {

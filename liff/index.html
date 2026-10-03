@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-03g 確定の照合を厳しくする';
+  var LIFF_BUILD = '2026-10-03h 完了文面を送信時点で固定';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -2556,14 +2556,24 @@
         // ★ボタンをここで戻さない。戻すと、成立しているのに押し直せてしまう。
         errEl.textContent = t('cf_verifying'); errEl.hidden = false;
         btn.textContent = t('cf_verifying');
+        // ★送った時点の表示内容を控える（2026-10-03 Codex指摘）。
+        //   確かめるのに最大で十数秒かかる。その間に顧客が別の画面へ移ると state が
+        //   書き換わり、**別の予約の文面**を完了として出す／state.selected が消えて
+        //   例外になる。表示に使うものは、送った瞬間の値で固定する。
+        var snap = {
+          sel: state.selected, trainer: state.trainerName,
+          proxy: state.proxyMode, proxyName: state.proxyCustomerName,
+          change: state.changeMode, transfer: _isTransfer
+        };
         _verifyBooked(req).then(function(found){
           if (found === true) {
             // 入っていた。完了として扱う（成功時と同じ文面を出す）
-            var s2 = state.selected;
-            var tag2 = _isTransfer ? t('done_tag_transfer') : state.changeMode ? t('done_tag_change') : state.proxyMode ? t('done_tag_proxy') : '';
+            var s2 = snap.sel;
+            if (!s2) { errEl.textContent = t('cf_verify_unknown'); btn.textContent = t('cf_submit'); return; }
+            var tag2 = snap.transfer ? t('done_tag_transfer') : snap.change ? t('done_tag_change') : snap.proxy ? t('done_tag_proxy') : '';
             document.getElementById('doneDetail').textContent =
-              (state.proxyMode ? state.proxyCustomerName + t('done_cust_sep') : '')
-              + state.trainerName + t('done_sep') + s2.date + ' ' + s2.startTime + '〜' + s2.endTime + tag2;
+              (snap.proxy ? snap.proxyName + t('done_cust_sep') : '')
+              + snap.trainer + t('done_sep') + s2.date + ' ' + s2.startTime + '〜' + s2.endTime + tag2;
             state.changeMode = false; state.changeReservationId = ''; state.transferMode = false;
             state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = '';
             state.useTransfer = false; state.repeatCount = 1; state._repaint = null;
