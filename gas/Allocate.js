@@ -558,8 +558,16 @@ function _lbResvValsToSessions(vals, customerId, parseDate) {
     var bt = String(r[13] == null ? '' : r[13]);
     var pkw = (bt.indexOf('ペア') >= 0) ? 'pair' : 'normal';
     var att = (r[14] === '' || r[14] == null) ? 1 : Number(r[14]);   // 列なし/空＝1（後方互換）
+    // col10=記録日時（その予約が**いつ作られたか**）。2026-10-03 に足した。
+    //   残数の計算には使わない。**いつ取られた予約かを人が追えるようにする**ためだけ。
+    //   10月の枠8回に対して10件入っていた会員を調べたとき、
+    //   「いつ取られたか」が分からないと、先に取ったのか後から増えたのかを切り分けられなかった。
+    var _ca = r[10];
+    var _caMs = (_ca instanceof Date) ? _ca.getTime()
+              : (_ca ? new Date(_ca).getTime() : NaN);
     out.push({ sessionId: sidCol || rid || ('row' + i), resId: rid, startAt: (dt && !isNaN(dt.getTime())) ? dt.getTime() : NaN, channel: ch,
-      attendeeCount: att, packKind: pkw, consumptionMode: (pkw === 'pair' ? 'pack' : ''), bookType: bt });
+      attendeeCount: att, packKind: pkw, consumptionMode: (pkw === 'pair' ? 'pack' : ''), bookType: bt,
+      createdAt: isNaN(_caMs) ? null : _caMs });
   }
   return out;
 }

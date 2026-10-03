@@ -859,7 +859,14 @@ function _remainingOneText(namePart, showName) {
     say('  ' + keys[k] + '：' + list.length + '件');
     for (var li = 0; li < list.length; li++) {
       var x = list[li];
+      // ★「いつ取られたか」を並べる（2026-10-03）。
+      //   枠を超えて予約が入っていたとき、先に取ったのか後から増えたのかは
+      //   これが無いと切り分けられない。月をまたいで取られた予約は印を付ける
+      //   （翌月ぶんを前の月のうちに取ると、その時点の残で判定されるため）。
+      var _ca = x.createdAt ? Utilities.formatDate(new Date(x.createdAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm') : '不明';
+      var _mark = (x.createdAt && _lbMonthKeyJst(x.createdAt) !== keys[k]) ? ' ◀前の月に取得' : '';
       say('     ・' + Utilities.formatDate(new Date(x.startAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm')
+          + ' / 取得=' + _ca + _mark
           + ' / 消化先=' + (x.consumptionMode || '(自動)')
           + ' / 種類=' + (x.packKind || '通常')
           + ' / 人数=' + (x.units == null ? 1 : x.units));
@@ -871,6 +878,10 @@ function _remainingOneText(namePart, showName) {
   say('   (2) 頻度の列を正しく読めているか（列の並びが変わっていないか）');
   say('   (3) 翌月ぶんの予約が混ざっていないか（25日以降は翌月が開く）');
   say('   (4) チケットやペアが月額とは別に引かれていないか');
+  say('   (5) ◀前の月に取得 が並んでいないか');
+  say('       翌月ぶんを前の月のうちに取ると、**その時点の残**で判定される。');
+  say('       当月でこれから使うチケットが「まだ残っている」と数えられ、');
+  say('       翌月の枠を実際より多く見せることがある（チケットの先食い）。');
   return log.join('\n');
 }
 
