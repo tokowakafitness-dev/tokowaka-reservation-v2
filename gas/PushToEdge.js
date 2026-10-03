@@ -1410,6 +1410,8 @@ function calSyncStatus() {
 // ============================================================
 
 // 突き合わせを1回ぶん送る。nowMsOpt を渡すと、その時点として計算する。
+//   nowMsOpt を渡したとき（＝時点をずらした突き合わせ）は sweep:true を付ける。
+//   Worker側は「時計がずれている」要求を既定で拒否するが、ここは意図してずらすため。
 function pushCalCompare(nowMsOpt) {
   if (!_edgeEnabled()) return { ok: false, code: 'EDGE_OFF' };
   var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
@@ -1435,6 +1437,7 @@ function pushCalCompare(nowMsOpt) {
     trainers: CALENDAR_IDS.TRAINERS.map(function (t) { return { id: t.id, hidden: !!t.hidden }; }),
     ownerWindow: _lbOwnerSlotWindow(),
     requiredCalendars: _calsyncCalendars(),
+    sweep: (nowMsOpt != null),      // 時点をずらしているときだけ true
     slots: slots.map(function (s) {
       return { startMs: new Date(s.startISO).getTime(), trainerId: s.trainerId, trialOk: s.trialOk !== false };
     })

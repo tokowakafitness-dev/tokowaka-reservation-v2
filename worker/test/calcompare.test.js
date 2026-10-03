@@ -314,6 +314,35 @@ const fmt = (ms) => jstDateStr(ms) + ' ' + jstTimeStr(ms);
   eq('古い nowMs の code', b.code, 'STALE_NOW');
   eq('古い nowMs でも1行も記録しない', logCount(env), 0);
 }
+{
+  // ★時点をずらした突き合わせ（sweep）では、ずれを許す（2026-10-03）
+  //
+  //   7日間待つ代わりに「いま」を1〜7日前・25日・月末などにずらして比べる。
+  //   ずれを拒否すると狙った時点を1つも試せない。実際、本番の最初の実行で
+  //   13時点すべてが STALE_NOW で落ちた。
+  //   安全性：nowMs は「GASが空き枠を計算した時点」であって鮮度の判定には使わない
+  //   （鮮度は calendar_active.checked_at で見る）。古い nowMs で鮮度は偽れない。
+  const env = await seeded();
+  const day = 24 * 60 * 60 * 1000;
+  for (const [name, back] of [['1日前', day], ['7日前', 7 * day], ['30日前', 30 * day]]) {
+    const [s2, b2] = await send(env, comparePayload({ nowMs: Date.now() - back, sweep: true }));
+    ok('★sweep なら ' + name + ' でも受ける', s2 === 200 && b2.code !== 'STALE_NOW');
+  }
+  // 未来にずらすのも許す（25日の解放・月末を先取りで試すため）
+  const [s3, b3] = await send(env, comparePayload({ nowMs: Date.now() + 20 * day, sweep: true }));
+  ok('★sweep なら未来にずらしても受ける', s3 === 200 && b3.code !== 'STALE_NOW');
+
+  // sweep を立てなければ、これまでどおり拒否する（本番の押し出しは守る）
+  const [s4, b4] = await send(env, comparePayload({ nowMs: Date.now() - day }));
+  eq('★sweep なしなら従来どおり拒否', [s4, b4.code], [409, 'STALE_NOW']);
+  const [s5, b5] = await send(env, comparePayload({ nowMs: Date.now() - day, sweep: false }));
+  eq('★sweep:false でも拒否', [s5, b5.code], [409, 'STALE_NOW']);
+  // 文字列の 'true' などで通らない（厳密に true のときだけ）
+  const [s6, b6] = await send(env, comparePayload({ nowMs: Date.now() - day, sweep: 'true' }));
+  eq('★sweep が true 以外なら拒否', [s6, b6.code], [409, 'STALE_NOW']);
+  const [s7, b7] = await send(env, comparePayload({ nowMs: Date.now() - day, sweep: 1 }));
+  eq('★sweep が 1 でも拒否', [s7, b7.code], [409, 'STALE_NOW']);
+}
 
 // ============================================================
 // 3. 一致したとき（matched=1・トレーナーごとに1行・diff は残さない）

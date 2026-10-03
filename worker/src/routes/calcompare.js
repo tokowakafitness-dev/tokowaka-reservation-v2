@@ -321,7 +321,16 @@ async function calcompare(request, env) {
   const nowMs = body.nowMs;
   if (!isInt(nowMs)) return jsonRes({ success: false, code: 'BAD_NOW' }, 400);
   const at = Date.now();
-  if (Math.abs(at - nowMs) > MAX_NOW_SKEW_MS) {
+  // ★時点をずらした突き合わせでは、nowMs は意図的にずれる（2026-10-03）。
+  //   7日間待つ代わりに「いま」を1〜7日前・25日・月末などにずらして比べるので、
+  //   ずれを拒否すると狙った時点を1つも試せない。実際、最初の実行で13時点すべてが
+  //   STALE_NOW で落ちた。
+  //   sweep:true を明示したときだけ、ずれを許す。
+  //   安全性：nowMs は「GASが空き枠を計算した時点」であって、D1の鮮度判定には使わない
+  //   （鮮度は calendar_active.checked_at で見る）。だから古い nowMs で鮮度を偽ることはできない。
+  //   突き合わせは compare_log に記録するだけで、表示にも予約にも影響しない。
+  const sweep = body.sweep === true;
+  if (!sweep && Math.abs(at - nowMs) > MAX_NOW_SKEW_MS) {
     return jsonRes({ success: false, code: 'STALE_NOW', skewMs: at - nowMs }, 409);
   }
 
