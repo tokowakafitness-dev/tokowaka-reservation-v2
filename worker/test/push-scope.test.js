@@ -85,5 +85,44 @@ ok('⑤真偽値をそのまま渡している呼び出しが無い',
 ok('⑤入口の引数名が opts になっている', /function _edgePushRows\(kind, rows, batchId, opts\)/.test(SRC));
 ok('⑤薄い包みも opts を素通しする', /function _edgePushRowsF\(kind, rows, batchId, opts\)/.test(SRC));
 
+// ---------- 6. ★消えたものが写しに残らないこと（2026-10-03・Codexの最終判定）----------
+//
+//   顧客が「キャンセルしたのに予約が残っている」「削除したのに固定枠がある」と
+//   見える状態を作らない。表によって「消えたことの伝え方」が違うので、
+//   それぞれに合った手段を取っているかを確かめる。
+
+// 予約：行は消えず、状態が変わる（confirmed → cancelled / changed）。
+//   だから**状態をそのまま写せば**消えたことが伝わる。削除は要らない。
+ok('⑥予約は取消・変更の状態も写している',
+  /\(st === 'cancelled'\) \? 'cancelled'/.test(SRC) && /\(st === 'changed'\)\s+\? 'changed'/.test(SRC));
+ok('⑥予約を「予約中だけ」に絞って写していない',
+  !/if \(st !== 'confirmed'\) continue/.test(SRC));
+
+// 固定枠：**行ごと消える**（deleteRecurringPattern が deleteRow する）。
+//   状態では表せないので、ふだんの同期でも「含まれなかった行＝消えた行」として落とす。
+ok('⑥★固定枠はふだんの同期でも消す',
+  /_edgePushRowsF\('recurring', _edgeRecurring\(\), batchId, \{ scope: 'all', deleteStale: true \}\)/.test(SRC));
+
+// ★そのためには「読めなかった」と「本当に0件」を区別しなければならない。
+//   読めなかったときに 0件 を送ると、**全件が消える。**
+{
+  const fn = (SRC.match(/function _edgeRecurring\(\)[\s\S]*?\n\}/) || [])[0] || '';
+  ok('⑥固定枠の取り出しが読める', !!fn);
+  ok('⑥★読めなかったら null（送信ごと中止）', /if \(!sh\) return null;/.test(fn));
+  ok('⑥本当に0件なら空配列', /getLastRow\(\) < 2\) return \[\];/.test(fn));
+  ok('⑥★「読めない」と「0件」を同じ返り値にしていない',
+     !/if \(!sh \|\| sh\.getLastRow\(\) < 2\) return \[\];/.test(fn));
+}
+
+// 予約も同じ作法（読めなかったら null）になっていること
+ok('⑥予約も読めなかったら null', /if \(!sh\) return null;[\s\S]{0,120}getLastRow\(\) < 2\) return null;/.test(SRC));
+
+// ★消す指定を持つのは固定枠と日次完全同期だけ。他の表に広げない。
+//   予約や顧客で毎回消すと、一時的に読めなかっただけで全件が消える危険がある。
+{
+  const always = [...SRC.matchAll(/_edgePushRowsF\('(\w+)',[^;]*?deleteStale: true/gs)].map((m) => m[1]);
+  eq('⑥ふだんの同期で消すのは固定枠だけ', always, ['recurring']);
+}
+
 console.log(`\n${fail ? '❌' : '✅'} 押し出しの走査範囲 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

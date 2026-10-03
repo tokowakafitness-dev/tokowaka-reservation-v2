@@ -259,9 +259,15 @@ function _edgeReservations() {
   return out;
 }
 
+// ★固定枠は**行ごと削除される**（deleteRecurringPattern が deleteRow する）。
+//   状態（active）では消えたことを表せないので、15分ごとの全件同期で
+//   「含まれなかった行＝消えた行」として落とす（下の deleteStale: true）。
+//   そのため「読めなかった」と「本当に0件」を区別する必要がある。
+//   読めなかったときに [] を返すと、全件を消してしまう。
 function _edgeRecurring() {
   var sh = _lbRecurSheet();
-  if (!sh || sh.getLastRow() < 2) return [];
+  if (!sh) return null;                     // 読めなかった（0件ではない）＝送らない
+  if (sh.getLastRow() < 2) return [];       // 本当に1件も無い
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
   var out = [];
   for (var i = 0; i < v.length; i++) {
@@ -780,7 +786,13 @@ function _pushToEdgeAllImpl(withHome, full) {
   step('trainers',     function () { return _edgePushRowsF('trainers', _edgeTrainers(), batchId, { scope: 'all', deleteStale: full }); });
   step('customers',    function () { return _edgePushRowsF('customers', customers, batchId, { scope: 'all', deleteStale: full }); });
   step('reservations', function () { return _edgePushRowsF('reservations', _edgeReservations(), batchId, { scope: 'all', deleteStale: full }); });
-  step('recurring',    function () { return _edgePushRowsF('recurring', _edgeRecurring(), batchId, { scope: 'all', deleteStale: full }); });
+  // ★固定枠だけは、ふだんの同期でも消す（2026-10-03・Codexの最終判定）。
+  //   固定枠の削除はシートから行ごと消えるため、押し出す側に「消えた」という情報が残らない。
+  //   日次4時の完全同期まで待つと、**削除したのに丸一日「まだ固定枠がある」と見える。**
+  //   件数が少なく（顧客ごとに数件）、全件を毎回送っているので、ここで消して問題ない。
+  //   元データが読めなかったときは _edgeRecurring が null を返して送信ごと中止する。
+  //   0件だった場合は Worker 側が EMPTY_SOURCE で削除を止める（全消しを防ぐ）。
+  step('recurring',    function () { return _edgePushRowsF('recurring', _edgeRecurring(), batchId, { scope: 'all', deleteStale: true }); });
   step('slots',        function () { return _edgePushRowsF('slots', _edgeSlotRows(), batchId, { scope: 'all', deleteStale: full }); });
   step('body',         function () { return _edgePushRowsF('body', _edgeBodyRows(), batchId, { scope: 'all', deleteStale: full }); });
   // 残数計算の入力（シート読み込みは1回にまとめる）
