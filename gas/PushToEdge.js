@@ -1336,7 +1336,7 @@ function setupCalSyncTrigger() {
     .everyMinutes(LB_CALSYNC.EVERY_MINUTES).create();
   _calsyncSetProp(LB_CALSYNC.ON_PROP, '1');
   _calsyncSetProp(LB_CALSYNC.FAILS_PROP, '0');
-  Logger.log('✅ カレンダー → D1 の同期を1分ごとに設定しました（' + LB_CALSYNC.TICK_HANDLER + '）'
+  Logger.log('✅ カレンダー → D1 の同期を' + LB_CALSYNC.EVERY_MINUTES + '分ごとに設定しました（' + LB_CALSYNC.TICK_HANDLER + '）'
              + (removed ? '／古い登録 ' + removed + '件を外しました' : ''));
   Logger.log('   予約の確定・変更・取消の直後にも、1秒後の一回限りトリガーで押し出します。');
   Logger.log('   元栓 EDGE_PUSH_ON = ' + (_edgeEnabled() ? '1（動きます）' : '1 ではありません（このままでは何も送りません）'));
