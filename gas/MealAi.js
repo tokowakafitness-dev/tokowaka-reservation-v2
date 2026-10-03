@@ -1108,6 +1108,13 @@ function maApiSeries_(uid, params, tr) {
   if (tr && params.customerId) {
     var nm = maCustomerName_(String(params.customerId));
     if (!nm) return { success: false, code: 'NOT_FOUND' };
+    // ★担当外の顧客のカルテを開かせない（2026-10-03・Codexの5回目の判定）。
+    //   予約側（line_*）の入口は塞いだが、こちら（ma_*）は別のdispatchで、
+    //   担当の確認が無いまま体組成の履歴と目標を返していた。
+    //   規則は予約側と同じ（オーナーは全員／担当なしは誰でも／担当が他人なら不可）。
+    if (!_lbTrainerMaySeeCustomer(tr, _lbCustOwnerOf(String(params.customerId)))) {
+      return { success: false, code: 'FORBIDDEN' };
+    }
     cust = { customerId: String(params.customerId), name: nm };
     asTrainer = true;
   } else {
@@ -1506,6 +1513,18 @@ function maTrainerMembers_(tr) {
   var sh = ss.getSheetByName('body_log');
   if (!sh) return { success: false, code: 'NO_SHEET' };
 
+  // ★担当外の顧客を一覧に出さない（2026-10-03・Codexの5回目の判定）。
+  //   それまでは記録のある顧客を**全員**返しており、どのトレーナーからも
+  //   他の担当の顧客の氏名と測定の履歴が見えていた。
+  //   顧客ごとに名簿を引くとシートを何度も読むので、担当の集合を1回だけ作る。
+  var _isOwner = _lbIsOwnerRole(tr);
+  var _allow = null;
+  if (!_isOwner) {
+    _allow = {};
+    var _mine = _lbTrainerCustomers(String((tr && tr.trainerId) || ''));   // 担当＋担当なし
+    for (var _mi = 0; _mi < _mine.length; _mi++) _allow[String(_mine[_mi].customerId)] = true;
+  }
+
   var out = {};
   var lastRow = sh.getLastRow();
   if (lastRow >= 2) {
@@ -1514,6 +1533,7 @@ function maTrainerMembers_(tr) {
     for (var i = 0; i < vals.length; i++) {
       var cid = String(vals[i][0] || '');
       if (!cid || cid.indexOf('__') === 0) continue;       // 自己テスト行は出さない
+      if (_allow && !_allow[cid]) continue;                 // 担当外は出さない
       var d = maDateStr_(vals[i][1]);
       if (!d) continue;
       var rec = out[cid] || { customerId: cid, last: '', lastInBody: '', count: 0 };
