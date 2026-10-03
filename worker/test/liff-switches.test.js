@@ -59,10 +59,13 @@ ok('①USE_CAL の既定は false', /var\s+USE_CAL\s*=\s*false\s*;/.test(HTML));
 
   // 既定ONのときは、止める道（?edge=0）が鍵を**書く**側でなければ効かない。
   if (defOn) {
-    ok('②★?edge=0 が鍵を書いて止める', /edge=0[\s\S]{0,80}setItem\('lb_edge', '0'\)/.test(CODE));
-    ok('②★?edge=1 が鍵を消して戻す', /edge=1[\s\S]{0,80}removeItem\('lb_edge'\)/.test(CODE));
+    ok('②★?edge=0 が鍵を書いて止める', /edge=0[\s\S]{0,120}setItem\('lb_edge', '0'\)/.test(CODE));
+    ok('②★?edge=1 が鍵を書いて戻す', /edge=1[\s\S]{0,120}setItem\('lb_edge', '1'\)/.test(CODE));
     ok('②★鍵が読めない端末でも ?edge=0 が効く',
        /catch \(e\) \{ EDGE_ON = !\/\[\?&#\]edge=0\//.test(CODE));
+    // 既定ONで removeItem を使うと、?edge=1 のあと鍵が消えて「既定ON」に戻るだけになり、
+    // 一見動くが意図が崩れる。保存する側で統一する。
+    ok('②既定ONでは鍵を消す書き方を使わない', !/removeItem\('lb_edge'\)/.test(CODE));
   }
 }
 ok('②USE_CAL は lb_cal === \'1\' のときだけ有効（既定OFFと対）',

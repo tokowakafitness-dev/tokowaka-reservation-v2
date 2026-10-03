@@ -222,6 +222,23 @@ ok('④固定枠の削除は担当を確かめる', /_lbTrainerCanManageRecur/.t
   ok('⑦Workerが担当を取り出している', /channel, trainer_id/.test(COMPAT));
 
   ok('⑦★画面が自分の予約かを見ている', /String\(r\.trainerId\) === String\(state\.myTrainerId\)/.test(HTML));
+  // ★オーナーは他のトレーナーの予約も変更・取消できる（サーバーがそう判定する）。
+  //   入れ忘れると、本来できる操作のボタンが消える。
+  ok('⑦★オーナーは出し分けの対象外', /var _mine = state\._isOwner/.test(HTML));
+  ok('⑦オーナーかどうかを控えている', /state\._isOwner = !!res\.isOwner/.test(HTML));
+  // 3つの場合で、ボタンを出すかどうかが設計どおりか（実際に式を動かして確かめる）
+  {
+    const expr = (HTML.match(/var _mine = state\._isOwner[\s\S]*?;/) || [])[0] || '';
+    ok('⑦出し分けの式が読める', !!expr);
+    const mine = new Function('state', 'r', expr.replace('var _mine =', 'return') .replace(/;$/, ';'));
+    const me = { myTrainerId: 't1', _isOwner: false };
+    const owner = { myTrainerId: 't9', _isOwner: true };
+    eq('⑦一般：自分の予約は出す',        mine(me, { trainerId: 't1' }), true);
+    eq('⑦★一般：他人の予約は出さない',  mine(me, { trainerId: 't2' }), false);
+    eq('⑦★オーナー：他人の予約も出す',  mine(owner, { trainerId: 't2' }), true);
+    eq('⑦担当が分からなければ出す',      mine(me, { trainerId: '' }), true);
+    eq('⑦自分のIDが分からなければ出す',  mine({ myTrainerId: '', _isOwner: false }, { trainerId: 't2' }), true);
+  }
   ok('⑦自分のトレーナーIDを控えている', /state\.myTrainerId = String\(res\.trainerId \|\| ''\)/.test(HTML));
   // 担当が分からないときは出す（押せないより押せるほうがよい。断られても一覧は見える）
   ok('⑦担当が分からなければ出す', /!r\.trainerId \|\| !state\.myTrainerId/.test(HTML));

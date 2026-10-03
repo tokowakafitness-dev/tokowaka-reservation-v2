@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-03i 操作できない予約にボタンを出さない';
+  var LIFF_BUILD = '2026-10-03j Workerを既定で使う';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -676,12 +676,21 @@
   //     (c) 写しの中身が壊れていても、JSONとして読めれば「残り0回」「空き0件」の
   //         成功として顧客に出る経路が残っている
   //     (a)(b)(c) を塞いでから改めて広げる。
-  var EDGE_ON = false;
+  //   ★2026-10-03 既定をONにした（オーナー承認）。公開前にCodexの関門を6回通し、
+  //     そのたびに出た穴をすべて塞いでから切り替えている。
+  //   ★既定と鍵の読み方は**対で**変える。
+  //     2026-09-29、既定 false のつもりで `!== '0'` と書き、鍵の無い端末が
+  //     式のほうでONに戻っていた（止めたつもりで止まっていなかった）。
+  //       鍵なし   … ON（既定）
+  //       ?edge=0  … '0' を保存して、その端末はずっとOFF
+  //       ?edge=1  … '1' を保存してONへ戻す
+  //       鍵が読めない端末 … 既定ON。ただしいまのURLが edge=0 ならOFF
+  var EDGE_ON = true;
   try {
     if (/[?&#]edge=1/.test(location.href)) { localStorage.setItem('lb_edge', '1'); }
-    else if (/[?&#]edge=0/.test(location.href)) { localStorage.removeItem('lb_edge'); }
-    EDGE_ON = (localStorage.getItem('lb_edge') === '1');
-  } catch (e) { EDGE_ON = /[?&#]edge=1/.test(location.href); }
+    else if (/[?&#]edge=0/.test(location.href)) { localStorage.setItem('lb_edge', '0'); }
+    EDGE_ON = (localStorage.getItem('lb_edge') !== '0');
+  } catch (e) { EDGE_ON = !/[?&#]edge=0/.test(location.href); }
 
   // 空き枠を「カレンダーの写し（D1）から計算して出す」かどうか（2026-10-03）。
   //   いまは GAS が計算した空き枠の写し（slots_cache）を配っている。
@@ -1158,6 +1167,7 @@
           //   予約一覧には自分の担当顧客が別のトレーナーで取った予約も出る。
           //   変更・取消はその予約の担当しかできないので、ボタンの出し分けに使う。
           state.myTrainerId = String(res.trainerId || '');
+          state._isOwner = !!res.isOwner;          // オーナーは全員の予約を操作できる
           renderTrainerAdmin(res);
         }
         else if (res.success && res.verified) { renderHome(res); }
@@ -1781,7 +1791,11 @@
       //   そのままボタンを出すと**押せるのに断られる**。誰の予約かで出し分ける。
       //   担当が分からないとき（古い写しなど）は、押せないより押せるほうがよいので出す
       //   ＝断られても一覧が見えなくなるわけではない（2026-10-03）。
-      var _mine = !r.trainerId || !state.myTrainerId || String(r.trainerId) === String(state.myTrainerId);
+      //   ★オーナーは他のトレーナーの予約も変更・取消できる（サーバーがそう判定する）。
+      //     ここに入れ忘れると、本来できる操作のボタンが消える（2026-10-03 私が作った回帰）。
+      var _mine = state._isOwner
+        || !r.trainerId || !state.myTrainerId
+        || String(r.trainerId) === String(state.myTrainerId);
       if (_mine) {
         if (r.freeCancel) {
           var chg = document.createElement('button'); chg.className = 'btn btn-outline'; chg.style.margin = '0'; chg.textContent = '時間を変更';
