@@ -675,7 +675,12 @@
     getTrainerReservations:       'c_trainerReservations',
     getCustomerHome:              'c_customerHome',
     listRecurringPatternsByTrainer:'c_recurringList',
-    getMyReservations:            'c_myReservations'
+    getMyReservations:            'c_myReservations',
+    // まとめ取得（2026-10-03）。本番の計測で、通信の86%がこの2つ（GAS）だった。
+    //   boot 6,168ms ／ customerCard 5,565ms・8,312ms に対し、
+    //   Workerの3回は合わせて 2,381ms。ここを通さない限り体感は変わらない。
+    boot:                         'c_boot',
+    customerCard:                 'c_customerCard'
   };
 
   // 残数は「写し」なので、30分ごとにしか更新されない。
@@ -686,7 +691,9 @@
   var EDGE_WRITE_ACTIONS = /^(makeReservation|makeRecurring|makeBatch|makeTransfer|changeReservation|cancelReservation|makeAdminBooking|makeBlock|linkUnlinked|addTicketRefill|addRecurringPatternByTrainer|deleteRecurringPattern|deleteAdminSlot|selfRegister)/;
   //   枠も対象にする。自分が取った枠が「まだ空いている」と見えるのを防ぐ。
   var EDGE_HOME_ACTIONS = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1,
-                            getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1 };
+                            getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1,
+                            // まとめ取得は残数と枠を含む。写しが古い間はGASに聞く側へ倒す。
+                            boot:1, customerCard:1 };
   function _edgeStaleUntil(){
     try { return Number(localStorage.getItem('lb_edge_stale') || 0) || 0; } catch (e) { return _edgeStaleMem; }
   }
@@ -886,7 +893,12 @@
   }
   function _fetchBoot(t0){
     var gen = _batchGen;
-    var p = _apiGas({ action:'line_boot' }).then(function(res){
+    // ★_apiGas ではなく _apiSend を通す（2026-10-03）。
+    //   ここが _apiGas 直行だったため、?edge=1 を入れてもこの1回だけはGASのままで、
+    //   起動の6.1秒が一切縮まなかった。api() ではなく _apiSend なのは、
+    //   まとめ取得そのものを受け皿の出し入れに巻き込まないため。
+    //   Workerが答えられなければ _apiSend の中で自動的にGASへ落ちる。
+    var p = _apiSend({ action:'line_boot' }, 'boot').then(function(res){
       var ms = res && res.parts && res.parts.memberStatus;
       // ★まとめ取得が使えないときは、必ず従来の1件取得に戻る。
       //   ここを怠ると、GAS側がまだ新しくない間、画面が開けなくなる。
@@ -918,7 +930,8 @@
   function _fetchCustomerCard(t0, customerId){
     var gen = _batchGen;
     var p;
-    p = _apiGas({ action:'line_customerCard', customerId: customerId }).then(function(res){
+    // ★同上。顧客カードは本番で 5.5〜8.3秒かかっていた。
+    p = _apiSend({ action:'line_customerCard', customerId: customerId }, 'customerCard').then(function(res){
       // ★あとから届いた古い応答で、いま見ている顧客の受け皿を上書きしない
       // ★捨てられたあと／別の取得に入れ替わったあとの応答は、受け皿に入れない
       if (res && res.success === true && res.parts

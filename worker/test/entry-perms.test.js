@@ -62,6 +62,8 @@ const ENTRIES = [
   { name: 'getBookingOptions', fn: 'compatBookingOptions',
     body: (cid) => ({ customerId: cid, startISO: new Date(now + 86400000).toISOString() }) },
   { name: 'listRecurring',     fn: 'compatRecurringList',  body: (cid) => ({ customerId: cid }) },
+  // まとめ取得（2026-10-03）。中の2つも各自で確かめるが、束ねた側でも確かめる。
+  { name: 'customerCard',      fn: 'compatCustomerCard',   body: (cid) => ({ customerId: cid }) },
 ];
 
 // ---------- 1. ★担当外の顧客は、どの入口からも取れない ----------

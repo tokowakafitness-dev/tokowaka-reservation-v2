@@ -79,11 +79,13 @@ function goesToWorker(plain, { EDGE_ON, USE_CAL, writeRecently }) {
   if (!useEdge) return false;
   if (EDGE_WRITE_ACTIONS.test(plain)) return false;          // 書き込みは必ずGAS
   const HOME = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1,
-                 getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1 };
+                 getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1,
+                 boot:1, customerCard:1 };
   if (HOME[plain] && writeRecently) return false;            // 書き込み直後はGAS
   const MAP = { getMemberStatus:1, getTrainers:1, getTrainerSlots:1, getBookingOptions:1,
                 getTrainerReservations:1, getCustomerHome:1,
-                listRecurringPatternsByTrainer:1, getMyReservations:1 };
+                listRecurringPatternsByTrainer:1, getMyReservations:1,
+                boot:1, customerCard:1 };
   return !!MAP[plain];
 }
 
@@ -95,14 +97,37 @@ eq('④?cal=1：予約一覧は行かない',            goesToWorker('getMyRese
 eq('④?cal=1：固定枠の一覧は行かない',        goesToWorker('listRecurringPatternsByTrainer', calOnly), false);
 eq('④?cal=1：ホームは行かない',              goesToWorker('getCustomerHome', calOnly), false);
 eq('④?cal=1：予約の確定は行かない',          goesToWorker('makeReservation', calOnly), false);
+// まとめ取得も「空き枠だけ」の原則から外れない。?cal=1 では通さない。
+eq('④?cal=1：起動のまとめ取得は行かない',    goesToWorker('boot', calOnly), false);
+eq('④?cal=1：顧客カードのまとめ取得も行かない', goesToWorker('customerCard', calOnly), false);
 eq('④?cal=1：取消は行かない',                goesToWorker('cancelReservation', calOnly), false);
 
 // 何も付けない端末（＝顧客全員）は、1つもWorkerへ行かない
 const plainDev = { EDGE_ON: false, USE_CAL: false, writeRecently: false };
 for (const a of ['getTrainerSlots','getMemberStatus','getBookingOptions','getMyReservations',
-                 'getCustomerHome','getTrainers','makeReservation']) {
+                 'getCustomerHome','getTrainers','makeReservation','boot','customerCard']) {
   eq('⑤既定の端末：' + a + ' はGASのまま', goesToWorker(a, plainDev), false);
 }
+
+// ---------- ⑧ まとめ取得が Worker を通る道にあること ----------
+//   2026-10-03、ここが _apiGas 直行だったため、?edge=1 を入れても起動の6.1秒と
+//   顧客カードの5.5〜8.3秒は一切縮まらなかった。本番の通信の86%がこの2つだった。
+ok('⑧窓口の表に起動のまとめ取得がある', /boot:\s*'c_boot'/.test(CODE));
+ok('⑧窓口の表に顧客カードのまとめ取得がある', /customerCard:\s*'c_customerCard'/.test(CODE));
+ok('⑧起動のまとめ取得が _apiGas 直行でない', !/var p = _apiGas\(\{ action:'line_boot' \}\)/.test(CODE));
+ok('⑧顧客カードが _apiGas 直行でない', !/p = _apiGas\(\{ action:'line_customerCard'/.test(CODE));
+ok('⑧起動のまとめ取得が _apiSend を通る', /_apiSend\(\{ action:'line_boot' \}, 'boot'\)/.test(CODE));
+ok('⑧顧客カードが _apiSend を通る', /_apiSend\(\{ action:'line_customerCard'[^)]*\}, 'customerCard'\)/.test(CODE));
+// 残数を含むので、書き込み直後に写しを使わない対象に入っていること
+ok('⑧書き込み直後は起動のまとめ取得もGASへ', /EDGE_HOME_ACTIONS[\s\S]{0,400}boot:1/.test(CODE));
+ok('⑧書き込み直後は顧客カードもGASへ', /EDGE_HOME_ACTIONS[\s\S]{0,400}customerCard:1/.test(CODE));
+
+// Worker を有効にした端末では通ること（＝繋がっていることの確認）
+const edgeOn = { EDGE_ON: true, USE_CAL: false, writeRecently: false };
+eq('⑧?edge=1：起動のまとめ取得が Worker へ行く', goesToWorker('boot', edgeOn), true);
+eq('⑧?edge=1：顧客カードも Worker へ行く', goesToWorker('customerCard', edgeOn), true);
+eq('⑧書き込み直後は Worker へ行かない',
+  goesToWorker('boot', { EDGE_ON: true, USE_CAL: false, writeRecently: true }), false);
 
 // ---------- ⑥ 書き込み直後は、枠も写しを使わない ----------
 //   自分が取った枠が「まだ空いている」と見えるのを防ぐ。USE_CAL でも外れてはいけない。

@@ -19,6 +19,7 @@ import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
+         compatBoot, compatCustomerCard,
          compatTrainerSlots, compatMyReservations } from './routes/compat.js';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
@@ -45,6 +46,11 @@ const HANDLERS = {
   c_trainerReservations: compatTrainerReservations,
   c_customerHome:        compatCustomerHome,
   c_recurringList:       compatRecurringList,
+
+  // まとめ取得（画面の _fetchBoot / _fetchCustomerCard が呼ぶ）。
+  //   2026-10-03 の実測で、通信の86%がGASのこの2つだった。
+  c_boot:                compatBoot,
+  c_customerCard:        compatCustomerCard,
 };
 
 function corsHeaders(origin) {

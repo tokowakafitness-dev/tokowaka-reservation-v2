@@ -410,3 +410,89 @@ function isSlotOpen(startMs, now, cfg) {
 }
 
 export const _forTest = { jst, resvLabel, isFreeCancel, isSlotOpen };
+
+// ===============================================================
+// line_boot / line_customerCard と同じ形（まとめ取得）
+// ===============================================================
+//
+//   ★なぜ要るのか（2026-10-03 の実測）
+//     本番の計測で、通信15回のうち**86%がGASの3回**だった。
+//       boot 6,168ms ／ customerCard 5,565ms ／ customerCard 8,312ms ＝ 20,045ms
+//       （Workerの3回は 1,255 + 805 + 321 ＝ 2,381ms）
+//     ところが画面の _fetchBoot / _fetchCustomerCard は _apiGas を直接呼んでおり、
+//     api() も _apiSend も通らない。つまり ?edge=1 を入れてもこの2回はGASのままで、
+//     体感速度は一切変わらなかった。ここを塞がない限り軽量化は完成しない。
+//
+//   ★中身は新規実装ではない。
+//     必要な部品（memberStatus / trainers / 予約一覧 / 顧客ホーム / 固定枠）は
+//     すべて上の compat* に在る。ここはそれを**束ねるだけ**。
+//     2026-09-29 に見つかった3つの穴（残数の鮮度・予約オプションの閲覧範囲・
+//     予約一覧と固定枠の鮮度）は、各 compat* の側で塞いである。束ねても効き続ける。
+//
+//   ★役割に応じた削り落とし（perms.js の redact）は入れ子も辿るので、
+//     parts に束ねても同じように効く。粗利や報酬が parts 経由で漏れることはない。
+//
+//   ★1つ転んでも残りは返す（GASの lbBoot と同じ作法）。
+//     転んだパートには PART_FAILED を入れる。画面はそれだけを個別に取り直し、
+//     その取得はGASへ行く。**全部が止まるより、1つだけ遅いほうがよい。**
+
+// パートを1つ組み立てる。答えられないものは PART_FAILED にする。
+//   ★ここで「空の成功」を作らない。_fallback を {success:true} に化かすと、
+//     画面が「0件」や「残数なし」をそのまま表示してしまう。
+async function _part(parts, name, fn, arg) {
+  try {
+    const r = await fn(arg);
+    parts[name] = (!r || r._fallback || r._forbidden)
+      ? { success: false, code: 'PART_FAILED' }
+      : { success: true, ...r };
+  } catch (e) {
+    console.warn('batch part', name, e && e.message);
+    parts[name] = { success: false, code: 'PART_FAILED' };
+  }
+}
+
+export async function compatBoot(arg) {
+  const parts = {};
+
+  // 会員状態はまとめの前提。ここが答えられないなら、まとめ全体を諦めてGASに任せる。
+  //   （success:true のまま転んだ中身を返すと、画面がそれを会員状態として解釈して
+  //     起動できなくなる。GAS側で 2026-09-29 に Codex が指摘したのと同じ理由。）
+  const ms = await compatMemberStatus(arg);
+  if (!ms || ms._fallback || ms._forbidden) return { _fallback: true };
+  parts.memberStatus = { success: true, ...ms };
+
+  // 残りは同時に取る（D1は並べて引ける。順に待つ理由がない）
+  if (ms.role === 'trainer') {
+    await Promise.all([
+      _part(parts, 'trainerReservations', compatTrainerReservations, arg),
+      _part(parts, 'trainers', compatTrainers, arg),
+    ]);
+  } else if (ms.verified) {
+    await Promise.all([
+      _part(parts, 'myReservations', compatMyReservations, arg),
+      _part(parts, 'trainers', compatTrainers, arg),
+    ]);
+  }
+  return { parts };
+}
+
+export async function compatCustomerCard(arg) {
+  const customerId = String((arg.body && arg.body.customerId) || '');
+  if (!customerId) return { _fallback: true };
+  // ★閲覧範囲は compatCustomerHome / compatRecurringList の中でも確かめるが、
+  //   ここでも先に1回見る。見てよい相手でないなら、3つとも走らせる意味がない。
+  if (!(await canSeeCustomer(arg.env, arg.who, customerId))) return { _forbidden: true };
+
+  const parts = {};
+  await Promise.all([
+    _part(parts, 'customerHome', compatCustomerHome, arg),
+    _part(parts, 'recurring', compatRecurringList, arg),
+  ]);
+
+  // InBody（maInBodyCard）はWorkerに無い。meal-ai の別系統で、D1に写しを持っていない。
+  //   ★ここで空の成功を作らない。PART_FAILED にして、画面にGASから取り直させる。
+  //     「実測はまだありません」と嘘を出すより、1回だけGASに行くほうがよい。
+  parts.inBody = { success: false, code: 'PART_FAILED' };
+
+  return { parts };
+}

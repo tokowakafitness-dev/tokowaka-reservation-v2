@@ -81,6 +81,10 @@ const CALLS = [
   ['compatTrainerReservations(オーナー)', { who: owner, body: {} }, 'compatTrainerReservations'],
   ['compatRecurringList',       { who: trainer, body: { customerId: 'c1' } }],
   ['compatMemberStatus',        { who: member,  body: {} }],
+  // まとめ取得（2026-10-03）。会員とトレーナーで中身が分かれるので両方通す。
+  ['compatBoot(会員)',           { who: member,  body: {} }, 'compatBoot'],
+  ['compatBoot(トレーナー)',      { who: trainer, body: {} }, 'compatBoot'],
+  ['compatCustomerCard',        { who: trainer, body: { customerId: 'c1' } }],
 ];
 
 for (const [label, args, realName] of CALLS) {

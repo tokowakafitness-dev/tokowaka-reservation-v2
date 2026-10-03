@@ -37,6 +37,10 @@ const TABLE = {
   'c_trainerReservations': ['trainer'],
   'c_customerHome':        ['trainer'],
   'c_recurringList':       ['trainer'],
+  // まとめ取得。中身は上の窓口と同じものを束ねるだけなので、役割も同じにそろえる。
+  //   c_boot は未登録の人も通す（起動して「会員登録へ」を出すため。c_memberStatus と同じ）。
+  'c_boot':                ['guest', 'customer', 'trainer', 'owner'],
+  'c_customerCard':        ['trainer'],
   'myReservations':    ['customer'],
   'book':              ['customer', 'trainer', 'owner'],
   'cancelReservation': ['customer', 'trainer', 'owner'],
