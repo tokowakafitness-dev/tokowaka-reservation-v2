@@ -145,6 +145,32 @@ async function ingest(request, env) {
   const conf = TABLES[kind];
   if (!conf) return jsonRes({ success: false, code: 'UNKNOWN_KIND' }, 400);
 
+  // ★押し出しの「走査範囲」を必ず名乗らせる（2026-10-03・Codexの設計レビュー）。
+  //
+  //   scope … 送り手がその表の**全件を走査し終えたか**
+  //     'all'     … 全件を見て送った（15分ごとの同期・日次の完全同期・枠の同期）
+  //     'partial' … 一部だけ（予約直後の1人ぶん・時間切れの続き）
+  //
+  //   以前は deleteStale ひとつで「全件か」と「消してよいか」の両方を表しており、
+  //   全件を送っている15分同期と、1人ぶんの押し出しが区別できなかった。
+  //   そのため1人が予約するたびに全体の同期時刻が若返り、他の顧客の古い予約行まで
+  //   「たったいま同期した」ことになっていた。
+  //
+  //   ★未指定・知らない値は**断る**。黙って partial 扱いにしない。
+  //     安全に失敗することと、黙って劣化することは別。
+  //     通してしまうと「なぜ遅いのか分からない」状態になり、原因を追えなくなる。
+  const scope = String(body.scope || '');
+  if (scope !== 'all' && scope !== 'partial') {
+    return jsonRes({ success: false, code: 'SCOPE_REQUIRED',
+                     detail: 'scope must be "all" or "partial"' }, 400);
+  }
+  // ★「消してよい」は「全件を走査した」より強い宣言。矛盾したら断る。
+  //   partial なのに消すと、今回含まれなかっただけの行がまるごと消える。
+  if (body.deleteStale === true && scope !== 'all') {
+    return jsonRes({ success: false, code: 'SCOPE_CONFLICT',
+                     detail: 'deleteStale requires scope "all"' }, 400);
+  }
+
   const rows = Array.isArray(body.rows) ? body.rows : [];
   if (rows.length > MAX_ROWS) return jsonRes({ success: false, code: 'TOO_MANY' }, 413);
 
@@ -215,8 +241,11 @@ async function ingest(request, env) {
   // ★0件で final を受けても消さない。元のシートが一時的に読めなかっただけの可能性がある。
   //   顧客や予約がまるごと消えると、会員が「未登録」に見え、予約も全部消える。
   if (body.final && full && !conf.keepStale && rows.length === 0 && body.allowEmpty !== true) {
-    await stampSync(env, kind, batchId, null);
-    return jsonRes({ success: true, written: 0, removed: 0, skippedDelete: 'EMPTY_SOURCE' });
+    // ★同期時刻も押さない（2026-10-03・Codex指摘）。
+    //   元データが読めなかった疑いがあるから削除を止めたのに、
+    //   全体を「いま同期した」ことにすると、古い行がそのまま新しい顔で使われる。
+    //   止めた理由と矛盾する。読めていないなら、読めていないままにする。
+    return jsonRes({ success: true, written, removed: 0, skippedDelete: 'EMPTY_SOURCE' });
   }
   // keepStale の表は、今回含まれなかった行を消さない。
   //   残数や枠は「会員の一部だけを更新する」使い方をするため、
@@ -234,7 +263,12 @@ async function ingest(request, env) {
   //
   //   差分で押さなくなると、全体同期が止まった時点から sync_state が古くなり、
   //   listTooOld が真になって予約一覧はGASへ落ちる。**遅くなるが正しい。**
-  if (body.final && full && !conf.keepStale) {
+  //   ★押すのは scope:'all' のときだけ。deleteStale では救済しない（Codex指摘）。
+  //     deleteStale は scope:'all' より強い宣言で、上で矛盾を弾いてある。
+  //     ここで OR にすると、将来 scope を書き忘れた呼び出しが
+  //     deleteStale 経由で素通りする道を残すことになる。
+  const sweptAll = body.final === true && scope === 'all';
+  if (sweptAll && full && !conf.keepStale) {
     // この押し出しに含まれなかった＝Google側から消えた行を落とす。
     // final を受け取ったときだけ実行するので、途中で切れても消えない。
     const del = await env.DB.prepare(
@@ -242,7 +276,7 @@ async function ingest(request, env) {
     ).bind(batchId).run();
     removed = (del.meta && del.meta.changes) || 0;
     await stampSync(env, kind, batchId, null);
-  } else if (body.final && full) {
+  } else if (sweptAll) {
     await stampSync(env, kind, batchId, null);
   }
 

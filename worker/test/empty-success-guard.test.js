@@ -139,8 +139,16 @@ if (slotsTest && slotsTest.readCache) {
   ok('③★差分の押し出しでは全体の同期時刻を押さない',
      !/\} else if \(body\.final\) \{/.test(SRC),
      '`} else if (body.final) {` が残っている＝差分でも押している');
-  ok('③完全同期のときは押す', /\} else if \(body\.final && full\) \{/.test(SRC));
-  ok('③消す処理は完全同期のときだけ', /body\.final && full && !conf\.keepStale/.test(SRC));
+  // ★押す条件は「final かつ 全件を走査し終えた」。deleteStale では救済しない
+  //   （OR にすると、scope を書き忘れた呼び出しが deleteStale 経由で素通りする）。
+  //   実際の振る舞いは worker/test/ingest.test.js が動かして確かめている。
+  //   ここはその条件が**式として1本に保たれている**ことだけを見る。
+  ok('③全件を走査し終えたときだけ押す',
+     /const sweptAll = body\.final === true && scope === 'all'/.test(SRC));
+  ok('③消す処理は全件走査＋消す指定のときだけ', /sweptAll && full && !conf\.keepStale/.test(SRC));
+  ok('③押す判定が1か所にまとまっている',
+     (SRC.match(/await stampSync\(/g) || []).length === 2,
+     `stampSync の呼び出しが ${(SRC.match(/await stampSync\(/g) || []).length} 箇所`);
 }
 
 console.log(`\n${fail ? '❌' : '✅'} 空の成功を作らない 検証: ${pass} passed / ${fail} failed`);
