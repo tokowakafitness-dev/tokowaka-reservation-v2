@@ -208,5 +208,26 @@ ok('④固定枠の削除は担当を確かめる', /_lbTrainerCanManageRecur/.t
   ok('⑤オーナーは絞らない', /owner\s*\n?\s*\?\s*`SELECT reservation_id[\s\S]{0,200}status = 'booked' ORDER BY/.test(fn));
 }
 
+// ---------- 7. ★操作できない予約にボタンを出さないこと ----------
+//   一覧には「自分の担当顧客が、別のトレーナーで取った予約」も出る。
+//   ところが変更・取消は**その予約の担当**しかできない（サーバーが拒む）。
+//   誰の予約かを返さないと、**ボタンは出るのに押すと断られる**
+//   （2026-10-03・Codexの最終判定）。
+{
+  const COMPAT = readFileSync(join(ROOT, 'worker/src/routes/compat.js'), 'utf8');
+  const HTML   = readFileSync(join(ROOT, 'liff/index.html'), 'utf8');
+
+  ok('⑦GASの一覧が担当を返す', /trainerId:\s*String\(r\[4\] \|\| ''\)/.test(LB));
+  ok('⑦Workerの一覧が担当を返す', /trainerId: String\(r\.trainer_id \|\| ''\)/.test(COMPAT));
+  ok('⑦Workerが担当を取り出している', /channel, trainer_id/.test(COMPAT));
+
+  ok('⑦★画面が自分の予約かを見ている', /String\(r\.trainerId\) === String\(state\.myTrainerId\)/.test(HTML));
+  ok('⑦自分のトレーナーIDを控えている', /state\.myTrainerId = String\(res\.trainerId \|\| ''\)/.test(HTML));
+  // 担当が分からないときは出す（押せないより押せるほうがよい。断られても一覧は見える）
+  ok('⑦担当が分からなければ出す', /!r\.trainerId \|\| !state\.myTrainerId/.test(HTML));
+  // 他人の予約には理由を出す（ボタンが無い理由が分からないと問い合わせになる）
+  ok('⑦他の担当の予約には理由を出す', /他のトレーナーが担当する予約です/.test(HTML));
+}
+
 console.log(`\n${fail ? '❌' : '✅'} 顧客の閲覧範囲（GAS側） 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

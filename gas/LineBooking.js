@@ -5583,6 +5583,11 @@ function getTrainerReservations(lineUserId) {
     list.push({
       reservationId: String(r[8]), dateLabel: _lbFmtResvLabel(r[0]),
       customerName:  String(r[1]), customerId: String(r[2]),
+      // ★この予約の担当（2026-10-03・Codexの最終判定）。
+      //   一覧には「自分の担当顧客が、別のトレーナーで取った予約」も出る。
+      //   ところが変更・取消は**その予約の担当**しかできない。
+      //   画面がボタンを出し分けられるよう、誰の予約かを返す。
+      trainerId:     String(r[4] || ''),
       startISO: dt.toISOString(),   // 代行変更時に旧予定を空き判定から除外（問題2）
       freeCancel: _lbIsFreeCancelWindow(dt),
       transfer: (String(r[9]) === 'transfer'), _sort: dt.getTime()

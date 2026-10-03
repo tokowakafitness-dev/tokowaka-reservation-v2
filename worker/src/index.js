@@ -19,7 +19,7 @@ import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
-         compatBoot, compatCustomerCard,
+         compatBoot, compatCustomerCard, rolesTooOld,
          compatTrainerSlots, compatMyReservations } from './routes/compat.js';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
@@ -162,6 +162,22 @@ export default {
       who = await resolveRole(auth.lineUserId, env);
     } catch (_) {
       return json({ success: false, code: 'DB_UNAVAILABLE' }, origin, 503);
+    }
+
+    // ②-2 ★役割と担当の写しが古ければ、何も答えない（2026-10-03・Codexの最終判定）
+    //
+    //   Workerは「誰がトレーナーか」「誰が誰の担当か」をD1だけで決めている。
+    //   その写しが古いまま答えると、
+    //     ・会員登録した直後、別の端末では「未登録のお客様」になる
+    //     ・担当を変えた直後、前の担当トレーナーがまだその顧客を見られる
+    //     ・**同期が止まると、古い権限が無期限に残る**
+    //   残数や予約一覧には鮮度の判定があるのに、権限そのものには無かった。
+    //   古い権限のうえで正しい残数を返しても意味がない。ここが一番外側の関門。
+    //
+    //   ★guest も落とす。「まだ登録していない」も役割の判定だから。
+    if (/^c_/.test(action) && await rolesTooOld(env)) {
+      return json({ success: false, code: 'FALLBACK', detail: 'ROLES_STALE' }, origin, 200,
+                  { 'X-Worker-Ms': String(Date.now() - t0) });
     }
 
     // ③ 許可表の照合（表に無い組み合わせはここで終わる）

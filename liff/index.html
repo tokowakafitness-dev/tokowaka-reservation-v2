@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-03h 完了文面を送信時点で固定';
+  var LIFF_BUILD = '2026-10-03i 操作できない予約にボタンを出さない';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -1153,7 +1153,13 @@
       }).then(function(res){
         if (!res) return;
         if (res.success) { try { sessionStorage.removeItem('_reauthTried'); } catch(e){} }
-        if (res.success && res.role === 'trainer') { renderTrainerAdmin(res); }
+        if (res.success && res.role === 'trainer') {
+          // ★自分のトレーナーIDを控える（2026-10-03）。
+          //   予約一覧には自分の担当顧客が別のトレーナーで取った予約も出る。
+          //   変更・取消はその予約の担当しかできないので、ボタンの出し分けに使う。
+          state.myTrainerId = String(res.trainerId || '');
+          renderTrainerAdmin(res);
+        }
         else if (res.success && res.verified) { renderHome(res); }
         else if (res.success) { show('s-register'); }
         else { showError((res && res.message) ? res.message : t('err_member_status', { code: res.code || '?' })); }
@@ -1770,14 +1776,26 @@
       var d = document.createElement('div'); d.className = 'card';
       d.innerHTML = '<div><b>' + r.dateLabel + '</b>' + (r.transfer ? '　<span style="color:var(--acc);">振替</span>' : '') + '</div>';
       var btns = document.createElement('div'); btns.style.cssText = 'margin-top:10px;display:flex;gap:8px;';
-      if (r.freeCancel) {
-        var chg = document.createElement('button'); chg.className = 'btn btn-outline'; chg.style.margin = '0'; chg.textContent = '時間を変更';
-        chg.onclick = function(){ startTrainerChange(r); };
-        btns.appendChild(chg);
+      // ★変更・取消は「その予約の担当」しかできない（サーバー側がそう判定する）。
+      //   一覧には「自分の担当顧客が、別のトレーナーで取った予約」も出るので、
+      //   そのままボタンを出すと**押せるのに断られる**。誰の予約かで出し分ける。
+      //   担当が分からないとき（古い写しなど）は、押せないより押せるほうがよいので出す
+      //   ＝断られても一覧が見えなくなるわけではない（2026-10-03）。
+      var _mine = !r.trainerId || !state.myTrainerId || String(r.trainerId) === String(state.myTrainerId);
+      if (_mine) {
+        if (r.freeCancel) {
+          var chg = document.createElement('button'); chg.className = 'btn btn-outline'; chg.style.margin = '0'; chg.textContent = '時間を変更';
+          chg.onclick = function(){ startTrainerChange(r); };
+          btns.appendChild(chg);
+        }
+        var cxl = document.createElement('button'); cxl.className = 'btn btn-outline'; cxl.style.margin = '0'; cxl.textContent = 'キャンセル';
+        cxl.onclick = function(){ trainerCancel(r); };
+        btns.appendChild(cxl);
+      } else {
+        var othr = document.createElement('p'); othr.className = 'muted'; othr.style.margin = '0';
+        othr.textContent = '他のトレーナーが担当する予約です（変更・キャンセルは担当者が行います）';
+        btns.appendChild(othr);
       }
-      var cxl = document.createElement('button'); cxl.className = 'btn btn-outline'; cxl.style.margin = '0'; cxl.textContent = 'キャンセル';
-      cxl.onclick = function(){ trainerCancel(r); };
-      btns.appendChild(cxl);
       d.appendChild(btns);
       box.appendChild(d);
     });

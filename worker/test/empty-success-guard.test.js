@@ -151,5 +151,36 @@ if (slotsTest && slotsTest.readCache) {
      `stampSync の呼び出しが ${(SRC.match(/await stampSync\(/g) || []).length} 箇所`);
 }
 
+// ---------- 4. ★役割と担当の写しが古ければ、何も答えないこと ----------
+//   Workerは「誰がトレーナーか」「誰が誰の担当か」をD1だけで決めている。
+//   残数や予約一覧には鮮度の判定があるのに、**権限そのものには無かった**
+//   （2026-10-03・Codexの最終判定）。古い権限のうえで正しい残数を返しても意味がない。
+//     ・会員登録した直後、別の端末では「未登録のお客様」になる
+//     ・担当を変えた直後、前の担当トレーナーがまだその顧客を見られる
+//     ・**同期が止まると、古い権限が無期限に残る**
+{
+  const INDEX  = readFileSync(join(ROOT, 'worker/src/index.js'), 'utf8');
+  const COMPAT = readFileSync(join(ROOT, 'worker/src/routes/compat.js'), 'utf8');
+
+  ok('④役割の鮮度を見る関数がある', /export async function rolesTooOld/.test(COMPAT));
+  ok('④顧客の写しの寿命が決まっている', /customers:\s*\d+ \* 60 \* 1000/.test(COMPAT));
+  ok('④トレーナーの写しの寿命が決まっている', /trainers:\s*\d+ \* 60 \* 1000/.test(COMPAT));
+  ok('④★入口で鮮度を見ている', /rolesTooOld\(env\)/.test(INDEX));
+  ok('④古ければGASへ落とす', /ROLES_STALE/.test(INDEX));
+
+  // ★許可表の照合より**前**に見ること。古い役割で許可を判定しても意味がない。
+  const iStale = INDEX.indexOf('rolesTooOld');
+  const iPerm  = INDEX.indexOf('isAllowed(action, who.role)');
+  ok('④★許可の判定より前に鮮度を見る', iStale > 0 && iPerm > iStale, `stale=${iStale} perm=${iPerm}`);
+
+  // 寿命は同期の間隔（15分）より長いこと。短いと毎回GASに落ちて高速化が消える。
+  const ms = (k) => {
+    const m2 = COMPAT.match(new RegExp(k + ':\\s*(\\d+) \\* 60 \\* 1000'));
+    return m2 ? Number(m2[1]) : 0;
+  };
+  ok('④寿命が同期の間隔より長い（customers）', ms('customers') >= 30, `${ms('customers')}分`);
+  ok('④寿命が同期の間隔より長い（trainers）', ms('trainers') >= 30, `${ms('trainers')}分`);
+}
+
 console.log(`\n${fail ? '❌' : '✅'} 空の成功を作らない 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

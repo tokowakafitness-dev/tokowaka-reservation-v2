@@ -40,6 +40,20 @@ export function isFreeCancel(startMs, nowMs) {
   return (nowMs == null ? Date.now() : nowMs) < deadline;
 }
 
+// 役割と担当の写しが古いかどうか。
+//   ★なぜ要るのか（2026-10-03・Codexの最終判定）
+//     Workerは「誰がトレーナーか」「誰が誰の担当か」をD1だけで決めている。
+//     その写しが古いと、次のことが起きる。
+//       ・会員登録した直後、別の端末では「未登録のお客様」と判定される
+//       ・担当を変えた直後、前の担当トレーナーがまだその顧客を見られる
+//       ・**同期が止まると、古い権限が無期限に残る**
+//     残数や予約一覧には鮮度の判定があるのに、**権限そのものには無かった。**
+//     古い権限で正しい残数を返しても意味がない。ここが一番外側の関門。
+export async function rolesTooOld(env) {
+  if (await listTooOld(env, 'customers')) return true;
+  return await listTooOld(env, 'trainers');
+}
+
 // ---------------------------------------------------------------
 // getMemberStatus と同じ形
 // ---------------------------------------------------------------
@@ -112,6 +126,10 @@ export async function compatTrainers({ env, who }) {
 const LIST_TTL_MS = {
   reservations: 20 * 60 * 1000,
   recurring:    30 * 60 * 1000,
+  // ★役割と担当（誰がトレーナーか・誰の担当か）の写し（2026-10-03・Codexの最終判定）。
+  //   15分ごとに全件を同期している。2回ぶん待っても届かないなら、写しを信用しない。
+  customers:    30 * 60 * 1000,
+  trainers:     30 * 60 * 1000,
 };
 async function listTooOld(env, key) {
   try {
@@ -140,7 +158,7 @@ export async function compatTrainerReservations({ env, who, body }) {
         WHERE ${scope.where} AND (contract_status IS NULL OR contract_status <> '退会')
         ORDER BY name`;
   const resvSql = owner
-    ? `SELECT reservation_id, customer_id, customer_name, start_at, channel
+    ? `SELECT reservation_id, customer_id, customer_name, start_at, channel, trainer_id
          FROM reservations WHERE start_at >= ? AND status = 'booked' ORDER BY start_at`
     // ★GAS側と同じ範囲にする（2026-10-03・Codexの4回目の判定）。
     //   GAS：予約の担当が自分 **または** 顧客が自分の担当（担当なしを含む）
@@ -149,7 +167,7 @@ export async function compatTrainerReservations({ env, who, body }) {
     //   見える範囲が経路によって変わるのは、それ自体が不具合。
     //   なお操作（キャンセル・変更）の権限はGAS側が予約行ごとに判定するので、
     //   ここで広く見えても、他人の担当予約を動かせるわけではない。
-    : `SELECT reservation_id, customer_id, customer_name, start_at, channel
+    : `SELECT reservation_id, customer_id, customer_name, start_at, channel, trainer_id
          FROM reservations
         WHERE start_at >= ? AND status = 'booked'
           AND (trainer_id = ?
@@ -168,6 +186,11 @@ export async function compatTrainerReservations({ env, who, body }) {
     //   押し出し側（PushToEdge.js）が備考欄のresIdを reservation_id に入れている。
     //   ここで別の値に差し替えてはいけない。
     reservationId: String(r.reservation_id),
+    // ★この予約の担当（2026-10-03・Codexの最終判定）。
+    //   一覧には「自分の担当顧客が、別のトレーナーで取った予約」も出る。
+    //   ところが変更・取消は**その予約の担当**しかできない（GASが拒む）。
+    //   これが無いと「ボタンは出るのに押すと断られる」ことになる。
+    trainerId: String(r.trainer_id || ''),
     dateLabel: resvLabel(r.start_at, lang),
     customerName: String(r.customer_name || ''),
     customerId: String(r.customer_id || ''),
@@ -304,7 +327,6 @@ export async function compatMyReservations({ env, who, body }) {
     if (r.status === 'booked' && r.start_at >= now) {
       upcoming.push({
         reservationId: String(r.reservation_id),
-        trainerId: String(r.trainer_id || ''),
         dateLabel: label,
         trainerName,
         status: 'confirmed',                       // 画面はGASの値を見るのでそろえる
