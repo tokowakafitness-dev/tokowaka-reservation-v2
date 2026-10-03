@@ -1596,3 +1596,179 @@ function calCompareSweepText() {
   }
   return out.join('\n');
 }
+
+// ============================================================
+// 任意の月を検証する（D1に触らない・2026-10-03 オーナー提案）
+//
+//   D1経由の突き合わせは、D1が持っている地平の中しか比べられない。
+//   地平は「いま」で決まるので、**25日の翌月解放や月末の地平の伸び**を比べられなかった。
+//   かといって9月のデータをD1へ押し出すと、公開中の世代が9月になって本番が壊れる。
+//
+//   だから予定をそのまま送り、Workerに同じ計算をさせて比べる。
+//   **D1には一切触らない**ので本番は無傷のまま、過ぎた月の実データで確かめられる。
+//   9月は実際に25日の解放が起きた月なので、そのときの形をそのまま検証できる。
+// ============================================================
+
+// 指定した期間の予定を読んで、D1に入れる形に直す（押し出しはしない）。
+function _calsyncEventsFor(fromDate, toDate) {
+  var cals = _calsyncCalendars();
+  var events = [], invalid = [];
+  for (var c = 0; c < cals.length; c++) {
+    var cal = null;
+    try { cal = CalendarApp.getCalendarById(cals[c].calendarId); } catch (e) { cal = null; }
+    if (!cal) return { ok: false, code: 'CALENDAR_UNREADABLE', calendarId: cals[c].calendarId };
+    var evs;
+    try { evs = cal.getEvents(fromDate, toDate); }
+    catch (e2) { return { ok: false, code: 'CALENDAR_FETCH_FAILED', detail: String(e2.message).slice(0, 120) }; }
+
+    for (var j = 0; j < evs.length; j++) {
+      var ev = evs[j];
+      var cls = _calsyncClassify(cals[c].role, ev.getTitle());
+      if (cls.effect === 'ignore') continue;
+      var s = ev.getStartTime(), e3 = ev.getEndTime();
+      var sMs = s ? s.getTime() : null, eMs = e3 ? e3.getTime() : null;
+      var id = ''; try { id = String(ev.getId() || ''); } catch (eId) { id = ''; }
+      if (!id) { invalid.push({ reason: 'NO_EVENT_ID' }); continue; }
+      if (sMs == null || eMs == null || !isFinite(sMs) || !isFinite(eMs)) { invalid.push({ reason: 'NOT_INTEGER_MS' }); continue; }
+      if (eMs <= sMs) { invalid.push({ reason: eMs < sMs ? 'REVERSED' : 'ZERO_WIDTH' }); continue; }
+      var allDay = 0; try { allDay = ev.isAllDayEvent() ? 1 : 0; } catch (eA) { allDay = 0; }
+      events.push({
+        calendarId: cals[c].calendarId, eventId: id + '#' + String(sMs),
+        role: cals[c].role, trainerId: cls.trainerId || cals[c].trainerId || null,
+        effect: cls.effect, reason: cls.reason,
+        startAt: sMs, endAt: eMs, allDay: allDay
+      });
+    }
+  }
+  return { ok: true, events: events, invalid: invalid };
+}
+
+// 1つの時点について、D1を使わずに突き合わせる。
+function _calCompareDirectAt(nowMs, fromMs, toMs, events) {
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return { ok: false, code: 'EDGE_NOT_CONFIGURED' };
+
+  var slots;
+  try { slots = buildAvailableSlots(null, nowMs) || []; }
+  catch (e) { return { ok: false, code: 'BUILD_FAILED', detail: e.message }; }
+
+  var payload = {
+    fromMs: fromMs, toMs: toMs, nowMs: nowMs,
+    trainers: CALENDAR_IDS.TRAINERS.map(function (t) { return { id: t.id, hidden: !!t.hidden }; }),
+    ownerWindow: _lbOwnerSlotWindow(),
+    events: events,
+    slots: slots.map(function (s) {
+      return { startMs: new Date(s.startISO).getTime(), trainerId: s.trainerId, trialOk: s.trialOk !== false };
+    })
+  };
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/calcompare/direct', {
+    method: 'post', contentType: 'application/json',
+    headers: { 'X-Ingest-Secret': secret },
+    payload: JSON.stringify(payload), muteHttpExceptions: true
+  });
+  var code = res.getResponseCode(), text = res.getContentText();
+  if (code !== 200) return { ok: false, code: 'HTTP_' + code, body: text.slice(0, 300) };
+  var out = {}; try { out = JSON.parse(text); } catch (e) { out = {}; }
+  return { ok: true, result: out };
+}
+
+// 過ぎた月を検証する。オーナーがGASエディタで実行する。
+//   月を変えたいときは下の ym を書き換える（'2026-09' の形）。
+function calCompareMonth() {
+  var ym = '2026-09';          // ← 検証したい月
+  Logger.log(calCompareMonthText(ym));
+}
+
+function calCompareMonthText(ym) {
+  var out = [];
+  function say(x) { out.push(x); }
+  var m = String(ym || '').match(/^(\d{4})-(\d{2})$/);
+  if (!m) return '月を YYYY-MM の形で指定してください（例 2026-09）。';
+  var y = Number(m[1]), mo = Number(m[2]) - 1;
+
+  say('===== ' + ym + ' の空き枠を突き合わせます（D1には触りません）=====');
+  say('※ 予定をそのまま送り、Workerに同じ計算をさせて比べます。');
+  say('   本番のD1は無傷のままです。過ぎた月の実データで確かめられます。');
+  say('');
+
+  if (!_edgeEnabled()) { say('⛔ EDGE_PUSH_ON が 1 ではありません'); return out.join('\n'); }
+
+  // その月の予定をまとめて1回だけ読む（時点ごとに読み直すとAPIを無駄に叩く）
+  var monthStart = new Date(y, mo, 1, 0, 0, 0);
+  var monthEnd = new Date(y, mo + 2, 1, 0, 0, 0);   // 翌月末まで（25日の解放で翌月が見えるため）
+  var got = _calsyncEventsFor(monthStart, monthEnd);
+  if (!got.ok) { say('⛔ 予定を読めません: ' + got.code + ' ' + (got.calendarId || got.detail || '')); return out.join('\n'); }
+  say('読んだ予定: ' + got.events.length + '件（壊れていた予定 ' + got.invalid.length + '件）');
+  say('');
+
+  // その月に起きた「月のかたちが変わる瞬間」を狙う
+  var points = [
+    { label: ym + '-01 09時（月初）', d: new Date(y, mo, 1, 9, 0, 0) },
+    { label: ym + '-10 12時（平常時）', d: new Date(y, mo, 10, 12, 0, 0) },
+    { label: ym + '-20 10時（シフト提出）', d: new Date(y, mo, 20, 10, 0, 0) },
+    { label: ym + '-24 10時（解放の前日）', d: new Date(y, mo, 24, 10, 0, 0) },
+    { label: ym + '-25 10時（★翌月の解放）', d: new Date(y, mo, 25, 10, 0, 0) },
+    { label: ym + '-25 23時（解放日の夜）', d: new Date(y, mo, 25, 23, 0, 0) },
+    { label: '月末 12時', d: new Date(y, mo + 1, 0, 12, 0, 0) },
+    { label: '月末 23時', d: new Date(y, mo + 1, 0, 23, 0, 0) },
+    { label: '翌月1日 9時', d: new Date(y, mo + 1, 1, 9, 0, 0) }
+  ];
+
+  var okCount = 0, ngCount = 0, details = [];
+  for (var i = 0; i < points.length; i++) {
+    var p = points[i], nowMs = p.d.getTime();
+    // ★その時点の地平で比べる。D1を使わないので、範囲を固定する必要がない。
+    //   これが D1経由では比べられなかった「月のかたちが変わる瞬間」を見る鍵。
+    var hEnd = _lbBookingHorizonEnd(p.d);
+    var fromMs = new Date(p.d.getFullYear(), p.d.getMonth(), p.d.getDate(), 0, 0, 0).getTime();
+    var toMs = hEnd.getTime();
+
+    var r;
+    try { r = _calCompareDirectAt(nowMs, fromMs, toMs, got.events); }
+    catch (e) { r = { ok: false, code: 'EXCEPTION', detail: e.message }; }
+
+    if (!r || !r.ok) {
+      ngCount++;
+      say('  ❌ ' + p.label + ' … 送れませんでした（' + ((r && r.code) || '不明') + '）');
+      continue;
+    }
+    var x = r.result || {};
+    if (x.matched) {
+      okCount++;
+      say('  ✅ ' + p.label + ' … 一致（' + x.gasCount + '枠）');
+    } else {
+      ngCount++;
+      say('  ❌ ' + p.label + ' … 食い違い（GAS ' + x.gasCount + ' / D1 ' + x.d1Count + '）');
+      var trs = x.trainers || [];
+      for (var t = 0; t < trs.length; t++) {
+        if (trs[t].matched) continue;
+        var c = trs[t].counts || {};
+        details.push('     ' + p.label + ' / ' + trs[t].trainerId
+          + '：GASだけ ' + (c.onlyGas || 0) + '件 ／ D1だけ ' + (c.onlyD1 || 0) + '件'
+          + ' ／ 体験の可否 ' + (c.trial || 0) + '件');
+        if ((trs[t].onlyGas || []).length) details.push('       GASだけ: ' + trs[t].onlyGas.slice(0, 5).join(' / '));
+        if ((trs[t].onlyD1 || []).length) details.push('       D1だけ: ' + trs[t].onlyD1.slice(0, 5).join(' / '));
+      }
+    }
+  }
+
+  say('');
+  say('────── 結果 ──────');
+  say('  一致 ' + okCount + ' / 食い違い ' + ngCount + '（全 ' + points.length + ' 時点）');
+  if (details.length) {
+    say('');
+    say('■ 食い違いの中身');
+    for (var k = 0; k < details.length; k++) say(details[k]);
+  }
+  say('');
+  if (ngCount === 0) {
+    say('✅ ' + ym + ' のすべての時点で一致しました。');
+    say('   月のかたちが変わる瞬間（25日の解放・月末・月初）も含めて確認できています。');
+  } else {
+    say('⛔ 食い違いがあります。切り替える前に、上の中身を潰してください。');
+  }
+  say('');
+  say('※ この検証は分類と空き枠の計算を見るものです。');
+  say('   D1の読み書き・鮮度判定・世代の公開は calCompareSweep の責務です。両方が要ります。');
+  return out.join('\n');
+}

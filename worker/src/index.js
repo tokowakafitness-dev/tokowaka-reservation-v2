@@ -106,7 +106,8 @@ export default {
     }
 
     // ①の突き合わせ（GASとD1の空き枠を本番で比べて compare_log に記録する）。読み取りのみ。
-    if (url.pathname === '/calcompare' || url.pathname === '/calcompare/status') return handleCalCompare(request, env);
+    if (url.pathname === '/calcompare' || url.pathname === '/calcompare/status'
+        || url.pathname === '/calcompare/direct') return handleCalCompare(request, env);
 
     // 照合専用の入口。GASの計算結果と突き合わせるためだけに使う。
     //   ID Tokenではなく合言葉で確かめる（お客様のブラウザからは呼ばせない）。

@@ -238,10 +238,15 @@ export function buildSkipDiff(read) {
 export async function handleCalCompare(request, env) {
   const url = new URL(request.url);
   const isStatus = url.pathname === '/calcompare/status';
+  const isDirect = url.pathname === '/calcompare/direct';
   try {
     if (isStatus) {
       if (request.method !== 'GET') return jsonRes({ success: false, code: 'METHOD_NOT_ALLOWED' }, 405);
       return await calcompareStatus(request, env, url);
+    }
+    if (isDirect) {
+      if (request.method !== 'POST') return jsonRes({ success: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+      return await calcompareDirect(request, env);
     }
     if (request.method !== 'POST') return jsonRes({ success: false, code: 'METHOD_NOT_ALLOWED' }, 405);
     return await calcompare(request, env);
@@ -251,6 +256,88 @@ export async function handleCalCompare(request, env) {
     console.error('calcompare', e && e.stack);
     return jsonRes({ success: false, code: 'INTERNAL', detail: String((e && e.message) || e).slice(0, 300) }, 500);
   }
+}
+
+// ------------------------------------------------------------
+// POST /calcompare/direct — 予定を直接受け取って突き合わせる（D1に触らない）
+//
+//   なぜ要るか（2026-10-03 オーナー提案）：
+//     D1経由の突き合わせは、D1が持っている地平の中しか比べられない。
+//     地平は「いま」で決まるので、**25日の翌月解放や月末の地平の伸び**といった
+//     月のかたちが変わる瞬間を比べられなかった（実際 horizon で落ちた）。
+//     かといって9月のデータをD1へ押し出すと、公開中の世代が9月になって本番が壊れる。
+//
+//     だから「予定をそのまま受け取って、同じ計算をして返す」経路を作る。
+//     **D1には一切触らない**（読みも書きもしない）ので、本番は無傷のまま
+//     任意の期間・任意の時点を検証できる。9月は実際に解放が起きた月なので、
+//     実データでそのときの形を確かめられる。
+//
+//   ★これで検証できるのは「分類と空き枠の計算」。
+//     D1の読み書き・鮮度判定・世代の公開は検証できない（そちらは /calcompare の責務）。
+//     2つを組み合わせて初めて完全になる。混同しないこと。
+// ------------------------------------------------------------
+export async function calcompareDirect(request, env) {
+  const bad = auth(request, env);
+  if (bad) return bad;
+
+  let body;
+  try { body = await request.json(); } catch (_) { return jsonRes({ success: false, code: 'BAD_JSON' }, 400); }
+  if (!body || typeof body !== 'object') return jsonRes({ success: false, code: 'BAD_JSON' }, 400);
+
+  const fromMs = body.fromMs, toMs = body.toMs, nowMs = body.nowMs;
+  if (!isInt(fromMs) || !isInt(toMs) || fromMs >= toMs) return jsonRes({ success: false, code: 'BAD_RANGE' }, 400);
+  if (!isInt(nowMs)) return jsonRes({ success: false, code: 'BAD_NOW' }, 400);
+  if (!Array.isArray(body.events)) return jsonRes({ success: false, code: 'EVENTS_NOT_ARRAY' }, 400);
+  if (!Array.isArray(body.slots)) return jsonRes({ success: false, code: 'SLOTS_NOT_ARRAY' }, 400);
+  if (body.events.length > 20000 || body.slots.length > 20000) {
+    return jsonRes({ success: false, code: 'TOO_MANY' }, 413);
+  }
+
+  const tr = normalizeTrainers(body.trainers);
+  if (tr.code) return jsonRes({ success: false, code: tr.code }, 400);
+  const trainers = tr.trainers;
+
+  // ★氏名は受け取った時点で捨てる（/calcompare と同じ扱い）。
+  const d1Slots = slotsFromEvents(body.events, {
+    nowMs, trainers, ownerWindow: body.ownerWindow || null,
+  });
+
+  const cmp = compareSlots(body.slots, d1Slots, trainers.map((t) => t.id), fromMs, toMs);
+
+  // ★D1には書かない。compare_log にも残さない。
+  //   この経路は「任意の期間を試す」ためのもので、連続日数の証拠にはしない。
+  //   記録に混ぜると「D1経由で7日一致した」という事実が薄まる。
+  // ★集計は /calcompare と同じ形にする。片方だけ違う形で返すと、
+  //   読む側（GASの一覧・人の目）が取り違える。
+  const allMatched = cmp.trainers.every((r) => r.matched);
+  return jsonRes({
+    success: true, compared: true, direct: true,
+    matched: allMatched,
+    gasCount: cmp.trainers.reduce((n, r) => n + r.gasCount, 0),
+    d1Count: cmp.trainers.reduce((n, r) => n + r.d1Count, 0),
+    gasOutOfRange: cmp.gasOutOfRange, d1OutOfRange: cmp.d1OutOfRange,
+    trainers: cmp.trainers,
+  });
+}
+
+// トレーナーの一覧を正規化する。
+//   ★氏名をここで捨てる（§12★）。name は受け取るが name:'' にして先へ渡さない。
+//     これで氏名が diff に混ざる道が構造的に無くなる。
+//   ★2か所（/calcompare と /calcompare/direct）で同じ処理を書かない。
+//     書き写すと、片方だけ直して食い違う（今日それで何度も往復した）。
+export function normalizeTrainers(list) {
+  if (!Array.isArray(list) || list.length === 0) return { code: 'BAD_TRAINERS' };
+  if (list.length > 50) return { code: 'TOO_MANY_TRAINERS' };
+  const trainers = [];
+  const seen = new Set();
+  for (const t of list) {
+    const id = t && t.id != null ? String(t.id) : '';
+    if (!id) return { code: 'BAD_TRAINER_ID' };
+    if (seen.has(id)) return { code: 'DUPLICATE_TRAINER' };
+    seen.add(id);
+    trainers.push({ id, name: '', hidden: !!(t && t.hidden) });
+  }
+  return { trainers };
 }
 
 function auth(request, env) {
@@ -295,16 +382,9 @@ async function calcompare(request, env) {
   }
 
   // ★氏名をここで捨てる（§12★）。name は受け取るが、どこにも渡さない。
-  //   slotsFromEvents には name:'' を渡す。これで氏名が diff に混ざる道が無くなる。
-  const trainers = [];
-  const seen = new Set();
-  for (const t of body.trainers) {
-    const id = t && t.id != null ? String(t.id) : '';
-    if (!id) return jsonRes({ success: false, code: 'BAD_TRAINER_ID' }, 400);
-    if (seen.has(id)) return jsonRes({ success: false, code: 'DUPLICATE_TRAINER' }, 400);
-    seen.add(id);
-    trainers.push({ id, name: '', hidden: !!(t && t.hidden) });
-  }
+  const tr = normalizeTrainers(body.trainers);
+  if (tr.code) return jsonRes({ success: false, code: tr.code }, 400);
+  const trainers = tr.trainers;
 
   for (const s of body.slots) {
     if (!s || !isInt(s.startMs) || s.trainerId == null || String(s.trainerId) === '') {

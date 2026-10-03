@@ -787,5 +787,101 @@ const DATES = (n, endDay) => Array.from({ length: n }, (_, i) => jstDayKey(endDa
   eq('2回ぶん記録される', logCount(env), 6);
 }
 
+// ============================================================
+// ★/calcompare/direct — 予定を直接受け取る（D1に触らない・2026-10-03）
+//
+//   D1経由では、D1が持っている地平の中しか比べられない。地平は「いま」で決まるので、
+//   25日の翌月解放や月末の地平の伸びを比べられなかった（horizon で落ちた）。
+//   9月のデータをD1へ押し出すと公開中の世代が9月になって本番が壊れるので、
+//   予定をそのまま受け取って同じ計算をする経路を作った。
+//
+//   ★この経路の生命線は「D1に一切触らないこと」。触ると本番を壊す。
+// ============================================================
+{
+  const env = await seeded();
+  const base = comparePayload();
+  const directBody = {
+    fromMs: base.fromMs, toMs: base.toMs, nowMs: base.nowMs,
+    trainers: base.trainers, ownerWindow: base.ownerWindow,
+    events: [], slots: [],
+  };
+  const sendDirect = async (e, b) => {
+    const req = new Request('https://x/calcompare/direct', {
+      method: 'POST', headers: { 'X-Ingest-Secret': SECRET, 'content-type': 'application/json' },
+      body: JSON.stringify(b),
+    });
+    const res = await handleCalCompare(req, e);
+    return [res.status, await res.json()];
+  };
+
+  // ① 認証
+  {
+    const req = new Request('https://x/calcompare/direct', { method: 'POST', body: '{}' });
+    const res = await handleCalCompare(req, env);
+    eq('★direct：合言葉なしは受けない', res.status, 403);
+  }
+
+  // ② ★D1に一切触らない（ここが生命線）
+  {
+    const before = env._sql.length;
+    const genBefore = one(env, 'SELECT generation FROM calendar_active WHERE id = 1');
+    const logBefore = logCount(env);
+    const [st] = await sendDirect(env, directBody);
+    eq('★direct：成功する', st, 200);
+    eq('★★direct：D1に1回もSQLを発行しない', env._sql.length - before, 0);
+    eq('★direct：公開中の世代が変わらない',
+       one(env, 'SELECT generation FROM calendar_active WHERE id = 1').generation,
+       genBefore.generation);
+    eq('★direct：compare_log にも残さない（連続日数の証拠にしない）', logCount(env), logBefore);
+  }
+
+  // ③ 時点も範囲も自由に選べる（D1の地平に縛られない）
+  {
+    const day = 24 * 60 * 60 * 1000;
+    const far = { ...directBody, nowMs: directBody.nowMs - 40 * day,
+                  fromMs: directBody.fromMs - 40 * day, toMs: directBody.toMs - 40 * day };
+    const [st2, b2] = await sendDirect(env, far);
+    eq('★direct：40日前でも比較できる（horizon で落ちない）', [st2, b2.compared], [200, true]);
+    ok('★direct：reason を返さない（比較できなかった扱いにしない）', b2.reason === undefined);
+  }
+
+  // ④ 実際に突き合わせる（一致・食い違い）
+  {
+    const H = (h) => Date.UTC(2026, 10, 5, h - 9, 0, 0);     // JST
+    const ev = [
+      { role: 'trainer', trainerId: 'A', effect: 'shift', reason: 'shift', startAt: H(7), endAt: H(23) },
+    ];
+    const nowMs = Date.UTC(2026, 10, 1, 0, 0, 0);
+    const payloadBase = {
+      fromMs: H(0), toMs: H(24), nowMs,
+      trainers: [{ id: 'A', hidden: false }], ownerWindow: null, events: ev,
+    };
+    // Worker が出す枠をそのまま渡せば一致する
+    const [, probe] = await sendDirect(env, { ...payloadBase, slots: [] });
+    ok('★direct：GASが0枠ならD1の枠数が出る', probe.d1Count > 0);
+    eq('★direct：0枠と突き合わせれば食い違う', probe.matched, false);
+  }
+
+  // ⑤ 壊れた要求は受けない
+  {
+    for (const [name, over, want] of [
+      ['範囲が逆', { fromMs: directBody.toMs, toMs: directBody.fromMs }, 400],
+      ['nowMs が無い', { nowMs: null }, 400],
+      ['events が配列でない', { events: 'x' }, 400],
+      ['slots が配列でない', { slots: 'x' }, 400],
+      ['events が多すぎる', { events: new Array(20001).fill({}) }, 413],
+    ]) {
+      const [st3] = await sendDirect(env, { ...directBody, ...over });
+      eq('★direct：' + name + ' は受けない', st3, want);
+    }
+  }
+
+  // ⑥ 経路が登録されている
+  {
+    const IDX = readFileSync(join(HERE, '../src/index.js'), 'utf8');
+    ok('★direct：経路が登録されている', /'\/calcompare\/direct'/.test(IDX));
+  }
+}
+
 console.log(`\n①の突き合わせ 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
