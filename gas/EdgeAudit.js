@@ -1927,3 +1927,179 @@ function consecutiveSessionsText(args) {
 
 // GASエディタから直接見るとき
 function consecutiveSessions() { _lbAuditLogChunks(consecutiveSessionsText({ consec: true }), 7000); }
+
+// ============================================================
+// 月額会員の「今月の枠」を1行1人で一覧する（2026-10-03 オーナー要望）
+//
+//   目的：トレーナーに共有して、繰越が正しいかを目で確かめてもらう。
+//   既存の monthlyMembersRemainingNamed は1人ずつ詳しく出すので、
+//   38名ぶんだと長すぎて一覧できない。こちらは**1行1人**の表にする。
+//
+//   ★「予約を含めない回数」＝**枠（頻度＋繰越）**。
+//     残数（予約を引いた後）とは別物。繰越の確認には枠を見る。
+//     両方を並べて出すので、どちらを見ているかを取り違えない。
+//
+//   ★GASエディタ専用（氏名を出すため）。作業依頼の結果URLには出さない。
+//   ★読み取りだけ。何も書き換えない。
+// ============================================================
+function monthlyQuotaTable() {
+  Logger.log(_monthlyQuotaTableText());
+}
+
+function _monthlyQuotaTableText(nowMs) {
+  var out = [];
+  function say(s) { out.push(s); }
+
+  var ms = (nowMs != null) ? nowMs : new Date().getTime();
+  var now = new Date(ms);
+  var nowKey = _lbMonthKeyJst(ms);
+  var nextMs = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0).getTime();
+  var nextKey = _lbMonthKeyJst(nextMs);
+
+  say('===== 月額会員の今月の枠（1行1人・氏名つき・読み取りだけ）'
+      + Utilities.formatDate(now, SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + ' =====');
+  say('版: ' + LB_AUDIT_BUILD);
+  say('★この出力には個人情報が含まれます。外部へ貼らないでください。');
+  say('');
+  say('【見方】');
+  say('  枠   … 今月使える回数。**予約を引く前**（頻度＋繰越）。繰越の確認はここを見る');
+  say('  頻度 … 契約の月あたりの回数');
+  say('  繰越 … 先月から持ち越した回数（枠 − 頻度）');
+  say('  予約 … 今月すでに入っている予約の数');
+  say('  残り … 枠 − 予約。お客様の画面に出る数字');
+  say('');
+
+  try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (eC) {}
+
+  var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!map || map.getLastRow() < 2) { say('⛔ 会員名簿が読めません。'); return out.join('\n'); }
+  var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
+
+  // 予約台帳は1回だけ読む（会員ごとに読み直すと6分の制限を使い切る）
+  var rvals = null, rvalsOk = false;
+  try {
+    var rsh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+    if (rsh) {
+      var lastR = rsh.getLastRow();
+      rvals = (lastR < 2) ? [] : rsh.getRange(2, 1, lastR - 1, Math.max(12, rsh.getLastColumn())).getValues();
+      rvalsOk = true;
+    }
+  } catch (eR) { rvalsOk = false; }
+  if (!rvalsOk) say('⚠️ 予約台帳が読めません。予約数と残りは出せません。');
+
+  var rate = (typeof LINE_BOOKING !== 'undefined' && LINE_BOOKING.CARRYOVER_RATE != null)
+             ? LINE_BOOKING.CARRYOVER_RATE : (1 / 3);
+
+  var rowsOut = [], checkOut = [], skipped = [];
+  var checked = 0;
+
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
+    var nm = String(vals[i][MAP_COL.NAME - 1] || ''); if (!nm) continue;
+    var cid = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || ''); if (!cid) continue;
+    var stat = String(vals[i][MAP_COL.CONTRACT_STAT - 1] || '');
+    checked++;
+
+    var rows, sessions, opening;
+    try {
+      rows = _lbContractRowsAll(nm, _lbPhoneByCustomerId(cid), false, cid);
+      if (!rows || !rows.length) { skipped.push(nm + '（契約なし）'); continue; }
+      sessions = rvalsOk ? _lbResvValsToSessions(rvals, cid, _lbParseResvDate) : null;
+      opening = _lbMemberOpeningWithFloor(cid);
+    } catch (e) { skipped.push(nm + '（' + e.message + '）'); continue; }
+
+    var sp = null, spNext = null;
+    try { sp = _lbSplitRemaining(rows, cid, ms, sessions); } catch (e2) { sp = null; }
+    try { spNext = _lbSplitRemaining(rows, cid, nextMs, sessions); } catch (e3) { spNext = null; }
+
+    // 月額契約を持たない方（チケットのみ）は対象外
+    if (!sp || !sp.hasMonthly) { continue; }
+
+    // 今月／翌月の予約数
+    var curN = 0, nextN = 0;
+    if (sessions) {
+      for (var s2 = 0; s2 < sessions.length; s2++) {
+        var mk = _lbMonthKeyJst(sessions[s2].startAt);
+        if (mk === nowKey) curN++;
+        else if (mk === nextKey) nextN++;
+      }
+    }
+
+    var freq = (sp.freq == null) ? null : Number(sp.freq);
+    var avail = (sp.avail == null) ? null : Number(sp.avail);
+    var carry = (freq != null && avail != null) ? (avail - freq) : null;
+    var rem = (sp.monthlyRem == null) ? null : Number(sp.monthlyRem);
+    var availNext = (spNext && spNext.avail != null) ? Number(spNext.avail) : null;
+
+    // 要確認の印（人が決めるべきものだけ）
+    var flags = [];
+    if (rem == null) flags.push('残数が出ない');
+    if (stat !== 'active') flags.push('契約が' + (stat || '空'));
+    if (carry != null && carry < 0) flags.push('繰越がマイナス');
+    // ★予約台帳が読めないときは、この検査をしない。
+    //   予約数が0として扱われるので、全員が「合わない」になって一覧が埋まる。
+    //   「分からない」を「問題あり」に化けさせない。
+    if (rvalsOk && avail != null && rem != null && curN !== (avail - rem)) {
+      flags.push('枠と残りが合わない');
+    }
+    try {
+      var odd = _contractOddities(rows);
+      if (odd.length) flags.push('契約の入力に食い違い');
+    } catch (eO) {}
+
+    // 台帳が読めないときは予約数と残りを「-」にする。0件と「分からない」を同じ見た目にしない。
+    var curShow = rvalsOk ? curN : null;
+    var nextShow = rvalsOk ? nextN : null;
+    var line = _mqPad(nm, 8) + _mqNum(freq, 5) + _mqNum(carry, 5)
+             + _mqNum(avail, 5) + _mqNum(curShow, 5) + _mqNum(rem, 5)
+             + '  ' + _mqNum(availNext, 5) + _mqNum(nextShow, 5)
+             + (flags.length ? '   ⚠ ' + flags.join('・') : '');
+    if (flags.length) checkOut.push(line); else rowsOut.push(line);
+  }
+
+  // 見出しも同じ幅で並べる（数字は右そろえ）
+  var head = _mqPad('氏名', 8) + _mqNum('頻度', 5) + _mqNum('繰越', 5)
+           + _mqNum('枠', 5) + _mqNum('予約', 5) + _mqNum('残り', 5)
+           + '  ' + _mqNum('翌枠', 5) + _mqNum('翌約', 5);
+
+  say('── 調べた会員 ' + checked + '名 ／ 月額契約あり ' + (rowsOut.length + checkOut.length) + '名');
+  say('');
+  if (checkOut.length) {
+    say('■ ⚠ 確認が要る ' + checkOut.length + '名');
+    say('  ' + head);
+    say('  ' + _mqRule(head.length));
+    for (var c = 0; c < checkOut.length; c++) say('  ' + checkOut[c]);
+    say('');
+  }
+  say('■ ○ 問題なし ' + rowsOut.length + '名');
+  say('  ' + head);
+  say('  ' + _mqRule(head.length));
+  for (var r2 = 0; r2 < rowsOut.length; r2++) say('  ' + rowsOut[r2]);
+
+  if (skipped.length) { say(''); say('■ 調べられなかった会員: ' + skipped.join(' / ')); }
+  say('');
+  say('※ 「枠」が繰越を含んだ今月の回数です。お客様の画面には「残り」が出ます。');
+  say('※ 翌枠・翌約は翌月（' + nextKey + '）の枠と予約数。25日以降は翌月の予約が開きます。');
+  say('');
+  say('===== ここまで。何も書き換えていません =====');
+  return out.join('\n');
+}
+
+// 表をそろえるための小道具（全角は2文字ぶんとして数える）
+function _mqWidth(s) {
+  var n = 0, t = String(s == null ? '' : s);
+  for (var i = 0; i < t.length; i++) n += (t.charCodeAt(i) > 0x7f) ? 2 : 1;
+  return n;
+}
+// 左そろえ。w は「全角の文字数」（全角1文字＝半角2つぶん）。
+function _mqPad(s, w) {
+  var t = String(s == null ? '' : s), need = w * 2 - _mqWidth(t);
+  return t + (need > 0 ? new Array(need + 1).join(' ') : '');
+}
+// 右そろえ。全角の見出し（頻度・繰越など）も数字と同じ幅にそろえる。
+function _mqNum(v, w) {
+  var t = (v == null) ? '-' : String(v);
+  var pad = w * 2 - _mqWidth(t);
+  return (pad > 0 ? new Array(pad + 1).join(' ') : '') + t;
+}
+function _mqRule(n) { return new Array(Math.max(n, 10) + 1).join('─'); }
