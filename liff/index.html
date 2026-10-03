@@ -223,6 +223,9 @@
       err_init:'初期化に失敗しました：{msg}', err_trainers:'トレーナー情報の取得に失敗しました。',
       err_slots:'空き枠の取得に失敗しました。', err_myres:'予約の取得に失敗しました（コード：{code}）。',
       err_cancel:'キャンセルに失敗しました（コード：{code}）。', comm_fail:'通信に失敗しました：{msg}',
+      cf_verifying:'確定できたか確認しています…',
+      cf_verify_none:'予約は確定できませんでした。もう一度お試しください。',
+      cf_verify_unknown:'確定できたかどうか確認できませんでした。二重のご予約を避けるため、「マイ予約」をご確認ください。入っていなければ、もう一度お試しください。',
       book_fail:'この時間は予約できませんでした。別の枠をお選びください。', opt_fail:'ご利用チケットを確認できませんでした。',
       confirm_change:'{date} の予約時間を変更します。\n次の画面で新しい時間を選んでください。{note}',
       confirm_change_penalty:'\n本日以降のため、変更時に1回分の消化となります。',
@@ -285,6 +288,9 @@
       err_init:'Initialization failed: {msg}', err_trainers:'Failed to get trainer information.',
       err_slots:'Failed to get available slots.', err_myres:'Failed to get bookings (code: {code}).',
       err_cancel:'Cancellation failed (code: {code}).', comm_fail:'Connection failed: {msg}',
+      cf_verifying:'Checking whether your booking went through…',
+      cf_verify_none:'The booking was not completed. Please try again.',
+      cf_verify_unknown:'We could not confirm whether the booking went through. To avoid a duplicate, please check "My bookings" first, and try again only if it is not there.',
       book_fail:'This time could not be booked. Please choose another slot.', opt_fail:'Could not verify your ticket.',
       confirm_change:'Change the time of your {date} booking.\nChoose a new time on the next screen.{note}',
       confirm_change_penalty:'\nFrom today onward, changing counts as one used session.',
@@ -347,6 +353,9 @@
       err_init:'初始化失败：{msg}', err_trainers:'获取教练信息失败。',
       err_slots:'获取可预约时段失败。', err_myres:'获取预约失败（代码：{code}）。',
       err_cancel:'取消失败（代码：{code}）。', comm_fail:'通信失败：{msg}',
+      cf_verifying:'正在确认预约是否已完成…',
+      cf_verify_none:'预约未能完成。请再试一次。',
+      cf_verify_unknown:'无法确认预约是否已完成。为避免重复预约，请先查看“我的预约”，若没有再重新预约。',
       book_fail:'该时间无法预约。请选择其他时段。', opt_fail:'无法确认您的次卡。',
       confirm_change:'更改您 {date} 的预约时间。\n请在下一屏选择新的时间。{note}',
       confirm_change_penalty:'\n当天及以后更改将消耗一次。',
@@ -409,6 +418,9 @@
       err_init:'初始化失敗：{msg}', err_trainers:'取得教練資訊失敗。',
       err_slots:'取得可預約時段失敗。', err_myres:'取得預約失敗（代碼：{code}）。',
       err_cancel:'取消失敗（代碼：{code}）。', comm_fail:'連線失敗：{msg}',
+      cf_verifying:'正在確認預約是否已完成…',
+      cf_verify_none:'預約未能完成。請再試一次。',
+      cf_verify_unknown:'無法確認預約是否已完成。為避免重複預約，請先查看「我的預約」，若沒有再重新預約。',
       book_fail:'此時間無法預約。請選擇其他時段。', opt_fail:'無法確認您的堂票。',
       confirm_change:'變更您 {date} 的預約時間。\n請於下一個畫面選擇新的時間。{note}',
       confirm_change_penalty:'\n當天及之後變更將消耗一次。',
@@ -2367,6 +2379,43 @@
     if (wasTrainer) { loadTrainerReservations(); } else { loadHome(); }   // トレーナーは管理一覧／会員はホームへ
   }
   on('confirmHome', goHome);
+  // ============================================================
+  // 予約が本当に入ったかを確かめる（2026-10-03）
+  // ============================================================
+  //   ★なぜ要るのか
+  //     GASの応答が20秒を超えると _rawApi が見切って reject する。
+  //     ところが**サーバー側では予約が成立している**ことがある。
+  //     実際 2026-10-03 に「通信に失敗しました：サーバー応答がタイムアウトしました」が
+  //     出たにもかかわらず予約は入っていた。それまでの作りは失敗と断定して
+  //     ボタンを押せる状態に戻していたので、顧客がもう一度押せば**二重予約**になる。
+  //   ★だから「失敗」と断定せず、予約表を見てから決める。
+  //     true  … 入っていた（＝成功として扱う）
+  //     false … 入っていなかった（＝もう一度どうぞ）
+  //     null  … 確かめられなかった（＝押させない。自分で確かめてもらう）
+  function _sameStart(a, b){
+    // 表記の揺れ（UTC表記とローカル表記）で取り違えないよう、時刻そのもので比べる
+    var x = new Date(String(a || '')).getTime();
+    var y = new Date(String(b || '')).getTime();
+    return isFinite(x) && isFinite(y) && x === y;
+  }
+  function _verifyBooked(req){
+    var want = String(req.newStartISO || req.startISO || '');
+    if (!want) return Promise.resolve(null);
+    // 代行はトレーナーの予約表、本人は自分の予約表を見る。
+    //   同じトレーナーの同じ時刻に2件は入らないので、時刻の一致で足りる。
+    var q = state.proxyMode
+      ? { action:'line_getTrainerReservations' }
+      : { action:'line_getMyReservations' };
+    return api(q).then(function(res){
+      if (!res || res.success !== true || !res.reservations) return null;   // 読めていない＝不明
+      var list = res.reservations;
+      for (var i = 0; i < list.length; i++) {
+        if (_sameStart(list[i] && list[i].startISO, want)) return true;
+      }
+      return false;
+    }).catch(function(){ return null; });
+  }
+
   on('weekHome', goHome);
   on('confirmBtn', function(){
     if (!state.optReady || state.optError) return;   // 二重防御：選択肢が確定していない状態では送らない
@@ -2403,7 +2452,36 @@
           errEl.textContent = res.message || t('book_fail');
           errEl.hidden = false;
         }
-      }).catch(function(e){ btn.disabled=false; btn.textContent=t('cf_submit'); errEl.textContent=t('comm_fail',{msg:e}); errEl.hidden=false; });
+      }).catch(function(e){
+        // ★ボタンをここで戻さない。戻すと、成立しているのに押し直せてしまう。
+        errEl.textContent = t('cf_verifying'); errEl.hidden = false;
+        btn.textContent = t('cf_verifying');
+        _verifyBooked(req).then(function(found){
+          if (found === true) {
+            // 入っていた。完了として扱う（成功時と同じ文面を出す）
+            var s2 = state.selected;
+            var tag2 = _isTransfer ? t('done_tag_transfer') : state.changeMode ? t('done_tag_change') : state.proxyMode ? t('done_tag_proxy') : '';
+            document.getElementById('doneDetail').textContent =
+              (state.proxyMode ? state.proxyCustomerName + t('done_cust_sep') : '')
+              + state.trainerName + t('done_sep') + s2.date + ' ' + s2.startTime + '〜' + s2.endTime + tag2;
+            state.changeMode = false; state.changeReservationId = ''; state.transferMode = false;
+            state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = '';
+            state.useTransfer = false; state.repeatCount = 1; state._repaint = null;
+            btn.disabled = false; btn.textContent = t('cf_submit'); errEl.hidden = true;
+            show('s-done');
+            return;
+          }
+          if (found === false) {
+            // 入っていない。ここで初めて押し直してよい。
+            btn.disabled = false; btn.textContent = t('cf_submit');
+            errEl.textContent = t('cf_verify_none');
+            return;
+          }
+          // 確かめられなかった。**押させない。** 二重予約の方が取り返しがつかない。
+          btn.textContent = t('cf_submit');
+          errEl.textContent = t('cf_verify_unknown');
+        });
+      });
   });
 
   on('doneClose', function(){ if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } loadHome(); });   // アプリを閉じず残数更新してホームへ（連続予約対応）
