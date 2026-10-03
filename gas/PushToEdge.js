@@ -1069,6 +1069,11 @@ function buildCalSyncPayload(nowMs) {
     horizonEnd: horizonEnd.getTime(),
     ruleVersion: LB_CALSYNC_RULE_VERSION,
     flag1f: _calsyncUse1F() ? 'on' : 'off',
+    // ★固定枠の持ち主（hidden なトレーナー）の曜日×時間帯（2026-10-03）。
+    //   Worker側がこれを持っていないと、その人の枠が本来出ない曜日・時間にも出る。
+    //   世代の一部として保存し、読み取り側が同じ条件で絞れるようにする。
+    //   未設定なら null（制限なし）。
+    ownerWindow: _lbOwnerSlotWindow(),
     // 読み終えた時刻。遅れて届いた押し出しで鮮度を偽らないための印。
     //   3分前に読んだ内容がいま届くと、確認時刻が「いま」になって古い内容が新鮮に見える。
     pushedAt: now.getTime(),
