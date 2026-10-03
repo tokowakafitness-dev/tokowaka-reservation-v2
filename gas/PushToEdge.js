@@ -274,8 +274,11 @@ function _edgeReservations() {
 //   そのため「読めなかった」と「本当に0件」を区別する必要がある。
 //   読めなかったときに [] を返すと、全件を消してしまう。
 function _edgeRecurring() {
-  var sh = _lbRecurSheet();
-  if (!sh) return null;                     // 読めなかった（0件ではない）＝送らない
+  //   ★シートを作らない版を使う。_lbRecurSheet は無ければ新規作成するため、
+  //     元シートが誤って消えたときに空シートが生まれ、「本当に0件」として
+  //     D1の固定枠を全部消してしまう（2026-10-03・Codexの4回目の判定）。
+  var sh = _lbRecurSheetReadOnly();
+  if (!sh) return null;                     // 無い／読めなかった（0件ではない）＝送らない
   if (sh.getLastRow() < 2) return [];       // 本当に1件も無い
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
   var out = [];

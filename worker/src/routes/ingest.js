@@ -240,7 +240,11 @@ async function ingest(request, env) {
   let removed = 0;
   // ★0件で final を受けても消さない。元のシートが一時的に読めなかっただけの可能性がある。
   //   顧客や予約がまるごと消えると、会員が「未登録」に見え、予約も全部消える。
-  if (body.final && full && !conf.keepStale && rows.length === 0 && body.allowEmpty !== true) {
+  //   ★allowEmpty を名乗れるのは固定枠だけに限る（2026-10-03・Codexの4回目の判定）。
+  //     送り手を信用して全表で許すと、どれか1つの表が一時的に0件になっただけで
+  //     全件が消える。受け取る側でも二重に縛る。
+  const mayBeEmpty = body.allowEmpty === true && kind === 'recurring';
+  if (body.final && full && !conf.keepStale && rows.length === 0 && !mayBeEmpty) {
     // ★同期時刻も押さない（2026-10-03・Codex指摘）。
     //   元データが読めなかった疑いがあるから削除を止めたのに、
     //   全体を「いま同期した」ことにすると、古い行がそのまま新しい顔で使われる。

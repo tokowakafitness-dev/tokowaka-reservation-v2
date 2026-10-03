@@ -5620,10 +5620,12 @@ function _lbTrainerCustomers(trainerId) {
 //   ★この関数は「map に載っている担当トレーナーID」を受け取る。シートを二度読まない。
 function _lbTrainerMaySeeCustomer(tr, ownerTrainerId) {
   if (!tr) return false;
-  if (_lbIsOwnerRole(tr)) return true;
-  // ★「判定できない」（顧客が見つからない・シートが読めない）は**見せない**。
-  //   ここを「担当なし」と同じ扱いにすると、実在しない顧客IDを投げるだけで通る。
+  // ★「判定できない」（顧客が見つからない・シートが読めない）は**誰にも通さない。**
+  //   オーナーより先に見る（2026-10-03・Codexの4回目の判定）。
+  //   後ろに置くと、オーナーが実在しない顧客IDで体組成を書けてしまい、
+  //   誰のものでもない記録が残る。権限の話ではなくデータの整合の話。
   if (ownerTrainerId === null || ownerTrainerId === undefined) return false;
+  if (_lbIsOwnerRole(tr)) return true;
   var owner = String(ownerTrainerId);
   if (!owner) return true;                                  // 実在して担当なし＝誰が見てもよい
   return owner === String((tr && tr.trainerId) || '');
@@ -6298,6 +6300,14 @@ function _lbTruthy(v) { var s = String(v).toLowerCase(); return v === true || s 
 function _lbValidWeekday(w) { var n = Number(w); return _lbIsFiniteNum(n) && n >= 0 && n <= 6 && Math.floor(n) === n; }
 function _lbValidTimeHHmm(s) { return /^([01]?\d|2[0-3]):[0-5]\d$/.test(String(s == null ? '' : s)); }
 
+// 同期用：**シートを作らずに**取るだけ（2026-10-03・Codexの4回目の判定）。
+//   _lbRecurSheet は無ければ新規作成する。押し出しがこれを使うと、
+//   元シートが誤って消えたときに空シートが生まれ、「本当に0件」として
+//   D1の固定枠を全部消してしまう。読むだけのときはこちらを使う。
+function _lbRecurSheetReadOnly() {
+  try { return _lbSs().getSheetByName(LB_RECUR_SHEET) || null; } catch (e) { return null; }
+}
+
 function _lbRecurSheet() {
   var ss = _lbSs(); var sh = ss.getSheetByName(LB_RECUR_SHEET);
   if (!sh) {
@@ -6432,16 +6442,20 @@ function _lbRecurRowByPattern(patternId) {
 function _lbTrainerCanManageRecur(lineUserId, customerId) {
   var tr = requireTrainer(lineUserId);   // トレーナー/オーナー（active・fail-closed）以外は不可
   if (!tr) return null;
-  var ct = _lbCustTrainerId(customerId);
-  if (!_lbIsOwnerRole(tr) && ct && ct !== String(tr.trainerId)) return null;   // 担当外トレーナーは不可（オーナーは全顧客可）
+  // ★判定は _lbTrainerMaySeeCustomer に一本化する（2026-10-03・Codexの4回目の判定）。
+  //   ここだけ緩い版（_lbCustTrainerId）を使っており、名簿が読めないときに
+  //   「担当なし」と解釈されて**担当外の顧客の固定枠を削除できる**状態だった。
+  if (!_lbTrainerMaySeeCustomer(tr, _lbCustOwnerOf(customerId))) return null;
   return tr;
 }
 
 // ---- トレーナー/オーナー（固定枠の設定・登録・削除はトレーナーアカウント限定）----
 function addRecurringPatternByTrainer(lineUserId, customerId, body) {
   var tr = requireTrainer(lineUserId); if (!tr) return { success: false, code: 'FORBIDDEN' };
-  var ct = _lbCustTrainerId(customerId);
-  if (!_lbIsOwnerRole(tr) && ct && ct !== String(tr.trainerId)) return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみ登録できます。' };
+  // 判定は _lbTrainerMaySeeCustomer に一本化する（同じ規則を2通り書かない）。
+  if (!_lbTrainerMaySeeCustomer(tr, _lbCustOwnerOf(customerId))) {
+    return { success: false, code: 'FORBIDDEN', message: 'この会員の担当トレーナーのみ登録できます。' };
+  }
   return _lbAddRecurPattern(String(customerId), body, _lbIsOwnerRole(tr) ? 'owner' : 'trainer');
 }
 function listRecurringPatternsByTrainer(lineUserId, customerId) {

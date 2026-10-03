@@ -142,14 +142,24 @@ export async function compatTrainerReservations({ env, who, body }) {
   const resvSql = owner
     ? `SELECT reservation_id, customer_id, customer_name, start_at, channel
          FROM reservations WHERE start_at >= ? AND status = 'booked' ORDER BY start_at`
+    // ★GAS側と同じ範囲にする（2026-10-03・Codexの4回目の判定）。
+    //   GAS：予約の担当が自分 **または** 顧客が自分の担当（担当なしを含む）
+    //   以前はここが「予約の担当が自分」だけで、Worker経由にした瞬間に
+    //   **自分の顧客の予約が一覧から消える**（他のトレーナーが代行した分など）。
+    //   見える範囲が経路によって変わるのは、それ自体が不具合。
+    //   なお操作（キャンセル・変更）の権限はGAS側が予約行ごとに判定するので、
+    //   ここで広く見えても、他人の担当予約を動かせるわけではない。
     : `SELECT reservation_id, customer_id, customer_name, start_at, channel
-         FROM reservations WHERE start_at >= ? AND status = 'booked' AND trainer_id = ?
-         ORDER BY start_at`;
+         FROM reservations
+        WHERE start_at >= ? AND status = 'booked'
+          AND (trainer_id = ?
+               OR customer_id IN (SELECT customer_id FROM customers WHERE ${scope.where}))
+        ORDER BY start_at`;
 
   const [custs, resv] = await Promise.all([
     owner ? env.DB.prepare(custSql).all() : env.DB.prepare(custSql).bind(...scope.args).all(),
     owner ? env.DB.prepare(resvSql).bind(now).all()
-          : env.DB.prepare(resvSql).bind(now, who.trainerId).all(),
+          : env.DB.prepare(resvSql).bind(now, who.trainerId, ...scope.args).all(),
   ]);
 
   const reservations = (resv.results || []).map((r) => ({

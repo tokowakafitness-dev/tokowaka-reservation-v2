@@ -59,7 +59,11 @@ eq('①実在して担当なし（空）は見える', maySee(trainer, ''), true
 //   **実在しない顧客IDを投げるだけで通る**状態だった（fail-open）。
 eq('①★判定できない（null）は見せない',      maySee(trainer, null), false);
 eq('①★判定できない（undefined）も見せない', maySee(trainer, undefined), false);
-eq('①★オーナーでも判定できなければ…',       maySee(owner, null), true);   // オーナーは先に通る
+// ★判定できないときは**オーナーでも通さない**（2026-10-03・Codexの4回目の判定）。
+//   後ろに置くと、オーナーが実在しない顧客IDで体組成を書けてしまい、
+//   誰のものでもない記録が残る。権限の話ではなくデータの整合の話。
+eq('①★判定できなければオーナーでも通さない', maySee(owner, null), false);
+eq('①オーナーは実在する他人の担当なら見える', maySee(owner, 't1'), true);
 eq('①オーナーは他人の担当も見える', maySee(owner, 't1'), true);
 eq('①オーナーは誰でも見える',     maySee(owner, 't2'), true);
 eq('①トレーナーでなければ見えない', maySee(null, ''), false);
@@ -124,6 +128,14 @@ eq('①違うIDなら数値でも通さない',   maySee({ trainerId: 1, role: '
 {
   const strict = (LB.match(/function _lbCustOwnerOf[\s\S]*?\n\}/) || [])[0] || '';
   ok('③-2 厳格版がある', !!strict);
+// ★判定できないかどうかを、オーナーより**先に**見ていること
+{
+  const fn = (LB.match(/function _lbTrainerMaySeeCustomer[\s\S]*?\n\}/) || [])[0] || '';
+  const iNull  = fn.indexOf('ownerTrainerId === null');
+  const iOwner = fn.indexOf('_lbIsOwnerRole');
+  ok('③-2★判定不能の確認がオーナー判定より前にある', iNull > 0 && iOwner > iNull,
+     `null=${iNull} owner=${iOwner}`);
+}
   ok('③-2★読めなければ null', /if \(!sh \|\| sh\.getLastRow\(\) < 2\) return null;/.test(strict));
   ok('③-2★見つからなければ null', /return null;\s*\n?\s*\/\/ 見つからない|return null;\s*\/\/ 見つからない/.test(strict)
      || strict.trim().endsWith('return null;\n}'), strict.slice(-120));
@@ -162,6 +174,39 @@ ok('④代行予約の担当判定が残っている',
   /この会員の担当トレーナーのみ代行予約ができます/.test(LB));
 ok('④チケット追加の担当判定が残っている', /function addTicketRefill/.test(LB));
 ok('④固定枠の削除は担当を確かめる', /_lbTrainerCanManageRecur/.test(LB));
+// ★固定枠の追加・削除も厳格版を使っていること（4回目の判定で見つかった漏れ）
+{
+  const manage = (LB.match(/function _lbTrainerCanManageRecur[\s\S]*?\n\}/) || [])[0] || '';
+  ok('④★固定枠の操作が厳格版を使う', /_lbTrainerMaySeeCustomer\(tr, _lbCustOwnerOf/.test(manage));
+  ok('④★固定枠の操作に緩い版が残っていない', !/_lbCustTrainerId\(/.test(manage));
+  const add = (LB.match(/function addRecurringPatternByTrainer[\s\S]*?\n\}/) || [])[0] || '';
+  ok('④★固定枠の追加も厳格版を使う', /_lbTrainerMaySeeCustomer\(tr, _lbCustOwnerOf/.test(add));
+  ok('④★固定枠の追加に緩い版が残っていない', !/_lbCustTrainerId\(/.test(add));
+}
+
+// ---------- 5. ★トレーナー予約一覧の範囲が、GASとWorkerで同じこと ----------
+//   見える範囲が経路によって変わるのは、それ自体が不具合。
+//   Worker経由にした瞬間に「自分の顧客の予約が一覧から消える」（他のトレーナーが
+//   代行した分など）と、トレーナーは何が起きたか分からない。
+//   なお操作（キャンセル・変更）の権限はGASが予約行ごとに判定するので、
+//   広く見えても他人の担当予約を動かせるわけではない。
+{
+  const COMPAT = readFileSync(join(ROOT, 'worker/src/routes/compat.js'), 'utf8');
+
+  // GAS：予約の担当が自分 **または** 顧客が担当範囲（担当なしを含む）に居る
+  ok('⑤GASは「予約担当が自分 or 顧客が担当範囲」',
+     /String\(r\[4\]\) !== String\(tr\.trainerId\) && !_custIds\[String\(r\[2\]\)\]/.test(LB));
+
+  // Worker：同じ条件になっていること
+  const fn = (COMPAT.match(/export async function compatTrainerReservations[\s\S]*?\n\}/) || [])[0] || '';
+  ok('⑤Worker側の一覧が読める', !!fn);
+  ok('⑤★Workerも「予約担当が自分 or 顧客が担当範囲」',
+     /trainer_id = \?\s*\n?\s*OR customer_id IN \(SELECT customer_id FROM customers WHERE/.test(fn),
+     '予約担当だけで絞っていると、自分の顧客の予約が消える');
+  ok('⑤絞り込みの値を渡している', /bind\(now, who\.trainerId, \.\.\.scope\.args\)/.test(fn));
+  // オーナーは全件（どちらも）
+  ok('⑤オーナーは絞らない', /owner\s*\n?\s*\?\s*`SELECT reservation_id[\s\S]{0,200}status = 'booked' ORDER BY/.test(fn));
+}
 
 console.log(`\n${fail ? '❌' : '✅'} 顧客の閲覧範囲（GAS側） 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

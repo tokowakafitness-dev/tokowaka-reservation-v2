@@ -155,11 +155,24 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
   eq('理由を返す', b.skippedDelete, 'EMPTY_SOURCE');
 }
 {
-  // 本当に0件にしたいときは、明示すれば消せる
+  // 本当に0件にしたいときは、明示すれば消せる。
+  //   ★ただし名乗れるのは固定枠だけ（2026-10-03・Codexの4回目の判定）。
+  //     固定枠は最後の1件を消すと次の同期が0件になるため、名乗れないと永久に残る。
+  //     送り手（_edgeRecurring）が「読めなければ送らない」ので名乗ってよい。
   const env = makeEnv();
-  await handleIngest(req({ kind: 'customers', batchId: 301, rows: [], final: true, scope: 'all',
+  await handleIngest(req({ kind: 'recurring', batchId: 301, rows: [], final: true,
     allowEmpty: true, deleteStale: true, scope: 'all' }, 'TEST-SECRET'), env);
-  eq('明示すれば消せる', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), true);
+  eq('★固定枠は明示すれば0件でも消せる',
+     env._sql.some((x) => /DELETE FROM recurring_patterns/.test(x.q)), true);
+}
+{
+  // ★他の表では名乗っても消さない。送り手を信用して全表で許すと、
+  //   どれか1つが一時的に0件になっただけで全件が消える。受け取る側でも縛る。
+  const env = makeEnv();
+  const [, b] = await json(await handleIngest(req({ kind: 'customers', batchId: 302, rows: [],
+    final: true, allowEmpty: true, deleteStale: true, scope: 'all' }, 'TEST-SECRET'), env));
+  eq('★顧客の表は名乗っても0件で消さない', env._sql.some((x) => /DELETE FROM customers/.test(x.q)), false);
+  eq('理由を返す', b.skippedDelete, 'EMPTY_SOURCE');
 }
 
 // ---------- 12. 古いバッチの遅着で巻き戻さない ----------
