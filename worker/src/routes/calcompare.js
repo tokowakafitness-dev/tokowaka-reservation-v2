@@ -335,10 +335,16 @@ async function calcompare(request, env) {
   }
 
   // ---- D1を読む（§7：すべての読み取りが readCalendar を通る）----
+  //   ★鮮度の判定には **実時刻** を渡す（2026-10-03）。
+  //     nowMs は「GASが空き枠を計算した時点」であって、D1が新しいかどうかとは関係ない。
+  //     時点をずらした突き合わせで nowMs をそのまま渡すと、
+  //     「1日前から見ればD1は1日先のデータ」となって必ず stale になり、
+  //     狙った時点を1つも比べられない（実際そうなった）。
+  //     ずらした時刻を使うのは**空き枠の計算（締め切り判定）だけ**。
   const read = await readCalendar(env, {
     fromMs, toMs, ruleVersion, flag1f,
     requiredCalendars: body.requiredCalendars,
-    nowMs,
+    nowMs: at,          // 鮮度は実時刻で見る
   });
 
   // ---- 使えないなら比較せず、理由を記録する（「不一致」と混ぜない）----

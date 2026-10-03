@@ -332,6 +332,29 @@ const fmt = (ms) => jstDateStr(ms) + ' ' + jstTimeStr(ms);
   const [s3, b3] = await send(env, comparePayload({ nowMs: Date.now() + 20 * day, sweep: true }));
   ok('★sweep なら未来にずらしても受ける', s3 === 200 && b3.code !== 'STALE_NOW');
 
+  // ★鮮度は実時刻で見る／空き枠の計算だけ、ずらした時刻を使う（2026-10-03）
+  //
+  //   nowMs は「GASが空き枠を計算した時点」であって、D1が新しいかどうかとは関係ない。
+  //   鮮度の判定に nowMs を渡すと、「1日前から見ればD1は1日先のデータ」となって
+  //   必ず stale になり、狙った時点を1つも比べられない（本番で実際にそうなった）。
+  {
+    const SRC = readFileSync(join(HERE, '../src/routes/calcompare.js'), 'utf8');
+    ok('★鮮度の判定には実時刻を渡す', /nowMs: at,\s*\/\/ 鮮度は実時刻で見る/.test(SRC));
+    ok('★空き枠の計算にはずらした時刻を渡す',
+       /slotsFromEvents\(read\.events, \{\s*nowMs, trainers/.test(SRC));
+    ok('★理由を書いている', /nowMs は「GASが空き枠を計算した時点」/.test(SRC));
+  }
+  // 実際に動かして確かめる：7日前でも比較できる（stale にならない）
+  for (const [name, back] of [['1日前', day], ['7日前', 7 * day], ['30日前', 30 * day]]) {
+    const [s8, b8] = await send(env, comparePayload({ nowMs: Date.now() - back, sweep: true }));
+    ok('★sweep の ' + name + ' が stale にならない',
+       s8 === 200 && b8.compared !== false);
+  }
+  {
+    const [s9, b9] = await send(env, comparePayload({ nowMs: Date.now() + 20 * day, sweep: true }));
+    ok('★未来にずらしても stale にならない', s9 === 200 && b9.compared !== false);
+  }
+
   // sweep を立てなければ、これまでどおり拒否する（本番の押し出しは守る）
   const [s4, b4] = await send(env, comparePayload({ nowMs: Date.now() - day }));
   eq('★sweep なしなら従来どおり拒否', [s4, b4.code], [409, 'STALE_NOW']);
