@@ -37,7 +37,7 @@ jobs:
       DEPLOY_ID: AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ
       SCRIPT_ID: 1iQyWD9ysH2zrdc6wn5j9wHUV_busRmZWOHFhigNNI9bIFuoGL9Cu3kab
       CLASP_VERSION: 3.3.0
-      MIN_VERSIONS_LEFT: '12'        # 残りがこれ以下なら反映しない（戻す分も要る）
+      MIN_VERSIONS_LEFT: '5'        # 残りがこれ以下なら反映しない（戻す分も要る）
     steps:
       # SHAで固定する。タグは動かせるため、タグ指定は固定になっていない。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
