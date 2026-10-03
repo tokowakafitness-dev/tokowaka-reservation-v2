@@ -145,6 +145,25 @@ ok('⑦読み込みにLINEの部品の時間が入る', /_perfBoot[\s\S]{0,900}s
 ok('⑦計測パネルが経路を描いている', /_perfRender[\s\S]{0,1200}_perfRoute\(\)/.test(HTML));
 // 版の印。端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために要る。
 ok('⑦版の印が定義されている', /var LIFF_BUILD = '[^']+'/.test(CODE));
+
+// ---------- ⑨ Workerを使わなかった理由が必ず残ること ----------
+//   成功だけを記録していたため、内訳に boot だけが出ているとき
+//   「呼ばなかった」のか「呼んで断られた」のかが区別できなかった（2026-10-03）。
+//   失敗が黙って消えるのは計測のいちばん悪い欠陥。Codexの指摘で入れた。
+ok('⑨使わなかった理由を残す関数がある', /function _edgeSkip\(plain, why\)/.test(CODE));
+ok('⑨書き込み直後は理由を残す',
+  /EDGE_HOME_ACTIONS\[plain\][\s\S]{0,200}_edgeSkip\(plain, '書き込み直後/.test(CODE));
+ok('⑨窓口に無いときも理由を残す', /_edgeSkip\(plain, '窓口なし'\)/.test(CODE));
+ok('⑨断られたら理由と時間を残す', /_perfAdd\('edgeNG:' \+ plain[\s\S]{0,120}j\.code/.test(CODE));
+ok('⑨通信が転んでも理由と時間を残す', /AbortError[\s\S]{0,160}_perfAdd\('edgeNG:'/.test(CODE));
+// 黙って null を返す道が残っていないこと（理由を残さず捨てない）
+{
+  const fn = (HTML.match(/function _edgeTry\(params\)\{[\s\S]*?\n  \}/) || [])[0] || '';
+  const silent = (fn.match(/return null;/g) || []).length;
+  const voiced = (fn.match(/_edgeSkip\(/g) || []).length + (fn.match(/_perfAdd\('edgeNG:/g) || []).length;
+  ok('⑨理由を残さず捨てる道が無い', silent <= voiced + 1,
+     `return null が${silent}個、理由を残すのが${voiced}個（+1は書き込みの道）`);
+}
 ok('⑦経路に版の印が出る', /_perfRoute[\s\S]{0,600}LIFF_BUILD/.test(HTML));
 ok('⑦計測パネルが読み込みを描いている', /_perfRender[\s\S]{0,1200}_perfBoot\(\)/.test(HTML));
 
