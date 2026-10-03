@@ -52,7 +52,7 @@ function _edgePost(payload) {
 // 行を分割して送り、最後の塊にだけ final を付ける。
 //   → 途中で失敗したら final が届かないので、Worker側は古い行を消さない（中途半端に消えない）。
 // 押し出し本体から「完全同期かどうか」を渡すための包み
-function _edgePushRowsF(kind, rows, batchId, full) { return _edgePushRows(kind, rows, batchId, full); }
+function _edgePushRowsF(kind, rows, batchId, opts) { return _edgePushRows(kind, rows, batchId, opts); }
 
 // 同じ識別子の行が複数あったら、最後のものだけ残す。
 //   重複したまま送ると、押し出しのたびに互いを上書きし合い、
@@ -73,20 +73,48 @@ function _edgeDedupe(kind, rows) {
   return out;
 }
 
-function _edgePushRows(kind, rows, batchId, full) {
+// ★scope は必ず書く（2026-10-03・Codexの設計レビュー）。
+//
+//   scope … 今回その表の**全件を走査し終えたか**
+//     'all'     … 全件を見て送った（15分ごとの同期・日次の完全同期・10分の枠同期）
+//     'partial' … 一部だけ（予約直後の1人ぶん・1トレーナーぶん・時間切れの続き）
+//
+//   deleteStale … 含まれなかった行を**消してよいか**（日次の完全同期だけ）
+//
+//   ★この2つは別物である。
+//     以前は full ひとつで両方を表しており、「全件を送っているのに full=false」
+//     （15分ごとの同期）と「1人ぶんだけで full=false」が区別できなかった。
+//     そのため Worker 側で全体の同期時刻を押す条件を作れず、
+//     1人が予約するたびに予約一覧全体が「たったいま同期した」ことになっていた。
+//
+//   ★既定値を持たせない。書き忘れたら**例外で止める。**
+//     既定を 'partial' にすると、新しい呼び出しを足したときに書き忘れても
+//     黙って「同期時刻を押さない」状態になり、遅くなった理由が分からなくなる。
+//     安全に失敗することと、黙って劣化することは別である。
+function _edgePushRows(kind, rows, batchId, opts) {
+  var _o = opts || {};
+  var scope = _o.scope;
+  if (scope !== 'all' && scope !== 'partial') {
+    throw new Error('_edgePushRows: scope は "all"（全件を走査した）か "partial"（一部だけ）を必ず指定してください。kind=' + kind);
+  }
+  var full = !!_o.deleteStale;
+  if (full && scope !== 'all') {
+    throw new Error('_edgePushRows: 含まれない行を消してよいのは全件を走査したときだけです。kind=' + kind);
+  }
+
   var sent = 0, wrote = 0, skip = 0, i;
   // 元データが読めなかった（null）ときは、何も送らない。
   //   空配列を final 付きで送ると、取り込み側が全行を消してしまう。
   if (rows == null) throw new Error(kind + ' の元データが読めませんでした（送信を中止）');
   rows = _edgeDedupe(kind, rows);
   if (!rows.length) {
-    _edgePost({ kind: kind, batchId: batchId, rows: [], final: true, deleteStale: !!full });
+    _edgePost({ kind: kind, batchId: batchId, rows: [], final: true, deleteStale: full, scope: scope });
     return '0件';
   }
   for (i = 0; i < rows.length; i += EDGE.CHUNK) {
     var chunk = rows.slice(i, i + EDGE.CHUNK);
     var last = (i + EDGE.CHUNK) >= rows.length;
-    var res = _edgePost({ kind: kind, batchId: batchId, rows: chunk, final: last, deleteStale: !!full });
+    var res = _edgePost({ kind: kind, batchId: batchId, rows: chunk, final: last, deleteStale: full, scope: scope });
     sent += chunk.length;
     wrote += Number((res && res.written) || 0);
     skip  += Number((res && res.skipped) || 0);
@@ -592,7 +620,11 @@ function _edgePushHome(customers, batchId, t0, log, full) {
   if (rows.length < all.length) {
     log.push('（残数は時間切れで ' + rows.length + '/' + all.length + ' 件。次回は ' + next + ' 番目から）');
   }
-  return _edgePushRows('home', rows, batchId, full);
+  // ★全員ぶん送れたときだけ 'all'。時間切れで途中までなら 'partial'（Codex指摘・2026-10-03）。
+  //   「_pushToEdgeAllImpl から呼ばれた」ことは全件を見終えたことを意味しない。
+  var _done = (rows.length >= all.length);
+  return _edgePushRows('home', rows, batchId,
+    { scope: _done ? 'all' : 'partial', deleteStale: !!full && _done });
 }
 
 // 契約や予約が変わった会員1人分だけを、その場で押し出す。
@@ -602,7 +634,7 @@ function pushToEdgeHomeFor(customerId, customerName) {
   if (!_edgeEnabled()) return;
   try {
     var rows = _edgeHomeRows([{ id: String(customerId), name: String(customerName || '') }], 0);
-    if (rows.length) _edgePushRows('home', rows, Date.now());
+    if (rows.length) _edgePushRows('home', rows, Date.now(), { scope: 'partial' });
   } catch (e) { Logger.log('[edge] 残数の即時更新に失敗: ' + (e && e.message)); }
 }
 
@@ -655,7 +687,7 @@ function _edgePushReservationsFor(customerId) {
     if (String(all[i].customer_id || '') === String(customerId)) mine.push(all[i]);
   }
   if (!mine.length) return 0;
-  return _edgePushRows('reservations', mine, Date.now());
+  return _edgePushRows('reservations', mine, Date.now(), { scope: 'partial' });
 }
 
 // そのトレーナーの枠だけを送り直す。
@@ -667,7 +699,7 @@ function _edgePushSlotsFor(trainerId) {
     if (String(all[i].trainer_id || '') === String(trainerId)) mine.push(all[i]);
   }
   if (!mine.length) return 0;
-  return _edgePushRows('slots', mine, Date.now());
+  return _edgePushRows('slots', mine, Date.now(), { scope: 'partial' });
 }
 
 // 振り分けの出口から呼ぶ。書き込みが成功したときだけ働く。
@@ -745,21 +777,21 @@ function _pushToEdgeAllImpl(withHome, full) {
 
   var customers = _edgeCustomers();
 
-  step('trainers',     function () { return _edgePushRowsF('trainers', _edgeTrainers(), batchId, full); });
-  step('customers',    function () { return _edgePushRowsF('customers', customers, batchId, full); });
-  step('reservations', function () { return _edgePushRowsF('reservations', _edgeReservations(), batchId, full); });
-  step('recurring',    function () { return _edgePushRowsF('recurring', _edgeRecurring(), batchId, full); });
-  step('slots',        function () { return _edgePushRowsF('slots', _edgeSlotRows(), batchId, full); });
-  step('body',         function () { return _edgePushRowsF('body', _edgeBodyRows(), batchId, full); });
+  step('trainers',     function () { return _edgePushRowsF('trainers', _edgeTrainers(), batchId, { scope: 'all', deleteStale: full }); });
+  step('customers',    function () { return _edgePushRowsF('customers', customers, batchId, { scope: 'all', deleteStale: full }); });
+  step('reservations', function () { return _edgePushRowsF('reservations', _edgeReservations(), batchId, { scope: 'all', deleteStale: full }); });
+  step('recurring',    function () { return _edgePushRowsF('recurring', _edgeRecurring(), batchId, { scope: 'all', deleteStale: full }); });
+  step('slots',        function () { return _edgePushRowsF('slots', _edgeSlotRows(), batchId, { scope: 'all', deleteStale: full }); });
+  step('body',         function () { return _edgePushRowsF('body', _edgeBodyRows(), batchId, { scope: 'all', deleteStale: full }); });
   // 残数計算の入力（シート読み込みは1回にまとめる）
   step('計算入力',      function () {
     return _edgeWithSheetCache(function () {
       var cr = _edgeCalcContracts(customers);
-      var a = _edgePushRowsF('calcContracts', cr, batchId, full);
+      var a = _edgePushRowsF('calcContracts', cr, batchId, { scope: 'all', deleteStale: full });
       var m = (_edgeCalcContracts._meta || []);
-      if (m.length) _edgePushRowsF('calcMeta', m, batchId, full);
-      var b = _edgePushRowsF('calcReservations', _edgeCalcReservations(), batchId, full);
-      var o = _edgePushRowsF('opening', _edgeOpening(customers), batchId, full);
+      if (m.length) _edgePushRowsF('calcMeta', m, batchId, { scope: 'all', deleteStale: full });
+      var b = _edgePushRowsF('calcReservations', _edgeCalcReservations(), batchId, { scope: 'all', deleteStale: full });
+      var o = _edgePushRowsF('opening', _edgeOpening(customers), batchId, { scope: 'all', deleteStale: full });
       return '契約' + a + ' / 予約' + b + ' / 棚卸し' + o;
     });
   });
@@ -786,7 +818,7 @@ function pushToEdgeSlots() {
 function _pushToEdgeSlotsImpl() {
   var batchId = Date.now();
   try {
-    var n = _edgePushRowsF('slots', _edgeSlotRows(), batchId);
+    var n = _edgePushRowsF('slots', _edgeSlotRows(), batchId, { scope: 'all', deleteStale: false });
     Logger.log('[edge] 枠 ' + n);
   } catch (e) { Logger.log('[edge] 枠の押し出しに失敗: ' + (e && e.message)); }
 }
