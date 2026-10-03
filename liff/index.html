@@ -601,6 +601,20 @@
     EDGE_ON = (localStorage.getItem('lb_edge') === '1');
   } catch (e) { EDGE_ON = /[?&#]edge=1/.test(location.href); }
 
+  // 空き枠を「カレンダーの写し（D1）から計算して出す」かどうか（2026-10-03）。
+  //   いまは GAS が計算した空き枠の写し（slots_cache）を配っている。
+  //   こちらを有効にすると、Worker が D1 の予定から**自分で計算**する。
+  //   ★まずオーナーの端末だけで確かめてから全員に広げる。
+  //     URLに ?cal=1 を付けるか、localStorage に lb_cal=1 を入れると有効。?cal=0 で戻る。
+  //   ★有効にしても、使えなければ写し → GAS の順に自動で退避する（三段構え）。
+  //     顧客が「空き枠が出ない」状態にはならない。
+  var USE_CAL = false;
+  try {
+    if (/[?&#]cal=1/.test(location.href)) { localStorage.setItem('lb_cal', '1'); }
+    else if (/[?&#]cal=0/.test(location.href)) { localStorage.removeItem('lb_cal'); }
+    USE_CAL = (localStorage.getItem('lb_cal') === '1');
+  } catch (e) { USE_CAL = /[?&#]cal=1/.test(location.href); }
+
   // GASの操作名 → Workerの窓口。ここに無いものは全てGASへ行く（読み取りだけを載せる）
   var EDGE_MAP = {
     getMemberStatus:              'c_memberStatus',
@@ -646,6 +660,9 @@
 
     var body = { action: act, idToken: idToken, lang: LANG };
     for (var k in params) if (k !== 'action' && k !== 'idToken') body[k] = params[k];
+    // 空き枠を取るときだけ、カレンダーから計算する指定を乗せる（上の USE_CAL）。
+    //   他の窓口には関係ないので付けない。
+    if (USE_CAL && plain === 'getTrainerSlots') body.useCalendar = true;
 
     var t0 = _nowMs();
     var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
