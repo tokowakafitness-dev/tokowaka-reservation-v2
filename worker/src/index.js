@@ -174,6 +174,27 @@ export default {
       return json({ success: false, code: 'FORBIDDEN' }, origin, 403);
     }
 
+    // ④-0 ★読み取りの肩代わりを全部止めるための一行（2026-10-03）
+    //
+    //   EDGE_READS = "off" を wrangler.toml に足して deploy すれば、
+    //   画面に一切触れずに**全員がGASへ戻る**。1分ほどで効く。
+    //
+    //   ★なぜ画面側の既定（EDGE_ON）だけでは足りないか
+    //     1. 画面は端末のキャッシュに載っている。push しても即座には届かない。
+    //     2. 既定を false にしても、鍵の読み方（`!== '0'`）が対で直っていないと
+    //        鍵の無い端末は式のほうで true に戻る。**2026-09-29に実際に起きた。**
+    //        「止めたつもりで止まっていなかった」事故は、止める手段を画面に置いたことが原因。
+    //     止める手段は、画面を経由しない1か所に置く。ここがその1か所。
+    //
+    //   ★対象は画面が呼ぶ窓口（c_ で始まるもの）。
+    //     画面の EDGE_MAP の値がすべて c_ で始まることを機械で検査している
+    //     （worker/test/edge-killswitch.test.js）。新しい窓口の付け忘れで
+    //     「止めたのに一部だけ残る」が起きないようにするため。
+    if (String((env && env.EDGE_READS) || '') === 'off' && /^c_/.test(action)) {
+      return json({ success: false, code: 'FALLBACK', detail: 'EDGE_READS_OFF' }, origin, 200,
+                  { 'X-Worker-Ms': String(Date.now() - t0) });
+    }
+
     // ④ 処理
     const handler = HANDLERS[action];
     if (!handler) {

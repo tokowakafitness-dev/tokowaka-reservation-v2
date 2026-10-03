@@ -223,6 +223,17 @@ async function ingest(request, env) {
   //   含まれなかった＝消えた、ではない。
   // ★古い行を消すのは完全同期のときだけ。
   //   ふだんの押し出しは変わった行しか書かないので、synced_at が古いまま残る行が正常にある。
+  //
+  // ★全体の同期時刻（sync_state）を押すのは**完全同期のときだけ**（2026-10-03・Codex指摘）。
+  //   予約の直後には対象の顧客1人ぶんだけを押し出しており、それにも final が付く。
+  //   以前はそれでも sync_state を押していたため、**定期の全体同期が止まっていても、
+  //   誰か1人が予約するたびに予約一覧全体が「たったいま同期した」ことになっていた。**
+  //   その結果、他の顧客の古い予約行を新しいものとして返しうる。
+  //   これは残数で禁止した「一部だけ届いたのに全体時刻で他の行も若返らせる」
+  //   （2026-09-29の穴）とまったく同じ形。同じ過ちを別の表で繰り返していた。
+  //
+  //   差分で押さなくなると、全体同期が止まった時点から sync_state が古くなり、
+  //   listTooOld が真になって予約一覧はGASへ落ちる。**遅くなるが正しい。**
   if (body.final && full && !conf.keepStale) {
     // この押し出しに含まれなかった＝Google側から消えた行を落とす。
     // final を受け取ったときだけ実行するので、途中で切れても消えない。
@@ -231,7 +242,7 @@ async function ingest(request, env) {
     ).bind(batchId).run();
     removed = (del.meta && del.meta.changes) || 0;
     await stampSync(env, kind, batchId, null);
-  } else if (body.final) {
+  } else if (body.final && full) {
     await stampSync(env, kind, batchId, null);
   }
 

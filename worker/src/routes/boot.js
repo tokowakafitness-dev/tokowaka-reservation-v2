@@ -36,6 +36,13 @@ function monthKeyJst(ms) {
  *   GASが「今月分」と「翌月分」の2つを押し出しているので、そこから選ぶ。
  *   どちらの月でもないとき（翌々月など）は null を返す＝画面はGASに聞き直す。
  */
+// 残数として使える形か。**欠けているものを 0 に変換しない**ための関門。
+//   JSONとして読めるだけでは足りない（上の readHome の★を参照）。
+function _homeShapeOk(h) {
+  if (!h || typeof h !== 'object' || Array.isArray(h)) return false;
+  return ('type' in h);
+}
+
 export async function readHome(env, customerId, targetMs) {
   if (!customerId) return null;
   const row = await env.DB.prepare('SELECT payload, computed_at FROM member_home WHERE customer_id = ?')
@@ -53,6 +60,13 @@ export async function readHome(env, customerId, targetMs) {
     else return null;                      // 持っていない月＝答えない（間違った残数を返さない）
   }
   if (!home) return null;
+  // ★JSONとして読めることと、残数として使えることは別（2026-10-03・Codex指摘）。
+  //   `{"current":{}}` でも JSON.parse は通り、p.current は truthy なので素通りしていた。
+  //   その先で pairRemaining || 0 ・ normalTicketRemaining || 0 と既定値に落ちるため、
+  //   **壊れた写しが「残り0回」として顧客に出る。** 写しが新しければ安全弁も働かない。
+  //   GASが押し出す残数には必ず type が入る（契約が無い会員は type:null）。
+  //   キーごと無いのは「形が壊れている」なので、読めなかったものとして扱う。
+  if (!_homeShapeOk(home)) return null;
 
   // ★鮮度は「その行がいつ計算されたか」だけで見る。
   //   全体の同期時刻と大きい方を取ってはいけない。押し出しは6分で打ち切られ、

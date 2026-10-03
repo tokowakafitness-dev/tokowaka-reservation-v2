@@ -278,9 +278,14 @@ async function readCache(env, trainerId) {
   //   新しい computed_at とあわせて「0件＝空きがありません」として顧客に出る。
   //   写しが壊れているときは「分からない」として退避させる（0件と同じ見た目にしない）。
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  // ★`slots` が配列で入っていなければ、写しとして壊れている（2026-10-03・Codex指摘）。
+  //   以前はここで空配列に倒していたため、`{"rules":{...}}` のような中途半端な写しが
+  //   新しい computed_at とあわせて「空きがありません」として顧客に出た。
+  //   **欠けているものを 0件 に変換しない。** 分からないなら分からないと言う。
+  if (!Array.isArray(raw.slots)) return null;
   const computedAt = Number(row.computed_at);
   return {
-    slots: Array.isArray(raw.slots) ? raw.slots : [],
+    slots: raw.slots,
     rules: (raw.rules && typeof raw.rules === 'object') ? raw.rules : null,
     computedAt: isFinite(computedAt) && computedAt > 0 ? computedAt : null,
   };
