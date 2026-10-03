@@ -302,12 +302,18 @@ function _lbDispatch(params, action, lineUserId, auth) {
     case 'line_maInBodyCard': {
       var _pic = requireTrainer(lineUserId);
       if (!_pic) return { success: false, code: 'FORBIDDEN' };
+      // ★担当外の顧客の体組成を見せない（2026-10-03・Codexの再判定）。
+      //   maInBodyCard_ は顧客IDだけで記録を返すため、ここで止めるしかない。
+      if (!_lbTrainerMaySeeCustomer(_pic, _lbCustOwnerOf(params.customerId))) return { success: false, code: 'FORBIDDEN' };
       try { return maInBodyCard_(_pic, params.customerId); }
       catch (e1) { Logger.log('meal-ai 隔離(card): ' + e1.message); return { success: false, code: 'UNAVAILABLE' }; }
     }
     case 'line_maSaveInBody': {
       var _pis = requireTrainer(lineUserId);
       if (!_pis) return { success: false, code: 'FORBIDDEN' };
+      // ★担当外の顧客の体組成を**書き込めない**ようにする（2026-10-03・Codexの再判定）。
+      //   読み取りより重い。他のトレーナーの顧客の記録に測定値を混ぜられる状態だった。
+      if (!_lbTrainerMaySeeCustomer(_pis, _lbCustOwnerOf(params.customerId))) return { success: false, code: 'FORBIDDEN' };
       try {
         return maSaveInBody_(_pis, params.customerId, {
           date: params.date, w: params.w, pbf: params.pbf,
@@ -3588,6 +3594,12 @@ function getBookingOptions(lineUserId, startISO, customerId) {
   var tr = getTrainerByLine(lineUserId);
   if (tr) {   // 代行：トレーナーは対象顧客を明示
     cid = String(customerId || ''); if (!cid) return { success: false, code: 'BAD_REQUEST' };
+    // ★担当外の顧客の残数内訳（チケット残・ペア残・期限）を見せない（2026-10-03・Codexの再判定）。
+    //   Worker側（compatBookingOptions）は 2026-09-29 に塞いだが、GAS側が塞がれていなかった。
+    //   画面はWorkerが FORBIDDEN を返しても**GASへ落ちる**ので、両方塞がないと意味がない。
+    if (!_lbTrainerMaySeeCustomer(tr, _lbCustOwnerOf(cid))) {
+      return { success: false, code: 'FORBIDDEN', message: 'この会員は他のトレーナーの担当です。' };
+    }
     var msh = _lbSheet(LINE_BOOKING.MAP_SHEET);
     if (msh && msh.getLastRow() >= 2) {
       var mv = msh.getRange(2, 1, msh.getLastRow() - 1, MAP_COL.NOTE).getValues();
@@ -5609,8 +5621,11 @@ function _lbTrainerCustomers(trainerId) {
 function _lbTrainerMaySeeCustomer(tr, ownerTrainerId) {
   if (!tr) return false;
   if (_lbIsOwnerRole(tr)) return true;
-  var owner = String(ownerTrainerId || '');
-  if (!owner) return true;                                  // 担当なし
+  // ★「判定できない」（顧客が見つからない・シートが読めない）は**見せない**。
+  //   ここを「担当なし」と同じ扱いにすると、実在しない顧客IDを投げるだけで通る。
+  if (ownerTrainerId === null || ownerTrainerId === undefined) return false;
+  var owner = String(ownerTrainerId);
+  if (!owner) return true;                                  // 実在して担当なし＝誰が見てもよい
   return owner === String((tr && tr.trainerId) || '');
 }
 
@@ -6292,7 +6307,26 @@ function _lbRecurSheet() {
   return sh;
 }
 
-// customer_line_map から customerId の担当trainer_idを引く（権限判定用）
+// 権限判定のために「この顧客の担当は誰か」を引く（2026-10-03・Codexの再判定）。
+//   ★_lbCustTrainerId との違い：**顧客が見つからない／シートが読めないときに null を返す。**
+//     _lbCustTrainerId は同じ場合も '' を返すため、権限判定に使うと
+//     「担当なし＝誰が見てもよい」と解釈され、**実在しない顧客IDを投げれば通る**（fail-open）。
+//     権限の判定にはこちらだけを使う。_lbCustTrainerId は通知先を引くなど
+//     「担当が分かれば足りる」用途に限る。
+//   返り値： trainerId（担当あり） ／ ''（実在して担当なし） ／ null（判定できない）
+function _lbCustOwnerOf(customerId) {
+  var cid = String(customerId || '');
+  if (!cid) return null;
+  var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!sh || sh.getLastRow() < 2) return null;           // 読めない＝判定できない
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, _lbMapWidth(sh)).getValues();
+  for (var i = 0; i < v.length; i++) {
+    if (String(v[i][MAP_COL.CUSTOMER_ID - 1]) === cid) return String(v[i][MAP_COL.TRAINER_ID - 1] || '');
+  }
+  return null;                                           // 見つからない＝判定できない
+}
+
+// customer_line_map から customerId の担当trainer_idを引く（通知先など）
 function _lbCustTrainerId(customerId) {
   if (!customerId) return '';
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
@@ -6413,7 +6447,7 @@ function addRecurringPatternByTrainer(lineUserId, customerId, body) {
 function listRecurringPatternsByTrainer(lineUserId, customerId) {
   var tr = requireTrainer(lineUserId); if (!tr) return { success: false, code: 'FORBIDDEN' };
   // 判定は _lbTrainerMaySeeCustomer に一本化する（同じ規則を2通り書かない）。
-  if (!_lbTrainerMaySeeCustomer(tr, _lbCustTrainerId(customerId))) return { success: false, code: 'FORBIDDEN' };
+  if (!_lbTrainerMaySeeCustomer(tr, _lbCustOwnerOf(customerId))) return { success: false, code: 'FORBIDDEN' };
   return { success: true, patterns: _lbListRecurFor(String(customerId), 'ja') };
 }
 

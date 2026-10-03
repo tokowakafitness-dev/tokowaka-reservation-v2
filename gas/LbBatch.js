@@ -145,7 +145,7 @@ function lbCustomerCard(lineUserId, customerId) {
   //   **InBody（maInBodyCard_）は顧客IDだけで体組成の記録を返す。**
   //   ここで止めないと、他のトレーナーの担当顧客の身体データが見える。
   //   規則は代行予約・固定枠と同じ（オーナーは全員／担当なしは誰でも／担当が他人なら不可）。
-  if (!_lbTrainerMaySeeCustomer(pic, _lbCustTrainerId(customerId))) {
+  if (!_lbTrainerMaySeeCustomer(pic, _lbCustOwnerOf(customerId))) {
     return { success: false, code: 'FORBIDDEN', message: 'この会員は他のトレーナーの担当です。' };
   }
 

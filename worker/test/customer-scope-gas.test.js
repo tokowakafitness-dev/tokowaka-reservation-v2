@@ -52,9 +52,14 @@ const owner   = { trainerId: 't9', role: 'owner' };
 
 eq('①自分の担当は見える',        maySee(trainer, 't1'), true);
 eq('①★他のトレーナーの担当は見えない', maySee(trainer, 't2'), false);
-eq('①担当なし（空）は見える',     maySee(trainer, ''), true);
-eq('①担当なし（null）も見える',   maySee(trainer, null), true);
-eq('①担当なし（undefined）も見える', maySee(trainer, undefined), true);
+eq('①実在して担当なし（空）は見える', maySee(trainer, ''), true);
+// ★「判定できない」は見せない（2026-10-03・Codexの再判定）。
+//   顧客が見つからない／シートが読めないとき、以前は '' が返って
+//   「担当なし＝誰が見てもよい」と解釈されていた。
+//   **実在しない顧客IDを投げるだけで通る**状態だった（fail-open）。
+eq('①★判定できない（null）は見せない',      maySee(trainer, null), false);
+eq('①★判定できない（undefined）も見せない', maySee(trainer, undefined), false);
+eq('①★オーナーでも判定できなければ…',       maySee(owner, null), true);   // オーナーは先に通る
 eq('①オーナーは他人の担当も見える', maySee(owner, 't1'), true);
 eq('①オーナーは誰でも見える',     maySee(owner, 't2'), true);
 eq('①トレーナーでなければ見えない', maySee(null, ''), false);
@@ -111,6 +116,44 @@ eq('①違うIDなら数値でも通さない',   maySee({ trainerId: 1, role: '
   ok('③Worker側の関数が読める', !!workerFn);
   ok('③★Worker側も担当トレーナーIDと突き合わせている',
      /trainerId/.test(workerFn) && /default_trainer_id|tid/.test(workerFn));
+}
+
+// ---------- 3-2. ★顧客IDを受け取る入口がすべて厳格版を使っていること ----------
+//   権限判定に _lbCustTrainerId（見つからなくても '' を返す）を使うと fail-open になる。
+//   判定用は _lbCustOwnerOf（見つからなければ null）だけを使う。
+{
+  const strict = (LB.match(/function _lbCustOwnerOf[\s\S]*?\n\}/) || [])[0] || '';
+  ok('③-2 厳格版がある', !!strict);
+  ok('③-2★読めなければ null', /if \(!sh \|\| sh\.getLastRow\(\) < 2\) return null;/.test(strict));
+  ok('③-2★見つからなければ null', /return null;\s*\n?\s*\/\/ 見つからない|return null;\s*\/\/ 見つからない/.test(strict)
+     || strict.trim().endsWith('return null;\n}'), strict.slice(-120));
+
+  // 判定に厳格版を使っている入口の数を数える（1つでも緩い版が混ざったら落とす）
+  const guards = [...(LB + BATCH).matchAll(/_lbTrainerMaySeeCustomer\((\w+), ([^)]+)\)/g)]
+                   .map((m) => m[2].trim());
+  ok('③-2 判定の呼び出しを拾えた', guards.length >= 4, `${guards.length}個`);
+  const loose = guards.filter((g) => /_lbCustTrainerId\(/.test(g));
+  eq('③-2★権限判定に緩い版（_lbCustTrainerId）を使っていない', loose, []);
+}
+
+// ---------- 3-3. ★顧客IDを受け取るGASの入口に漏れが無いこと ----------
+//   画面はWorkerが FORBIDDEN を返しても**GASへ落ちる**（成功以外はすべてフォールバック）。
+//   だからWorkerだけ塞いでも意味がない。GAS側の入口を1つずつ確かめる。
+{
+  const codeLB = code(LB);
+  // InBody の読み取りと**書き込み**。書き込みは他人の記録に測定値を混ぜられるので重い。
+  const iCard = codeLB.indexOf("case 'line_maInBodyCard'");
+  const iSave = codeLB.indexOf("case 'line_maSaveInBody'");
+  ok('③-3 InBody の入口がある', iCard >= 0 && iSave >= 0);
+  ok('③-3★InBody の読み取りに担当照合がある',
+     /line_maInBodyCard[\s\S]{0,400}_lbTrainerMaySeeCustomer/.test(codeLB));
+  ok('③-3★InBody の書き込みに担当照合がある',
+     /line_maSaveInBody[\s\S]{0,400}_lbTrainerMaySeeCustomer/.test(codeLB));
+  // 予約オプション（チケット残・ペア残・期限が出る）
+  const opt = (codeLB.match(/function getBookingOptions[\s\S]*?\n\}/) || [])[0] || '';
+  ok('③-3★予約オプションに担当照合がある', /_lbTrainerMaySeeCustomer/.test(opt));
+  ok('③-3 予約オプションは照合してから名簿を読む',
+     opt.indexOf('_lbTrainerMaySeeCustomer') < opt.indexOf('MAP_SHEET'));
 }
 
 // ---------- 4. 書き込み側の判定も残っていること（退行していないこと）----------

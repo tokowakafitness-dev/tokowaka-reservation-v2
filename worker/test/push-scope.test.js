@@ -101,7 +101,7 @@ ok('⑥予約を「予約中だけ」に絞って写していない',
 // 固定枠：**行ごと消える**（deleteRecurringPattern が deleteRow する）。
 //   状態では表せないので、ふだんの同期でも「含まれなかった行＝消えた行」として落とす。
 ok('⑥★固定枠はふだんの同期でも消す',
-  /_edgePushRowsF\('recurring', _edgeRecurring\(\), batchId, \{ scope: 'all', deleteStale: true \}\)/.test(SRC));
+  /_edgePushRowsF\('recurring', _edgeRecurring\(\), batchId, \{ scope: 'all', deleteStale: true/.test(SRC));
 
 // ★そのためには「読めなかった」と「本当に0件」を区別しなければならない。
 //   読めなかったときに 0件 を送ると、**全件が消える。**
@@ -122,6 +122,22 @@ ok('⑥予約も読めなかったら null', /if \(!sh\) return null;[\s\S]{0,12
 {
   const always = [...SRC.matchAll(/_edgePushRowsF\('(\w+)',[^;]*?deleteStale: true/gs)].map((m) => m[1]);
   eq('⑥ふだんの同期で消すのは固定枠だけ', always, ['recurring']);
+}
+
+// ---------- 7. ★最後の1件が消せること（2026-10-03・Codexの再判定）----------
+//   受け取る側は、元データが読めなかった事故を疑って**0件の完全同期では消さない**。
+//   そのため固定枠の最後の1件を消すと、次の同期が0件になり、D1に残り続けていた。
+//   送る側で「本当に0件だ」と名乗れる表だけ、それを名乗る。
+ok('⑦固定枠は0件でも消すと名乗る',
+  /_edgePushRowsF\('recurring'[^;]*allowEmpty: true/.test(SRC));
+ok('⑦0件の送信にも名乗りを載せている',
+  /rows: \[\], final: true, deleteStale: full, scope: scope, allowEmpty: allowEmpty/.test(SRC));
+// ★名乗ってよいのは「読めなかったら送らない」表だけ。消す指定と必ずセット。
+ok('⑦★消す指定なしでは名乗れない',
+  /allowEmpty && !full[\s\S]{0,160}throw new Error/.test(SRC));
+{
+  const named = [...SRC.matchAll(/_edgePushRowsF?\('(\w+)',[^;]*?allowEmpty: true/gs)].map((m) => m[1]);
+  eq('⑦名乗っているのは固定枠だけ', named, ['recurring']);
 }
 
 console.log(`\n${fail ? '❌' : '✅'} 押し出しの走査範囲 検証: ${pass} passed / ${fail} failed`);

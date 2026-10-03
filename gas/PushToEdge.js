@@ -101,6 +101,15 @@ function _edgePushRows(kind, rows, batchId, opts) {
   if (full && scope !== 'all') {
     throw new Error('_edgePushRows: 含まれない行を消してよいのは全件を走査したときだけです。kind=' + kind);
   }
+  // ★0件のときに「本当に0件だ」と名乗るか（2026-10-03・Codexの再判定）。
+  //   受け取る側は、元データが読めなかった事故を疑って**0件の完全同期では消さない**。
+  //   そのため最後の1件を消したとき、次の同期が0件になり、D1に残り続けていた。
+  //   「読めなかった」と「本当に0件」を送る側で区別できる表だけ、これを立てる。
+  //   （固定枠は _edgeRecurring が読めないとき null を返して送信ごと中止する）
+  var allowEmpty = !!_o.allowEmpty;
+  if (allowEmpty && !full) {
+    throw new Error('_edgePushRows: allowEmpty は消す指定とあわせてのみ使えます。kind=' + kind);
+  }
 
   var sent = 0, wrote = 0, skip = 0, i;
   // 元データが読めなかった（null）ときは、何も送らない。
@@ -108,7 +117,7 @@ function _edgePushRows(kind, rows, batchId, opts) {
   if (rows == null) throw new Error(kind + ' の元データが読めませんでした（送信を中止）');
   rows = _edgeDedupe(kind, rows);
   if (!rows.length) {
-    _edgePost({ kind: kind, batchId: batchId, rows: [], final: true, deleteStale: full, scope: scope });
+    _edgePost({ kind: kind, batchId: batchId, rows: [], final: true, deleteStale: full, scope: scope, allowEmpty: allowEmpty });
     return '0件';
   }
   for (i = 0; i < rows.length; i += EDGE.CHUNK) {
@@ -792,7 +801,11 @@ function _pushToEdgeAllImpl(withHome, full) {
   //   件数が少なく（顧客ごとに数件）、全件を毎回送っているので、ここで消して問題ない。
   //   元データが読めなかったときは _edgeRecurring が null を返して送信ごと中止する。
   //   0件だった場合は Worker 側が EMPTY_SOURCE で削除を止める（全消しを防ぐ）。
-  step('recurring',    function () { return _edgePushRowsF('recurring', _edgeRecurring(), batchId, { scope: 'all', deleteStale: true }); });
+  //   ★0件でも消す（allowEmpty）。最後の1件を消したとき、次の同期は0件になる。
+  //     受け取る側は事故を疑って0件では消さないので、ここで「本当に0件だ」と名乗らないと
+  //     **最後の固定枠だけが永久に残る**（2026-10-03・Codexの再判定）。
+  //     名乗ってよいのは、読めなかったときに null を返して送信ごと中止するから。
+  step('recurring',    function () { return _edgePushRowsF('recurring', _edgeRecurring(), batchId, { scope: 'all', deleteStale: true, allowEmpty: true }); });
   step('slots',        function () { return _edgePushRowsF('slots', _edgeSlotRows(), batchId, { scope: 'all', deleteStale: full }); });
   step('body',         function () { return _edgePushRowsF('body', _edgeBodyRows(), batchId, { scope: 'all', deleteStale: full }); });
   // 残数計算の入力（シート読み込みは1回にまとめる）
