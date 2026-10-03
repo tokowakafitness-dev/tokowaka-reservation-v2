@@ -1418,9 +1418,19 @@ function pushCalCompare(nowMsOpt) {
   if (!url || !secret) return { ok: false, code: 'EDGE_NOT_CONFIGURED' };
 
   var nowMs = (nowMsOpt != null) ? Number(nowMsOpt) : new Date().getTime();
-  var now = new Date(nowMs);
-  var horizonEnd = _lbBookingHorizonEnd(now);
-  var fromMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).getTime();
+
+  // ★比べる範囲は「実時刻の地平」に固定する（2026-10-03）。
+  //   D1の地平は押し出した時点（＝実時刻）で決まる。時点をずらすと、
+  //   ずらした時点の地平（例：1日前なら前日0時から／25日なら翌月末まで）が
+  //   D1の地平からはみ出し、**比較そのものが成立しない**（horizon で落ちる）。
+  //   実際、最初の実行で10時点が horizon で止まった。
+  //   範囲は固定し、ずらすのは「いま」だけにする。
+  //   ★この結果、25日の解放や月末の地平の伸びは比較できない（範囲がD1にない）。
+  //     そこは実際にその日が来たときに確認する。範囲を無理に広げてD1側の地平を
+  //     動かすと、公開中の世代を壊すので採らない。
+  var realNow = new Date();
+  var horizonEnd = _lbBookingHorizonEnd(realNow);
+  var fromMs = new Date(realNow.getFullYear(), realNow.getMonth(), realNow.getDate(), 0, 0, 0).getTime();
   var toMs = horizonEnd.getTime();
 
   // ★GASの答え。ここは本番と同じ関数を使う（別の実装で作ると比較の意味がない）。
@@ -1510,6 +1520,9 @@ function calCompareSweepText() {
   points.push({ label: 'いま', ms: nowMs });
   for (var d = 1; d <= 7; d++) points.push({ label: d + '日前', ms: nowMs - d * day });
   // 月のかたちが変わる時点（25日の翌月解放・月末・月初）
+  //   ★これらは「その時点の地平」がD1の地平と違うため、比較できないことがある。
+  //     比較できるかは Worker が判定する（horizon）。出しておいて、
+  //     できなかったものは理由とともに一覧に残す（黙って消さない）。
   var y = now.getFullYear(), mo = now.getMonth();
   points.push({ label: '今月25日 10時（翌月の解放）', ms: new Date(y, mo, 25, 10, 0, 0).getTime() });
   points.push({ label: '今月24日 10時（解放の前日）', ms: new Date(y, mo, 24, 10, 0, 0).getTime() });
@@ -1566,13 +1579,20 @@ function calCompareSweepText() {
     for (var k = 0; k < details.length; k++) say(details[k]);
   }
   say('');
-  if (ngCount === 0 && skipCount === 0) {
-    say('✅ すべての時点で一致しました。読み取りをD1へ切り替える判断材料が揃っています。');
-  } else if (ngCount === 0) {
-    say('△ 食い違いはありませんが、比較できなかった時点があります（' + skipCount + '件）。');
-    say('   理由が stale なら押し出しの直後に実行し直してください。');
-  } else {
+  if (ngCount > 0) {
     say('⛔ 食い違いがあります。切り替える前に、上の中身を潰してください。');
+  } else if (okCount === 0) {
+    say('⛔ 1つも比較できていません。切り替えの判断材料がありません。');
+  } else if (skipCount === 0) {
+    say('✅ すべての時点で一致しました。読み取りをD1へ切り替える判断材料が揃っています。');
+  } else {
+    // 比較できた分はすべて一致している。できなかった分の理由で意味が変わる。
+    say('△ 比較できた ' + okCount + ' 時点はすべて一致しました（食い違い 0）。');
+    say('   比較できなかった ' + skipCount + ' 時点は、理由を見て判断してください。');
+    say('     horizon … その時点の地平がD1の範囲外。**実装の問題ではない**。');
+    say('               25日の解放・月末の地平の伸びは、その日が来たときに確認する。');
+    say('     stale   … D1が古い。押し出しの直後に実行し直す。');
+    say('     rule / flag / calendars … 設定が食い違っている。先にそこを揃える。');
   }
   return out.join('\n');
 }
