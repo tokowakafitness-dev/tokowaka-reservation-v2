@@ -8,7 +8,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  :root { --pri:#1b2a47; --acc:#b8965a; --line:#e6ddcd; --ok:#2e7d32; --bg:#faf5eb; --navy:#1b2a47; --ink:#1a1a1a; }
+  :root { --pri:#1b2a47; --acc:#b8965a; --line:#e6ddcd; --ok:#2e7d32; --bg:#faf5eb; --navy:#1b2a47; --ink:#1a1a1a;
+          /* 超過の表示に使う赤。クリーム地のブランドに合わせ、強すぎない深めの赤にする（2026-10-04 オーナー指定）。
+             顧客に見せる数字なので、驚かせずに「確認が要る」と伝わる濃さを選ぶ。 */
+          --warn:#a8524a; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body { margin:0; font-family:'Noto Sans JP',-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; color:var(--ink); background:var(--bg); }
   #app { max-width:480px; margin:0 auto; min-height:100vh; }
@@ -167,7 +170,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-04d 超過を3つの契約型すべてで出す';
+  var LIFF_BUILD = '2026-10-04e 超過を落ち着いた赤で出す';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -2015,8 +2018,12 @@
     function overageRow(){
       var ov = Number(h.overageCount || 0);
       if (!(ov > 0)) return '';
-      return '<div class="home-row"><span class="k"></span><span class="v" style="font-size:13px;color:var(--acc);">'
+      return '<div class="home-row"><span class="k"></span><span class="v" style="font-size:13px;color:var(--warn);">'
            + t('overage_note', { n: ov }) + '</span></div>';
+    }
+    //   超過しているときだけ、数字にも同じ色を当てる（普段の数字は従来の色のまま）。
+    function overageStyle(){
+      return (Number(h.overageCount || 0) > 0) ? ' style="color:var(--warn);"' : '';
     }
     //   表示する数。超過しているときは、その数をマイナスで出す。
     function shownTotal(base){
@@ -2033,11 +2040,11 @@
         monthlyBreakdownRow(p) +
         '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + h.ticketRemaining + '</b> ' + t('unit_sheets') + '</span></div>' +
         packBreakdownRow(h.ticketExpire, false) +
-        '<div class="home-row"><span class="k">' + t('bd_total') + '</span><span class="v"><b>' + shownTotal(grand) + '</b> ' + t('unit_times') + '</span></div>' +
+        '<div class="home-row"><span class="k">' + t('bd_total') + '</span><span class="v"><b' + overageStyle() + '>' + shownTotal(grand) + '</b> ' + t('unit_times') + '</span></div>' +
         overageRow() +
         nextMonthHtml(h);
     }
-    if (h.type === 'ticket') return '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + shownTotal(h.remaining) + '</b> ' + t('unit_times') + '</span></div>' +
+    if (h.type === 'ticket') return '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b' + overageStyle() + '>' + shownTotal(h.remaining) + '</b> ' + t('unit_times') + '</span></div>' +
       overageRow() +
       packBreakdownRow(h.expire, true) + nextMonthHtml(h);
     if (h.type === 'monthly') {
@@ -2047,7 +2054,7 @@
       //   超過しているときは、その数をマイナスで出し、理由と支払いの要否を添える。
       //   ★チケットを足せば、その予約が割り当たって超過は自然に消える
       //     （ただしチケットの有効開始日が、超過した予約の日より前であること）。
-      var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b>' + shownTotal(mp.total) + '</b> ' + t('unit_times') + '</span></div>';
+      var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b' + overageStyle() + '>' + shownTotal(mp.total) + '</b> ' + t('unit_times') + '</span></div>';
       s += overageRow();
       s += monthlyBreakdownRow(mp);
       if (detailed) { var carry = h.carryover ? t('plus_carry', { c: h.carryover }) : '';

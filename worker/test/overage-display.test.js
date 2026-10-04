@@ -103,6 +103,15 @@ ok('⑥理由と支払いの要否を添える', /t\('overage_note', \{ n: ov \}
 //   最初は monthly にだけ入れ、併用型（both）の会員で出ずに2往復した。
 //   型ごとに書くと必ずどれかが漏れる。1か所にまとめて、3つすべてで呼ぶ。
 ok('⑥共通の関数にまとめている', /function overageRow\(\)/.test(HTML) && /function shownTotal\(base\)/.test(HTML));
+
+// ★色は1か所で決める（2026-10-04 オーナー指定：強すぎない赤）。
+//   数字と注記で別の色を直書きすると、片方だけ直したときに食い違う。
+ok('⑥超過の色を変数で持っている', /--warn:#[0-9a-f]{6}/.test(HTML));
+ok('⑥注記がその色を使う', /color:var\(--warn\);[\s\S]{0,120}overage_note/.test(HTML));
+ok('⑥数字にも同じ色を当てる関数がある', /function overageStyle\(\)[\s\S]{0,160}var\(--warn\)/.test(HTML));
+ok('⑥★超過していないときは色を付けない', /\? ' style="color:var\(--warn\);"' : ''/.test(HTML));
+// 3つの型すべてで数字に色が当たること（型ごとに書くと必ずどれかが漏れる）
+eq('⑥3つの型すべてで数字に色を当てている', (HTML.match(/overageStyle\(\)/g) || []).length - 1, 3);
 {
   const types = ['both', 'monthly', 'ticket'];
   // 各型の分岐が overageRow / shownTotal を使っていること
