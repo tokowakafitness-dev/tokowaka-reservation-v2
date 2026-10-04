@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-04a すでに取り消された予約を失敗と見せない';
+  var LIFF_BUILD = '2026-10-04b 超過をマイナスで出す';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -229,6 +229,7 @@
       err_slots:'空き枠の取得に失敗しました。', err_myres:'予約の取得に失敗しました（コード：{code}）。',
       err_cancel:'キャンセルに失敗しました（コード：{code}）。',
       already_gone:'このご予約は、すでに取り消されています。一覧を最新にしました。',
+      overage_note:'超過 {n}回：追加のお支払いが必要です',
       already_gone_recur:'この固定枠は、すでに削除されています。一覧を最新にしました。', comm_fail:'通信に失敗しました：{msg}',
       cf_verifying:'確定できたか確認しています…',
       cf_verify_none:'予約は確定できませんでした。もう一度お試しください。',
@@ -296,6 +297,7 @@
       err_slots:'Failed to get available slots.', err_myres:'Failed to get bookings (code: {code}).',
       err_cancel:'Cancellation failed (code: {code}).',
       already_gone:'This booking has already been cancelled. The list has been refreshed.',
+      overage_note:'{n} session(s) over: additional payment required',
       already_gone_recur:'This recurring slot has already been removed. The list has been refreshed.', comm_fail:'Connection failed: {msg}',
       cf_verifying:'Checking whether your booking went through…',
       cf_verify_none:'The booking was not completed. Please try again.',
@@ -363,6 +365,7 @@
       err_slots:'获取可预约时段失败。', err_myres:'获取预约失败（代码：{code}）。',
       err_cancel:'取消失败（代码：{code}）。',
       already_gone:'此预约已被取消。列表已更新。',
+      overage_note:'超出 {n} 次：需要追加付款',
       already_gone_recur:'此固定时段已被删除。列表已更新。', comm_fail:'通信失败：{msg}',
       cf_verifying:'正在确认预约是否已完成…',
       cf_verify_none:'预约未能完成。请再试一次。',
@@ -430,6 +433,7 @@
       err_slots:'取得可預約時段失敗。', err_myres:'取得預約失敗（代碼：{code}）。',
       err_cancel:'取消失敗（代碼：{code}）。',
       already_gone:'此預約已被取消。列表已更新。',
+      overage_note:'超出 {n} 次：需要追加付款',
       already_gone_recur:'此固定時段已被刪除。列表已更新。', comm_fail:'連線失敗：{msg}',
       cf_verifying:'正在確認預約是否已完成…',
       cf_verify_none:'預約未能完成。請再試一次。',
@@ -1996,7 +2000,18 @@
       packBreakdownRow(h.expire, true) + nextMonthHtml(h);
     if (h.type === 'monthly') {
       var mp = monthlyParts();
-      var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b>' + mp.total + '</b> ' + t('unit_times') + '</span></div>';
+      // ★枠にもチケットにも割り当たらなかった予約がある＝超過（2026-10-04 オーナー要望）。
+      //   それまでは残数が0で止まるだけで、超過は画面のどこにも出なかった。
+      //   超過しているときは、その数をマイナスで出し、理由と支払いの要否を添える。
+      //   ★チケットを足せば、その予約が割り当たって超過は自然に消える
+      //     （ただしチケットの有効開始日が、超過した予約の日より前であること）。
+      var _ov = Number(h.overageCount || 0);
+      var _shown = (_ov > 0) ? -_ov : mp.total;
+      var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b>' + _shown + '</b> ' + t('unit_times') + '</span></div>';
+      if (_ov > 0) {
+        s += '<div class="home-row"><span class="k"></span><span class="v" style="font-size:13px;color:var(--acc);">'
+           + t('overage_note', { n: _ov }) + '</span></div>';
+      }
       s += monthlyBreakdownRow(mp);
       if (detailed) { var carry = h.carryover ? t('plus_carry', { c: h.carryover }) : '';
         s += '<div class="home-row"><span class="k">' + t('this_month_bookings') + '</span><span class="v" style="font-size:14px;">' + t('month_detail', { used: h.thisMonth, quota: t('month_quota', { q: h.quota }), carry: carry }) + '</span></div>'; }

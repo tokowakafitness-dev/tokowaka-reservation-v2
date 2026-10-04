@@ -673,6 +673,9 @@ function _lbBuildHome(customerId, customerName, lang, targetDateMs) {
   } catch (e) { Logger.log('翌月残数の算出に失敗（表示を省略）: ' + e.message); }
 
   var month = _lbCountReservations(customerId, 'month');
+  //   ★超過を数えるのに使う「月のキー」。上の month は**件数**であって月ではない（2026-10-04）。
+  //     残数の計算が今月を基準にしているので、同じ月を見る。
+  var _ovKey = _lbMonthKeyJst(new Date().getTime());
   var type = (sp.hasMonthly && sp.hasTicket) ? 'both' : (sp.hasTicket ? 'ticket' : 'monthly');
   return {
     type: type, active: true, nextMonth: nextMonth,
@@ -684,6 +687,22 @@ function _lbBuildHome(customerId, customerName, lang, targetDateMs) {
     ticketPacks: (sp.ticketPacks || []).map(function (p) { return { remaining: p.remaining, expire: _lbFmtDateOnly(new Date(p.expireMs), lang), kind: (p.kind || 'normal') }; }),   // #3：pack別（残枚数・期限・種別）
     // 後方互換（既存フロントの単一type表示用）
     remaining: (type === 'ticket') ? sp.ticketRem : sp.monthlyRem,
+    // ★超過の表示（2026-10-04 オーナー要望）。**ここだけ顧客の画面が読む。**
+    //   枠にもチケットにも割り当たらなかった予約が、超過。
+    //   それまでは残数が0で止まるだけで、超過は画面のどこにも出なかった
+    //   （monthlyRemaining は quota - used で、used は月額に割り当たった分だけ）。
+    //   ★既存の monthlyRemaining / ticketRemaining / remaining は**変えない**。
+    //     それらは予約の可否・締め・請求・リマインドの文面・D1の写しが使っており、
+    //     負数にすると「今月はあと -2回ご利用いただけます」のような文面が出る（Codex指摘）。
+    //   ★チケットを足せば、その予約が割り当たって超過は自然に消える。
+    //     ただしチケットの有効開始日が、超過した予約の日より前であること。
+    overageCount: _lbOverageOf(sp, _ovKey),
+    displayRemaining: (function () {
+      var _ov = _lbOverageOf(sp, _ovKey);
+      if (_ov > 0) return -_ov;
+      return (type === 'ticket') ? sp.ticketRem : sp.monthlyRem;
+    })(),
+    paymentRequired: _lbOverageOf(sp, _ovKey) > 0,
     total: sp.ticketTotal, used: (sp.ticketTotal - sp.ticketRem), expire: ticketExpire, expireMs: ticketExpireMs
   };
 }
@@ -5635,6 +5654,25 @@ function _lbTrainerMaySeeCustomer(tr, ownerTrainerId) {
   var owner = String(ownerTrainerId);
   if (!owner) return true;                                  // 実在して担当なし＝誰が見てもよい
   return owner === String((tr && tr.trainerId) || '');
+}
+
+// この月に「枠にもチケットにも割り当たらなかった予約」が何件あるか（2026-10-04）。
+//   ★対象の月だけを数える。他の月の超過を混ぜると、顧客の画面が理由なく赤くなる。
+//   ★入力が壊れている予約（人数が不正・種別が不明など）は数えない。
+//     それは「お支払いが必要な超過」ではなく、直すべき入力の誤り。
+//     混ぜると、顧客に身に覚えのない請求を案内してしまう。
+var LB_OVERAGE_REASONS = { NO_ENTITLEMENT: 1, NO_MONTHLY_LEFT: 1, NO_PACK_LEFT: 1 };
+function _lbOverageOf(sp, monthKey) {
+  if (!sp || !sp._ok || !sp._perSession || !monthKey) return 0;
+  var n = 0;
+  for (var i = 0; i < sp._perSession.length; i++) {
+    var ps = sp._perSession[i];
+    if (!ps || ps.alloc !== 'unallocated') continue;
+    if (String(ps.monthKey) !== String(monthKey)) continue;
+    if (ps.reason && !LB_OVERAGE_REASONS[String(ps.reason)]) continue;   // 入力の誤りは数えない
+    n++;
+  }
+  return n;
 }
 
 // トレーナー用：指定顧客の残数(home)を返す。担当トレーナー（と担当なしの顧客）のみ閲覧可。
