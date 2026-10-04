@@ -5661,7 +5661,18 @@ function _lbTrainerMaySeeCustomer(tr, ownerTrainerId) {
 //   ★入力が壊れている予約（人数が不正・種別が不明など）は数えない。
 //     それは「お支払いが必要な超過」ではなく、直すべき入力の誤り。
 //     混ぜると、顧客に身に覚えのない請求を案内してしまう。
-var LB_OVERAGE_REASONS = { NO_ENTITLEMENT: 1, NO_MONTHLY_LEFT: 1, NO_PACK_LEFT: 1 };
+//   ★「残りが無い／使えない」理由を、割当器が実際に出す名前で並べる（2026-10-04）。
+//     最初に書いたときは想像で名前を付け（NO_MONTHLY_LEFT など）、
+//     実際には存在しない名前だったため**超過が常に0になった。**
+//     本番で確かめたら、片山様の2件は PACK_EXHAUSTED だった。
+//     ★推測で名前を書かない。割当器の実際の出力を見てから並べる。
+var LB_OVERAGE_REASONS = {
+  NO_ENTITLEMENT: 1,          // 使える権利がそもそも無い
+  PACK_EXHAUSTED: 1,          // チケットを使い切った
+  PACK_EXPIRED: 1,            // チケットの期限が切れていた
+  PACK_NOT_YET_AVAILABLE: 1,  // チケットがまだ有効でない（開始日より前の予約）
+  PACK_KIND_UNAVAILABLE: 1,   // 種別が合わない（ペア券しか無いのに1名で取った等）
+};
 function _lbOverageOf(sp, monthKey) {
   if (!sp || !sp._ok || !sp._perSession || !monthKey) return 0;
   var n = 0;

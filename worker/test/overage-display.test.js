@@ -63,7 +63,28 @@ ok('③★リマインドが表示用の値を読んでいない',
   ok('④割り当たらなかったものだけ数える', /ps\.alloc !== 'unallocated'\) continue/.test(fn));
   // ★入力の誤り（人数が不正・種別が不明など）を「お支払いが必要な超過」に混ぜない
   ok('④★入力の誤りを超過に混ぜない', /LB_OVERAGE_REASONS\[String\(ps\.reason\)\]\) continue/.test(fn));
-  ok('④数える理由を列挙してある', /var LB_OVERAGE_REASONS = \{[^}]+\}/.test(LB));
+  ok('④数える理由を列挙してある', /var LB_OVERAGE_REASONS = \{[\s\S]*?\};/.test(LB));
+  // ★割当器が実際に出す名前と、数える名前が一致していること。
+  //   最初に書いたときは想像で名前を付け（NO_MONTHLY_LEFT など）、
+  //   実際には存在しない名前だったため**超過が常に0になった**（2026-10-04）。
+  //   本番で確かめるまで気づけなかった。名前は実際の出力から取る。
+  {
+    const AL = readFileSync(join(ROOT, 'gas/Allocate.js'), 'utf8');
+    const listed = [...(LB.match(/var LB_OVERAGE_REASONS = \{[\s\S]*?\};/) || [''])[0]
+                       .matchAll(/^\s*([A-Z_]+):/gm)].map((m) => m[1]);
+    ok('④数える理由を拾えた', listed.length >= 3, listed.join(','));
+    // 並べた名前が、割当器のどこかに実在すること（存在しない名前を書かない）
+    const missing = listed.filter((r) => !new RegExp("'" + r + "'").test(AL));
+    eq('④★存在しない理由名を並べていない', missing, []);
+    // 「残りが無い」系の代表が漏れていないこと
+    for (const r of ['NO_ENTITLEMENT', 'PACK_EXHAUSTED', 'PACK_EXPIRED']) {
+      ok('④★' + r + ' を数える', listed.includes(r), listed.join(','));
+    }
+    // 入力の誤りは数えないこと
+    for (const r of ['INVALID_SESSION', 'INVALID_ATTENDEE_COUNT', 'PRE_CUTOVER']) {
+      ok('④' + r + ' は数えない', !listed.includes(r));
+    }
+  }
   // 計算が信用できないときは数えない
   ok('④計算が信用できなければ0', /!sp\._ok \|\| !sp\._perSession/.test(fn));
 }
