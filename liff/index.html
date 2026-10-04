@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-04b 超過をマイナスで出す';
+  var LIFF_BUILD = '2026-10-04c 受け取った残数を出す';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -550,6 +550,26 @@
     return r.join(' ／ ');
   }
 
+  // ★画面が実際に受け取った残数の中身を出す（2026-10-04）。
+  //   「直したのに変わらない」とき、どこで止まっているかを推測で詰めると何往復もかかる。
+  //   実際この日、GAS反映→押し出し→それでも変わらない、を2周した。
+  //   画面に届いた値をそのまま並べれば、計算・写し・画面のどこで欠けたかが一目で分かる。
+  //   ?perf を付けたときだけ出る。
+  var _lastHome = null;
+  function _perfHome(h){ if (h && typeof h === 'object') _lastHome = h; }
+  function _perfHomeRows(){
+    if (!_lastHome) return '';
+    var h = _lastHome, keys = ['type','quota','carryover','thisMonth','monthlyRemaining',
+      'ticketRemaining','remaining','overageCount','displayRemaining','paymentRequired'];
+    var out = [];
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      var v = (h[k] === undefined) ? '（無い）' : (h[k] === null ? 'null' : String(h[k]));
+      out.push('・' + k + ' … ' + v);
+    }
+    return out.join('<br>');
+  }
+
   function _perfRender(){
     var el = document.getElementById('_perfPanel');
     if (!el) {
@@ -571,6 +591,8 @@
     el.innerHTML = '<div style="color:#cda86c;letter-spacing:.06em;margin-bottom:3px">経路 '
       + _perfRoute() + '</div>'
       + (boot ? '<div style="color:#9fb6dc;margin-bottom:5px">読み込み<br>' + boot + '</div>' : '')
+      + (_perfHomeRows() ? '<div style="color:#cda86c;letter-spacing:.06em;margin-bottom:3px">画面が受け取った残数</div>'
+         + '<div style="color:#9fb6dc;margin-bottom:5px">' + _perfHomeRows() + '</div>' : '')
       + '<div style="color:#cda86c;letter-spacing:.06em;margin-bottom:3px">通信の内訳'
       + '（画面を開いてから ' + Math.round(_nowMs() - _T0).toLocaleString() + 'ms）</div>'
       + rows
@@ -1998,6 +2020,7 @@
     }
     if (h.type === 'ticket') return '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + h.remaining + '</b> ' + t('unit_times') + '</span></div>' +
       packBreakdownRow(h.expire, true) + nextMonthHtml(h);
+    _perfHome(h);   // ?perf のときだけ中身を出す（普段は何もしない）
     if (h.type === 'monthly') {
       var mp = monthlyParts();
       // ★枠にもチケットにも割り当たらなかった予約がある＝超過（2026-10-04 オーナー要望）。
