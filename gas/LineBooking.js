@@ -6111,8 +6111,13 @@ function cancelReservationLine(lineUserId, reservationId) {
   var _actorTrainer = getTrainerByLine(lineUserId);   // トレーナーも操作可（管理ページ）＝会員verified必須の対象外。行単位で担当を再検証する。
   if (!_actorTrainer && (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified')) return { success: false, code: 'NOT_VERIFIED', message: '会員登録が必要です。' };
 
+  // ★「表そのものが読めない」と「その予約が見つからない」を分ける（2026-10-04）。
+  //   画面は NOT_FOUND を「すでに取り消されている」と受け取って、
+  //   その旨を案内する（一覧は写しなので、別の端末が先に取り消すと残って見えるため）。
+  //   表が壊れているときに同じコードを返すと、**壊れているのに
+  //   「すでに取り消されています」と案内してしまう。**
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
-  if (!sh) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
+  if (!sh) return { success: false, code: 'NO_SHEET', message: '予約の台帳が読めません。恐れ入りますが担当トレーナーへご連絡ください。' };
   var last = sh.getLastRow();
   if (last < 2) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
 
@@ -6179,7 +6184,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
   var _actorTrainerC = getTrainerByLine(lineUserId);   // トレーナーも操作可（管理ページ）＝会員verified必須の対象外。行単位で担当を再検証する。
   if (!_actorTrainerC && (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified')) return { success: false, code: 'NOT_VERIFIED', message: '会員登録が必要です。' };
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
-  if (!sh) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
+  if (!sh) return { success: false, code: 'NO_SHEET', message: '予約の台帳が読めません。恐れ入りますが担当トレーナーへご連絡ください。' };   // ★表が壊れているのを「すでに取り消されている」と見せない（2026-10-04）
   var last = sh.getLastRow();
   if (last < 2) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
 
@@ -6437,8 +6442,15 @@ function _lbListRecurFor(customerId, lang) {
 }
 
 // パターン行の解決＋管理権限判定（会員本人／担当トレーナー／オーナー）
+// ★返り値： {sh,rowIndex,row}（見つかった） ／ null（行が無い） ／ false（表が読めない）
+//   表が読めないことと、行が無いことを分ける（2026-10-04・Codex指摘）。
+//   画面は「行が無い」を**すでに削除されている**と受け取って案内するので、
+//   表が壊れているときに同じ返し方をすると、壊れているのに
+//   「すでに削除されています」と案内してしまう。
 function _lbRecurRowByPattern(patternId) {
-  var sh = _lbSheet(LB_RECUR_SHEET); if (!sh || sh.getLastRow() < 2) return null;
+  var sh = _lbSheet(LB_RECUR_SHEET);
+  if (!sh) return false;                       // 表そのものが無い／読めない
+  if (sh.getLastRow() < 2) return null;        // 表はあるが1件も無い
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
   for (var i = 0; i < v.length; i++) { if (String(v[i][RP_COL.PATTERN_ID - 1]) === String(patternId)) return { sh: sh, rowIndex: i + 2, row: v[i] }; }
   return null;
@@ -6473,12 +6485,14 @@ function listRecurringPatternsByTrainer(lineUserId, customerId) {
 // ---- 削除（担当トレーナー／オーナー限定）----
 function deleteRecurringPattern(lineUserId, patternId) {
   var hit = _lbRecurRowByPattern(patternId);
+  if (hit === false) return { success: false, code: 'NO_SHEET', message: '固定枠の台帳が読めません。恐れ入りますが担当トレーナーへご連絡ください。' };
   if (!hit) return { success: false, code: 'NOT_FOUND', message: 'パターンが見つかりません。' };
   var cid = String(hit.row[RP_COL.CUSTOMER_ID - 1]);
   if (!_lbTrainerCanManageRecur(lineUserId, cid)) return { success: false, code: 'FORBIDDEN' };
   var lock = LockService.getScriptLock(); lock.waitLock(10000);
   try {
     var re = _lbRecurRowByPattern(patternId);   // Lock内で再解決（行ズレ防止）
+    if (re === false) return { success: false, code: 'NO_SHEET' };
     if (!re) return { success: false, code: 'NOT_FOUND' };
     re.sh.deleteRow(re.rowIndex);
   } finally { lock.releaseLock(); }

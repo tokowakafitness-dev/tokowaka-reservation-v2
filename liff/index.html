@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-03k 予約直後の待ちを縮める';
+  var LIFF_BUILD = '2026-10-04a すでに取り消された予約を失敗と見せない';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -227,7 +227,9 @@
       err_title:'エラー', err_member_status:'会員状態の取得に失敗しました（コード：{code}）。',
       err_init:'初期化に失敗しました：{msg}', err_trainers:'トレーナー情報の取得に失敗しました。',
       err_slots:'空き枠の取得に失敗しました。', err_myres:'予約の取得に失敗しました（コード：{code}）。',
-      err_cancel:'キャンセルに失敗しました（コード：{code}）。', comm_fail:'通信に失敗しました：{msg}',
+      err_cancel:'キャンセルに失敗しました（コード：{code}）。',
+      already_gone:'このご予約は、すでに取り消されています。一覧を最新にしました。',
+      already_gone_recur:'この固定枠は、すでに削除されています。一覧を最新にしました。', comm_fail:'通信に失敗しました：{msg}',
       cf_verifying:'確定できたか確認しています…',
       cf_verify_none:'予約は確定できませんでした。もう一度お試しください。',
       cf_verify_unknown:'確定できたかどうか確認できませんでした。二重のご予約を避けるため、「マイ予約」をご確認ください。入っていなければ、もう一度お試しください。',
@@ -292,7 +294,9 @@
       err_title:'Error', err_member_status:'Failed to get member status (code: {code}).',
       err_init:'Initialization failed: {msg}', err_trainers:'Failed to get trainer information.',
       err_slots:'Failed to get available slots.', err_myres:'Failed to get bookings (code: {code}).',
-      err_cancel:'Cancellation failed (code: {code}).', comm_fail:'Connection failed: {msg}',
+      err_cancel:'Cancellation failed (code: {code}).',
+      already_gone:'This booking has already been cancelled. The list has been refreshed.',
+      already_gone_recur:'This recurring slot has already been removed. The list has been refreshed.', comm_fail:'Connection failed: {msg}',
       cf_verifying:'Checking whether your booking went through…',
       cf_verify_none:'The booking was not completed. Please try again.',
       cf_verify_unknown:'We could not confirm whether the booking went through. To avoid a duplicate, please check "My bookings" first, and try again only if it is not there.',
@@ -357,7 +361,9 @@
       err_title:'错误', err_member_status:'获取会员状态失败（代码：{code}）。',
       err_init:'初始化失败：{msg}', err_trainers:'获取教练信息失败。',
       err_slots:'获取可预约时段失败。', err_myres:'获取预约失败（代码：{code}）。',
-      err_cancel:'取消失败（代码：{code}）。', comm_fail:'通信失败：{msg}',
+      err_cancel:'取消失败（代码：{code}）。',
+      already_gone:'此预约已被取消。列表已更新。',
+      already_gone_recur:'此固定时段已被删除。列表已更新。', comm_fail:'通信失败：{msg}',
       cf_verifying:'正在确认预约是否已完成…',
       cf_verify_none:'预约未能完成。请再试一次。',
       cf_verify_unknown:'无法确认预约是否已完成。为避免重复预约，请先查看“我的预约”，若没有再重新预约。',
@@ -422,7 +428,9 @@
       err_title:'錯誤', err_member_status:'取得會員狀態失敗（代碼：{code}）。',
       err_init:'初始化失敗：{msg}', err_trainers:'取得教練資訊失敗。',
       err_slots:'取得可預約時段失敗。', err_myres:'取得預約失敗（代碼：{code}）。',
-      err_cancel:'取消失敗（代碼：{code}）。', comm_fail:'連線失敗：{msg}',
+      err_cancel:'取消失敗（代碼：{code}）。',
+      already_gone:'此預約已被取消。列表已更新。',
+      already_gone_recur:'此固定時段已被刪除。列表已更新。', comm_fail:'連線失敗：{msg}',
       cf_verifying:'正在確認預約是否已完成…',
       cf_verify_none:'預約未能完成。請再試一次。',
       cf_verify_unknown:'無法確認預約是否已完成。為避免重複預約，請先查看「我的預約」，若沒有再重新預約。',
@@ -733,7 +741,12 @@
   var EDGE_HOME_ACTIONS = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1,
                             getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1,
                             // まとめ取得は残数と枠を含む。写しが古い間はGASに聞く側へ倒す。
-                            boot:1, customerCard:1 };
+                            boot:1, customerCard:1,
+                            // ★固定枠も入れる（2026-10-04・Codex指摘）。
+                            //   固定枠を削除した直後に一覧を取り直しても、ここに無いと
+                            //   Workerへ行き、D1がまだ古ければ**削除したはずの枠がまた出る。**
+                            //   「一覧を最新にしました」と案内しているのに最新でない、という形になる。
+                            listRecurringPatternsByTrainer:1 };
   function _edgeStaleUntil(){
     try { return Number(localStorage.getItem('lb_edge_stale') || 0) || 0; } catch (e) { return _edgeStaleMem; }
   }
@@ -1896,6 +1909,7 @@
     if (!window.confirm(r.customerName + '様の予約（' + r.dateLabel + '）を取り消します。よろしいですか？')) return;
     api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
       if (res && res.success) { window.alert('取り消しました。お客様に通知が届きます。'); loadTrainerReservations(); }
+      else if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadTrainerReservations(); }
       else { showError('キャンセルに失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
@@ -2065,6 +2079,7 @@
               if (!window.confirm(t('recur_delete_confirm'))) return;
               api({ action:'line_deleteRecurringPattern', patternId: p.patternId }).then(function(r){
                 if (r && r.success) { window.alert(t('recur_deleted')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
+                else if (_alreadyGone(r)) { _edgeMarkStale(); window.alert(t('already_gone_recur')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
                 else { showError(t('err_cancel', { code: (r && r.code) || '?' })); }
               }).catch(function(e){ showError(t('comm_fail', { msg: e })); });
             };
@@ -2173,7 +2188,12 @@
     if (!window.confirm(msg)) return;
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
-      if (!res || !res.success) { showError(t('err_cancel', { code: (res && res.code) || '?' })); return; }
+      if (!res || !res.success) {
+        // ★案内を出してから一覧を取り直すと、取り直しが画面を切り替えて**案内が消える**。
+        //   読む間もなく消えるので、確実に目に入る出し方にする（2026-10-04・Codex指摘）。
+        if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadMyReservations(); return; }
+        showError(t('err_cancel', { code: (res && res.code) || '?' })); return;
+      }
       if (res.penalty && !r.transfer) {
         // 当日キャンセル＝1回消化。振替セッション（+5,500円）を案内。
         // ★振替セッション自身のキャンセルでは案内しない（振替の振替＝再振替を防ぐ。バックエンドでも同ガード）。
@@ -2518,6 +2538,19 @@
   //   GASの確定は20秒で見切っているが、サーバー側の処理はそのあとも続く。
   //   短すぎると追い越したままになり、長すぎると顧客を待たせる。
   var VERIFY_RETRY_MS = 6000;
+
+  // ★「もう無い／もう取消済み」は失敗ではない（2026-10-04・オーナーの指摘から）。
+  //   一覧は写し（D1）から来るので、別の端末やトレーナーが先に取り消すと、
+  //   こちらの画面にはまだ残って見える（最大20分）。
+  //   それを押したときに「キャンセルに失敗しました」と出すと、
+  //   **すでに望みどおりになっているのに、失敗したように見える。**
+  //   そう伝えて、一覧を取り直す。
+  //   ★あわせて写しを信用しない印を立てる。写しが古いことが分かった直後なので、
+  //     しばらくはGASに直接聞くほうが正しい。
+  function _alreadyGone(res){
+    var c = String((res && res.code) || '');
+    return c === 'ALREADY' || c === 'NOT_FOUND';
+  }
 
   function _delay(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 

@@ -112,5 +112,79 @@ const jaUnknown = (HTML.match(/cf_verify_unknown:'([^']*)'/) || [])[1] || '';
 ok('⑤不明の文面が「確認」を促している', /確認/.test(jaUnknown));
 ok('⑤不明の文面が二重予約に触れている', /二重/.test(jaUnknown));
 
+// ---------- ⑥ ★すでに取り消された予約を「失敗」と見せないこと（2026-10-04）----------
+//   一覧は写し（D1）から来るので、別の端末やトレーナーが先に取り消すと、
+//   こちらの画面にはまだ残って見える（最大20分）。
+//   それを押したときに「キャンセルに失敗しました」と出すと、
+//   **すでに望みどおりになっているのに、失敗したように見える。**
+{
+  const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
+
+  ok('⑥判定の関数がある', /function _alreadyGone\(res\)/.test(HTML));
+  // ★判定に使うのは「もう取消済み」と「その予約が無い」だけ。
+  //   台帳そのものが読めない場合を混ぜると、壊れているのに
+  //   「すでに取り消されています」と案内してしまう。
+  {
+    const fn = (HTML.match(/function _alreadyGone\(res\)\{[\s\S]*?\n  \}/) || [])[0] || '';
+    ok('⑥判定の中身が読める', !!fn);
+    ok('⑥★見るのは ALREADY と NOT_FOUND だけ',
+       /c === 'ALREADY' \|\| c === 'NOT_FOUND'/.test(fn));
+    ok('⑥★台帳が読めない場合を混ぜていない', !/NO_SHEET/.test(fn));
+    ok('⑥権限が無い場合も混ぜていない', !/FORBIDDEN/.test(fn));
+  }
+
+  // ★GAS側で「台帳が読めない」を別のコードにしていること。
+  //   ここを分けないと、画面がいくら気をつけても取り違える。
+  ok('⑥★取消：台帳が読めないときは別のコード',
+     /function cancelReservationLine[\s\S]{0,900}code: 'NO_SHEET'/.test(LB));
+  ok('⑥★変更：台帳が読めないときも別のコード',
+     /function changeReservationLine[\s\S]{0,900}code: 'NO_SHEET'/.test(LB));
+
+  // 3つの入口すべてで使っていること（1つでも漏れるとそこだけ失敗に見える）
+  ok('⑥トレーナーの取消で使っている', /_alreadyGone\(res\)[\s\S]{0,160}loadTrainerReservations/.test(HTML));
+  ok('⑥会員の取消で使っている', /_alreadyGone\(res\)[\s\S]{0,160}loadMyReservations/.test(HTML));
+  ok('⑥固定枠の削除で使っている', /_alreadyGone\(r\)[\s\S]{0,160}_buildRecurSection/.test(HTML));
+
+  // ★一覧を取り直すこと。伝えるだけだと、古い一覧が残って同じことを繰り返す。
+  ok('⑥取消のあと一覧を取り直す', /already_gone'\)\); loadTrainerReservations\(\)/.test(HTML));
+
+  // ★案内を出してから一覧を取り直すと、取り直しが画面を切り替えて**案内が消える**
+  //   （2026-10-04・Codex指摘）。読む間もなく消えるので、確実に目に入る出し方にする。
+  //   showError は画面を切り替えるだけなので、その直後に読み込みを始めると消える。
+  for (const m of (HTML.match(/_alreadyGone\(\w+\)\)[^\n]*/g) || [])) {
+    ok('⑥★案内が消えない出し方になっている（' + m.slice(0, 40) + '…）',
+       !/showError\(t\('already_gone/.test(m), m);
+  }
+  ok('⑥会員の取消も確実に目に入る出し方', /_alreadyGone\(res\)\) \{ _edgeMarkStale\(\); window\.alert\(t\('already_gone'\)\); loadMyReservations/.test(HTML));
+
+  // ★固定枠も「書き込み直後はGASに聞く」対象に入っていること（2026-10-04・Codex指摘）。
+  //   入っていないと、削除した直後に取り直してもWorkerへ行き、
+  //   D1がまだ古ければ**削除したはずの枠がまた出る。**
+  //   「一覧を最新にしました」と案内しているのに最新でない、という形になる。
+  ok('⑥★固定枠が書き込み直後の対象に入っている',
+     /EDGE_HOME_ACTIONS[\s\S]{0,600}listRecurringPatternsByTrainer:1/.test(HTML));
+
+  // ★固定枠の台帳が読めない場合も、別のコードにしていること
+  ok('⑥★固定枠：台帳が読めないときは別のコード',
+     /function deleteRecurringPattern[\s\S]{0,400}hit === false[\s\S]{0,120}NO_SHEET/.test(LB));
+  ok('⑥固定枠：行を探す関数が3つの結果を返す',
+     /if \(!sh\) return false;[\s\S]{0,160}getLastRow\(\) < 2\) return null;/.test(LB));
+  // Lock内の再解決でも同じ分け方をしていること（片方だけ直すと、そこだけ誤案内が残る）
+  ok('⑥固定枠：Lock内の再解決も分けている',
+     /re === false\) return \{ success: false, code: 'NO_SHEET' \}/.test(LB));
+  // ★写しが古いと分かった直後なので、しばらくGASに聞く
+  ok('⑥★写しを信用しない印を立てる', /_alreadyGone\(res\)\) \{ _edgeMarkStale\(\)/.test(HTML));
+
+  // 文言が4言語そろっていること
+  for (const key of ['already_gone', 'already_gone_recur']) {
+    const n = (HTML.match(new RegExp(key + ':', 'g')) || []).length;
+    eq('⑥' + key + ' が4言語ぶんある', n, 4);
+  }
+  // 「失敗」と書いていないこと（失敗ではないため）
+  const ja = (HTML.match(/already_gone:'([^']*)'/) || [])[1] || '';
+  ok('⑥日本語の文面に「失敗」と書いていない', !/失敗/.test(ja), ja);
+  ok('⑥日本語の文面が「すでに取り消されている」と伝える', /すでに取り消/.test(ja), ja);
+}
+
 console.log((fail ? '❌' : '✅') + ' liff-confirm-timeout: ' + pass + '件合格' + (fail ? ' / ' + fail + '件失敗' : ''));
 process.exit(fail ? 1 : 0);
