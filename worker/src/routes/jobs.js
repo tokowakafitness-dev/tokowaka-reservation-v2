@@ -7,7 +7,7 @@
 //   結果を読む            … request_id を知っていることが鍵
 //   ★結果に個人情報を入れない。読み取りに合言葉が要らないため。
 
-const OPS = new Set(['audit', 'verify', 'previewMerge', 'testConnection', 'pushAll', 'remaining', 'nudgePreview']);
+const OPS = new Set(['audit', 'verify', 'previewMerge', 'testConnection', 'pushAll', 'remaining', 'remainingAt', 'nudgePreview']);
 // 写しを書き換える作業は点検と分ける（Codexの指摘）。二重起動も防ぐ。
 const WRITE_OPS = new Set(['pushAll']);
 

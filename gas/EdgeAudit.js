@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-02c 版の印/契約の二重/月額会員の残数一覧/連続セッションの実測';
+var LB_AUDIT_BUILD = '2026-10-04a 版の印/契約の二重/月額会員の残数一覧/連続セッションの実測/過去のある時点の残数の再現';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -882,6 +882,408 @@ function _remainingOneText(namePart, showName) {
   say('       翌月ぶんを前の月のうちに取ると、**その時点の残**で判定される。');
   say('       当月でこれから使うチケットが「まだ残っている」と数えられ、');
   say('       翌月の枠を実際より多く見せることがある（チケットの先食い）。');
+  return log.join('\n');
+}
+
+// ============================================================
+// 過去のある時点の残数を再現する（2026-10-04）
+//
+//   きっかけ：会員#2412 で、10月の枠8回に対して10件の予約が入っていた。
+//     ・契約は 月額8回（2026/05/01〜2026/11/01）＋ チケット3枚（2026/09/15〜2026/12/15）
+//     ・9月は11件消化（月額8＋チケット3でちょうど使い切り）
+//     ・10月の10件は **すべて9月のうちに取られていた**
+//         8件 … 9/25 00:06〜00:08（毎月25日の固定枠の自動予約）
+//         2件 … 9/25 12:56（手動で追加。10/09 の 10:00 と 11:00）
+//     ・いま計算すると「残り0回」と**正しく**出る
+//   つまり「9/25 12:56 の時点では、10月にまだ余裕があると見えていた」。
+//   いまの数字を何度見てもその時点の見え方は出てこない。再現しないと確かめられない。
+//
+//   やり方：残数の計算には一切触らない。**渡す予約を減らすだけ**。
+//     取得日時（createdAt）が指定の時点より後の予約を除き、
+//     残った予約だけを既存の _lbComputeRemaining に渡す。
+//     入力を変えて同じ計算器を回す＝計算を書き換えずに過去を再現する唯一の方法。
+//
+//   ★取得日時が無い予約は除かない（ここを間違えると再現が狂う）。
+//     createdAt（台帳のcol11=記録日時）は 2026-10-04 に足したので、
+//     それより前に作られた行には入っていない。
+//     「無い＝後で取られた」と扱って除くと、過去の予約がまるごと消え、
+//     残数が実際より**多く**出る。だから除かずに、何件あったかを出力に明記する。
+//
+//   ★読み取りだけ。シートもカレンダーも書き換えない。
+//   ★氏名・電話・LINE IDは出さない（結果は作業番号を知っていれば読めるため）。
+// ============================================================
+//   args = { name: '氏名の一部 または 顧客IDの下桁', at: '2026-09-25 12:56' }
+
+// 'YYYY-MM-DD HH:MM[:SS]'（'T'区切りも可）→ { ms, hasTime }。読めなければ null。
+//   ★日付だけなら「その日の終わり（23:59:59）」とみなす。
+//     00:00 にすると、その日に取られた予約が全部除かれて「その日の前」の再現になる。
+//   ★存在しない日付（2026-02-31 等）は Date が翌月へ転がるので、月日を突き合わせて弾く。
+function _lbAtParseMs(text) {
+  var s = String(text == null ? '' : text).trim().replace(/[Tt]/, ' ').replace(/\//g, '-');
+  var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!m) return null;
+  var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  var hasTime = (m[4] != null);
+  var hh = hasTime ? Number(m[4]) : 23;
+  var mi = hasTime ? Number(m[5]) : 59;
+  var ss = hasTime ? Number(m[6] || 0) : 59;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  if (hh > 23 || mi > 59 || ss > 59) return null;
+  var dt = new Date(y, mo - 1, d, hh, mi, ss);
+  if (isNaN(dt.getTime())) return null;
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;   // 転がった＝存在しない日付
+  return { ms: dt.getTime(), hasTime: hasTime };
+}
+
+// 会員を1人引く（氏名の一部／顧客IDの下桁／顧客IDそのもの）。
+//   ★_remainingOneText と同じ引き方をここにも持つ。
+//     毎日使っている関数の中身は触らない（壊したときの影響が大きい）。
+//     引き方を変えるときは両方を直すこと。
+function _lbAtFindMember(spec) {
+  var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!map || map.getLastRow() < 2) return { error: '会員名簿が読めません。' };
+  var rawId = String(spec).replace(/^\*/, '').trim();
+  var byId = /^[0-9]{3,}$/.test(rawId);
+  var target = _lbNormName(spec);
+  var vals = map.getRange(2, 1, map.getLastRow() - 1, _auditMapWidth(map)).getValues();
+  var hits = [], exact = String(spec).trim();
+  for (var i = 0; i < vals.length; i++) {
+    var cidRow = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || '');
+    if (cidRow && cidRow === exact) { hits = [vals[i]]; break; }   // 顧客IDそのものなら一意
+    if (byId) { if (cidRow && cidRow.slice(-rawId.length) === rawId) hits.push(vals[i]); }
+    else if (_lbNormName(vals[i][MAP_COL.NAME - 1]).indexOf(target) >= 0) hits.push(vals[i]);
+  }
+  if (!hits.length) return { error: '「' + spec + '」に一致する会員が名簿にいません。'
+    + (byId ? '（顧客IDの下' + rawId.length + '桁として探しました）' : '') };
+  return { row: hits[0], count: hits.length };
+}
+
+// 月ごとの内訳と「どの予約がチケットを使ったか」を取るための割当（表示専用）。
+//   ★残数の数字はここから取らない。数字は _lbComputeRemaining が正本。
+//     ここは内訳（どの予約がどこへ当たったか）を見せるためだけに使う。
+//     条件は _lbComputeRemaining とまったく同じに揃える（揃っているかは下で突き合わせる）。
+function _lbAtAllocate(customerId, rows, sessions, asOfKey, throughKey, rate, opening) {
+  var ent = _lbRowsToEntitlements(rows, rate);
+  if (opening) {
+    ent.entitlements.openingCarry = opening.carry || {};
+    ent.entitlements.openingPacks = opening.packsUsed || opening.packs || {};
+  }
+  return _lbAllocateSessions(String(customerId || 'unknown'), ent.entitlements, sessions,
+    { asOfMonth: asOfKey, throughMonth: throughKey, carryRateDefault: rate,
+      cutoverMonth: (opening ? opening.cutoverMonth : undefined),
+      legacyMonthlyFirst: false,
+      carryFromContractStart: true,
+      recordsFromMonth: (opening ? opening.recordsFrom : undefined) });
+}
+
+// 月（ord）を見るときの基準日時。
+//   基準の月（asOf）はその時刻そのまま／過去の月はその月の終わり／先の月はその月の1日正午。
+//   （先の月を1日正午で見るのは既存の点検と同じ作法）
+function _lbAtRefMs(ord, baseOrd, baseMs) {
+  if (ord === baseOrd) return baseMs;
+  var k = _lbOrdToKey(ord);
+  var y = Number(k.slice(0, 4)), mo = Number(k.slice(5, 7)) - 1;
+  if (ord < baseOrd) return new Date(y, mo + 1, 0, 23, 59, 59).getTime();   // その月の末日
+  return new Date(y, mo, 1, 12, 0, 0).getTime();                            // その月の1日正午
+}
+
+function remainingAtText(args) {
+  var spec = String((args && args.name) || '').trim();
+  var atRaw = String((args && args.at) || '').trim();
+  if (!spec || !atRaw) return '版: ' + LB_AUDIT_BUILD
+    + '\n再現する会員と時点を渡してください。'
+    + '\n  args = { name: "氏名の一部 または 顧客IDの下桁", at: "2026-09-25 12:56" }';
+
+  var at = _lbAtParseMs(atRaw);
+  if (!at) return '版: ' + LB_AUDIT_BUILD
+    + '\nat の形が読めません。"2026-09-25 12:56"（秒まで可）で渡してください。'
+    + '\n日付だけ（"2026-09-25"）なら、その日の終わり（23:59:59）として扱います。';
+
+  var log = [];
+  function say(s) { log.push(s); }
+
+  try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e0) {}
+
+  var found = _lbAtFindMember(spec);
+  if (found.error) return '版: ' + LB_AUDIT_BUILD + '\n' + found.error;
+  var hit = found.row;
+  var customerId = String(hit[MAP_COL.CUSTOMER_ID - 1] || '');
+  // ★_cname は契約行を引くためだけに使う。出力には絶対に出さない（下で2箇所しか現れない）。
+  var _cname = String(hit[MAP_COL.NAME - 1] || '');
+  var who = '会員#' + (customerId ? customerId.slice(-4) : '不明');
+
+  var atMs = at.ms;
+  var atKey = _lbMonthKeyJst(atMs);
+  var atOrd = _lbMonthOrd(atKey);
+  var atStr = Utilities.formatDate(new Date(atMs), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm:ss');
+  var nowMs = new Date().getTime();
+  var nowKey = _lbMonthKeyJst(nowMs);
+  var nowOrd = _lbMonthOrd(nowKey);
+
+  say('===== その時点の残数の再現：' + who + '（' + atStr + ' 時点）=====');
+  say('版: ' + LB_AUDIT_BUILD);
+  say('（読み取りだけ。シートもカレンダーも書き換えていません）');
+  if (found.count > 1) say('※ ' + found.count + '件一致しました。1件目で再現します。');
+  if (!at.hasTime) say('※ 時刻の指定が無いので、その日の終わり（23:59:59）を時点としました。');
+  say('照合状態=' + String(hit[MAP_COL.AUTH_STATE - 1] || '(空)')
+      + ' / 契約状況=' + String(hit[MAP_COL.CONTRACT_STAT - 1] || '(空)'));
+
+  // ---- 計算の前提（数字だけ出して前提を書かないと、また誤って断定する）----
+  say('');
+  say('■ 計算の前提');
+  say('  再現する時点 = ' + atStr);
+  say('  この時点より後に**取られた**予約を、計算に渡す前に除きます（除く＝入力を減らすだけ）。');
+  say('  この時点の月を「いま」として計算します（asOfMonth=' + atKey + '）。');
+  say('  残数の計算そのものは既存の _lbComputeRemaining をそのまま呼んでいます（書き換えていません）。');
+  say('  ⚠️ 契約・会員名簿・残数ログは **いまの中身** を読んでいます（過去の中身は残っていません）。');
+  say('     ' + atStr + ' 以降にそれらが書き換わっていれば、その分はこの再現に現れません。');
+  var rate = (typeof LINE_BOOKING !== 'undefined' && LINE_BOOKING.CARRYOVER_RATE != null)
+             ? LINE_BOOKING.CARRYOVER_RATE : (1 / 3);
+  var opening = null;
+  try {
+    opening = _lbMemberOpeningWithFloor(customerId);
+    var _logged = _lbMemberOpening(customerId);
+    say('  台帳が記録を持ち始めた月 = ' + _lbRecordsFromMonth());
+    say('  この会員の下限（ここより前は数えない） = '
+        + ((opening && opening.recordsFrom) ? String(opening.recordsFrom) : '(下限なし＝契約開始月まで遡る)'));
+    say('  残数ログ = ' + (_logged
+        ? ('有（' + (_logged.recordsFrom || '?') + '基準・繰越 ' + _lbMbCarryOf(_logged) + '回'
+           + (_logged.packsUsed && _lbCountKeys(_logged.packsUsed) ? '・チケット引継ぎ有' : '') + '）')
+        : '無（下限は会員登録の月）'));
+  } catch (ePre) { say('  ⚠️ 前提を読めませんでした: ' + ePre.message); }
+
+  // ---- 契約行 ----
+  var rows = null;
+  try { rows = _lbContractRowsAll(_cname, _lbPhoneByCustomerId(customerId), false, customerId); }
+  catch (eC) { return log.join('\n') + '\n⛔ 契約を読めません: ' + eC.message; }
+  if (!rows || !rows.length) return log.join('\n') + '\n⛔ 有効な契約行がありません。';
+  if (rows.migrationGap) say('⚠️ ID移行が未完了の行があります（残数は要確認扱い）。');
+
+  say('');
+  say('■ いまの契約行 ' + rows.length + '件（これがその時点の契約だったと仮定します）');
+  for (var r = 0; r < rows.length; r++) {
+    var rr = rows[r], cc = rr.cols, row = rr.row;
+    var f = function (k) { return (cc[k] >= 0 && cc[k] != null) ? String(row[cc[k]]) : '(列なし)'; };
+    var dd = function (x) { return x ? Utilities.formatDate(x, SETTINGS.TIMEZONE, 'yyyy/MM/dd') : '(なし)'; };
+    say('  ' + (r + 1) + ') 種別=' + f('type') + ' / 残数方式=' + f('method')
+        + ' / 頻度=' + f('freq') + ' / チケット枚数=' + f('ticket')
+        + ' / 期間=' + dd(rr.start) + '〜' + dd(rr.end));
+  }
+
+  // ---- 予約を取り、その時点より後に取られたものを除く ----
+  var all = _lbResvSessions(customerId);
+  if (all === null) return log.join('\n') + '\n⛔ 予約台帳が読めません（再現できません）。';
+
+  var kept = [], dropped = [], noStamp = [];
+  for (var i = 0; i < all.length; i++) {
+    var s = all[i];
+    // ★取得日時が無い予約は**除かない**。除くと過去の予約が消えて残が多く出る＝再現が狂う。
+    if (s.createdAt == null) { noStamp.push(s); kept.push(s); continue; }
+    if (s.createdAt > atMs) { dropped.push(s); continue; }   // この時点より後に取られた＝まだ無かった
+    kept.push(s);
+  }
+
+  function _mk(x) {
+    return (x && x.startAt != null && isFinite(x.startAt)) ? _lbMonthKeyJst(x.startAt) : '(日時不明)';
+  }
+  function _sline(x) {
+    var st = (x.startAt != null && isFinite(x.startAt))
+      ? Utilities.formatDate(new Date(x.startAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm') : '日時不明';
+    var ca = (x.createdAt != null)
+      ? Utilities.formatDate(new Date(x.createdAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm:ss') : '不明';
+    return st + ' / 取得=' + ca
+      + ' / 消化先=' + (x.consumptionMode || '(自動)')
+      + ' / 種類=' + (x.packKind || '通常')
+      + ' / 人数=' + (x.attendeeCount == null ? 1 : x.attendeeCount);
+  }
+
+  say('');
+  say('■ 予約の取り扱い');
+  say('  台帳にある本人の予約（confirmed/consumed） ' + all.length + '件');
+  say('  ├ この時点より後に取られた＝**除いた** ' + dropped.length + '件');
+  say('  ├ 取得日時が無い＝**除かなかった** ' + noStamp.length + '件');
+  if (noStamp.length) {
+    say('  │   ★取得日時の列は2026-10-04に足したので、それ以前の行には入っていません。');
+    say('  │     「無い＝後で取られた」として除くと、過去の予約が消えて残が実際より多く出ます。');
+    say('  │     だから除かず、この時点より前に取られたものとして数えています。');
+  }
+  say('  └ 残して計算に渡した ' + kept.length + '件');
+  if (dropped.length) {
+    say('');
+    say('  ● 除いた予約（この時点より後に取られた）');
+    dropped.sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
+    for (var d1 = 0; d1 < dropped.length; d1++) say('     ・' + _mk(dropped[d1]) + ' ' + _sline(dropped[d1]));
+  }
+  if (noStamp.length) {
+    say('');
+    say('  ● 取得日時が無い予約（除いていません）');
+    for (var d2 = 0; d2 < noStamp.length; d2++) say('     ・' + _mk(noStamp[d2]) + ' ' + _sline(noStamp[d2]));
+  }
+
+  // ---- 見る月を決める（この時点の月・翌月・予約のある月）----
+  var ordSet = {};
+  ordSet[atOrd] = true; ordSet[atOrd + 1] = true;
+  for (var a1 = 0; a1 < all.length; a1++) {
+    if (all[a1].startAt == null || !isFinite(all[a1].startAt)) continue;
+    ordSet[_lbMonthOrd(_lbMonthKeyJst(all[a1].startAt))] = true;
+  }
+  var ords = [];
+  for (var ok in ordSet) if (ordSet.hasOwnProperty(ok)) ords.push(Number(ok));
+  ords.sort(function (x, y) { return x - y; });
+  if (ords.length > 6) ords = ords.slice(ords.length - 6);   // 出力を膨らませない（新しい方を残す）
+  var throughKey = _lbOrdToKey(ords[ords.length - 1]);
+
+  // ---- 内訳（どの予約がどこへ当たったか）。数字は下の _lbComputeRemaining が正本 ----
+  var alcThen = null, alcErr = '';
+  try { alcThen = _lbAtAllocate(customerId, rows, kept, atKey, throughKey, rate, opening); }
+  catch (eA) { alcErr = eA.message; }
+
+  var persByMonth = {}, packLabel = {}, packSeq = 0, packUse = [];
+  if (alcThen) {
+    for (var p1 = 0; p1 < alcThen.perPack.length; p1++) {
+      packSeq++;
+      packLabel[alcThen.perPack[p1].packId] = 'チケット' + packSeq;   // ★packIdは生で出さない（長い数字列は伏せ字処理で壊れる）
+    }
+    var sidMonth = {}, sidLine = {};
+    for (var s1 = 0; s1 < kept.length; s1++) { sidMonth[kept[s1].sessionId] = _mk(kept[s1]); sidLine[kept[s1].sessionId] = _sline(kept[s1]); }
+    for (var q = 0; q < alcThen.perSession.length; q++) {
+      var ps = alcThen.perSession[q];
+      var mk2 = ps.monthKey || '(月不明)';
+      var b = persByMonth[mk2] = persByMonth[mk2] || { monthly: 0, pack: 0, transfer: 0, unalloc: 0, reasons: {} };
+      if (ps.alloc === 'monthly') b.monthly++;
+      else if (ps.alloc === 'pack') {
+        b.pack++;
+        packUse.push({ monthKey: mk2, label: (packLabel[ps.packId] || 'チケット?'),
+                       units: (ps.units == null ? 1 : ps.units), line: (sidLine[ps.sessionId] || '(詳細不明)') });
+      } else if (ps.alloc === 'transfer') b.transfer++;
+      else { b.unalloc++; b.reasons[ps.reason || '?'] = (b.reasons[ps.reason || '?'] || 0) + 1; }
+    }
+  }
+
+  // ---- 月ごとの見え方（A=その時点／B=除いた予約を戻す／C=いま）----
+  function _calc(sessions, asOfKey, baseOrd, baseMs, ord) {
+    var ms = _lbAtRefMs(ord, baseOrd, baseMs);
+    try {
+      var c = _lbComputeRemaining(customerId, rows, sessions, asOfKey, ms, rate, opening);
+      return { r: c, ms: ms, total: ((c.monthlyRem || 0) + (c.ticketRem || 0)) };
+    } catch (e) { return { err: e.message, ms: ms }; }
+  }
+
+  say('');
+  say('■ その時点の見え方（月ごと・' + atStr + ' に計算したとしたら）');
+  if (alcErr) say('  ⚠️ 内訳を取れませんでした（' + alcErr + '）。残数の数字は下に出ます。');
+  var A = {}, B = {}, C = {};
+  for (var z = 0; z < ords.length; z++) {
+    var ord = ords[z], mk3 = _lbOrdToKey(ord);
+    A[mk3] = _calc(kept, atKey, atOrd, atMs, ord);
+    B[mk3] = _calc(all, atKey, atOrd, atMs, ord);
+    C[mk3] = _calc(all, nowKey, nowOrd, nowMs, ord);
+
+    var tag = (ord === atOrd) ? '（この時点の月）' : (ord === atOrd + 1 ? '（その翌月）' : (ord < atOrd ? '（過去）' : ''));
+    say('');
+    say('  ' + mk3 + tag + '  基準日時=' + Utilities.formatDate(new Date(A[mk3].ms), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm'));
+    if (A[mk3].err) { say('    ⛔ 計算できません: ' + A[mk3].err); continue; }
+    var ar = A[mk3].r;
+    var bd = persByMonth[mk3] || { monthly: 0, pack: 0, transfer: 0, unalloc: 0, reasons: {} };
+    var later = 0;
+    for (var d3 = 0; d3 < dropped.length; d3++) if (_mk(dropped[d3]) === mk3) later++;
+    say('    枠（頻度＋繰越）= ' + ar.avail + '（うち頻度 ' + ar.freq + '）');
+    say('    計算に入った予約 ' + (bd.monthly + bd.pack + bd.transfer + bd.unalloc) + '件'
+        + '（月額で消化 ' + bd.monthly + ' ／ チケットで消化 ' + bd.pack
+        + ' ／ 振替 ' + bd.transfer + ' ／ 割当できず ' + bd.unalloc + '）');
+    if (bd.unalloc) {
+      var rk = [];
+      for (var k4 in bd.reasons) if (bd.reasons.hasOwnProperty(k4)) rk.push(k4 + ' ' + bd.reasons[k4] + '件');
+      say('      割当できなかった理由：' + rk.join(' / '));
+    }
+    say('    月額残 = ' + (ar.monthlyRem == null ? '(頻度未設定＝無制限扱い)' : ar.monthlyRem)
+        + ' ／ チケット残 = ' + ar.ticketRem
+        + ' ／ ▶ その時点で予約できる残り = ' + A[mk3].total);
+    if (later) say('    ◀ この月の予約は、この時点より後に ' + later + '件 増えています');
+    if (ar.ok === false) say('    ⚠️ 割当器が「要確認」と判定: ' + JSON.stringify(ar.issues || []));
+
+    // 内訳と残数が同じ条件で出ているかの突き合わせ（ずれたら内訳を信用しない）
+    if (alcThen && ar.monthlyRem != null) {
+      var pmA = null;
+      for (var pm1 = 0; pm1 < alcThen.perMonth.length; pm1++) if (alcThen.perMonth[pm1].monthKey === mk3) { pmA = alcThen.perMonth[pm1]; break; }
+      if (pmA && Number(pmA.monthlyRemaining) !== Number(ar.monthlyRem)) {
+        say('    ⚠️ 内訳と残数が一致しません（内訳の月額残=' + pmA.monthlyRemaining + ' / 残数=' + ar.monthlyRem + '）。'
+            + '内訳は参考に留めてください（見る月の範囲の違いで起こります）。');
+      }
+    }
+  }
+
+  // ---- チケット ----
+  say('');
+  say('■ チケット（その時点）');
+  var arAt = A[atKey] && A[atKey].r;
+  if (arAt) {
+    say('  ' + atKey + ' を対象にしたチケット残 = ' + arAt.ticketRem + '枚'
+        + '（通常 ' + arAt.ticketRemNormal + ' ／ ペア ' + arAt.ticketRemPair + '）');
+    if (arAt.ticketPacks && arAt.ticketPacks.length) {
+      for (var tp = 0; tp < arAt.ticketPacks.length; tp++) {
+        say('    ・残 ' + arAt.ticketPacks[tp].remaining + '枚'
+            + ' / 期限 ' + Utilities.formatDate(new Date(arAt.ticketPacks[tp].expireMs), SETTINGS.TIMEZONE, 'yyyy/MM/dd')
+            + ' / 種類 ' + (arAt.ticketPacks[tp].kind === 'pair' ? 'ペア' : '通常'));
+      }
+    } else say('    ・この時点で有効なチケットの残はありません');
+  }
+  if (alcThen) {
+    say('  契約上のチケット：' + alcThen.perPack.length + '枚組');
+    for (var p2 = 0; p2 < alcThen.perPack.length; p2++) {
+      var pp = alcThen.perPack[p2];
+      say('    ・' + (packLabel[pp.packId] || 'チケット?') + '：' + pp.qty + '枚中 ' + pp.used + '枚を使用した扱い（残 ' + pp.remaining + '）'
+          + ' / 種類 ' + (pp.kind === 'pair' ? 'ペア' : '通常'));
+    }
+    say('  チケットを使った扱いになった予約 ' + packUse.length + '件');
+    packUse.sort(function (x, y) { return (x.monthKey < y.monthKey) ? -1 : (x.monthKey > y.monthKey ? 1 : 0); });
+    for (var u = 0; u < packUse.length; u++) {
+      say('    ・' + packUse[u].monthKey + ' ' + packUse[u].line
+          + ' → ' + packUse[u].label + (packUse[u].units > 1 ? '（' + packUse[u].units + '枚）' : ''));
+    }
+    if (!packUse.length) say('    （ありません）');
+  }
+
+  // ---- いまとの差 ----
+  say('');
+  say('■ いまの計算との差（何が変わったか）');
+  say('  A … その時点（除いた ' + dropped.length + '件を抜き・asOfMonth=' + atKey + '）');
+  say('  B … 参考：A と同じ基準のまま、除いた ' + dropped.length + '件を戻した場合'
+      + ' → A→B の差が「後から取られた予約」ぶん');
+  say('  C … いま（予約を全部・asOfMonth=' + nowKey + '・基準日時もいま）'
+      + ' → B→C の差が「基準日時が動いたこと」ぶん');
+  for (var z2 = 0; z2 < ords.length; z2++) {
+    var mk5 = _lbOrdToKey(ords[z2]);
+    var ta = A[mk5].err ? null : A[mk5].total;
+    var tb = B[mk5].err ? null : B[mk5].total;
+    var tc = C[mk5].err ? null : C[mk5].total;
+    var sgn = function (n) { return (n > 0 ? '+' : '') + n; };
+    say('  ' + mk5 + '：予約できる残り  A=' + (ta == null ? '?' : ta)
+        + ' ／ B=' + (tb == null ? '?' : tb)
+        + ' ／ C=' + (tc == null ? '?' : tc)
+        + ((ta != null && tb != null && tc != null)
+            ? ('　→ A→C ' + sgn(tc - ta) + '（後から取られた予約 ' + sgn(tb - ta)
+               + ' ／ 基準日時の違い ' + sgn(tc - tb) + '）')
+            : ''));
+    if (!A[mk5].err && !C[mk5].err) {
+      say('        月額残 A=' + (A[mk5].r.monthlyRem == null ? '?' : A[mk5].r.monthlyRem)
+          + '→C=' + (C[mk5].r.monthlyRem == null ? '?' : C[mk5].r.monthlyRem)
+          + ' ／ チケット残 A=' + A[mk5].r.ticketRem + '→C=' + C[mk5].r.ticketRem
+          + ' ／ 枠 A=' + A[mk5].r.avail + '→C=' + C[mk5].r.avail);
+    }
+  }
+
+  say('');
+  say('■ 読むときの注意');
+  say('  ・A が 0 より大きいのに、いま C が 0 なら、その時点では「まだ空いている」と見えていた。');
+  say('    枠を超えて受け付けたのではなく、**その時点の見え方のまま受け付けた**ということ。');
+  say('  ・翌月ぶんを前の月のうちに取ると、その時点の残で判定される。');
+  say('    当月でこれから使うチケットが「まだ残っている」と数えられ、');
+  say('    翌月の枠を実際より多く見せることがある（チケットの先食い）。');
+  say('  ・取得日時が無い予約が多いほど、この再現は「その時点より前に取られた」側へ寄る。');
+  say('    件数は上の「予約の取り扱い」に出している。');
+  say('');
+  say('===== ここまで。何も書き換えていません =====');
   return log.join('\n');
 }
 

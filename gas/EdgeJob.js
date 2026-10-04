@@ -89,6 +89,13 @@ function _ejRun(op, args) {
       if (args && args.usage) return _ejScrub(lineUsageText(String(args.usage)));
       if (args && args.date) return _ejScrub(dayReservationsText(args.date));
       return _ejScrub(remainingDebugText((args && args.name) || ''));
+    // 過去のある時点の残数を再現する（2026-10-04）。args = { name, at: '2026-09-25 12:56' }。
+    //   いまの数字を何度見ても「その時点では空いて見えていた」ことは確かめられない。
+    //   取得日時がその時点より後の予約を**計算に渡す前に除く**だけで、計算そのものは触らない。
+    //   ★remaining とは別のopにする。name だけ渡して at を書き忘れたとき、
+    //     黙って「いまの残数」を返すと、過去を見ているつもりで現在を見てしまう。
+    case 'remainingAt':
+      return _ejScrub(remainingAtText(args || {}));
     // リマインドの中身を、送らずに一覧する（読み取りだけ）。有効化の前に私が確認するため。
     // args.date（'2026-09-29'）を渡すと、その日を「今日」として一覧する。
     //   過去の実データで「誰に何が送られたか」を確かめるため。読み取りだけ。

@@ -558,8 +558,16 @@ function _lbResvValsToSessions(vals, customerId, parseDate) {
     var bt = String(r[13] == null ? '' : r[13]);
     var pkw = (bt.indexOf('ペア') >= 0) ? 'pair' : 'normal';
     var att = (r[14] === '' || r[14] == null) ? 1 : Number(r[14]);   // 列なし/空＝1（後方互換）
+    // col10=記録日時（その予約が**いつ作られたか**）。2026-10-03 に足した。
+    //   残数の計算には使わない。**いつ取られた予約かを人が追えるようにする**ためだけ。
+    //   10月の枠8回に対して10件入っていた会員を調べたとき、
+    //   「いつ取られたか」が分からないと、先に取ったのか後から増えたのかを切り分けられなかった。
+    var _ca = r[10];
+    var _caMs = (_ca instanceof Date) ? _ca.getTime()
+              : (_ca ? new Date(_ca).getTime() : NaN);
     out.push({ sessionId: sidCol || rid || ('row' + i), resId: rid, startAt: (dt && !isNaN(dt.getTime())) ? dt.getTime() : NaN, channel: ch,
-      attendeeCount: att, packKind: pkw, consumptionMode: (pkw === 'pair' ? 'pack' : ''), bookType: bt });
+      attendeeCount: att, packKind: pkw, consumptionMode: (pkw === 'pair' ? 'pack' : ''), bookType: bt,
+      createdAt: isNaN(_caMs) ? null : _caMs });
   }
   return out;
 }
@@ -1189,7 +1197,11 @@ if (typeof module !== 'undefined' && module.exports) {
 // ここから下は Workers 用の書き出しです（コピー元の pt-gas/Allocate.js には存在しません）。
 //   ★この行より上は pt-gas/Allocate.js と1文字も違ってはいけません。
 //     ずれると、GASとWorkerで残数が静かに食い違います。
-//     line-booking/test/allocate-worker-drift.test.js が毎回照合します。
+//     worker/test/allocate-drift.test.js が毎回照合します。
+//     ★2026-10-04まで、ここは存在しないファイル（line-booking/test/allocate-worker-drift.test.js）を
+//       指していました。実際には照合が1度も回っていないのに、回っていると書いてあったため、
+//       GAS側にだけ createdAt を足した変更が、Worker側で取り残されていました。
+//       **無い仕組みを指すコメントは、無いより悪い。** 読む人を安心させてしまう。
 // ============================================================
 export {
   _lbRowsToEntitlements, _lbResvValsToSessions, _lbComputeRemaining, _lbBookability,
