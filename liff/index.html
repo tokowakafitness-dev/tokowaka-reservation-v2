@@ -167,7 +167,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-04c 受け取った残数を出す';
+  var LIFF_BUILD = '2026-10-04d 超過を3つの契約型すべてで出す';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -2007,6 +2007,24 @@
         + ps.map(function(p){ return p.expire ? t('bd_pack', { n: p.remaining, e: p.expire }) : t('bd_pack_noexp', { n: p.remaining }); }).join('<br>') + '</span></div>';
       return singleExpire ? '<div class="home-row"><span class="k">' + (isTicketType ? t('expiry_valid') : t('expiry_ticket')) + '</span><span class="v" style="font-size:14px;">' + singleExpire + '</span></div>' : '';
     }
+    _perfHome(h);   // ?perf のときだけ中身を出す（普段は何もしない）。★型の分岐より前に置く
+    // ★超過の表示（2026-10-04 オーナー要望）。
+    //   枠にもチケットにも割り当たらなかった予約が「超過」。
+    //   ★契約の型は3つある（monthly ／ ticket ／ both）。最初は monthly にだけ入れ、
+    //     併用型（both）の会員で出ずに2往復した。**型ごとに書かず、1か所にまとめる。**
+    function overageRow(){
+      var ov = Number(h.overageCount || 0);
+      if (!(ov > 0)) return '';
+      return '<div class="home-row"><span class="k"></span><span class="v" style="font-size:13px;color:var(--acc);">'
+           + t('overage_note', { n: ov }) + '</span></div>';
+    }
+    //   表示する数。超過しているときは、その数をマイナスで出す。
+    function shownTotal(base){
+      var ov = Number(h.overageCount || 0);
+      return (ov > 0) ? -ov : base;
+    }
+
+    _perfHome(h);   // ?perf のときだけ中身を出す（普段は何もしない）。★型の分岐より前に置く
     if (h.type && h.active === false) return '<p class="muted">' + t('inactive_contract') + '</p>';
     if (h.type === 'both') {
       var p = monthlyParts();
@@ -2015,12 +2033,13 @@
         monthlyBreakdownRow(p) +
         '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + h.ticketRemaining + '</b> ' + t('unit_sheets') + '</span></div>' +
         packBreakdownRow(h.ticketExpire, false) +
-        '<div class="home-row"><span class="k">' + t('bd_total') + '</span><span class="v"><b>' + grand + '</b> ' + t('unit_times') + '</span></div>' +
+        '<div class="home-row"><span class="k">' + t('bd_total') + '</span><span class="v"><b>' + shownTotal(grand) + '</b> ' + t('unit_times') + '</span></div>' +
+        overageRow() +
         nextMonthHtml(h);
     }
-    if (h.type === 'ticket') return '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + h.remaining + '</b> ' + t('unit_times') + '</span></div>' +
+    if (h.type === 'ticket') return '<div class="home-row"><span class="k">' + t('home_ticket_left') + '</span><span class="v"><b>' + shownTotal(h.remaining) + '</b> ' + t('unit_times') + '</span></div>' +
+      overageRow() +
       packBreakdownRow(h.expire, true) + nextMonthHtml(h);
-    _perfHome(h);   // ?perf のときだけ中身を出す（普段は何もしない）
     if (h.type === 'monthly') {
       var mp = monthlyParts();
       // ★枠にもチケットにも割り当たらなかった予約がある＝超過（2026-10-04 オーナー要望）。
@@ -2028,13 +2047,8 @@
       //   超過しているときは、その数をマイナスで出し、理由と支払いの要否を添える。
       //   ★チケットを足せば、その予約が割り当たって超過は自然に消える
       //     （ただしチケットの有効開始日が、超過した予約の日より前であること）。
-      var _ov = Number(h.overageCount || 0);
-      var _shown = (_ov > 0) ? -_ov : mp.total;
-      var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b>' + _shown + '</b> ' + t('unit_times') + '</span></div>';
-      if (_ov > 0) {
-        s += '<div class="home-row"><span class="k"></span><span class="v" style="font-size:13px;color:var(--acc);">'
-           + t('overage_note', { n: _ov }) + '</span></div>';
-      }
+      var s = '<div class="home-row"><span class="k">' + t('home_month_left') + '</span><span class="v"><b>' + shownTotal(mp.total) + '</b> ' + t('unit_times') + '</span></div>';
+      s += overageRow();
       s += monthlyBreakdownRow(mp);
       if (detailed) { var carry = h.carryover ? t('plus_carry', { c: h.carryover }) : '';
         s += '<div class="home-row"><span class="k">' + t('this_month_bookings') + '</span><span class="v" style="font-size:14px;">' + t('month_detail', { used: h.thisMonth, quota: t('month_quota', { q: h.quota }), carry: carry }) + '</span></div>'; }

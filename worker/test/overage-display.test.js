@@ -95,9 +95,30 @@ ok('⑤月のキーを別に作っている', /var _ovKey = _lbMonthKeyJst\(new 
 ok('⑤★件数を月のキーとして渡していない', !/_lbOverageOf\(sp, month\)/.test(LB));
 
 // ---------- ⑥ 画面が表示専用の値を読むこと ----------
-ok('⑥画面が超過の件数を読む', /var _ov = Number\(h\.overageCount \|\| 0\)/.test(HTML));
-ok('⑥★超過があればマイナスで出す', /var _shown = \(_ov > 0\) \? -_ov : mp\.total/.test(HTML));
-ok('⑥理由と支払いの要否を添える', /t\('overage_note', \{ n: _ov \}\)/.test(HTML));
+ok('⑥画面が超過の件数を読む', /var ov = Number\(h\.overageCount \|\| 0\)/.test(HTML));
+ok('⑥★超過があればマイナスで出す', /return \(ov > 0\) \? -ov : base/.test(HTML));
+ok('⑥理由と支払いの要否を添える', /t\('overage_note', \{ n: ov \}\)/.test(HTML));
+
+// ★契約の型は3つある（monthly ／ ticket ／ both）。
+//   最初は monthly にだけ入れ、併用型（both）の会員で出ずに2往復した。
+//   型ごとに書くと必ずどれかが漏れる。1か所にまとめて、3つすべてで呼ぶ。
+ok('⑥共通の関数にまとめている', /function overageRow\(\)/.test(HTML) && /function shownTotal\(base\)/.test(HTML));
+{
+  const types = ['both', 'monthly', 'ticket'];
+  // 各型の分岐が overageRow / shownTotal を使っていること
+  const bothBlk = (HTML.match(/if \(h\.type === 'both'\)[\s\S]*?nextMonthHtml\(h\);/) || [])[0] || '';
+  ok('⑥★併用型（both）で出す', /overageRow\(\)/.test(bothBlk) && /shownTotal\(grand\)/.test(bothBlk), bothBlk.slice(0, 120));
+  const monBlk = (HTML.match(/if \(h\.type === 'monthly'\)[\s\S]*?return s \+ nextMonthHtml\(h\);/) || [])[0] || '';
+  ok('⑥月額型で出す', /overageRow\(\)/.test(monBlk) && /shownTotal\(mp\.total\)/.test(monBlk));
+  const tkBlk = (HTML.match(/if \(h\.type === 'ticket'\)[\s\S]*?nextMonthHtml\(h\);/) || [])[0] || '';
+  ok('⑥チケット型で出す', /overageRow\(\)/.test(tkBlk) && /shownTotal\(h\.remaining\)/.test(tkBlk));
+}
+// 受け取った中身を出す仕掛けが、型の分岐より前にあること（併用型で通らなかった）
+{
+  const iPerf = HTML.indexOf('_perfHome(h);');
+  const iBoth = HTML.indexOf("if (h.type === 'both')");
+  ok('⑥★中身を出す仕掛けが型の分岐より前にある', iPerf > 0 && iBoth > iPerf, `perf=${iPerf} both=${iBoth}`);
+}
 // 文言が4言語そろっていること
 eq('⑥文言が4言語ぶんある', (HTML.match(/overage_note:/g) || []).length, 4);
 // 「超過」と「お支払い」の両方を伝えること（どちらか欠けると意味が通らない）
