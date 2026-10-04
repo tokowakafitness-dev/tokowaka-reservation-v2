@@ -550,7 +550,13 @@ function _lbResvValsToSessions(vals, customerId, parseDate) {
     var r = vals[i];
     if (String(r[2]) !== String(customerId)) continue;      // col2=customer_id
     var st = String(r[6]); if (st !== 'confirmed' && st !== 'consumed') continue; // col6=status
-    var ch = (String(r[9]) === 'transfer') ? 'transfer' : 'line';  // col9=channel
+    // col9=channel。計算に渡すのは 'line' / 'transfer' の2値に丸めた値だが、
+    //   **元の値も残す**（2026-10-04）。どの入口から入った予約かを人が追えるようにするため。
+    //   枠を超えて予約が入っていた会員を調べたとき、「どこから入ったか」が分からないと
+    //   残数の検査をすり抜けたのか、検査を通らない入口から入ったのかを切り分けられなかった。
+    //   ★残数の計算には使わない（計算は従来どおり ch を見る）。
+    var ch0 = String(r[9] == null ? '' : r[9]);
+    var ch = (ch0 === 'transfer') ? 'transfer' : 'line';
     var dt = parseDate ? parseDate(r[0]) : new Date(r[0]);  // col0=予約日時
     var sidCol = String(r[11] == null ? '' : r[11]).replace(/^\s+|\s+$/g, '');   // col11=専用session_id(不変・H-3)
     var rid = String(r[8] == null ? '' : r[8]).split('|')[0].replace(/^\s+|\s+$/g, '');   // col8=備考(resId・cancel/change後は'|'付き)
@@ -567,7 +573,7 @@ function _lbResvValsToSessions(vals, customerId, parseDate) {
               : (_ca ? new Date(_ca).getTime() : NaN);
     out.push({ sessionId: sidCol || rid || ('row' + i), resId: rid, startAt: (dt && !isNaN(dt.getTime())) ? dt.getTime() : NaN, channel: ch,
       attendeeCount: att, packKind: pkw, consumptionMode: (pkw === 'pair' ? 'pack' : ''), bookType: bt,
-      createdAt: isNaN(_caMs) ? null : _caMs });
+      createdAt: isNaN(_caMs) ? null : _caMs, channelRaw: ch0 });
   }
   return out;
 }

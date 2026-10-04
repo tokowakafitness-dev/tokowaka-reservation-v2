@@ -865,8 +865,12 @@ function _remainingOneText(namePart, showName) {
       //   （翌月ぶんを前の月のうちに取ると、その時点の残で判定されるため）。
       var _ca = x.createdAt ? Utilities.formatDate(new Date(x.createdAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm') : '不明';
       var _mark = (x.createdAt && _lbMonthKeyJst(x.createdAt) !== keys[k]) ? ' ◀前の月に取得' : '';
+      // ★どの入口から入ったか（2026-10-04）。残数の検査をすり抜けたのか、
+      //   検査を通らない入口から入ったのかを切り分けるのに要る。
+      var _via = String(x.channelRaw || '').replace(/^\s+|\s+$/g, '') || '(空欄)';
       say('     ・' + Utilities.formatDate(new Date(x.startAt), SETTINGS.TIMEZONE, 'MM/dd HH:mm')
           + ' / 取得=' + _ca + _mark
+          + ' / 入口=' + _via
           + ' / 消化先=' + (x.consumptionMode || '(自動)')
           + ' / 種類=' + (x.packKind || '通常')
           + ' / 人数=' + (x.units == null ? 1 : x.units));
