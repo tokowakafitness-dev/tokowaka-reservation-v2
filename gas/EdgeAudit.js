@@ -2456,8 +2456,21 @@ function _monthlyQuotaTableText(nowMs) {
     // ★予約台帳が読めないときは、この検査をしない。
     //   予約数が0として扱われるので、全員が「合わない」になって一覧が埋まる。
     //   「分からない」を「問題あり」に化けさせない。
-    if (rvalsOk && avail != null && rem != null && curN !== (avail - rem)) {
-      flags.push('枠と残りが合わない');
+    // ★「枠と残りが合わない」の数え方（2026-10-04 に作り直した）。
+    //
+    //   以前は「予約の件数 ≠ 枠 − 残り」で見ていたが、これは**月額しか見ていない**。
+    //   チケットで消化した予約はこの式に入らないので、
+    //   チケットを持つ会員では必ず食い違って見える（2026-10-04・オーナーの指摘）。
+    //
+    //   正しくは「予約の件数 ＝ 月額で消化 ＋ チケットで消化 ＋ 振替 ＋ 割り当たらなかった分」。
+    //   これが崩れていたら、本当に計算が合っていない。
+    if (rvalsOk && sp && sp._perSession && avail != null && rem != null) {
+      var _sumCur = 0;
+      for (var _qi = 0; _qi < sp._perSession.length; _qi++) {
+        var _qs = sp._perSession[_qi];
+        if (_qs && _qs.monthKey === nowKey) _sumCur++;
+      }
+      if (curN !== _sumCur) flags.push('枠と残りが合わない');
     }
     try {
       var odd = _contractOddities(rows);
@@ -2468,17 +2481,28 @@ function _monthlyQuotaTableText(nowMs) {
     var curShow = rvalsOk ? curN : null;
 
     var nextShow = rvalsOk ? nextN : null;
-    // ★枠を超えて予約が入っていないか（2026-10-03・オーナーの指摘から）。
-    //   会員#2412 で、10月の枠8回に対して10件の予約が入っていた。
-    //   残数の計算は正しく0回を出していたが、**予約の受付が通りすぎていた。**
-    //   オーナーが気づいたのは偶然で、気づかなければそのままだった。
-    //   超過は顧客との金銭の話になるので、毎日の確認で自然に目に入るようにする。
-    //   ★原因が何であれ、ここで気づける。原因を1つ塞いでも、別の経路でまた起こりうる。
-    if (rvalsOk && avail != null && curShow != null && curShow > avail) {
-      flags.push('今月が' + (curShow - avail) + '件超過');
-    }
-    if (availNext != null && nextShow != null && nextShow > availNext) {
-      flags.push('翌月が' + (nextShow - availNext) + '件超過');
+    // ★枠を超えて予約が入っていないか（2026-10-03／2026-10-04 に作り直した）。
+    //
+    //   最初は「月額の枠 < 予約の件数」で数えたが、**チケットを見ていなかった。**
+    //   月額3回＋チケット2枚の会員が4件予約していると「1件超過」と誤って出した
+    //   （2026-10-04・オーナーの指摘）。誤検知はオーナーの確認の手間を増やすだけで、
+    //   しかも本物の超過が埋もれる。
+    //
+    //   正しいのは「割り当てられなかった予約の数」を見ること。
+    //   割当器は、月額にもチケットにも割り当たらなかった予約を unallocated にする。
+    //   ★ところがそれは残数のどこにも現れない（monthlyRem は quota - used で、
+    //     used は月額に割り当たった分だけ）。だから「枠8に予約10」でも残数は0で止まる。
+    //   毎日の確認で自然に目に入るようにするため、ここで数える。
+    if (rvalsOk && sp && sp._perSession) {
+      var _unCur = 0, _unNext = 0;
+      for (var _pi = 0; _pi < sp._perSession.length; _pi++) {
+        var _ps = sp._perSession[_pi];
+        if (!_ps || _ps.alloc !== 'unallocated') continue;
+        if (_ps.monthKey === nowKey) _unCur++;
+        else if (_ps.monthKey === nextKey) _unNext++;
+      }
+      if (_unCur > 0) flags.push('今月が' + _unCur + '件超過');
+      if (_unNext > 0) flags.push('翌月が' + _unNext + '件超過');
     }
     var line = _mqPad(nm, 8) + _mqNum(freq, 5) + _mqNum(carry, 5)
              + _mqNum(avail, 5) + _mqNum(curShow, 5) + _mqNum(rem, 5)

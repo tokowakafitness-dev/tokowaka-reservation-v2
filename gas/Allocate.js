@@ -631,7 +631,13 @@ function _lbComputeRemaining(customerId, rows, sessions, nowKey, targetDateMs, c
     hasMonthly: ent.hasMonthly, hasTicket: ent.hasTicket,
     monthlyRem: monthlyRem, ticketTotal: ent.ticketTotal, ticketRem: ticketRem, ticketPacks: ticketPacks,
     ticketRemPair: ticketRemPair, ticketRemNormal: ticketRemNormal, pairPackMax: pairPackMax,   // ペア=人数回残（表示用・可否判定は_lbBookability）
-    freq: covFreq || 0, avail: pm ? pm.quota : 0 };
+    freq: covFreq || 0, avail: pm ? pm.quota : 0,
+    // ★割当の結果（2026-10-04）。枠にもチケットにも割り当たらなかった予約は
+    //   残数のどこにも現れない（monthlyRem は quota - used で、used は月額に
+    //   割り当たった分だけ）。だから「枠8に予約10」でも残数は0で止まり、
+    //   超過として出てこない。超過を正しく数えるにはここを見るしかない。
+    //   ★計算そのものには使わない。読み手が数えるためだけに返す。
+    perSession: res.perSession };
 }
 
 // 予約可否判定（純粋・C1/C3の核）：対象日時の仮セッションを割当器に投入し monthly/pack に割り当たるかで判定。

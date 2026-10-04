@@ -4,11 +4,16 @@
 //     会員#2412 で、10月の枠8回に対して10件の予約が入っていた。
 //     残数の計算は正しく0回を出していたが、**予約の受付が通りすぎていた。**
 //     そしてオーナーが気づいたのは偶然で、気づかなければそのままだった。
-//     超過は顧客との金銭の話になる（今回は請求で解決したが、毎回そうとは限らない）。
 //
-//   ★原因を1つ塞ぐことと、気づける状態にしておくことは別。
-//     原因は1つとは限らず、別の経路でまた起こりうる。
-//     毎日見る残数の一覧に出しておけば、何が原因でも目に入る。
+//   ★なぜ数え方を作り直したか（2026-10-04）
+//     最初は「月額の枠 < 予約の件数」で数えた。**チケットを見ていなかった。**
+//     月額3回＋チケット2枚の会員が4件予約していると「1件超過」と誤って出した。
+//     誤検知はオーナーの確認の手間を増やすだけでなく、本物の超過をその中に埋もれさせる。
+//
+//     正しいのは「割り当てられなかった予約の数」を見ること。
+//     割当器は、月額にもチケットにも割り当たらなかった予約を unallocated にする。
+//     ★ところがそれは残数のどこにも現れない（monthlyRem は quota - used で、
+//       used は月額に割り当たった分だけ）。だから「枠8に予約10」でも残数は0で止まる。
 //
 //   実行: node worker/test/quota-overrun.test.js
 
@@ -23,43 +28,48 @@ const SRC = readFileSync(join(ROOT, 'gas/EdgeAudit.js'), 'utf8');
 let pass = 0, fail = 0;
 function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
 
-// ---------- 1. 超過を見ていること ----------
-ok('①今月の超過を見ている', /curShow > avail/.test(SRC));
-ok('①翌月の超過も見ている', /nextShow > availNext/.test(SRC));
-ok('①何件超えているかを出す', /件超過/.test(SRC));
-ok('①警告の並びに載せている', /flags\.push\('今月が'/.test(SRC) && /flags\.push\('翌月が'/.test(SRC));
+// ---------- 1. ★超過は「割り当たらなかった予約の数」で見ること ----------
+ok('①割当の結果を見ている', /_ps\.alloc !== 'unallocated'/.test(SRC));
+ok('①今月と翌月を分けて数えている',
+  /_ps\.monthKey === nowKey\) _unCur\+\+/.test(SRC) && /_ps\.monthKey === nextKey\) _unNext\+\+/.test(SRC));
+ok('①何件超えているかを出す', /'今月が' \+ _unCur \+ '件超過'/.test(SRC));
+ok('①翌月も出す', /'翌月が' \+ _unNext \+ '件超過'/.test(SRC));
 
-// ---------- 2. ★使う変数が、定義より後で使われていること ----------
-//   JavaScript の var は巻き上げられるので、定義より前で使っても
-//   エラーにならず **undefined** になる。超過があっても黙って見逃す。
-//   実際この検査を足したとき、最初に書いた位置が定義より前だった。
+// ★月額の枠と件数を直接比べる古い判定が残っていないこと（これが誤検知の正体）
+ok('①★「枠 < 予約件数」で超過と決めていない',
+  !/curShow > avail/.test(SRC) && !/nextShow > availNext/.test(SRC),
+  'チケットを持つ会員で必ず誤検知する');
+
+// ---------- 2. 「枠と残りが合わない」もチケットを含めて数えること ----------
+ok('②割当の結果の件数と突き合わせている',
+  /if \(curN !== _sumCur\) flags\.push\('枠と残りが合わない'\)/.test(SRC));
+ok('②★「枠 − 残り」と直接比べる古い判定が残っていない',
+  !/curN !== \(avail - rem\)/.test(SRC),
+  'チケットで消化した予約がこの式に入らない');
+
+// ---------- 3. 計算の返り値に割当の結果が入っていること ----------
 {
-  const iCur  = SRC.indexOf('var curShow =');
-  const iNext = SRC.indexOf('var nextShow =');
-  const uCur  = SRC.indexOf('curShow > avail');
-  const uNext = SRC.indexOf('nextShow > availNext');
-  ok('②今月の件数が定義されている', iCur > 0);
-  ok('②翌月の件数が定義されている', iNext > 0);
-  ok('②★今月の超過は定義の後で見ている', uCur > iCur, `定義=${iCur} 使用=${uCur}`);
-  ok('②★翌月の超過は定義の後で見ている', uNext > iNext, `定義=${iNext} 使用=${uNext}`);
+  const AL = readFileSync(join(ROOT, 'gas/Allocate.js'), 'utf8');
+  const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
+  const WK = readFileSync(join(ROOT, 'worker/src/allocate.js'), 'utf8');
+  ok('③計算が割当の結果を返す', /perSession: res\.perSession/.test(AL));
+  ok('③★Worker側も同じ（片方だけ直さない）', /perSession: res\.perSession/.test(WK));
+  ok('③残数の入口が素通しする', /_perSession: a\.perSession/.test(LB));
 }
 
-// ---------- 3. 読み取れなかったときに「超過なし」と言わないこと ----------
-//   予約表が読めなかったら件数は null になる。
-//   null を 0 として比べると「0件 ≦ 枠」で**超過なしに見える**。
-ok('③★件数が無いときは超過と判定しない',
-  /curShow != null && curShow > avail/.test(SRC));
-ok('③★翌月も同じ', /nextShow != null && nextShow > availNext/.test(SRC));
-ok('③予約表が読めたときだけ今月を見る', /rvalsOk && avail != null && curShow != null/.test(SRC));
+// ---------- 4. 読み取れなかったときに「超過なし」と言わないこと ----------
+//   割当の結果が無いのに「0件超過」と見なすと、黙って見逃す。
+ok('④割当の結果が無ければ数えない', /if \(rvalsOk && sp && sp\._perSession\)/.test(SRC));
+ok('④合計の検査も同じ条件',
+  /if \(rvalsOk && sp && sp\._perSession && avail != null && rem != null\)/.test(SRC));
 
-// ---------- 4. 予約が「いつ取られたか」も出していること ----------
-//   枠を超えていたとき、先に取ったのか後から増えたのかは
-//   取得の時刻が無いと切り分けられない。
-ok('④取得の時刻を出している', /' \/ 取得=' \+ _ca/.test(SRC));
-ok('④★月をまたいで取られた予約に印を付ける', /◀前の月に取得/.test(SRC));
-ok('④印の判定が月の比較になっている',
-  /_lbMonthKeyJst\(x\.createdAt\) !== keys\[k\]/.test(SRC));
-ok('④時刻が無ければ「不明」と書く（0扱いにしない）', /x\.createdAt \? Utilities\.formatDate/.test(SRC));
+// ---------- 5. 予約が「いつ・どこから」入ったかも出していること ----------
+//   枠を超えていたとき、先に取ったのか後から増えたのか、
+//   どの入口から入ったのかが分からないと原因を切り分けられない。
+ok('⑤取得の時刻を出している', /' \/ 取得=' \+ _ca/.test(SRC));
+ok('⑤★月をまたいで取られた予約に印を付ける', /◀前の月に取得/.test(SRC));
+ok('⑤★どの入口から入ったかを出す', /' \/ 入口=' \+ _via/.test(SRC));
+ok('⑤時刻が無ければ「不明」と書く（0扱いにしない）', /x\.createdAt \? Utilities\.formatDate/.test(SRC));
 
 console.log(`\n${fail ? '❌' : '✅'} 枠の超過に気づく 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

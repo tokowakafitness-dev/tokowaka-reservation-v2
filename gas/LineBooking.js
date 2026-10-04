@@ -3484,7 +3484,8 @@ function _lbSplitRemaining(rows, customerId, targetDateMs, sessionsCache) {
   return { hasMonthly: a.hasMonthly, hasTicket: a.hasTicket, monthlyRow: null, _sessions: sessions,
     monthlyRem: a.monthlyRem, ticketTotal: a.ticketTotal, ticketRem: a.ticketRem, ticketPacks: a.ticketPacks || [],
     ticketRemPair: a.ticketRemPair || 0, ticketRemNormal: a.ticketRemNormal || 0, pairPackMax: a.pairPackMax || 0,   // ペア／通常の内訳（消化先の選択UI用）
-    freq: a.freq, avail: a.avail, _ok: a.ok, _issues: a.issues };
+    freq: a.freq, avail: a.avail, _ok: a.ok, _issues: a.issues,
+    _perSession: a.perSession };   // ★割当の結果（超過を数えるため。計算には使わない）
 }
 
 // 顧客名から契約種別を引く（代行予約・変更でカレンダータイトルのプレフィックスを顧客ごとの種別に正す）
