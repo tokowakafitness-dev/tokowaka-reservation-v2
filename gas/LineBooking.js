@@ -5970,6 +5970,12 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   if (cols.phone >= 0 && phone) rowArr[cols.phone] = phone;   // 会員の電話を記入（併存の照合安定化）
   if (cols.packId >= 0) rowArr[cols.packId] = 'PK' + Utilities.formatDate(today, SETTINGS.TIMEZONE, 'yyyyMMddHHmmss') + '_' + Utilities.getUuid().slice(0, 4);   // 新pack固有ID（会計join用）
   // 単価＝トレーナー入力（必須・上で検証済み）。月額会員の月額単価を誤って拾わないよう自動フォールバックはしない。
+  // ★担当トレーナーを既存契約から引き継ぐ（2026-10-05）。顧客マスタを人が見たときに担当が空の行は
+  //   追えないし、将来の集計が担当列を使うようになった時点で壊れる。計上自体は担当を見ていない。
+  if (cols.trainer >= 0) {
+    var _tn = (contract && contract.cols && contract.cols.trainer >= 0) ? contract.row[contract.cols.trainer] : '';
+    if (_tn !== '' && _tn != null) rowArr[cols.trainer] = _tn;
+  }
   // ★報酬割合を既存契約から引き継ぐ（2026-10-05）。書かないとチケット行の報酬割合が空になり、
   //   billing は行ごとの割合で報酬を出すため、チケット消化ぶんのトレーナー報酬が丸ごと¥0になる。
   //   同じ60分のセッションなので月額と同率にする。レンタルの0円packは報酬なしが正しいので引き継がない。
