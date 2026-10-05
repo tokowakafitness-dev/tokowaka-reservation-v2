@@ -3247,7 +3247,7 @@ function _lbContractCols(headers) {
   // 単価フォールバックは「1名来店」を含む列を常に除外（ペア専用列を通常単価として拾わない）。
   function findPlainPrice() { for (var i = 0; i < headers.length; i++) { var h = String(headers[i]); if (h.indexOf('単価') >= 0 && h.indexOf('1名来店') < 0) return i; } return -1; }
   var tPrice = find('チケット単価'); if (tPrice < 0) tPrice = findPlainPrice();
-  return { name: find('お客様名'), type: find('種別'), course: find('コース'), freq: find('頻度'), ticket: find('チケット枚数'), start: find('開始日'), end: find('契約終了日'), carry: find('繰越率'), carryCap: find('繰越上限'), phone: find('電話'), method: find('残数方式'), trainer: find('担当'),
+  return { name: find('お客様名'), type: find('種別'), course: find('コース'), freq: find('頻度'), reward: find('報酬'), ticket: find('チケット枚数'), start: find('開始日'), end: find('契約終了日'), carry: find('繰越率'), carryCap: find('繰越上限'), phone: find('電話'), method: find('残数方式'), trainer: find('担当'),
     custId: strict ? find('顧客ID') : -1, ticketPrice: tPrice, packId: strict ? find('pack_id') : -1, normalPrice: normalPrice };
 }
 // 敬称を1つに畳んで付ける。顧客名に既に「様」が入っていても二重にならない（2026-09-16）。
@@ -5970,6 +5970,14 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   if (cols.phone >= 0 && phone) rowArr[cols.phone] = phone;   // 会員の電話を記入（併存の照合安定化）
   if (cols.packId >= 0) rowArr[cols.packId] = 'PK' + Utilities.formatDate(today, SETTINGS.TIMEZONE, 'yyyyMMddHHmmss') + '_' + Utilities.getUuid().slice(0, 4);   // 新pack固有ID（会計join用）
   // 単価＝トレーナー入力（必須・上で検証済み）。月額会員の月額単価を誤って拾わないよう自動フォールバックはしない。
+  // ★報酬割合を既存契約から引き継ぐ（2026-10-05）。書かないとチケット行の報酬割合が空になり、
+  //   billing は行ごとの割合で報酬を出すため、チケット消化ぶんのトレーナー報酬が丸ごと¥0になる。
+  //   同じ60分のセッションなので月額と同率にする。レンタルの0円packは報酬なしが正しいので引き継がない。
+  if (cols.reward >= 0 && kind.indexOf('レンタル') < 0) {
+    var _rw = (contract && contract.cols && contract.cols.reward >= 0) ? contract.row[contract.cols.reward] : '';
+    if (_rw !== '' && _rw != null) rowArr[cols.reward] = _rw;
+    else Logger.log('⚠️ チケット補充：既存契約から報酬割合を読めず空のまま行を作ります（' + name + '）→ 顧客マスタでこの行の報酬割合を入れてください（空だとチケット分の報酬が¥0になります）');
+  }
   if (cols.ticketPrice >= 0) rowArr[cols.ticketPrice] = unitPrice;   // 通常＝チケット単価／ペア＝ペア単価
   if (isPair) rowArr[cols.normalPrice] = normalUnitPrice;   // 1名来店の通常単価＝専用列（上でスキーマ検証済み）
   sh.appendRow(rowArr);
