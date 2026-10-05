@@ -3598,11 +3598,25 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
   // Codex条件：割当器 result.ok===true を厳守。不正入力（データ不整合・期限欠損）は fail-closed で予約拒否。
   if (!b.ok) return { ok: false, code: 'REVIEW_REQUIRED', message: 'ご契約情報の確認が必要です。恐れ入りますが担当トレーナーへご連絡ください。' };
   if (!b.canBook) return { ok: false, code: 'NO_REMAINING', message: (wantAtt > 1 ? 'ペアチケットの残数が不足しています（2名分が同一チケットに必要です）。' : '予約可能な残数がありません。') };
-  if (b.degradedUnlimited) return { ok: true, remaining: null, consumeType: 'monthly', packKind: 'normal' };   // 移行期degraded＝無制限維持
+  if (b.degradedUnlimited) return { ok: true, remaining: null, consumeType: 'monthly', packKind: 'normal', monthlyType: String(contractType || '').indexOf('モニター') >= 0 ? 'モニター' : '' };   // 移行期degraded＝無制限維持
+  // ★月額(通常/モニター)契約の種別を返す（2026-10-05）。予約タイトルの種別を決めるのに使う。
+  //   contractType は最新の契約行から来るため、追加チケット行が並列にあると 'チケット' になる。
+  //   月額枠を消化した予約が チケット_ に化けるのを防ぐため、月額契約の種別を別に渡す。
+  //   対象は予約日時点で有効な行のみ。モニターが1行でもあればモニターを優先する（売上内訳を分けるため）。
+  var _monthlyType = '';
+  for (var _mr = 0; _mr < rows.length; _mr++) {
+    var _rr = rows[_mr];
+    if (_rr.start && _rr.start.getTime() > tMs) continue;
+    if (_rr.end && _rr.end.getTime() < tMs) continue;
+    var _mt = String((_rr.cols.type >= 0 ? _rr.row[_rr.cols.type] : '') || '');
+    if (!_mt || _mt.indexOf('チケット') >= 0 || _mt.indexOf('レンタル') >= 0 || _mt.indexOf('ペア') >= 0) continue;
+    if (_mt.indexOf('モニター') >= 0) { _monthlyType = 'モニター'; break; }
+    if (!_monthlyType) _monthlyType = _mt;
+  }
   return { ok: true, remaining: (disp.monthlyRem || 0) + (disp.ticketRem || 0),
            monthlyRem: disp.monthlyRem, ticketRem: disp.ticketRem,
            ticketRemPair: disp.ticketRemPair, ticketRemNormal: disp.ticketRemNormal,
-           packKind: wantKind, attendeeCount: wantAtt, consumeType: b.consumeType };
+           packKind: wantKind, attendeeCount: wantAtt, consumeType: b.consumeType, monthlyType: _monthlyType };
 }
 
 // 予約確定画面の選択肢を「予約対象日時ベース」で返す（ホームの当日基準の内訳で未来予約を縛らないため）。
@@ -3887,7 +3901,8 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     // 顧客ごとの契約種別をカレンダータイトルに反映（billingが種別別に計上）。優先＝振替>レンタル>モニター>通常。
     var ct = String(custInfo.contractType || '');
     var _consume = (typeof rem !== 'undefined' && rem && rem.consumeType) ? rem.consumeType : '';   // 併存会員の消化種別（月額優先→尽きたらチケット）
-    var typePrefix = _lbBookTypePrefix(channel, _kind, ct, _consume);   // 純粋関数（Codex#3：消化連動・レンタルは月額消化時に計上しない）。テスト=booking-rules
+    var _mct = (typeof rem !== 'undefined' && rem && rem.monthlyType) ? rem.monthlyType : '';   // 月額契約の種別（追加チケット行に化けさせない）
+    var typePrefix = _lbBookTypePrefix(channel, _kind, ct, _consume, _mct);   // 純粋関数（Codex#3：消化連動・レンタルは月額消化時に計上しない）。テスト=booking-rules
     // F-6：staging中はカレンダーが本番共有のため、テストマーカー[TEST]を先頭に付す→billingが計上から除外
     //   （billingは[RESERVED]/[消化]===0で判定するため、[TEST]接頭辞は素通り＝集計対象外になる）。残数側はstaging SSで隔離済み。
     var _testPfx = _lbIsStaging() ? '[TEST] ' : '';

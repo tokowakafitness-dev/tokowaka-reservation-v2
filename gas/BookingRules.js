@@ -87,12 +87,19 @@ function _lbCountTicketConsumption(sessions) {
 // 予約カレンダータイトルの種別プレフィックス決定（純粋・billingの計上種別を左右する）。
 //   channel(transfer優先)＞packKind(pair)＞レンタル(0円pack消化時＝月額消化はレンタルにしない・Codex#3)＞
 //   消化=ticket＞契約モニター/チケット＞通常。consumeType='monthly'/'ticket'/''。
-function _lbBookTypePrefix(channel, packKind, contractType, consumeType) {
-  var ct = String(contractType || ''), cons = String(consumeType || '');
+function _lbBookTypePrefix(channel, packKind, contractType, consumeType, monthlyType) {
+  var ct = String(contractType || ''), cons = String(consumeType || ''), mct = String(monthlyType || '');
   if (channel === 'transfer') return '振替_';
   if (packKind === 'pair') return 'ペア_';
   if (ct.indexOf('レンタル') >= 0 && cons !== 'monthly') return 'レンタル_';   // レンタル会員が0円pack(ticket)消化＝レンタル計上。月額消化はレンタルにしない
   if (cons === 'ticket') return 'チケット_';
+  // ★月額枠を消化したときは月額として計上する（2026-10-05）。
+  //   contractType は「開始日が最も新しい有効な契約行」から来る（_lbFindContract）。月額行と追加チケット行を
+  //   並列に持つ運用にしたため、チケットを買った会員は contractType='チケット' になる。それをそのまま
+  //   タイトルに出すと、月額枠を消化した予約が チケット_ に化け、billing がチケット行で計上して
+  //   月額売上が立たない。消化方式が monthly と確定しているなら、月額契約の種別(monthlyType)を使う。
+  //   monthlyType が取れない場合（degraded・旧経路）は従来のフォールバックへ落ちる＝後方互換。
+  if (cons === 'monthly' && mct) return (mct.indexOf('モニター') >= 0) ? 'モニター_' : '通常_';
   if (ct.indexOf('モニター') >= 0) return 'モニター_';
   if (ct.indexOf('チケット') >= 0) return 'チケット_';
   return '通常_';
