@@ -3892,7 +3892,9 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     //   （billingは[RESERVED]/[消化]===0で判定するため、[TEST]接頭辞は素通り＝集計対象外になる）。残数側はstaging SSで隔離済み。
     var _testPfx = _lbIsStaging() ? '[TEST] ' : '';
     var capTitle = _testPfx + '[RESERVED] ' + typePrefix + lastName + '_' + _lbWithSama(custInfo.customerName) + '_line';
-    var desc = '担当：' + trainer.name + '\nchannel：' + channel + '\ncustomer_id：' + custInfo.customerId + (channel === 'transfer' ? '\n※振替セッション（5,500円・手動請求）' : '') + (custInfo.actingTrainer ? '\n代行実行：' + custInfo.actingTrainer + '(' + (custInfo.actingTrainerId || '') + ')' : '');   // 代行の監査（誰が代行したか）
+    //   ★ペアは来店人数を説明欄に固定キーで記録する（billingがこれを読んで人数分を計上する）。
+    //     タイトル側は 'ペア_' のまま＝book_type・タイトル分類器・修復処理・既存同期を壊さない（Codexレビュー 2026-10-05）。
+    var desc = '担当：' + trainer.name + '\nchannel：' + channel + '\ncustomer_id：' + custInfo.customerId + (_kind === 'pair' ? '\nattendee_count：' + _att : '') + (channel === 'transfer' ? '\n※振替セッション（5,500円・手動請求）' : '') + (custInfo.actingTrainer ? '\n代行実行：' + custInfo.actingTrainer + '(' + (custInfo.actingTrainerId || '') + ')' : '');   // 代行の監査（誰が代行したか）
     var capEv = calB1.createEvent(capTitle, start, end, { description: desc });
     var capEvId = '';
     try { capEvId = capEv.getId(); } catch (eId) { Logger.log('eventId捕捉失敗（予約は継続）: ' + eId.message); }   // billing載せ替えのID接合用（決定0043）
@@ -5785,6 +5787,35 @@ function linkUnlinkedReservation(lineUserId, resId, customerId, attendeeCount) {
           ush.deleteRow(row);   // 未紐付けリストからは消す（重複表示を止める）＝押しても増えない
           return { success: true, alreadyLinked: true, message: 'この予約は既に紐付け済みです。' };
         }
+      }
+    }
+  }
+  // ★ペアはカレンダー予定の説明欄にも人数を書く。**台帳に書く前**に行い、失敗したら紐付けを完了させない。
+  //   LB_CUTOVER_MONTH 適用前の billing は台帳ではなくカレンダーを読むため、ここが欠けると顧客名が
+  //   連名（A様・B様）でない限り1名計上になり、2名来店ぶんの売上と報酬が落ちる。
+  //   台帳を先に書くと、失敗時に「台帳は2名・カレンダーは1名・未紐付け一覧からは消滅」が確定して
+  //   通常操作から直せなくなる。だから順序はこちらが先で、失敗は握りつぶさず返す（Codexレビュー 2026-10-05）。
+  if (kind.indexOf('ペア') >= 0) {
+    // evId が空＝カレンダー予定を特定できない。ログだけ出して続けると、まさにこの修正で防ごうとした
+    //   「台帳は2名・カレンダーは1名・未紐付け一覧からは消滅」が確定する。だから中断する（Codexレビュー 2026-10-05）。
+    //   line_unlinked の行はカレンダー由来で作られるため evId が空になるのは異常であり、止めて気づく方が安全。
+    if (!evId) {
+      Logger.log('⚠️ ペアの人数同期: calendar_event_id が空のため紐付けを中断しました（未紐付けのまま残します）: ' + resId);
+      return { success: false, code: 'PAIR_EVENT_ID_MISSING', message: 'カレンダー予定との紐付け情報がありません。既存予約の再同期を実行してからもう一度お試しください。' };
+    } else {
+      try {
+        var _ce = CalendarApp.getCalendarById(CALENDAR_IDS.CAPACITY_B1).getEventById(String(evId));
+        if (!_ce) return { success: false, code: 'PAIR_EVENT_NOT_FOUND', message: 'カレンダーの予定が見つかりません。予定が削除・再作成されていないか確認してください。' };
+        // 既存の説明欄は保持し、attendee_count の行だけを入れ替える。
+        //   既存行が複数あっても全部落としてから1行だけ足す（1行だけ置換すると重複が残り、billing側で
+        //   「複数記載＝どれが正か不明」として人数を採用しなくなる）。
+        var _cd  = String(_ce.getDescription() || '');
+        var _cd2 = _cd.replace(/^attendee_count[：:].*$/gm, '').replace(/\n{2,}/g, '\n').replace(/^\n|\n$/g, '');
+        _cd2 = (_cd2 ? _cd2 + '\n' : '') + 'attendee_count：' + att;
+        if (_cd2 !== _cd) _ce.setDescription(_cd2);
+      } catch (eDesc) {
+        Logger.log('⚠️ ペアの人数同期に失敗（紐付けを中断・未紐付けのまま残します）: ' + eDesc.message);
+        return { success: false, code: 'PAIR_DESC_SYNC_FAILED', message: 'カレンダーへの人数反映に失敗しました。もう一度お試しください。' };
       }
     }
   }

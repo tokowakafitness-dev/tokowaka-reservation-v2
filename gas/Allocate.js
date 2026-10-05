@@ -1069,7 +1069,7 @@ function _lbBuildSessionExclusion(closedRecords, sessionEventMap) {
 //            issues, monthlyRevenue, ticketRevenue, rewardByTrainer, ok }
 function _lbBuildLineInjectionRows(closedRecords, meta, trainerNameById) {
   closedRecords = closedRecords || []; meta = meta || {}; trainerNameById = trainerNameById || {};
-  var rows = [], issues = [], mRev = 0, tRev = 0, rewardByTrainer = {};
+  var rows = [], issues = [], mRev = 0, tRev = 0, pRev = 0, rewardByTrainer = {}, pairRewardByTrainer = {};
   for (var r = 0; r < closedRecords.length; r++) {
     var rec = closedRecords[r] || {}, cid = String(rec.customerId || ''), det = rec.details || [];
     var mt = meta[cid] || {}, cname = String(mt.name || ''), rate = mt.rewardRate;
@@ -1084,15 +1084,25 @@ function _lbBuildLineInjectionRows(closedRecords, meta, trainerNameById) {
       if (rate == null || !(typeof rate === 'number' && isFinite(rate))) { issues.push({ code: 'RATE_MISSING', customerId: cid, detail: cname }); continue; }
       // 月額の表示種別は 通常/モニター のみ許容。レンタル等は店舗売上計算(count×2000で単価無視・報酬符号逆)と齟齬＝fail-loud（Codex#2）
       if (alloc === 'monthly' && mt.contentType !== '通常' && mt.contentType !== 'モニター') { issues.push({ code: 'MONTHLY_TYPE_INVALID', customerId: cid, detail: cname + '＝' + String(mt.contentType) }); continue; }
-      var contentType = (alloc === 'pack') ? 'チケット' : (mt.contentType || '通常');
+      // ★ペアpack（packKind='pair'）は 'チケット' ではなく 'ペア' として計上する（Codexレビュー 2026-10-05）。
+      //   混ぜると billing の売上内訳が「ペア売上¥0・チケット売上がペア分だけ過大」になる（billing.gs:569 の pairSales に入らない）。
+      //   unitPriceSnapshot は Allocate側で既に人数反映済み（2名=ペア単価×2／1名=通常単価）。ここで人数を再計算してはいけない。
+      var _isPair = (alloc === 'pack' && String(det[d].packKind || '') === 'pair');
+      var contentType = _isPair ? 'ペア' : (alloc === 'pack') ? 'チケット' : (mt.contentType || '通常');
       var rewardAmount = Math.floor(price * rate / 100);
       rows.push({ startAt: det[d].startAt, contentType: contentType, trainerName: tname, clientName: cname,
         unitPrice: price, rewardRate: rate, rewardAmount: rewardAmount });
-      if (alloc === 'pack') tRev += price; else mRev += price;
+      // ペアは pairRevenue に分離する。reconcile（billing.gs:1702）は old側がペアを返さない＝検算対象外のため、
+      //   ticketRevenue にペアを混ぜると新旧の差が必ず出て締められなくなる。
+      if (_isPair) pRev += price; else if (alloc === 'pack') tRev += price; else mRev += price;
       rewardByTrainer[tname] = (rewardByTrainer[tname] || 0) + rewardAmount;
+      // ペア分の報酬も内訳として別に持つ。reconcile（billing.gs:1710）は old側がペアを返さないため、
+      //   ペア報酬を引いた額どうしで比較しないと「売上は差ゼロなのに報酬差で ok=false」になり切替できない（Codexレビュー 2026-10-05）。
+      //   rewardByTrainer 自体はペア込みのまま＝本番の報酬計上は変えない。
+      if (_isPair) pairRewardByTrainer[tname] = (pairRewardByTrainer[tname] || 0) + rewardAmount;
     }
   }
-  return { rows: rows, issues: issues, monthlyRevenue: mRev, ticketRevenue: tRev, rewardByTrainer: rewardByTrainer, ok: issues.length === 0 };
+  return { rows: rows, issues: issues, monthlyRevenue: mRev, ticketRevenue: tRev, pairRevenue: pRev, rewardByTrainer: rewardByTrainer, pairRewardByTrainer: pairRewardByTrainer, ok: issues.length === 0 };
 }
 
 // 締め記録の正規化文字列（純粋・決定論的）＝checksumの素。金額全項目＋closing（次月opening）も含める
