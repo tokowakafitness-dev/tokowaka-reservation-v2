@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-02c 来店翌日Aの文面';
+var LB_NUDGE_BUILD = '2026-10-05a 1人1日1通を種別横断で・送る前に記録・排他ロック';
 
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
@@ -442,6 +442,8 @@ function _lbNudgeLogSheet() {
 function _lbNudgeLogReadAll() {
   var out = {};
   for (var i = 0; i < LB_NUDGE_ORDER.length; i++) out[LB_NUDGE_ORDER[i]] = {};
+  out._byDay = {};        // 'yyyy-MM-dd|customerId' → true（種別をまたいだ1日1通の判定に使う）
+  out._readFailed = false;
   try {
     var sh = _lbSheet(LB_NUDGE_LOG_SHEET);
     if (!sh || sh.getLastRow() < 2) return out;
@@ -450,30 +452,43 @@ function _lbNudgeLogReadAll() {
     for (var r = 0; r < v.length; r++) {
       var kind = String(v[r][1]);
       if (!out[kind]) continue;
-      if (String(v[r][4]) !== 'sent') continue;
+      // ★'sending' も「送った扱い」にする（2026-10-05）。
+      //   送信の直前に 'sending' を書き、結果が出てから 'sent'/'failed' に書き換える。
+      //   途中でGASが落ちると 'sending' のまま残る＝**送ったかどうか分からない**。
+      //   そのとき再送すると同じ人に2通届く。届かないより届きすぎる方が害が大きいので、
+      //   分からないものは「送った」とみなして二度と送らない（安全側）。
+      var _rst = String(v[r][4]);
+      if (_rst !== 'sent' && _rst !== 'sending') continue;
       var cid = String(v[r][2] || ''); if (!cid) continue;
       var e = out[kind][cid] || (out[kind][cid] = { lastMs: null, keys: {} });
       var d = _lbParseResvDate(String(v[r][0] || '').replace(/^'/, ''));   // 文字列固定のため先頭 ' を外す
-      if (d) { var ms = d.getTime(); if (e.lastMs === null || ms > e.lastMs) e.lastMs = ms; }
+      if (d) {
+        var ms = d.getTime(); if (e.lastMs === null || ms > e.lastMs) e.lastMs = ms;
+        // 暦日ごとの印。種別をまたいで「今日はもう送った」を判定するために使う。
+        out._byDay[Utilities.formatDate(d, SETTINGS.TIMEZONE, 'yyyy-MM-dd') + '|' + cid] = true;
+      }
       var k = String(v[r][3] || ''); if (k) e.keys[k] = true;
     }
-  } catch (e) { Logger.log('nudge_log 読み取り失敗（送信は中止せず、この実行では抑止を効かせない）: ' + e.message); }
+  } catch (e) {
+    // ★読めなければ送らない（2026-10-05・fail-closed）。
+    //   以前はここで「抑止を効かせないまま続行」していた。記録が読めない状態は、
+    //   **すでに送った人をもう一度送る**状態と見分けがつかない。送らない側に倒す。
+    out._readFailed = true;
+    Logger.log('nudge_log 読み取り失敗（この実行は中止する）: ' + e.message);
+  }
   return out;
 }
 
-// まとめて1回で書く（1人ずつ insert すると人数ぶんシート往復が増える）
-function _lbNudgeLogWrite(rows, nowMs) {
-  if (!rows || !rows.length) return;
-  try {
-    var sh = _lbNudgeLogSheet();
-    var when = Utilities.formatDate(new Date(nowMs), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm');
-    var out = rows.map(function (r) {
-      return ["'" + when, r.kind, r.customerId, r.key || '', r.result, String(r.detail || '').slice(0, 200)];
-    });
-    sh.insertRowsAfter(1, out.length);   // 新しい行を上に（reminder_status と同方針）
-    sh.getRange(2, 1, out.length, LB_NUDGE_LOG_COLS).setValues(out);
-  } catch (e) { Logger.log('nudge_log 記録失敗: ' + e.message); }
+// 種別を問わず「その暦日にもう1通送っている」か。1人1日1通の最後の砦。
+function _lbNudgeSentOnDay(logs, customerId, dayKey) {
+  return !!(logs && logs._byDay && logs._byDay[dayKey + '|' + String(customerId)]);
 }
+
+// ★「まとめて1回で書く」はやめた（2026-10-05）。
+//   全員へ送り終えてから記録すると、途中で時間切れになったとき
+//   「送信済みだが記録なし」が残り、次の実行で同じ人にもう一度届く。
+//   いまは送信の直前に1行ずつ書く（_lbNudgeLogAppendOne → _lbNudgeLogSettle）。
+//   シートの往復は増えるが、対象は1日数名なので実害はない。
 
 // ------------------------------------------------------------
 // 判定に必要な事実を、シートごとに1回だけ読む
@@ -705,7 +720,8 @@ function lbNudgePlanAll(nowMs) {
     counts: { nudge_transfer: 0, nudge_month_open: 0, nudge_visit_b: 0, nudge_visit_a: 0 },
     skipped: { noCustomerId: 0, notVerified: 0, notActive: 0, noLine: 0,
                transferUsed: 0, transferExpired: 0, transferNone: 0,
-               monthAlreadySent: 0, visitATooSoon: 0, noRemain: 0, remainUnknown: 0, noEvent: 0 }
+               monthAlreadySent: 0, visitATooSoon: 0, noRemain: 0, remainUnknown: 0, noEvent: 0,
+               sentToday: 0, dupMember: 0 }
   };
 
   // ★正本がD1へ移っていないか（2026-10-02）。
@@ -726,6 +742,12 @@ function lbNudgePlanAll(nowMs) {
   if (tc === null) { plan.code = 'NO_TCREDIT_SHEET'; return plan; }     // 振替権が無い＝当日キャンセルと来店を区別できない → 送らない
   var recur = _lbNudgeRecurIndex();
   var log = _lbNudgeLogReadAll();
+  // ★送信記録が読めなければ1通も出さない（2026-10-05）。
+  //   記録は「もう送った人」を知る唯一の手がかり。読めない状態で送ると、
+  //   昨日送った人へもう一度送ることになる。読めない＝中止。
+  if (log._readFailed) { plan.code = 'LOG_UNREADABLE'; return plan; }
+  var todayKey = Utilities.formatDate(new Date(ms), SETTINGS.TIMEZONE, 'yyyy-MM-dd');
+  var seenCid = {};   // この1回の一覧で、すでに1通ぶん作った会員（名簿の重複行よけ）
 
   for (var i = 0; i < members.length; i++) {
     var m = members[i];
@@ -798,6 +820,18 @@ function lbNudgePlanAll(nowMs) {
         continue;
       }
 
+      // ★1人1日1通を、種別をまたいで守る（2026-10-05）。
+      //   これまで送信済みの記録で抑えていたのは month_open（対象月）と visit_a（7日）だけで、
+      //   transfer と visit_b は条件が続くかぎり毎回候補になった。1日1回のトリガーしか無い前提の
+      //   作りで、トリガーの二重発火・手動の再実行・前回の途中終了があると、同じ人に同じ案内が
+      //   何通も届く。「1回の実行の中で1通」ではなく「その日に1通」で抑える。
+      if (_lbNudgeSentOnDay(log, m.customerId, todayKey)) { plan.skipped.sentToday++; continue; }
+
+      // ★同じ会員が名簿に2行あるとき、この1回の中で2通作らない（2026-10-05）。
+      //   送信済みの記録は「この実行より前」しか見ていないので、
+      //   1回の一覧の中に同じ人が2度入ると、どちらも抑止をすり抜ける。
+      if (seenCid[m.customerId]) { plan.skipped.dupMember++; continue; }
+
       // ── 優先順位で1通に絞る。絞って送らなかったものは demoted として一覧に出す ──
       cand.sort(function (a, b) { return LB_NUDGE_ORDER.indexOf(a.kind) - LB_NUDGE_ORDER.indexOf(b.kind); });
       var win = cand[0];
@@ -822,6 +856,7 @@ function lbNudgePlanAll(nowMs) {
         expire: v.expire, next: v.next, pattern: v.pattern, quota: v.quota,
         _to: m.lineUserId, _cid: m.customerId, _key: win.key, _text: _lbNudgeText(win.kind, m.lang, v)
       });
+      seenCid[m.customerId] = true;   // ここから先、この実行ではこの会員に2通目を作らない
       for (var d = 1; d < cand.length; d++) {
         plan.demoted.push({ id: _lbNudgeMask(m.customerId), kind: cand[d].kind, insteadOf: win.kind });
       }
@@ -837,28 +872,91 @@ function lbNudgePlanAll(nowMs) {
 // ============================================================
 // 送信（ここだけが実際にLINEへ出す。既定は無効なので何もしない）
 // ============================================================
-function _lbNudgeSend(plan, nowMs) {
+function _lbNudgeSend(plan, nowMs, alreadyLocked) {
   var res = { success: true, enabled: _lbNudgeEnabled(), sent: 0, failed: 0, deferred: 0, plan: _lbNudgePublic(plan) };
-  if (plan.code !== 'OK') { Logger.log('nudge 中止（fail-closed）: ' + plan.code); return res; }
+  // ★中止したときは success を倒し、理由を返す（2026-10-05）。
+  //   以前は success:true のまま返していた。1通も送れなかったのに「成功」と見え、
+  //   記録が読めない・正本が移ったといった**止まっている状態が黙って続く**。
+  if (plan.code !== 'OK') { res.success = false; res.code = plan.code; Logger.log('nudge 中止（fail-closed）: ' + plan.code); return res; }
   if (!res.enabled) {
     // ★既定の道。ここで必ず止まる。記録も残さない（あとで有効にしたとき抑止が誤作動しないように）。
     Logger.log('nudge は無効（LB_REMIND_ON≠1）。対象' + plan.targets.length + '名を一覧しただけで送信していません。');
     return res;
   }
-  var cap = plan.conf.maxPerRun;
-  var rows = [];
-  for (var i = 0; i < plan.targets.length; i++) {
-    var t = plan.targets[i];
-    if (cap > 0 && (res.sent + res.failed) >= cap) { res.deferred++; continue; }   // 残りは翌日の実行へ
-    var ok = false;
-    try { ok = _lbPush(t._to, t._text, t.kind); } catch (e) { Logger.log('nudge push例外: ' + e.message); }
-    if (ok) res.sent++; else res.failed++;
-    rows.push({ kind: t.kind, customerId: t._cid, key: t._key, result: ok ? 'sent' : 'failed', detail: ok ? '' : 'push未達' });
-    Utilities.sleep(250);   // 連続送信で429を招かない間隔（sendLineReminders と同じ）
+  // ★同時に2つ走らせない（2026-10-05）。
+  //   通常の入口（lbNudgeDaily）は、一覧を作る前からロックを取っている（alreadyLocked=true）。
+  //   ここで取り直すのは、将来この関数が単独で呼ばれたときに裸にならないようにするため。
+  //   待たずに諦める（tryLock(0)）。待って送るより、送らない方が安全。
+  var _lock = null;
+  if (!alreadyLocked) {
+    try { _lock = LockService.getScriptLock(); } catch (e) { _lock = null; }
+    // 入口と同じ扱い：守れないなら送らない。
+    if (!_lock) {
+      res.success = false; res.code = 'LOCK_UNAVAILABLE';
+      Logger.log('nudge 中止：排他ロックを使えないため何も送りません');
+      return res;
+    }
+    if (!_lock.tryLock(0)) {
+      res.success = false; res.code = 'ALREADY_RUNNING';
+      Logger.log('nudge 中止：別の実行が動いています（二重送信を避けるため何も送りません）');
+      return res;
+    }
   }
-  _lbNudgeLogWrite(rows, nowMs != null ? nowMs : new Date().getTime());
+  try {
+    var cap = plan.conf.maxPerRun;
+    var now2 = (nowMs != null) ? nowMs : new Date().getTime();
+    for (var i = 0; i < plan.targets.length; i++) {
+      var t = plan.targets[i];
+      if (cap > 0 && (res.sent + res.failed) >= cap) { res.deferred++; continue; }   // 残りは翌日の実行へ
+      // ★送る前に記録する（2026-10-05）。
+      //   以前は全員へ送り終えてから一括で記録していた。途中でGASが時間切れになると、
+      //   送信は済んでいるのに記録が残らず、次の実行で同じ人にもう一度届いた。
+      //   先に 'sending' を残しておけば、落ちても「送ったかもしれない人」として二度と送らない。
+      var _row = -1;
+      try { _row = _lbNudgeLogAppendOne({ kind: t.kind, customerId: t._cid, key: t._key }, now2); }
+      catch (e) { Logger.log('nudge_log に書けないため送信を中止: ' + e.message); res.success = false; res.code = 'LOG_UNWRITABLE'; break; }
+      var ok = false, detail = '';
+      try { ok = _lbPush(t._to, t._text, t.kind); } catch (e) { detail = String(e.message).slice(0, 200); Logger.log('nudge push例外: ' + e.message); }
+      if (ok) res.sent++; else { res.failed++; res.success = false; }   // 1人でも届かなければ成功とは言わない
+      _lbNudgeLogSettle(_row, { kind: t.kind, customerId: t._cid }, ok ? 'sent' : 'failed', ok ? '' : (detail || 'push未達'));
+      Utilities.sleep(250);   // 連続送信で429を招かない間隔（sendLineReminders と同じ）
+    }
+  } finally {
+    if (_lock) { try { _lock.releaseLock(); } catch (e) { } }
+  }
   Logger.log('nudge: ' + JSON.stringify({ sent: res.sent, failed: res.failed, deferred: res.deferred, counts: plan.counts }));
   return res;
+}
+
+// 送信の直前に1行だけ書き、その行番号を返す（必ず2行目＝いちばん上に挿入する）。
+//   書けなければ例外を投げる＝呼び出し側が送信を止める。記録できない送信は、
+//   次の実行で同じ人にもう一度送ることになるため。
+function _lbNudgeLogAppendOne(row, nowMs) {
+  var sh = _lbNudgeLogSheet();
+  var when = Utilities.formatDate(new Date(nowMs), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm');
+  sh.insertRowsAfter(1, 1);
+  sh.getRange(2, 1, 1, LB_NUDGE_LOG_COLS)
+    .setValues([["'" + when, row.kind, row.customerId, row.key || '', 'sending', '']]);
+  SpreadsheetApp.flush();   // 送る前に確実に残す
+  return 2;
+}
+
+// 送信の結果で 'sending' を書き換える。ここが失敗しても 'sending' のまま残り、
+//   再送されない側（安全側）に倒れる。
+//   ★書く前に、その行が本当に自分の行かを確かめる（2026-10-05）。
+//     行番号で場所を覚えているので、送信している間に誰かがシートの先頭へ行を足すと
+//     ずれて**別人の記録を書き換える**。種別と顧客IDが一致しなければ何も書かない。
+function _lbNudgeLogSettle(rowIndex, expect, result, detail) {
+  if (!(rowIndex > 0)) return;
+  try {
+    var sh = _lbNudgeLogSheet();
+    var cur = sh.getRange(rowIndex, 2, 1, 2).getValues()[0];   // B=種別 / C=customer_id
+    if (String(cur[0]) !== String(expect.kind) || String(cur[1]) !== String(expect.customerId)) {
+      Logger.log('nudge_log の行がずれたため結果を書きません（sending のまま残す＝再送しない）');
+      return;
+    }
+    sh.getRange(rowIndex, 5, 1, 2).setValues([[result, String(detail || '').slice(0, 200)]]);
+  } catch (e) { Logger.log('nudge_log の結果更新に失敗（sending のまま残す＝再送しない）: ' + e.message); }
 }
 
 // ============================================================
@@ -878,7 +976,8 @@ var _LB_NUDGE_SKIP_LABEL = {
   noCustomerId: '顧客ID未設定', notVerified: '未認証', notActive: '契約が有効でない', noLine: 'LINE未連携',
   transferUsed: '振替権を使用済み', transferExpired: '振替権が期限切れ', transferNone: '振替権の記録なし',
   monthAlreadySent: 'その月は送信済み', visitATooSoon: '前回の来店翌日Aから日が浅い',
-  noRemain: '月額残が0', remainUnknown: '残数が算出できない', noEvent: '該当する出来事なし'
+  noRemain: '月額残が0', remainUnknown: '残数が算出できない', noEvent: '該当する出来事なし',
+  sentToday: '今日すでに送信済み', dupMember: '名簿に同じ会員の行が重複'
 };
 function _lbNudgeSkipText(skipped) {
   var parts = [];
@@ -962,7 +1061,29 @@ function lbNudgePreview(nowMs) {
 // ============================================================
 function lbNudgeDaily(nowMs) {
   var ms = (nowMs != null) ? nowMs : new Date().getTime();
-  return _lbNudgeSend(lbNudgePlanAll(ms), ms);
+  // ★ロックは「誰に送るかを決める前」に取る（2026-10-05）。
+  //   送信だけを囲っても足りない。2つの実行が同時に一覧を作ると、どちらも
+  //   「まだ誰にも送っていない」記録を読む。先に送った方がロックを解放したあと、
+  //   もう一方が**古い一覧のまま**送る＝同じ人に2通届く。
+  //   読む→決める→送る→記録する、までを1つの実行だけが通るようにする。
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
+  // ★ロックそのものが使えないなら送らない（2026-10-05）。
+  //   ここで null のまま先へ進むと、**何も守っていないのに「ロック済み」として**送ることになる。
+  //   2つ走れば同じ人に2通届く。守れないときは送らない。
+  if (!lock) {
+    Logger.log('nudge 中止：排他ロックを使えないため何も送りません');
+    return { success: false, code: 'LOCK_UNAVAILABLE', enabled: _lbNudgeEnabled(), sent: 0, failed: 0, deferred: 0 };
+  }
+  if (!lock.tryLock(0)) {
+    Logger.log('nudge 中止：別の実行が動いています（二重送信を避けるため何も送りません）');
+    return { success: false, code: 'ALREADY_RUNNING', enabled: _lbNudgeEnabled(), sent: 0, failed: 0, deferred: 0 };
+  }
+  try {
+    return _lbNudgeSend(lbNudgePlanAll(ms), ms, true);   // 第3引数＝ロックは取得済み
+  } finally {
+    if (lock) { try { lock.releaseLock(); } catch (e) { } }
+  }
 }
 
 // ------------------------------------------------------------
