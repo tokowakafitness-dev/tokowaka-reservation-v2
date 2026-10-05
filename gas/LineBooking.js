@@ -5956,7 +5956,13 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   for (var k = 0; k < lastCol; k++) rowArr.push('');
   var qty = isPair ? tickets * 2 : tickets;   // ペアは人数回（2名×回数）
   if (cols.name >= 0)   rowArr[cols.name]   = name;
-  if (cols.type >= 0)   rowArr[cols.type]   = isPair ? 'ペア' : kind;   // ペアは種別=ペア（予約時のペア判定・計上）
+  // ★種別＝チケット。既存契約の種別(kind)を流用してはいけない（2026-10-05 オーナー決定・Codex指摘）。
+  //   月額会員が追加チケットを買うと「種別=通常・開始=購入日」の行ができ、billing の findMaster が
+  //   期間の重なる行から開始日の新しいものを選ぶため、生きている月額契約（単価あり）を押しのけて
+  //   売上¥0・報酬¥0になる（2026-09に片山典之様ほかで実際に発生。単価0が23件）。
+  //   月額行とチケット行は種別で分けて並列に持たせる＝互いの候補に入らず押しのけ合わない。
+  //   レンタルの0円packだけは会計上レンタルとして扱うため維持する（売上はcount×2000で別計上）。
+  if (cols.type >= 0)   rowArr[cols.type]   = isPair ? 'ペア' : (kind.indexOf('レンタル') >= 0 ? 'レンタル' : 'チケット');   // ペアは種別=ペア（予約時のペア判定・計上）
   if (cols.ticket >= 0) rowArr[cols.ticket] = qty;
   if (cols.start >= 0)  rowArr[cols.start]  = Utilities.formatDate(today, SETTINGS.TIMEZONE, 'yyyy/MM/dd');
   if (cols.end >= 0)    rowArr[cols.end]    = expireStr;
