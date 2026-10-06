@@ -3598,21 +3598,24 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
   // Codex条件：割当器 result.ok===true を厳守。不正入力（データ不整合・期限欠損）は fail-closed で予約拒否。
   if (!b.ok) return { ok: false, code: 'REVIEW_REQUIRED', message: 'ご契約情報の確認が必要です。恐れ入りますが担当トレーナーへご連絡ください。' };
   if (!b.canBook) return { ok: false, code: 'NO_REMAINING', message: (wantAtt > 1 ? 'ペアチケットの残数が不足しています（2名分が同一チケットに必要です）。' : '予約可能な残数がありません。') };
-  if (b.degradedUnlimited) return { ok: true, remaining: null, consumeType: 'monthly', packKind: 'normal', monthlyType: String(contractType || '').indexOf('モニター') >= 0 ? 'モニター' : '' };   // 移行期degraded＝無制限維持
-  // ★月額(通常/モニター)契約の種別を返す（2026-10-05）。予約タイトルの種別を決めるのに使う。
+  // ★月額(通常/モニター)契約の種別を求める（2026-10-05）。予約タイトルの種別を決めるのに使う。
   //   contractType は最新の契約行から来るため、追加チケット行が並列にあると 'チケット' になる。
   //   月額枠を消化した予約が チケット_ に化けるのを防ぐため、月額契約の種別を別に渡す。
-  //   対象は予約日時点で有効な行のみ。モニターが1行でもあればモニターを優先する（売上内訳を分けるため）。
-  var _monthlyType = '';
+  //   ★degraded（頻度0の月額契約＝無制限扱い）の早期returnより前で求める。後ろに置くと、
+  //     その経路だけ contractType（＝チケット行）を見てしまい、月額の予約が チケット_ に化ける（Codex関門③）。
+  //   選び方は findMaster（billing側）と揃える＝予約日時点で有効な月額行のうち開始日が最も新しいもの。
+  //   種別を「モニター優先」で決めると、新しい通常契約があっても古いモニター契約が勝って売上内訳がずれる。
+  var _monthlyType = '', _monthlyStart = -1;
   for (var _mr = 0; _mr < rows.length; _mr++) {
     var _rr = rows[_mr];
     if (_rr.start && _rr.start.getTime() > tMs) continue;
     if (_rr.end && _rr.end.getTime() < tMs) continue;
     var _mt = String((_rr.cols.type >= 0 ? _rr.row[_rr.cols.type] : '') || '');
     if (!_mt || _mt.indexOf('チケット') >= 0 || _mt.indexOf('レンタル') >= 0 || _mt.indexOf('ペア') >= 0) continue;
-    if (_mt.indexOf('モニター') >= 0) { _monthlyType = 'モニター'; break; }
-    if (!_monthlyType) _monthlyType = _mt;
+    var _st = _rr.start ? _rr.start.getTime() : 0;
+    if (_st >= _monthlyStart) { _monthlyStart = _st; _monthlyType = (_mt.indexOf('モニター') >= 0) ? 'モニター' : '通常'; }
   }
+  if (b.degradedUnlimited) return { ok: true, remaining: null, consumeType: 'monthly', packKind: 'normal', monthlyType: _monthlyType };   // 移行期degraded＝無制限維持
   return { ok: true, remaining: (disp.monthlyRem || 0) + (disp.ticketRem || 0),
            monthlyRem: disp.monthlyRem, ticketRem: disp.ticketRem,
            ticketRemPair: disp.ticketRemPair, ticketRemNormal: disp.ticketRemNormal,
@@ -5790,6 +5793,12 @@ function linkUnlinkedReservation(lineUserId, resId, customerId, attendeeCount) {
     if (!(att === 1 || att === 2)) return { success: false, code: 'ATTENDEE_COUNT_REQUIRED', message: 'ペアの予約は来店人数（2名／1名）を指定してください。' };
   }
   var evId = String(rec[4] || '');
+  // ★同時クリックで二重appendされ残数が二重消化されるのを防ぐ（Codex関門③）。
+  //   重複確認→説明欄同期→append→未紐付け行の削除までを不可分にする。
+  //   取れなければ失敗を返す（黙って通すと二重取込になる）。
+  var _linkLock = LockService.getScriptLock();
+  if (!_linkLock.tryLock(15000)) return { success: false, code: 'BUSY', message: '他の操作と重なりました。少し待ってからもう一度お試しください。' };
+  try {
   var resvSh = _lbEnsureResvSchema();   // 15列スキーマを保証してから書く
   // 多重取込防止：同じcalendar_event_idが既にconfirmed/consumedで台帳にあれば再紐付けしない（linkの複数回実行で重複行→残数の多重消化を防ぐ）。
   if (evId) {
@@ -5840,6 +5849,8 @@ function linkUnlinkedReservation(lineUserId, resId, customerId, attendeeCount) {
     evId, kind, att
   ]);
   ush.deleteRow(row);
+  } finally { _linkLock.releaseLock(); }
+  // 通知はLockの外（送信の遅さでLockを握り続けない）
   if (member.lineUserId) { var _ml = _lbMemberLang(member.lineUserId); _lbPush(member.lineUserId, _lbSt(_ml, 'push_booked', { dt: _lbFmtResvLabel(rec[0], _ml) }), 'booking_customer'); }
   return { success: true };
 }
