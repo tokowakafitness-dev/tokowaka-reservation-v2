@@ -214,7 +214,14 @@ CREATE TABLE reservation_allocations (
   month_key      TEXT,                -- monthly のとき、どの月の枠か
   pack_id        TEXT,                -- ticket/pair のとき、どのパックか
   units          INTEGER NOT NULL DEFAULT 1,
-  decided_at     INTEGER NOT NULL
+  decided_at     INTEGER NOT NULL,
+
+  -- ★units は種別ごとに値が決まっている。制約を付けないと残数が壊れる
+  --   負の値が入ると、上限の条件（used + units <= total）を素通りしたうえ、
+  --   消費のトリガーが used を**減らす**＝予約するたびに残数が増える。
+  --   ペアに 1 が入ると、2枚ぶんの席を使って1枚しか引かれない。
+  CHECK (units > 0),
+  CHECK ((source = 'pair' AND units = 2) OR (source <> 'pair' AND units = 1))
 );
 ```
 
