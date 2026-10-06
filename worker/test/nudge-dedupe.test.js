@@ -164,6 +164,13 @@ ok('⑬期間の鍵を記録に残す',
   && /_key: \(range \? range\.key : win\.key\)/.test(SRC),
   '鍵を記録しないと、次の実行で「送った」と判定できない');
 ok('⑬送信済みは理由として数える', /catchUpDone: 'この期間の追いかけは送信済み'/.test(SRC));
+ok('⑬★エディタから引数なしで呼べる入口がある',
+  /function lbNudgeCatchUpCheck\(\) \{/.test(SRC) && /function lbNudgeCatchUpSend\(\) \{/.test(SRC),
+  'GASエディタの関数プルダウンからは引数を渡せない。入口が無いとオーナーが実行できない');
+ok('⑬確認用と送信用が名前で見分けられる',
+  /lbNudgeCatchUpCheck[\s\S]{0,400}?lbNudgeCatchUpPreview\(FROM, TO\)/.test(SRC)
+  && /lbNudgeCatchUpSend[\s\S]{0,400}?lbNudgeCatchUp\(FROM, TO\)/.test(SRC),
+  '取り違えて送信を実行すると、確認なしで顧客に届く');
 ok('⑬★抑止が「恒久的」ではないことを書いてある',
   /「恒久的」ではない。記録を読むのは直近 LB_NUDGE_LOG_SCAN 行まで/.test(SRC),
   '3000行を超えて古くなった鍵は見えなくなる。言い切ると、同じ期間を流し直したとき二重に届く');

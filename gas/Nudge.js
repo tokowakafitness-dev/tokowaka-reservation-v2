@@ -1230,6 +1230,32 @@ function _lbNudgeCatchUpRange(fromYmd, toYmd) {
            label: Utilities.formatDate(f, tz, 'yyyy/MM/dd') + '〜' + Utilities.formatDate(t, tz, 'yyyy/MM/dd') };
 }
 
+// ============================================================
+// ★GASエディタから実行する入口（2026-10-06）
+// ============================================================
+//   エディタの関数プルダウンからは**引数を渡せない**。
+//   日付はここに書いて実行する。既存の lbNudgePreviewNamed と同じ作法。
+//
+//   手順：
+//     ① 下の FROM / TO を直す
+//     ② lbNudgeCatchUpCheck を実行 → ログで「誰に何が届くか」を確かめる（送りません）
+//     ③ 問題なければ lbNudgeCatchUpSend を実行（ここで実際に届きます）
+//   ②を飛ばして③をしない。送ったものは取り消せない。
+
+function lbNudgeCatchUpCheck() {
+  var FROM = '2026-09-30';   // ← 来店の期間（この日を含む）
+  var TO   = '2026-10-05';   // ← この日も含む
+  Logger.log(lbNudgeCatchUpPreview(FROM, TO));
+}
+
+function lbNudgeCatchUpSend() {
+  var FROM = '2026-09-30';   // ← 上と同じ日付にすること
+  var TO   = '2026-10-05';
+  var r = lbNudgeCatchUp(FROM, TO);
+  Logger.log('結果: ' + JSON.stringify({ success: r.success, code: r.code || '', sent: r.sent, failed: r.failed, deferred: r.deferred }));
+  return r;
+}
+
 /** 送らずに一覧だけ出す。実際に送る前に必ずこれで確かめる。 */
 function lbNudgeCatchUpPreview(fromYmd, toYmd) {
   var r = _lbNudgeCatchUpRange(fromYmd, toYmd);
