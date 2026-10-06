@@ -220,8 +220,12 @@ CREATE TABLE reservation_allocations (
   --   負の値が入ると、上限の条件（used + units <= total）を素通りしたうえ、
   --   消費のトリガーが used を**減らす**＝予約するたびに残数が増える。
   --   ペアに 1 が入ると、2枚ぶんの席を使って1枚しか引かれない。
+  --   ★ペアは 1 も正当。ペア契約の方が1名で来店する運用があり、
+  --     そのときペアpackから1枚だけ引く（差額を請求する）。
+  --     `gas/Allocate.js:366`「ペア＝常にpack（月額に吸われない・1名来店でも）」
+  --     `gas/Allocate.js:837`「消化枚数（ペア2名=2・1名=1）」
   CHECK (units > 0),
-  CHECK ((source = 'pair' AND units = 2) OR (source <> 'pair' AND units = 1))
+  CHECK ((source = 'pair' AND units IN (1,2)) OR (source <> 'pair' AND units = 1))
 );
 ```
 
