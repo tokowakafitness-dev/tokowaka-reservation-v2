@@ -106,5 +106,67 @@ ok('⑩★「lock があれば」で済ませていない',
 ok('⑪中止の理由を返す', /res\.success = false; res\.code = plan\.code;/.test(SRC),
   '1通も送れていないのに「成功」と見えると、止まっている状態が黙って続く');
 
+// ---------- ⑫ 追いかけ送信（ある期間の来店者へ、まとめて1回） ----------
+//   ★毎日の送信は「昨日来た人」しか見ない。有効化の前に来店した方には何も届かない。
+//     運用を始める前の数日ぶんを、1人1通で追いかける（2026-10-06 オーナー要望）。
+ok('⑫来店を見る窓を期間で広げられる',
+  /function _lbNudgeResvIndex\(now, range\)/.test(SRC)
+  && /if \(range && range\.fromMs != null && range\.toMs != null\) \{ yStart = range\.fromMs; yEnd = range\.toMs; \}/.test(SRC));
+ok('⑫一覧の生成にも期間を渡せる',
+  /function lbNudgePlanAll\(nowMs, range\)/.test(SRC) && /_lbNudgeResvIndex\(now, range\)/.test(SRC));
+ok('⑫入口が2つある（確認用と送信用）',
+  /function lbNudgeCatchUpPreview\(fromYmd, toYmd\)/.test(SRC) && /function lbNudgeCatchUp\(fromYmd, toYmd\)/.test(SRC));
+ok('⑫★to の日を含める（指定した最終日の来店者が漏れない）',
+  /toEnd\.setDate\(toEnd\.getDate\(\) \+ 1\);/.test(SRC));
+ok('⑫期間が不正なら何もしない', /code: 'BAD_RANGE'/.test(SRC));
+
+// ★追いかけ送信も、毎日の送信と同じ守りを通ること
+ok('⑫★ロックを一覧の前に取る',
+  /function lbNudgeCatchUp\(fromYmd, toYmd\)[\s\S]{0,700}?lock\.tryLock\(0\)[\s\S]{0,400}?_lbNudgeSend\(lbNudgePlanAll\(ms, r\), ms, true\)/.test(SRC),
+  '一覧を作ってからロックを取ると、毎日の送信と同時に走ったとき同じ人へ2通行く');
+ok('⑫★ロックが使えなければ送らない',
+  /function lbNudgeCatchUp\(fromYmd, toYmd\)[\s\S]{0,500}?LOCK_UNAVAILABLE/.test(SRC));
+ok('⑫★送信は共通の _lbNudgeSend を通る（重複防止を迂回しない）',
+  /_lbNudgeSend\(lbNudgePlanAll\(ms, r\), ms, true\)/.test(SRC),
+  '別の送信処理を書くと、1日1通・送る前に記録・名簿の重複よけが効かない');
+
+// ★既定（期間を渡さない）の挙動が変わっていないこと
+ok('⑫既定はいまも「昨日の1日」',
+  /var yStart = _lbNudgeDayStart\(now, -1\), yEnd = _lbNudgeDayStart\(now, 0\);/.test(SRC));
+ok('⑫一覧の整形は毎日と追いかけで共通',
+  /function _lbNudgePreviewText\(plan, title\)/.test(SRC)
+  && /return _lbNudgePreviewText\(lbNudgePlanAll\(ms\), null\);/.test(SRC));
+
+// ---------- ⑬ 追いかけ送信が、来ていない日のことを言わない／別の人に送らない ----------
+//   ★Codex関門②で差し戻された3点（2026-10-06）。どれも顧客に直接届く誤り。
+ok('⑬★「先日」の文面が別に用意されている',
+  /visit_a_catchup: \{/.test(SRC) && /visit_b_catchup: \{/.test(SRC)
+  && /先日はお疲れさまでした。/.test(SRC),
+  'visit_a/visit_b を流用すると、9/30の来店者に「昨日はお疲れさまでした」と送る');
+ok('⑬★追いかけのときだけ文面を切り替える',
+  /_lbNudgeMsg\(lang, catchUp \? 'visit_a_catchup' : 'visit_a', vars\)/.test(SRC)
+  && /_lbNudgeText\(win\.kind, m\.lang, v, !!range\)/.test(SRC));
+ok('⑬英語・中国語も直っている',
+  /Thank you for your recent session\./.test(SRC) && /前些天辛苦了。/.test(SRC),
+  '日本語だけ直すと、他の言語の方には "yesterday" のまま届く');
+
+ok('⑬★追いかけは来店した人だけに送る',
+  /if \(range\) \{[\s\S]{0,300}?c\.kind === LB_NUDGE_KIND\.VISIT_A \|\| c\.kind === LB_NUDGE_KIND\.VISIT_B/.test(SRC),
+  '期間を広げると、当日キャンセルした人へ振替の案内が飛び、解放日なら全会員に翌月の案内が飛ぶ');
+ok('⑬来店以外は理由として数える', /notVisitKind: '来店以外（追いかけでは送らない）'/.test(SRC));
+
+ok('⑬★同じ期間を二度実行しても二度目は送らない',
+  /function _lbNudgeSentForRange\(logs, customerId, rangeKey\)/.test(SRC)
+  && /if \(range && _lbNudgeSentForRange\(log, m\.customerId, range\.key\)\)/.test(SRC),
+  '暦日の抑止だけでは、翌日もう一度実行すると visit_b に2通目が届く');
+ok('⑬期間の鍵を記録に残す',
+  /key: 'catchup:' \+ Utilities\.formatDate/.test(SRC)
+  && /_key: \(range \? range\.key : win\.key\)/.test(SRC),
+  '鍵を記録しないと、次の実行で「送った」と判定できない');
+ok('⑬送信済みは理由として数える', /catchUpDone: 'この期間の追いかけは送信済み'/.test(SRC));
+ok('⑬★抑止が「恒久的」ではないことを書いてある',
+  /「恒久的」ではない。記録を読むのは直近 LB_NUDGE_LOG_SCAN 行まで/.test(SRC),
+  '3000行を超えて古くなった鍵は見えなくなる。言い切ると、同じ期間を流し直したとき二重に届く');
+
 console.log(`\n${fail ? '❌' : '✅'} リマインドの二重送信 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

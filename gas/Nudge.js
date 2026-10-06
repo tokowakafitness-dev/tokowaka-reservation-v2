@@ -319,7 +319,92 @@ var _LB_NUDGE_MSG = {
         '\n' +
         '▼ 預約\n' +
         '{url}'
-  }
+  },
+  // ★追いかけ送信用（2026-10-06）。中身は visit_a / visit_b と同じで、冒頭だけ「昨日」→「先日」。
+  //   数日前の来店にも使うため、そのまま流用すると**来ていない日のことを言う**（Codex関門②の指摘）。
+  visit_b_catchup: {
+    ja: '先日はお疲れさまでした。\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        '次回のご予約がお決まりでなければ、下記よりお待ちしております。\n' +
+        '\n' +
+        '▼ ご予約\n' +
+        '{url}',
+    en: 'Thank you for your recent session.\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        'If your next session is not yet decided, we will be glad to welcome you below.\n' +
+        '\n' +
+        '▼ Book\n' +
+        '{url}',
+    zh: '前些天辛苦了。\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        '若下次的预约尚未确定，敬请从下方预约，我们恭候您的光临。\n' +
+        '\n' +
+        '▼ 预约\n' +
+        '{url}',
+    'zh-Hant': '前些天辛苦了。\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        '若下次的預約尚未確定，敬請從下方預約，我們恭候您的光臨。\n' +
+        '\n' +
+        '▼ 預約\n' +
+        '{url}'
+  },
+  // ④ 来店翌日A（今月の予約あり）
+  //   すでにご予約がある方なので押しを弱める。合う枠が無いときの逃げ道も示す
+  //   （担当へご相談いただく）。2026-10-02 オーナー指示。
+  visit_a_catchup: {
+    ja: '先日はお疲れさまでした。\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        '次のご予約は {next} に承っております。\n' +
+        '他日程でもいかがでしょうか。\n' +
+        '\n' +
+        'もし予約可能枠が合わなければ、担当宛にご希望の日時をご相談ください！\n' +
+        '\n' +
+        '▼ ご予約\n' +
+        '{url}',
+    en: 'Thank you for your recent session.\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        'Your next session is reserved for {next}.\n' +
+        'Another day would be very welcome as well.\n' +
+        '\n' +
+        'If none of the available times suit you, please let your trainer know your preferred date and time.\n' +
+        '\n' +
+        '▼ Book\n' +
+        '{url}',
+    zh: '前些天辛苦了。\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        '您的下次预约为 {next}。\n' +
+        '其他日期也十分欢迎。\n' +
+        '\n' +
+        '如果可预约的时段不合适，请将您希望的日期与时间告知您的教练！\n' +
+        '\n' +
+        '▼ 预约\n' +
+        '{url}',
+    'zh-Hant': '前些天辛苦了。\n' +
+        '\n' +
+        '{facts}\n' +
+        '\n' +
+        '您的下次預約為 {next}。\n' +
+        '其他日期也十分歡迎。\n' +
+        '\n' +
+        '如果可預約的時段不合適，請將您希望的日期與時間告知您的教練！\n' +
+        '\n' +
+        '▼ 預約\n' +
+        '{url}'
+  },
 };
 
 // 文面の取り出し（_lbSt と同じ作り。辞書だけ別にして、LineBooking.js を太らせない）
@@ -345,7 +430,7 @@ function _lbNudgeLiffUrl() {
 }
 
 // 種別＋差し込み値 → 本文。month_open だけ固定枠の有無で辞書キーが分かれる。
-function _lbNudgeText(kind, lang, v) {
+function _lbNudgeText(kind, lang, v, catchUp) {
   var vars = {
     month: v.monthLabel, pattern: v.pattern, remain: v.remain, carry: v.carry, days: v.days,
     facts: v.facts || '',                      // 残数の一文（繰越の行は月末が近いときだけ入る）
@@ -353,8 +438,9 @@ function _lbNudgeText(kind, lang, v) {
   };
   if (kind === LB_NUDGE_KIND.TRANSFER)   return _lbNudgeMsg(lang, 'transfer', vars);
   if (kind === LB_NUDGE_KIND.MONTH_OPEN) return _lbNudgeMsg(lang, v.pattern ? 'month_open_fixed' : 'month_open_free', vars);
-  if (kind === LB_NUDGE_KIND.VISIT_B)    return _lbNudgeMsg(lang, 'visit_b', vars);
-  return _lbNudgeMsg(lang, 'visit_a', vars);
+  // ★追いかけ送信は「先日」と言う。数日前の来店に「昨日」は嘘になる。
+  if (kind === LB_NUDGE_KIND.VISIT_B)    return _lbNudgeMsg(lang, catchUp ? 'visit_b_catchup' : 'visit_b', vars);
+  return _lbNudgeMsg(lang, catchUp ? 'visit_a_catchup' : 'visit_a', vars);
 }
 
 // ------------------------------------------------------------
@@ -479,6 +565,23 @@ function _lbNudgeLogReadAll() {
   return out;
 }
 
+// この追いかけ（期間）で、その方に既に送ったか。種別も日付も問わない。
+//   記録の「対象キー」列に期間の鍵を入れておき、それで照合する。
+//   暦日の抑止だけでは、翌日もう一度実行したときに2通目が出る。
+//
+//   ★「恒久的」ではない。記録を読むのは直近 LB_NUDGE_LOG_SCAN 行まで（既定3000行）。
+//     その鍵の行が3000行より古くなったあとに同じ期間をもう一度実行すると、再び送られる。
+//     追いかけは数日ぶんを1回流すための道具なので、いまの運用では足りる。
+//     何か月も経ってから同じ期間を流し直す使い方をするなら、この制限を先に外すこと。
+function _lbNudgeSentForRange(logs, customerId, rangeKey) {
+  if (!logs || !rangeKey) return false;
+  for (var i = 0; i < LB_NUDGE_ORDER.length; i++) {
+    var e = logs[LB_NUDGE_ORDER[i]] && logs[LB_NUDGE_ORDER[i]][String(customerId)];
+    if (e && e.keys && e.keys[rangeKey]) return true;
+  }
+  return false;
+}
+
 // 種別を問わず「その暦日にもう1通送っている」か。1人1日1通の最後の砦。
 function _lbNudgeSentOnDay(logs, customerId, dayKey) {
   return !!(logs && logs._byDay && logs._byDay[dayKey + '|' + String(customerId)]);
@@ -526,13 +629,18 @@ function _lbNudgeMembers() {
 //     `if (st !== 'confirmed' && st !== 'consumed') continue;`）ことで成立している。
 //     ここだけ consumed に限っていたため、実際に来店された方を1人も拾えていなかった。
 //     **消化の定義はシステム全体で1つにする。**
-function _lbNudgeResvIndex(now) {
+//   ★来店を見る範囲（2026-10-06）
+//     既定は「昨日の1日」。毎日動かす前提の作り。
+//     `range` を渡すと、その期間に来店した人をまとめて拾う（取りこぼしの追いかけ送信に使う）。
+//     判定そのものは同じ。見る窓の広さだけが変わる。
+function _lbNudgeResvIndex(now, range) {
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
   if (!sh) return null;
   var last = sh.getLastRow();
   if (last < 2) return {};
   var nowMs = now.getTime();
   var yStart = _lbNudgeDayStart(now, -1), yEnd = _lbNudgeDayStart(now, 0);
+  if (range && range.fromMs != null && range.toMs != null) { yStart = range.fromMs; yEnd = range.toMs; }
   var monthEnd = _lbNudgeMonthEnd(now);
   var vals = sh.getRange(2, 1, last - 1, Math.max(12, sh.getLastColumn())).getValues();
   var idx = {};
@@ -708,8 +816,9 @@ function _lbNudgeSourceOfTruth() {
   return v ? v : 'sheet';
 }
 
-function lbNudgePlanAll(nowMs) {
+function lbNudgePlanAll(nowMs, range) {
   var now = (nowMs != null) ? new Date(nowMs) : new Date();   // 引数はテスト／確認で「今」を固定するため。本番は省略。
+  // range を渡すと、来店を見る窓が「昨日の1日」から指定の期間に広がる（追いかけ送信・2026-10-06）。
   var ms = now.getTime();
   var conf = _lbNudgeConf();
   var nm = _lbNudgeNextMonthDate(now);
@@ -736,7 +845,7 @@ function lbNudgePlanAll(nowMs) {
 
   var members = _lbNudgeMembers();
   if (members === null) { plan.code = 'NO_MAP_SHEET'; return plan; }
-  var resv = _lbNudgeResvIndex(now);
+  var resv = _lbNudgeResvIndex(now, range);
   if (resv === null) { plan.code = 'NO_RESV_SHEET'; return plan; }      // 台帳が無い＝来店も未来も分からない → 送らない
   var tc = _lbNudgeTcreditIndex();
   if (tc === null) { plan.code = 'NO_TCREDIT_SHEET'; return plan; }     // 振替権が無い＝当日キャンセルと来店を区別できない → 送らない
@@ -832,6 +941,26 @@ function lbNudgePlanAll(nowMs) {
       //   1回の一覧の中に同じ人が2度入ると、どちらも抑止をすり抜ける。
       if (seenCid[m.customerId]) { plan.skipped.dupMember++; continue; }
 
+      // ★追いかけ送信は「来店した方」だけに送る（2026-10-06・Codex関門②の指摘）。
+      //   range は来店を見る窓を広げるが、同じ `yesterday` を振替の判定も使っている。
+      //   そのまま走らせると、期間中に**当日キャンセルした方**にも振替の案内が届く。
+      //   さらに実行日が解放日なら、期間と関係ない全会員に翌月分の案内が飛ぶ。
+      //   どちらも「来店した方へのお礼」という今回の目的から外れる。
+      if (range) {
+        cand = cand.filter(function (c) {
+          return c.kind === LB_NUDGE_KIND.VISIT_A || c.kind === LB_NUDGE_KIND.VISIT_B;
+        });
+        if (!cand.length) { plan.skipped.notVisitKind = (plan.skipped.notVisitKind || 0) + 1; continue; }
+      }
+
+      // ★この追いかけで既に送った方には、日をまたいでも二度と送らない。
+      //   種別をまたいだ抑止は「同じ暦日」しか見ないので、翌日もう一度実行すると
+      //   予約の無い来店者（visit_b）には2通目が届く。期間を鍵にして恒久的に抑える。
+      // （注：記録の読み取りは直近3000行まで。古くなった鍵は見えなくなる＝_lbNudgeSentForRange のコメント）
+      if (range && _lbNudgeSentForRange(log, m.customerId, range.key)) {
+        plan.skipped.catchUpDone = (plan.skipped.catchUpDone || 0) + 1; continue;
+      }
+
       // ── 優先順位で1通に絞る。絞って送らなかったものは demoted として一覧に出す ──
       cand.sort(function (a, b) { return LB_NUDGE_ORDER.indexOf(a.kind) - LB_NUDGE_ORDER.indexOf(b.kind); });
       var win = cand[0];
@@ -854,7 +983,7 @@ function lbNudgePlanAll(nowMs) {
         carry:  (win.kind === LB_NUDGE_KIND.TRANSFER) ? null : f.carry,
         days:   (win.kind === LB_NUDGE_KIND.TRANSFER) ? null : f.days,
         expire: v.expire, next: v.next, pattern: v.pattern, quota: v.quota,
-        _to: m.lineUserId, _cid: m.customerId, _key: win.key, _text: _lbNudgeText(win.kind, m.lang, v)
+        _to: m.lineUserId, _cid: m.customerId, _key: (range ? range.key : win.key), _text: _lbNudgeText(win.kind, m.lang, v, !!range)
       });
       seenCid[m.customerId] = true;   // ここから先、この実行ではこの会員に2通目を作らない
       for (var d = 1; d < cand.length; d++) {
@@ -977,7 +1106,8 @@ var _LB_NUDGE_SKIP_LABEL = {
   transferUsed: '振替権を使用済み', transferExpired: '振替権が期限切れ', transferNone: '振替権の記録なし',
   monthAlreadySent: 'その月は送信済み', visitATooSoon: '前回の来店翌日Aから日が浅い',
   noRemain: '月額残が0', remainUnknown: '残数が算出できない', noEvent: '該当する出来事なし',
-  sentToday: '今日すでに送信済み', dupMember: '名簿に同じ会員の行が重複'
+  sentToday: '今日すでに送信済み', dupMember: '名簿に同じ会員の行が重複',
+  notVisitKind: '来店以外（追いかけでは送らない）', catchUpDone: 'この期間の追いかけは送信済み'
 };
 function _lbNudgeSkipText(skipped) {
   var parts = [];
@@ -992,10 +1122,16 @@ function _lbNudgeIndent(s) { return String(s).split('\n').map(function (l) { ret
 
 function lbNudgePreview(nowMs) {
   var ms = (nowMs != null) ? nowMs : new Date().getTime();
-  var plan = lbNudgePlanAll(ms);
+  return _lbNudgePreviewText(lbNudgePlanAll(ms), null);
+}
+
+// 一覧の整形。毎日の送信と追いかけ送信で同じものを使う（見え方がずれないように）。
+//   title を渡すと見出しに添える（例：「追いかけ送信（来店 2026/09/30〜2026/10/05）」）。
+function _lbNudgePreviewText(plan, title) {
   var conf = plan.conf;
   var out = [];
-  out.push('=== 予約を促すリマインド 一覧（送信しません） ' + plan.asOf + ' ===');
+  out.push('=== 予約を促すリマインド 一覧（送信しません） ' + plan.asOf + ' ==='
+           + (title ? '\n【' + title + '】' : ''));
   // ★どの版が本番で動いているかを出す。
   //   「直したのに出力が変わらない」とき、反映漏れなのか不具合なのかを切り分けられない。
   //   今日それで時間を使ったので、印を出す（2026-10-01）。
@@ -1059,6 +1195,66 @@ function lbNudgePreview(nowMs) {
 // 1日1回のトリガーの入口（★これ以外のトリガーは作らない）
 //   4種すべてをこの1回でまとめて判定する。month_open は解放日（既定25日）だけ内部で当たる。
 // ============================================================
+// ============================================================
+// 追いかけ送信：ある期間に来店した方へ、まとめて1回だけ送る（2026-10-06）
+// ============================================================
+//   ★なぜ要るのか
+//     毎日の送信は「昨日来た人」だけを見る。仕組みを有効にする前に来店した方には
+//     何も届かない。運用を始める前の数日ぶんを、1人1通で追いかける。
+//
+//   ★重複させない仕掛けは、毎日の送信とまったく同じものを使う
+//     ・種別をまたいだ「その日1通」（送信記録の暦日で判定）
+//     ・同じ一覧の中の重複（名簿に同じ会員の行が2つある場合）
+//     ・排他ロック。読む→決める→送る→記録する、を1つの実行だけが通る
+//     ・送る前に記録する。途中で落ちても再送しない
+//     したがって **毎日の送信と同じ日に実行しても、同じ人に2通は行かない。**
+//
+//   ★期間に何度来ていても1通
+//     来店が複数あっても会員ごとに1行にまとめている（_lbNudgeResvIndex）。
+//     文面は「今月の予約が残っているか」で選ばれる（来店翌日A／B）。
+//
+//   使い方（GASエディタ）：
+//     lbNudgeCatchUpPreview('2026-09-30', '2026-10-05')   送らずに一覧だけ
+//     lbNudgeCatchUp('2026-09-30', '2026-10-05')          実際に送る（LB_REMIND_ON=1 のときだけ）
+//   どちらも「to」の日を**含む**（その日の終わりまで）。
+function _lbNudgeCatchUpRange(fromYmd, toYmd) {
+  var tz = SETTINGS.TIMEZONE;
+  var f = _lbParseResvDate(String(fromYmd) + ' 00:00');
+  var t = _lbParseResvDate(String(toYmd) + ' 00:00');
+  if (!f || !t) return null;
+  var toEnd = new Date(t.getTime()); toEnd.setDate(toEnd.getDate() + 1);   // to の日を含める
+  if (f.getTime() >= toEnd.getTime()) return null;
+  return { fromMs: f.getTime(), toMs: toEnd.getTime(),
+           // ★記録に残す鍵。これで「この期間の追いかけは済み」を日をまたいで判定する。
+           key: 'catchup:' + Utilities.formatDate(f, tz, 'yyyyMMdd') + '-' + Utilities.formatDate(t, tz, 'yyyyMMdd'),
+           label: Utilities.formatDate(f, tz, 'yyyy/MM/dd') + '〜' + Utilities.formatDate(t, tz, 'yyyy/MM/dd') };
+}
+
+/** 送らずに一覧だけ出す。実際に送る前に必ずこれで確かめる。 */
+function lbNudgeCatchUpPreview(fromYmd, toYmd) {
+  var r = _lbNudgeCatchUpRange(fromYmd, toYmd);
+  if (!r) { var e = '⛔ 期間の指定が正しくありません。例：lbNudgeCatchUpPreview(\'2026-09-30\', \'2026-10-05\')'; Logger.log(e); return e; }
+  var plan = lbNudgePlanAll(new Date().getTime(), r);
+  return _lbNudgePreviewText(plan, '追いかけ送信（来店 ' + r.label + '）');   // 整形の中でログに出る（二重に出さない）
+}
+
+/** 実際に送る。LB_REMIND_ON=1 のときだけ。1人1通。 */
+function lbNudgeCatchUp(fromYmd, toYmd) {
+  var r = _lbNudgeCatchUpRange(fromYmd, toYmd);
+  if (!r) { Logger.log('⛔ 期間の指定が正しくありません'); return { success: false, code: 'BAD_RANGE' }; }
+  var ms = new Date().getTime();
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
+  if (!lock) { Logger.log('nudge 中止：排他ロックを使えないため何も送りません'); return { success: false, code: 'LOCK_UNAVAILABLE' }; }
+  if (!lock.tryLock(0)) { Logger.log('nudge 中止：別の実行が動いています'); return { success: false, code: 'ALREADY_RUNNING' }; }
+  try {
+    Logger.log('追いかけ送信：来店 ' + r.label + ' を対象にします');
+    return _lbNudgeSend(lbNudgePlanAll(ms, r), ms, true);
+  } finally {
+    try { lock.releaseLock(); } catch (e) { }
+  }
+}
+
 function lbNudgeDaily(nowMs) {
   var ms = (nowMs != null) ? nowMs : new Date().getTime();
   // ★ロックは「誰に送るかを決める前」に取る（2026-10-05）。
