@@ -87,9 +87,21 @@ D1 → カレンダーに出力 → カレンダー同期が読む → D1に取�
 サロンボード固有の経路に完全に分かれ、D1が書いた予定を物理的に読まなくなったあと**だけ。
 それまでは残す。
 
-判定は「説明欄にその文字が含まれるか」ではなく、**鍵と値の形を決めて厳密に見る**
-（例：`reservation_id: r-xxxx` の行として書き、正規表現で取り出す）。
-顧客が入力した自由記述に同じ文字列が紛れても誤判定しないようにするため。
+**判定に説明欄を使ってはならない。** 説明欄には顧客やトレーナーが自由に書ける。
+`reservation_id: r-xxxx` と書かれた行を正規表現で探す方式だと、**顧客が同じ行を書き写すだけで
+「これはD1の出力だ」と誤判定され、本物の予約が空き枠の計算から消える。**
+
+**Googleカレンダーの非公開の拡張プロパティ**（`extendedProperties.private`）に入れる。
+説明欄とは別の領域で、人は編集できない。
+
+```
+extendedProperties.private.reservationId = <reservation_id>
+```
+
+既存の HPB 連携が同じ理由で `hpbReservationId` を拡張プロパティに入れている
+（`hpb-mail-to-calendar/gas/sync.js`）。**同じ作法に揃える。**
+
+説明欄にも人が読めるように書いてよいが、**判定には使わない**。
 
 ---
 
@@ -325,28 +337,49 @@ Nodeでテストでき、将来の差し替えがここだけで済む。
 
 **① 各文の条件に、前の文が効いたことを含める**（鎖にする）
 
-```sql
--- a. 枠の確保（仮押さえだけ上限を外す）
-UPDATE monthly_quota SET used = used + 1, updated_at = :now
- WHERE customer_id = :cid AND month_key = :mk
-   AND (:unpaid = 1 OR used + 1 <= quota);
+**確保と引当を2文に分けてはならない。** 分けると、2文目が「1文目が成功したこと」を確かめられない。
 
--- b. 引当。a が効いていなければ作らない
---    （used が「自分のぶんを含んだ値」になっているかで確かめる）
+> 試して失敗した書き方（記録として残す）：
+> a で `UPDATE ... WHERE used + 1 <= quota`、b で `WHERE EXISTS (... used <= quota)` とした。
+> **`used = quota` のとき a は0行なのに b は真になる。** 引当が作られ、予約が成立し、超過が通る。
+> 「残数を見る条件」を2回書くと、2つの条件は必ずどこかでずれる。
+
+**解き方：引当を作ることが、確保そのものになるようにする。**
+
+```sql
+-- a. 引当を作る。ここに残数の条件を**1回だけ**書く
 INSERT INTO reservation_allocations (reservation_id, customer_id, source, month_key, units, created_at)
 SELECT :rid, :cid, 'monthly', :mk, 1, :now
  WHERE EXISTS (
    SELECT 1 FROM monthly_quota
     WHERE customer_id = :cid AND month_key = :mk
-      AND (:unpaid = 1 OR used <= quota)
+      AND (:unpaid = 1 OR used + 1 <= quota)
  );
 
--- c. 予約。b が在ることと、重なりが無いことの両方
+-- b. 引当ができたら、枠が減る（トリガー＝引当と不可分）
+CREATE TRIGGER trg_alloc_consume_monthly AFTER INSERT ON reservation_allocations
+WHEN NEW.source = 'monthly'
+BEGIN
+  UPDATE monthly_quota SET used = used + 1, updated_at = NEW.created_at
+   WHERE customer_id = NEW.customer_id AND month_key = NEW.month_key;
+END;
+
+-- c. 予約。引当が在ることと、重なりが無いことの両方
 INSERT INTO reservations (...)
 SELECT ...
  WHERE EXISTS (SELECT 1 FROM reservation_allocations WHERE reservation_id = :rid)
    AND NOT EXISTS ( ...重なりの条件2本... );
 ```
+
+**「引当がある」と「枠が減っている」が同じ出来事になる。** два条件がずれる余地が無い。
+
+`reservation_allocations.reservation_id` は主キーなので、同じ予約で2回引当は作れない。
+再送しても枠は1回しか減らない。
+
+チケット（pack）も同じ形にする。引当の `source = 'ticket'` のトリガーで `ticket_packs.used` を増やす。
+
+**D1は書き込みを直列化する**ので、2つの予約が同時に来ても、2つ目は1つ目で増えた `used` を見る。
+「両方が `used + 1 <= quota` を満たして通る」ことは起きない。
 
 **② 最後に、予約が無ければ必ずSQLエラーになる文を置く**
 
@@ -367,6 +400,18 @@ CREATE TABLE op_log (
   created_at     INTEGER NOT NULL
 );
 ```
+
+#### 同じ操作IDが同時に2回来たとき
+
+手順1で `op_log` を見て「既にあれば元の結果を返す」としているが、
+**2つの再送が同時に来ると、両方が手順1を通過する。** 片方は最後の `INSERT INTO op_log` で
+**主キー衝突**になり、バッチ全体が戻る。
+
+戻るので**二重に消化されることはない**。ただしそのまま失敗を返すと、顧客には
+「予約できませんでした」と出る。**実際には1件目が成功している。**
+
+**主キー衝突を捕まえたら、`op_log` を読み直して1件目の結果を返す。**
+衝突は「誰かが先に成功した」という意味であって、失敗ではない。
 
 **この NOT NULL が、バッチ全体の成否を決めている。** 「なぜ NOT NULL なのか」を知らずに
 外すと、残数だけ減る壊れ方が静かに戻ってくる。スキーマにコメントで残す。
@@ -601,10 +646,21 @@ A・B       両方が作成 → 予定が2つ並ぶ
 Google Calendar API は作成時にイベントIDを指定できる。`reservation_id` から決まる値を使えば、
 2回目の作成は「既に存在する」として弾かれる（409）。**探す必要がなくなり、競合しても1つしか作られない。**
 
+**IDの作り方は、衝突しないことが証明できる形にする。**
+Google Calendar のイベントIDは base32hex（`0-9a-v`）・5〜1024文字という制約がある。
+`reservation_id` を**可逆な符号化**（base32hex）に通し、出力先ごとに決まった接尾辞を足す。
+
 ```
-B1の予定ID            r<reservation_id> を正規化したもの
-トレーナーの予定ID     r<reservation_id>t を正規化したもの
+B1の予定ID            e<base32hex(reservation_id)>b
+トレーナーの予定ID     e<base32hex(reservation_id)>t
 ```
+
+**「正規化」と書いて済ませない。** 不可逆な変換（記号を落とす・小文字化するだけ等）を使うと、
+**別の予約が同じIDになり、2件目が409で作られないまま成功扱いされる**（予定が欠落する）。
+可逆な符号化を使い、**復号して元の `reservation_id` に戻ることをテストで固定する。**
+
+**409を「既にある」と見なす前に、既存の予定の `reservation_id` が一致することを必ず確かめる。**
+一致しなければ、それはID衝突であって成功ではない。要対応に積んで止める。
 
 あわせて、**同じ `reservation_id` ＋出力先の予定が2つ以上無いか**を定期の照合で見る。
 作られてしまった場合に気づけるようにする（防ぐだけでなく、起きたら分かるように）。
