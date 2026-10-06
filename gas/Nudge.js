@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-05a 1人1日1通を種別横断で・送る前に記録・排他ロック';
+var LB_NUDGE_BUILD = '2026-10-06a 追いかけ送信（期間の来店者へ1人1通・文面は「先日」）';
 
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
@@ -785,13 +785,21 @@ function _lbNudgeFirstOfMonth(logs, customerId, now) {
 //   remain が null＝残数を算出できない（degraded）＝送らない側へ倒す。
 function _lbNudgeFacts(m, now) {
   var h = _lbBuildHome(m.customerId, m.name, m.lang, now.getTime());
-  if (!h || !h.type) return { remain: null, carry: 0, days: _lbNudgeDaysLeft(now), quota: 0, carriedIn: 0 };
+  // ★「残数が出ない」には別のことが混ざっている（2026-10-06）。
+  //   ・計算が壊れている（reviewRequired）＝**その会員は予約できない。本当の異常**
+  //   ・月額の契約が無い（チケットだけ・契約切れ）＝正常。送らないだけ
+  //   一緒くたに「残数が算出できない」と数えると、異常が正常の中に埋もれる。
+  if (!h || !h.type) {
+    return { remain: null, why: (h && h.reviewRequired) ? 'broken' : 'noMonthly',
+             carry: 0, days: _lbNudgeDaysLeft(now), quota: 0, carriedIn: 0 };
+  }
   var remain = (h.monthlyRemaining == null) ? null : Number(h.monthlyRemaining);
+  var why = (remain === null) ? 'noMonthly' : '';   // 月額の回数が無い（チケットのみ等）
   var quota = Number(h.quota || 0);
   var carry = (remain == null) ? 0 : Math.max(0, Math.min(remain, _lbNudgeCarryCap(m, quota)));
   // carriedIn＝今月に繰り越されてきた回数（先月の余り）。月の前半に一度だけ伝える。
   var carriedIn = Math.max(0, Number(h.carryover || 0));
-  return { remain: remain, carry: carry, days: _lbNudgeDaysLeft(now), quota: quota, carriedIn: carriedIn };
+  return { remain: remain, why: why, carry: carry, days: _lbNudgeDaysLeft(now), quota: quota, carriedIn: carriedIn };
 }
 
 // 翌月に押さえていただきたい回数（②'固定枠なしの {quota}）。翌月時点の月額残が本命、
@@ -830,6 +838,7 @@ function lbNudgePlanAll(nowMs, range) {
     skipped: { noCustomerId: 0, notVerified: 0, notActive: 0, noLine: 0,
                transferUsed: 0, transferExpired: 0, transferNone: 0,
                monthAlreadySent: 0, visitATooSoon: 0, noRemain: 0, remainUnknown: 0, noEvent: 0,
+               remainBroken: 0, noMonthlyPlan: 0,
                sentToday: 0, dupMember: 0 }
   };
 
@@ -898,7 +907,7 @@ function lbNudgePlanAll(nowMs, range) {
         if (le && le.keys[plan.monthKey]) { reasons.push('monthAlreadySent'); }
         else {
           var f2 = needFacts();
-          if (f2.remain === null) reasons.push('remainUnknown');
+          if (f2.remain === null) reasons.push(f2.why === 'broken' ? 'remainBroken' : 'noMonthlyPlan');
           else {
             var pats = recur[m.customerId] || [];
             var label = pats.map(function (p) { return _lbRecurLabel(p.weekday, p.time, m.lang); }).join('／');
@@ -912,7 +921,7 @@ function lbNudgePlanAll(nowMs, range) {
       //   ★当日キャンセルの方はここに来ない。振替（①）だけをお送りする。
       if (visited) {
         var f3 = needFacts();
-        if (f3.remain === null) reasons.push('remainUnknown');
+        if (f3.remain === null) reasons.push(f3.why === 'broken' ? 'remainBroken' : 'noMonthlyPlan');
         else if (f3.remain <= 0) reasons.push('noRemain');
         else if (ev.futureThisMonth === 0) {
           cand.push({ kind: LB_NUDGE_KIND.VISIT_B, key: '' });
@@ -1106,6 +1115,7 @@ var _LB_NUDGE_SKIP_LABEL = {
   transferUsed: '振替権を使用済み', transferExpired: '振替権が期限切れ', transferNone: '振替権の記録なし',
   monthAlreadySent: 'その月は送信済み', visitATooSoon: '前回の来店翌日Aから日が浅い',
   noRemain: '月額残が0', remainUnknown: '残数が算出できない', noEvent: '該当する出来事なし',
+  remainBroken: '🚨 残数の計算が止まっている（その会員は予約できません）', noMonthlyPlan: '月額の契約が無い（チケットのみ等・正常）',
   sentToday: '今日すでに送信済み', dupMember: '名簿に同じ会員の行が重複',
   notVisitKind: '来店以外（追いかけでは送らない）', catchUpDone: 'この期間の追いかけは送信済み'
 };
@@ -1245,7 +1255,7 @@ function _lbNudgeCatchUpRange(fromYmd, toYmd) {
 function lbNudgeCatchUpCheck() {
   var FROM = '2026-09-30';   // ← 来店の期間（この日を含む）
   var TO   = '2026-10-05';   // ← この日も含む
-  Logger.log(lbNudgeCatchUpPreview(FROM, TO));
+  lbNudgeCatchUpPreview(FROM, TO);   // 一覧は中でログに出る（ここで出すと二重になる）
 }
 
 function lbNudgeCatchUpSend() {
