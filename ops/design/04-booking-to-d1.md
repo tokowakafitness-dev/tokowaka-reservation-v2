@@ -39,7 +39,7 @@ Codexの判定：
 | # | 論点 | 結論 |
 |---|---|---|
 | ① | 二重予約 | **重なりの条件をINSERT文そのものに含める**（単一SQL）。**条件は2本**（施設・トレーナー）。一意制約は補助の砦 |
-| ② | **残数の同時予約** | **枠を行にして、条件付きUPDATEで確保する**（`used < quota` のときだけ+1）。**ただし仮押さえは超えても作れる**（⑪） |
+| ② | **残数の同時予約** | **枠を行にし、引当のINSERTが確保そのものになる**（残数の条件はそこに1回だけ。枠の増減はトリガー）。**仮押さえは超えても作れる**（⑪） |
 | ③ | **消化先** | **予約時に決めて行として記録し、以後変えない**（オーナー判断） |
 | ④ | 消化先の既定 | **月額を先に使う**（オーナー判断）。顧客は選べる。**将来は自動で最適に割り当てる** |
 | ⑤ | カレンダー照会 | **確定の瞬間の照会は要らなくなる**（⑫）。B1に人が書かないため |
@@ -218,40 +218,103 @@ CREATE TABLE reservation_allocations (
 );
 ```
 
-### 確保のしかた（同時に走っても壊れない）
+### 確保のしかた：引当を作ることが、確保そのもの
+
+**枠を直接UPDATEして確保する書き方はしない。** 理由は第5節「`changes = 0` は失敗ではない」に書いた。
+**残数の条件は引当のINSERTに1回だけ書き、枠の増減はトリガーに任せる。**
 
 ```sql
--- 月額から1回を確保する
-UPDATE monthly_quota
-   SET used = used + 1, updated_at = :now
- WHERE customer_id = :cid AND month_key = :mk
-   AND used + 1 <= quota;              -- ★これが条件
--- changes = 1 なら確保できた。0 なら残りが無い
+-- 月額：引当を作る（残数の条件はここだけ）
+INSERT INTO reservation_allocations (reservation_id, customer_id, source, month_key, units, decided_at)
+SELECT :rid, :cid, 'monthly', :mk, 1, :now
+ WHERE EXISTS (
+   SELECT 1 FROM monthly_quota
+    WHERE customer_id = :cid AND month_key = :mk
+      AND (:unpaid = 1 OR used + 1 <= quota)
+ );
+
+-- チケット／ペア：引当を作る（上限・期限・持ち主・種別をすべてここで見る）
+INSERT INTO reservation_allocations (reservation_id, customer_id, source, pack_id, units, decided_at)
+SELECT :rid, :cid, :source, :pid, :units, :now          -- :source は 'ticket' か 'pair'
+ WHERE EXISTS (
+   SELECT 1 FROM ticket_packs
+    WHERE pack_id = :pid
+      AND customer_id = :cid                            -- 他人のパックを使わせない
+      AND kind = (CASE WHEN :source = 'pair' THEN 'pair' ELSE 'normal' END)
+      AND used + :units <= total
+      AND valid_from <= :start_at AND valid_to >= :start_at
+ );
 ```
 
 ```sql
--- チケットから確保する（ペアは units=2）
-UPDATE ticket_packs
-   SET used = used + :units
- WHERE pack_id = :pid
-   AND used + :units <= total
-   AND valid_from <= :start_at AND valid_to >= :start_at;
+-- 枠が減るのはトリガー。引当と不可分にする
+CREATE TRIGGER trg_alloc_consume_monthly AFTER INSERT ON reservation_allocations
+WHEN NEW.source = 'monthly'
+BEGIN
+  UPDATE monthly_quota SET used = used + NEW.units, updated_at = NEW.decided_at
+   WHERE customer_id = NEW.customer_id AND month_key = NEW.month_key;
+END;
+
+-- ★'ticket' と 'pair' の両方を対象にする（片方だけにすると、ペアの枠が減らない）
+CREATE TRIGGER trg_alloc_consume_pack AFTER INSERT ON reservation_allocations
+WHEN NEW.source IN ('ticket','pair')
+BEGIN
+  UPDATE ticket_packs SET used = used + NEW.units WHERE pack_id = NEW.pack_id;
+END;
 ```
 
-**同時に2つのリクエストが来ても、データベースが1つずつ処理するので、`used < quota` を同時に通れない。**
+**同時に2つのリクエストが来ても、データベースが1つずつ処理する**ので、2つ目は増えた `used` を見る。
 ScriptLockが守っていたものを、より細かい単位（会員×月／パック）で守る。
 
 > ★ScriptLockは**プロジェクト全体で1つ**だった。つまり無関係な会員の予約まで並べて待たせていた。
 > 行ごとの確保にすると、関係する会員だけが待つ。**速くなるうえに、守りは強くなる。**
 
-### 戻すとき（取消・変更）
+#### 親の行が無い引当を作らせない
+
+引当のINSERTは `WHERE EXISTS` で親（`monthly_quota` / `ticket_packs`）を見ているので、
+通常の経路では親の無い引当は作られない。
+**ただし別の経路から直接INSERTされると、トリガーのUPDATEが0行でも引当だけが残る**（枠が減らない）。
+
+外部キーで親を保証する。D1では外部キーの強制を明示的に有効にする必要がある。
 
 ```sql
-UPDATE monthly_quota SET used = used - 1 WHERE customer_id = ? AND month_key = ? AND used > 0;
-DELETE FROM reservation_allocations WHERE reservation_id = ?;
+FOREIGN KEY (customer_id, month_key) REFERENCES monthly_quota(customer_id, month_key)
+FOREIGN KEY (pack_id) REFERENCES ticket_packs(pack_id)
+-- source ごとに、どちらを埋めるかを固定する
+CHECK ((source = 'monthly' AND month_key IS NOT NULL AND pack_id IS NULL)
+    OR (source IN ('ticket','pair') AND pack_id IS NOT NULL AND month_key IS NULL)
+    OR (source = 'transfer'))
 ```
 
-**予約の取消と、引当の返却を同じ書き込みで行う。** 片方だけ成功する状態を作らない。
+### 戻すとき（取消・変更）も、トリガーで対称にする
+
+**手動のUPDATEと削除トリガーを併用してはならない。** 両方書くと二重に返却され、
+**取り消すたびに残数が増えていく。** 返却もトリガーに一本化する。
+
+```sql
+CREATE TRIGGER trg_alloc_return_monthly AFTER DELETE ON reservation_allocations
+WHEN OLD.source = 'monthly'
+BEGIN
+  UPDATE monthly_quota SET used = used - OLD.units
+   WHERE customer_id = OLD.customer_id AND month_key = OLD.month_key AND used >= OLD.units;
+END;
+
+CREATE TRIGGER trg_alloc_return_pack AFTER DELETE ON reservation_allocations
+WHEN OLD.source IN ('ticket','pair')
+BEGIN
+  UPDATE ticket_packs SET used = used - OLD.units
+   WHERE pack_id = OLD.pack_id AND used >= OLD.units;
+END;
+```
+
+取消は **`DELETE FROM reservation_allocations WHERE reservation_id = :rid` の1文だけ**。
+枠が戻るのはトリガーがやる。`used >= OLD.units` を付けて、負の残数を作らない。
+
+**予約の取消と、引当の削除を同じ書き込みで行う。** 片方だけ成功する状態を作らない。
+
+> ★作成と返却で、枠を触る場所を**必ず揃える**。片方だけトリガー、片方は手書き、が事故のもと。
+> 「枠を触るのはトリガーだけ」を不変条件にし、アプリ側のSQLに `monthly_quota` や
+> `ticket_packs` への UPDATE が現れたら、それは設計からの逸脱とみなす。
 
 ---
 
@@ -302,11 +365,10 @@ Nodeでテストでき、将来の差し替えがここだけで済む。
 2. 認証・締め切り・入力の検証          … 純粋関数（既にある）
 3. （3-c以降は不要）カレンダーの照会   … 下記「照会が要らなくなる」
 4. D1に1回の書き込みで、すべてを行う（★順序と連鎖が肝。下記「changes=0 は失敗ではない」）：
-     a. 枠の確保（条件付きUPDATE）
-     b. 引当の記録（a が効いたことを条件にする）
-     c. 予約の作成（b が在ることと、重なりが無いことを条件にする）
-     d. やることリスト（outbox）に積む（c が在ることを条件にする）
-     e. 操作IDの記録（★ここで c が無ければ必ず失敗させる＝全体がロールバックする）
+     a. 引当の記録（★残数の条件はここに1回だけ書く。枠が減るのはトリガー＝引当と不可分）
+     b. 予約の作成（a が在ることと、重なりが無いことを条件にする）
+     c. やることリスト（outbox）に積む（b が在ることを条件にする）
+     d. 操作IDの記録（★ここで b が無ければ必ず失敗させる＝全体がロールバックする）
 5. 応答を返す
 ---- 以下は別の処理が、やることリストを見て進める ----
 6. Googleカレンダーに予定を作る
@@ -348,7 +410,7 @@ Nodeでテストでき、将来の差し替えがここだけで済む。
 
 ```sql
 -- a. 引当を作る。ここに残数の条件を**1回だけ**書く
-INSERT INTO reservation_allocations (reservation_id, customer_id, source, month_key, units, created_at)
+INSERT INTO reservation_allocations (reservation_id, customer_id, source, month_key, units, decided_at)
 SELECT :rid, :cid, 'monthly', :mk, 1, :now
  WHERE EXISTS (
    SELECT 1 FROM monthly_quota
@@ -356,13 +418,9 @@ SELECT :rid, :cid, 'monthly', :mk, 1, :now
       AND (:unpaid = 1 OR used + 1 <= quota)
  );
 
--- b. 引当ができたら、枠が減る（トリガー＝引当と不可分）
-CREATE TRIGGER trg_alloc_consume_monthly AFTER INSERT ON reservation_allocations
-WHEN NEW.source = 'monthly'
-BEGIN
-  UPDATE monthly_quota SET used = used + 1, updated_at = NEW.created_at
-   WHERE customer_id = NEW.customer_id AND month_key = NEW.month_key;
-END;
+-- b. 引当ができたら、枠が減る
+--    → トリガー trg_alloc_consume_monthly / trg_alloc_consume_pack（定義は第3節）
+--    ★アプリ側のSQLが monthly_quota / ticket_packs を直接UPDATEすることは無い
 
 -- c. 予約。引当が在ることと、重なりが無いことの両方
 INSERT INTO reservations (...)
