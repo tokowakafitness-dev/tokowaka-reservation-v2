@@ -125,6 +125,18 @@ ok('⑨★割り当て方を決め直していない',
   !/used\s*[<>+]/.test(ALLOC) && /_lbComputeRemaining/.test(ALLOC),
   'ここで決め直すと、GASの残数とD1の残数が実装の違いでずれる');
 
+// ---------- 12. ★問題があれば、その会員は何も書かない ----------
+//   Codex関門②の指摘（2026-10-07）。それまでは「問題として記録しつつ、そのまま書き込む」
+//   作りだった。記録しても書いてしまえば、壊れた値が本番に入る：
+//     OPENING_PACK_UNRESOLVED → opening_used が0のまま入り、使ったチケットが復活する
+//     OPENING_OVER_TOTAL      → 実態と違う値が入る
+//   **問題を見つけたら止める。報告だけして書くのは、見つけていないのと変わらない。**
+ok('⑫★枠の問題でも引当の問題でも書かない',
+  /if \(!dry && \(built\.issues\.length \|\| allocIssues\.length\)\) \{/.test(ROUTE));
+ok('⑫飛ばした会員を数える', /summary\.blocked = \(summary\.blocked \|\| 0\) \+ 1;/.test(ROUTE));
+ok('⑫★その会員は枠も引当も書かない', /continue;   \/\/ この会員は飛ばす（枠も引当も書かない）/.test(ROUTE));
+ok('⑫引当側の問題も拾っている', /allocIssues = al\.issues;/.test(ROUTE));
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 枠を作る窓口 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

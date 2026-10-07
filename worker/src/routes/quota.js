@@ -110,7 +110,7 @@ export async function buildQuota(request, env) {
     //     after を空にしてもう一度流せば、UPSERT なので重複の害は無い。
     next: null, done: false,
     retryFrom: after,   // このページが失敗したら、ここからやり直す
-    monthlyRows: 0, packRows: 0, allocRows: 0, overflow: 0, wrote: 0, withAlloc,
+    monthlyRows: 0, packRows: 0, allocRows: 0, overflow: 0, wrote: 0, blocked: 0, withAlloc,
     skipped: [],       // 計算入力が揃っていない会員（理由つき）
     issues: [],        // 枠を作れなかった月・パック（理由つき）
   };
@@ -137,6 +137,7 @@ export async function buildQuota(request, env) {
     //   枠と引当は対で意味を持つので、作る順序を間違えないよう同じ場所で扱う。
     //   （枠が先・引当が後。引当のINSERTは枠の行を親として見る）
     let allocStmts = [];
+    let allocIssues = [];
     if (withAlloc) {
       const al = buildAllocationsForCustomer(cid, input.rows, input.sessions, input.opening, {
         fromMonth: from, toMonth: to, nowKey: nowMonthKeyJst(now),
@@ -165,9 +166,23 @@ export async function buildQuota(request, env) {
       summary.allocRows += al.rows.length;
       summary.overflow += al.skippedUnallocated;
       for (const is of al.issues) summary.issues.push({ ...is, customerId: mask(is.customerId), at: 'alloc' });
+      allocIssues = al.issues;
       // ★「消してから入れる」。流し直したとき、消化先が変わっていれば古い引当を落とす。
       //   INSERT OR IGNORE だけだと壊れはしないが正しくもならない（枠は新しく used は古い）。
       allocStmts = allocationInsertStatements(al, now, { customerId: cid, fromMonth: from, toMonth: to });
+    }
+
+    // ★問題が1件でもあれば、この会員は何も書かない（2026-10-07・Codex関門②）。
+    //   それまでは「問題として記録しつつ、そのまま書き込む」作りだった。
+    //   記録しても書いてしまえば、壊れた値が本番に入る。たとえば：
+    //     OPENING_PACK_UNRESOLVED → opening_used が 0 のまま入る
+    //       ＝移行前に使ったチケットが復活し、**使えないチケットが使えるようになる**
+    //     OPENING_OVER_TOTAL      → 買った枚数で止めた値が入る（実態と違う）
+    //   問題を見つけたら止める。報告だけして書くのは、見つけていないのと変わらない。
+    //   枠の問題（棚卸しが解決できない等）も、引当の問題（親が無い等）も、どちらも止める。
+    if (!dry && (built.issues.length || allocIssues.length)) {
+      summary.blocked = (summary.blocked || 0) + 1;
+      continue;   // この会員は飛ばす（枠も引当も書かない）
     }
 
     if (!dry) {
