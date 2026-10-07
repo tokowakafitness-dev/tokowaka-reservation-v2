@@ -1,0 +1,74 @@
+// 枠を作る窓口が、守られていることを固定する
+//
+//   ★なぜ要るのか
+//     枠（monthly_quota / ticket_packs）は**すべての残数の土台**。
+//     引当はこの行を親として見るので、枠を作り直せる人は残数そのものを壊せる。
+//     お客様のブラウザからも、トレーナーの画面からも呼べてはならない。
+//
+//   ★既定が「書かない」であること
+//     本番の実データで試す窓口なので、うっかり叩いただけで枠が書き換わると困る。
+//     dry=0 を明示したときだけ書く。
+//
+//   実行: node worker/test/quota-route.test.js
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(HERE, '../..');
+const ROUTE = readFileSync(join(ROOT, 'worker/src/routes/quota.js'), 'utf8');
+const INDEX = readFileSync(join(ROOT, 'worker/src/index.js'), 'utf8');
+const BUILD = readFileSync(join(ROOT, 'worker/src/lib/quota-build.js'), 'utf8');
+
+let pass = 0, fail = 0;
+function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
+
+// ---------- 1. 合言葉なしでは通らない ----------
+ok('①両方の窓口が合言葉を確かめる',
+  /export async function buildQuota\(request, env\) \{\s*\n\s*const deny = requireSecret\(request, env\);/.test(ROUTE)
+  && /export async function quotaStatus\(request, env\) \{\s*\n\s*const deny = requireSecret\(request, env\);/.test(ROUTE),
+  '枠を作り直せる人は、残数そのものを壊せる');
+ok('①合言葉が未設定なら動かない', /if \(!secret\) return json\(\{ ok: false, reason: 'SECRET_NOT_SET' \}, 503\)/.test(ROUTE));
+ok('①合わなければ403', /reason: 'FORBIDDEN' \}, 403\)/.test(ROUTE));
+ok('①時間差の出ない比較をしている', /diff \|= \(x\[i\] \|\| 0\) \^ \(y\[i\] \|\| 0\)/.test(ROUTE),
+  '素朴な === だと、合言葉を1文字ずつ当てられる');
+ok('①ingest と同じヘッダ名を使う', /request\.headers\.get\('X-Ingest-Secret'\)/.test(ROUTE));
+
+// ---------- 2. 既定は「書かない」 ----------
+ok('②★dry が既定', /const dry = url\.searchParams\.get\('dry'\) !== '0';/.test(ROUTE),
+  'うっかり叩いただけで枠が書き換わると、全員の残数が動く');
+ok('②書くのは dry でないときだけ', /if \(!dry\) \{[\s\S]{0,200}?env\.DB\.batch/.test(ROUTE));
+
+// ---------- 3. 顧客の情報を出さない ----------
+ok('③顧客IDは下4桁だけ', /function mask\(id\)/.test(ROUTE) && /'\*' \+ s\.slice\(-4\)/.test(ROUTE));
+ok('③結果に生の顧客IDを入れない',
+  /summary\.skipped\.push\(\{ customerId: mask\(cid\)/.test(ROUTE)
+  && /summary\.issues\.push\(\{ \.\.\.is, customerId: mask\(is\.customerId\) \}\)/.test(ROUTE));
+ok('③氏名を出す経路が無い', !/customer_name|\.name\b/.test(ROUTE));
+
+// ---------- 4. ルーティングに繋がっている ----------
+ok('④2つの道が通っている',
+  /url\.pathname === '\/quota\/build'/.test(INDEX) && /url\.pathname === '\/quota\/status'/.test(INDEX));
+ok('④読み込まれている', /import \{ buildQuota, quotaStatus \} from '\.\/routes\/quota\.js';/.test(INDEX));
+
+// ---------- 5. ★used に触れない（設計の不変条件） ----------
+ok('⑤★更新で used を書き換えない',
+  !/DO UPDATE SET[\s\S]{0,200}?used\s*=/.test(BUILD),
+  '既にある枠の used を書き換えると、使った数が消える。動かすのはトリガーだけ');
+ok('⑤新しく作るときだけ used=0', /VALUES \(\?, \?, \?, 0, \?\)/.test(BUILD));
+ok('⑤枠を直接UPDATEする文が無い',
+  !/UPDATE monthly_quota|UPDATE ticket_packs/.test(BUILD) && !/UPDATE monthly_quota|UPDATE ticket_packs/.test(ROUTE),
+  'アプリ側のSQLに枠のUPDATEが現れたら、それは設計からの逸脱');
+
+// ---------- 6. 計算入力が古ければ枠を作らない ----------
+ok('⑥入力が揃わない会員は飛ばす', /if \(!input\.ok\) \{[\s\S]{0,300}?summary\.skipped\.push/.test(ROUTE),
+  '古い契約で枠を作ると、そこから作られる引当も残数もずれる');
+
+// ---------- 7. 範囲の指定が壊れていたら止まる ----------
+ok('⑦月の形と前後関係を見る',
+  /!\/\^\\d\{4\}-\\d\{2\}\$\/\.test\(from\) \|\| !\/\^\\d\{4\}-\\d\{2\}\$\/\.test\(to\) \|\| from > to/.test(ROUTE));
+
+console.log('');
+console.log(`${fail ? '❌' : '✅'} 枠を作る窓口 検証: ${pass} passed / ${fail} failed`);
+process.exit(fail ? 1 : 0);

@@ -15,6 +15,7 @@ import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
 import { handleCalSync } from './routes/calsync.js';
 import { handleCalCompare } from './routes/calcompare.js';
+import { buildQuota, quotaStatus } from './routes/quota.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
@@ -128,6 +129,12 @@ export default {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
       return handleJobs(request, env);
     }
+
+    // 契約から「枠」を作る（段階3-a の土台・2026-10-07）。
+    //   既定は dry＝書かない。dry=0 のときだけ D1 へ書く。
+    //   合言葉で守る。お客様のブラウザからは呼ばせない（CORSも許さない）。
+    if (url.pathname === '/quota/build') return buildQuota(request, env);
+    if (url.pathname === '/quota/status') return quotaStatus(request, env);
 
     if (url.pathname === '/calc') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
