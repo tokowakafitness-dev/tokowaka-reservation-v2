@@ -133,6 +133,20 @@ export function allocationInsertStatements(built, nowMs, scope) {
              WHERE customer_id = ? AND resv_month >= ? AND resv_month <= ?`,
       args: [scope.customerId, scope.fromMonth, scope.toMonth],
     });
+
+    // ★期間の外に残っている「いま入れようとしている予約」も消す（Codex関門②・5回目）。
+    //   予約の日付が期間の外から中へ変わると、古い引当は期間外のまま残る。
+    //   上の DELETE は期間で絞るので届かず、同じ主キーの INSERT が衝突して
+    //   **バッチ全体が失敗する**＝流し直しが通らず、古い状態のまま止まる。
+    //   入れる予約のIDで直接消しておけば、どこに残っていても片づく。
+    const ids = built.rows.map((r) => r.reservationId);
+    if (ids.length) {
+      stmts.push({
+        sql: `DELETE FROM reservation_allocations
+               WHERE customer_id = ? AND reservation_id IN (${ids.map(() => '?').join(',')})`,
+        args: [scope.customerId, ...ids],
+      });
+    }
   }
 
   // ② 入れ直す

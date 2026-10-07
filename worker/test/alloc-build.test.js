@@ -84,9 +84,12 @@ console.log('=== 4. 入れる文の形（★二度入れても二重に増えな
 {
   const b = buildAllocationsForCustomer('C1', CONTRACTS, [ses('r1', jst(2026, 10, 5, 10))], null, OPTS);
   const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
-  eq('④消す文＋入れる文', st.length, 2);
-  eq('④消す文の引数は 会員1＋期間2', st[0].args.length, 3);
-  ok('④予約の月を入れる', /resv_month/.test(st[1].sql) && st[1].args.includes('2026-10'),
+  eq('④消す文2つ＋入れる文1つ', st.length, 3);
+  eq('④期間で消す文の引数は 会員1＋期間2', st[0].args.length, 3);
+  ok('④★入れる予約のIDでも消す（期間外から移ってきた古い引当）',
+    /WHERE customer_id = \? AND reservation_id IN/.test(st[1].sql),
+    '日付が期間の外から中へ変わると、古い引当は期間外のまま残り、同じ主キーのINSERTが衝突してバッチ全体が落ちる');
+  ok('④予約の月を入れる', /resv_month/.test(st[2].sql) && st[2].args.includes('2026-10'),
     'month_key は月額専用。チケットや振替がどの月の予約かを別に持たないと、期間で絞れない');
   ok('④★先に消す（流し直したとき消化先の変更が反映される）',
     /^DELETE FROM reservation_allocations/.test(st[0].sql.trim()),
@@ -96,10 +99,10 @@ console.log('=== 4. 入れる文の形（★二度入れても二重に増えな
     && !/NOT IN/.test(st[0].sql),
     'NOT IN で残すと、消化先が変わった予約の古い引当が消えず、INSERT OR IGNORE も無視する＝最初の問題に戻る');
   ok('④他の月・他の会員には触れない', /customer_id = \? AND resv_month >= \? AND resv_month <= \?/.test(st[0].sql));
-  ok('④★入れ直しは OR IGNORE にしない', !/INSERT OR IGNORE/.test(st[1].sql),
+  ok('④★入れ直しは OR IGNORE にしない', !/INSERT OR IGNORE/.test(st[2].sql),
     '全部消したあとなので衝突しない。OR IGNORE だと消し損ねたとき黙って古い行が残る');
-  ok('④列を明示している', /\(reservation_id, customer_id, source, month_key, pack_id, units, resv_month, decided_at\)/.test(st[1].sql));
-  eq('④引数の数', st[1].args.length, 8);
+  ok('④列を明示している', /\(reservation_id, customer_id, source, month_key, pack_id, units, resv_month, decided_at\)/.test(st[2].sql));
+  eq('④引数の数', st[2].args.length, 8);
   // 範囲を渡さなければ消さない（既存の呼び方を壊さない）
   eq('④範囲が無ければ入れるだけ', allocationInsertStatements(b, 1000).length, 1);
 }
@@ -148,7 +151,7 @@ console.log('=== 8. 超過に転じた予約は行を作らない（全消しす
   eq('⑧行は3件', b.rows.length, 3);
   eq('⑧あふれた2件', b.skippedUnallocated, 2);
   const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
-  eq('⑧消す文1＋入れる文3', st.length, 4);
+  eq('⑧消す文2＋入れる文3', st.length, 5);
 }
 
 console.log('');

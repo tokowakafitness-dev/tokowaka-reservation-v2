@@ -253,6 +253,28 @@ q "DELETE FROM reservation_allocations WHERE customer_id='C5' AND resv_month >= 
 ok "⑲★別の会員の引当は残る" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='H1';")" "1"
 ok "⑲別の会員の枠も減ったまま" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C6';")" "1"
 
+echo "=== 20. ★期間の外から中へ日付が変わった予約（主キー衝突を防ぐ） ==="
+#   予約の日付が9月→12月に変わると、古い引当は resv_month='2026-09' のまま残る。
+#   期間（12月）で絞る DELETE は届かず、同じ主キーの INSERT が衝突してバッチ全体が落ちる。
+#   入れる予約のIDでも消しておけば、どこに残っていても片づく。
+q "INSERT INTO monthly_quota VALUES ('C7','2026-09',4,0,0);
+   INSERT INTO monthly_quota VALUES ('C7','2026-12',4,0,0);
+   INSERT INTO reservation_allocations
+     (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
+   VALUES ('J1','C7','monthly','2026-09',NULL,1,'2026-09',100);" >/dev/null
+ok "⑳9月の枠を1つ使っている" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C7' AND month_key='2026-09';")" "1"
+
+#   12月を対象に流し直す。J1 は12月の予約になった。
+r=$(q "DELETE FROM reservation_allocations WHERE customer_id='C7' AND resv_month >= '2026-12' AND resv_month <= '2026-12';
+       DELETE FROM reservation_allocations WHERE customer_id='C7' AND reservation_id IN ('J1');
+       INSERT INTO reservation_allocations
+         (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
+       VALUES ('J1','C7','monthly','2026-12',NULL,1,'2026-12',200);")
+case "$r" in *UNIQUE*|*constraint*) ok "⑳★主キーが衝突しない" "衝突:$r" "ok";; *) ok "⑳★主キーが衝突しない" "ok" "ok";; esac
+ok "⑳★9月の枠が戻る"   "$(q "SELECT used FROM monthly_quota WHERE customer_id='C7' AND month_key='2026-09';")" "0"
+ok "⑳★12月の枠が減る"  "$(q "SELECT used FROM monthly_quota WHERE customer_id='C7' AND month_key='2026-12';")" "1"
+ok "⑳行は1件のまま"     "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='J1';")" "1"
+
 echo ""
 if [ "$fail" -eq 0 ]; then echo "✅ 引当と枠の守り: $pass passed / 0 failed"; else echo "❌ 引当と枠の守り: $pass passed / $fail failed"; fi
 exit $([ "$fail" -eq 0 ] && echo 0 || echo 1)

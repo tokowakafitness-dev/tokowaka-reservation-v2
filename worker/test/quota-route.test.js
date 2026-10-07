@@ -102,6 +102,9 @@ ok('⑨★流し直すと正しくなる（対象期間を全部消して入れ�
   && !/reservation_id NOT IN/.test(ALLOC)
   && /allocationInsertStatements\(al, now, \{ customerId: cid, fromMonth: from, toMonth: to \}\)/.test(ROUTE),
   'NOT IN で残すと、消化先が変わった予約の古い引当が消えず、INSERT OR IGNORE も無視する');
+ok('⑨★期間外から移ってきた引当も消す（主キー衝突を防ぐ）',
+  /WHERE customer_id = \? AND reservation_id IN/.test(ALLOC),
+  '日付が期間の外から中へ変わると、古い引当が期間外に残り、同じ主キーのINSERTでバッチ全体が落ちる');
 ok('⑨★計算できなかった会員には何もしない',
   /if \(!built\.computed\) return \[\];/.test(ALLOC),
   'ok:false は「予約が0件」ではなく「計算できなかった」。消すと used が0になり、枠を超えて予約できてしまう');
