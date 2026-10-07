@@ -200,6 +200,21 @@ ok "⑮★月額が0に戻る"      "$(q "SELECT used FROM monthly_quota WHERE c
 ok "⑮★チケットが1になる"  "$(q "SELECT used FROM ticket_packs WHERE pack_id='P3';")" "1"
 ok "⑮行は1件のまま"        "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='D1';")" "1"
 
+echo "=== 16. ★契約が減って超過に転じたら、古い引当が消えること ==="
+#   前回は引当済み・今回は超過（unallocated）になった予約を消さないと、
+#   used が過大なまま残り、残数が実際より少なく見えて予約できなくなる（Codex関門②）。
+q "INSERT INTO monthly_quota VALUES ('C4','2026-12',2,0,0);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations VALUES ('E1','C4','monthly','2026-12',NULL,1,100);
+   INSERT OR IGNORE INTO reservation_allocations VALUES ('E2','C4','monthly','2026-12',NULL,1,100);" >/dev/null
+ok "⑯2件ぶん使っている" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C4';")" "2"
+# 契約が減って枠が1になり、E2 が超過に転じた。見た予約は E1・E2 の両方。
+q "UPDATE monthly_quota SET quota = 1 WHERE customer_id='C4';" >/dev/null
+q "DELETE FROM reservation_allocations WHERE customer_id='C4' AND reservation_id IN ('E1','E2');
+   INSERT OR IGNORE INTO reservation_allocations VALUES ('E1','C4','monthly','2026-12',NULL,1,200);" >/dev/null
+ok "⑯★超過に転じた E2 の引当が消える" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='E2';")" "0"
+ok "⑯★used が1に戻る（過大なまま残らない）" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C4';")" "1"
+ok "⑯E1 の引当は残る" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='E1';")" "1"
+
 echo ""
 if [ "$fail" -eq 0 ]; then echo "✅ 引当と枠の守り: $pass passed / 0 failed"; else echo "❌ 引当と枠の守り: $pass passed / $fail failed"; fi
 exit $([ "$fail" -eq 0 ] && echo 0 || echo 1)

@@ -88,7 +88,7 @@ console.log('=== 4. 入れる文の形（★二度入れても二重に増えな
   ok('④★先に消す（流し直したとき消化先の変更が反映される）',
     /^DELETE FROM reservation_allocations/.test(st[0].sql.trim()),
     'INSERT OR IGNORE だけだと壊れはしないが正しくもならない。枠は新しく used は古いまま');
-  ok('④消す範囲はこの会員の、作り直す予約だけ',
+  ok('④消す範囲はこの会員の、今回見た予約',
     /WHERE customer_id = \? AND reservation_id IN \(\?\)/.test(st[0].sql),
     '他の会員や他の月の引当に触れない');
   ok('④★INSERT OR IGNORE である', /INSERT OR IGNORE INTO reservation_allocations/.test(st[1].sql),
@@ -118,6 +118,23 @@ console.log('=== 6. 振替は枠もチケットも使わない ===');
   eq('⑥source は transfer', b.rows[0].source, 'transfer');
   ok('⑥親を指さない', b.rows[0].monthKey === null && b.rows[0].packId === null,
     '振替は月額の枠もチケットも減らさない');
+}
+
+console.log('=== 7. ★超過に転じた予約も「見た」に数える（古い引当を消すため） ===');
+{
+  // 枠3回ぶん（月額2＋チケット1）に対して予約5件 → 2件が超過
+  const many = [1, 2, 3, 4, 5].map((i) => ses('y' + i, jst(2026, 10, i * 3, 10)));
+  const b = buildAllocationsForCustomer('C1', CONTRACTS, many, null, OPTS);
+  eq('⑦行は3件', b.rows.length, 3);
+  eq('⑦★見た予約は5件（超過の2件も含む）', b.seenIds.length, 5);
+  ok('⑦★消す対象に超過の予約も入る',
+    b.seenIds.length > b.rows.length,
+    '行を作る予約だけを消すと、前回引当があり今回超過に転じた予約の古い引当が残り、used が過大になる');
+
+  const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
+  const delSql = st[0].sql;
+  eq('⑦消す文の引数は 会員1＋予約5', st[0].args.length, 6);
+  ok('⑦消す文に5件ぶんの差し込みがある', (delSql.match(/\?/g) || []).length === 6);
 }
 
 console.log('');

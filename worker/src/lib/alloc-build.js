@@ -33,7 +33,10 @@ function monthKeyJst(ms) {
  */
 export function buildAllocationsForCustomer(customerId, rows, sessions, opening, opts) {
   const { fromMonth, toMonth, nowKey, targetDateMs, carryRate } = opts;
-  const out = { rows: [], skippedUnallocated: 0, issues: [] };
+  //   seenIds … 今回「見た」予約のID。行を作らなかったもの（超過・問題あり）も含める。
+  //   ★消す対象はこれ。行を作る予約（rows）だけを消すと、
+  //     **前回は引当があったが今回は超過に転じた予約**の古い引当が残り、used が過大になる。
+  const out = { rows: [], seenIds: [], skippedUnallocated: 0, issues: [] };
 
   const res = _lbComputeRemaining(
     customerId, rows, sessions, nowKey, targetDateMs, carryRate, opening,
@@ -52,6 +55,9 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
     if (!ps || !ps.sessionId) continue;
     const mk = String(ps.monthKey || '');
     if (!mk || mk < String(fromMonth) || mk > String(toMonth)) continue;   // 対象の範囲だけ
+
+    // ★対象の範囲に入った時点で「見た」とみなす。この先どう転んでも、古い引当は消す。
+    out.seenIds.push(String(ps.sessionId));
 
     // 割り当たらなかった＝枠を使っていない。行を作らない（超過として見えるようにする）。
     if (ps.alloc === 'unallocated') { out.skippedUnallocated++; continue; }
@@ -109,10 +115,11 @@ export function allocationInsertStatements(built, nowMs, scope) {
 
   // ① まず消す（返却のトリガーが used を戻す）
   if (scope && scope.customerId && scope.fromMonth && scope.toMonth) {
-    //   月額は month_key で、チケット・振替は予約の月で絞れないため、
-    //   **この会員の引当のうち、今回作り直す予約のぶんだけ**を消す。
-    //   作り直す予約の一覧は built.rows に入っている。
-    const ids = built.rows.map((r) => r.reservationId);
+    //   ★消すのは「今回見た予約」すべて。行を作る予約だけではない。
+    //     契約が減って引当済みの予約が超過に転じたとき、その予約は rows に入らない。
+    //     rows だけを消すと**古い引当が残り、used が過大なままになる**＝
+    //     残数が実際より少なく見え、予約できなくなる（Codex関門②の指摘・2026-10-07）。
+    const ids = (built.seenIds && built.seenIds.length) ? built.seenIds : built.rows.map((r) => r.reservationId);
     if (ids.length) {
       stmts.push({
         sql: `DELETE FROM reservation_allocations
