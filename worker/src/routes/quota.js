@@ -130,7 +130,9 @@ export async function buildQuota(request, env) {
       summary.allocRows += al.rows.length;
       summary.overflow += al.skippedUnallocated;
       for (const is of al.issues) summary.issues.push({ ...is, customerId: mask(is.customerId), at: 'alloc' });
-      allocStmts = allocationInsertStatements(al, now);
+      // ★「消してから入れる」。流し直したとき、消化先が変わっていれば古い引当を落とす。
+      //   INSERT OR IGNORE だけだと壊れはしないが正しくもならない（枠は新しく used は古い）。
+      allocStmts = allocationInsertStatements(al, now, { customerId: cid, fromMonth: from, toMonth: to });
     }
 
     if (!dry) {

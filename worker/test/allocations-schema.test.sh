@@ -182,6 +182,24 @@ q "INSERT OR IGNORE INTO reservation_allocations VALUES ('T1','C2','transfer',NU
 ok "⑭振替の引当は作れる" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='T1';")" "1"
 ok "⑭★月額の枠は減らない" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
 
+echo "=== 15. ★流し直すと「正しくなる」こと（消してから入れる） ==="
+#   INSERT OR IGNORE だけだと壊れはしないが正しくもならない。
+#   契約を直して流し直したとき、消化先が月額→チケットに変わっても古い引当が残り、
+#   枠は新しく used は古い、というちぐはぐな状態になる（Codex関門②の指摘）。
+q "INSERT INTO monthly_quota VALUES ('C3','2026-12',2,0,0);
+   INSERT INTO ticket_packs  VALUES ('P3','C3','normal',2,0,0,99999999999,0);" >/dev/null
+# 1回目：月額から引く
+q "DELETE FROM reservation_allocations WHERE customer_id='C3' AND reservation_id IN ('D1');
+   INSERT OR IGNORE INTO reservation_allocations VALUES ('D1','C3','monthly','2026-12',NULL,1,100);" >/dev/null
+ok "⑮1回目は月額が1" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C3';")" "1"
+ok "⑮チケットは0"    "$(q "SELECT used FROM ticket_packs WHERE pack_id='P3';")" "0"
+# 2回目：同じ予約がチケットから引かれるように変わった（契約を直した等）
+q "DELETE FROM reservation_allocations WHERE customer_id='C3' AND reservation_id IN ('D1');
+   INSERT OR IGNORE INTO reservation_allocations VALUES ('D1','C3','ticket',NULL,'P3',1,200);" >/dev/null
+ok "⑮★月額が0に戻る"      "$(q "SELECT used FROM monthly_quota WHERE customer_id='C3';")" "0"
+ok "⑮★チケットが1になる"  "$(q "SELECT used FROM ticket_packs WHERE pack_id='P3';")" "1"
+ok "⑮行は1件のまま"        "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='D1';")" "1"
+
 echo ""
 if [ "$fail" -eq 0 ]; then echo "✅ 引当と枠の守り: $pass passed / 0 failed"; else echo "❌ 引当と枠の守り: $pass passed / $fail failed"; fi
 exit $([ "$fail" -eq 0 ] && echo 0 || echo 1)

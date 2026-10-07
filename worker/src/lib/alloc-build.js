@@ -92,18 +92,46 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
 /**
  * 引当をD1へ入れる文を組み立てる。
  *
- *   ★INSERT OR IGNORE にする。
- *     reservation_id は主キーなので、同じ予約を二度入れようとしても2件目は何もしない。
- *     ここで `ON CONFLICT DO UPDATE` にすると、**トリガーが二度動いて used が二重に増える**。
- *     （作り直したいときは、先に消してから入れる＝返却のトリガーが正しく戻す）
+ *   ★「消してから入れる」。
+ *     `INSERT OR IGNORE` だけだと、**壊れはしないが正しくもならない**。
+ *     既にある引当は無視されるので、契約を直して流し直しても消化先が古いまま残る。
+ *     一方で枠（quota）は流すたびに最新になるため、**枠は新しく used は古い**という
+ *     ちぐはぐな状態が生まれ、残数が実際とずれる（Codex関門②の指摘・2026-10-07）。
+ *
+ *     DELETE → INSERT にすると、返却のトリガーが used を戻し、消費のトリガーが入れ直す。
+ *     どちらも同じバッチの中なので、途中で止まれば両方とも無かったことになる。
+ *
+ *   ★消す範囲は「この会員の、この期間の引当」だけ。
+ *     他の会員や他の月の引当に触れない。
  */
-export function allocationInsertStatements(built, nowMs) {
-  return built.rows.map((r) => ({
-    sql: `INSERT OR IGNORE INTO reservation_allocations
-            (reservation_id, customer_id, source, month_key, pack_id, units, decided_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [r.reservationId, r.customerId, r.source, r.monthKey, r.packId, r.units, nowMs],
-  }));
+export function allocationInsertStatements(built, nowMs, scope) {
+  const stmts = [];
+
+  // ① まず消す（返却のトリガーが used を戻す）
+  if (scope && scope.customerId && scope.fromMonth && scope.toMonth) {
+    //   月額は month_key で、チケット・振替は予約の月で絞れないため、
+    //   **この会員の引当のうち、今回作り直す予約のぶんだけ**を消す。
+    //   作り直す予約の一覧は built.rows に入っている。
+    const ids = built.rows.map((r) => r.reservationId);
+    if (ids.length) {
+      stmts.push({
+        sql: `DELETE FROM reservation_allocations
+               WHERE customer_id = ? AND reservation_id IN (${ids.map(() => '?').join(',')})`,
+        args: [scope.customerId, ...ids],
+      });
+    }
+  }
+
+  // ② 入れ直す
+  for (const r of built.rows) {
+    stmts.push({
+      sql: `INSERT OR IGNORE INTO reservation_allocations
+              (reservation_id, customer_id, source, month_key, pack_id, units, decided_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [r.reservationId, r.customerId, r.source, r.monthKey, r.packId, r.units, nowMs],
+    });
+  }
+  return stmts;
 }
 
 export { monthKeyJst };

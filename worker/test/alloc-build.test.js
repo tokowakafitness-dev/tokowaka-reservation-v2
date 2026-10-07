@@ -83,12 +83,20 @@ console.log('=== 3. 対象の範囲の外は写さない ===');
 console.log('=== 4. 入れる文の形（★二度入れても二重に増えない） ===');
 {
   const b = buildAllocationsForCustomer('C1', CONTRACTS, [ses('r1', jst(2026, 10, 5, 10))], null, OPTS);
-  const st = allocationInsertStatements(b, 1000);
-  eq('④1件ぶんの文', st.length, 1);
-  ok('④★INSERT OR IGNORE である', /INSERT OR IGNORE INTO reservation_allocations/.test(st[0].sql),
+  const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
+  eq('④消す文＋入れる文', st.length, 2);
+  ok('④★先に消す（流し直したとき消化先の変更が反映される）',
+    /^DELETE FROM reservation_allocations/.test(st[0].sql.trim()),
+    'INSERT OR IGNORE だけだと壊れはしないが正しくもならない。枠は新しく used は古いまま');
+  ok('④消す範囲はこの会員の、作り直す予約だけ',
+    /WHERE customer_id = \? AND reservation_id IN \(\?\)/.test(st[0].sql),
+    '他の会員や他の月の引当に触れない');
+  ok('④★INSERT OR IGNORE である', /INSERT OR IGNORE INTO reservation_allocations/.test(st[1].sql),
     'ON CONFLICT DO UPDATE にすると、トリガーが二度動いて used が二重に増える');
-  ok('④列を明示している', /\(reservation_id, customer_id, source, month_key, pack_id, units, decided_at\)/.test(st[0].sql));
-  eq('④引数の数', st[0].args.length, 7);
+  ok('④列を明示している', /\(reservation_id, customer_id, source, month_key, pack_id, units, decided_at\)/.test(st[1].sql));
+  eq('④引数の数', st[1].args.length, 7);
+  // 範囲を渡さなければ消さない（既存の呼び方を壊さない）
+  eq('④範囲が無ければ入れるだけ', allocationInsertStatements(b, 1000).length, 1);
 }
 
 console.log('=== 5. 計算が「要確認」なら引当を作らない ===');
