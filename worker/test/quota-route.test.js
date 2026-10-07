@@ -95,13 +95,16 @@ ok('⑨引当は明示したときだけ作る', /const withAlloc = url\.searchP
   '枠だけ作り直したい場面があるので、別の指定にしておく');
 ok('⑨★枠と引当を同じ書き込みで入れる', /quotaUpsertStatements\(built, now\)\.concat\(allocStmts\)/.test(ROUTE),
   '枠が先・引当が後。引当のINSERTは枠の行を親として見る');
-ok('⑨★二度入れても増えない形', /INSERT OR IGNORE INTO reservation_allocations/.test(ALLOC),
-  'ON CONFLICT DO UPDATE にすると、トリガーが二度動いて used が二重に増える');
-ok('⑨★流し直すと正しくなる（期間で絞って差分で消す）',
-  /DELETE FROM reservation_allocations[\s\S]{0,120}?WHERE customer_id = \? AND resv_month >= \? AND resv_month <= \?/.test(ALLOC)
-  && /reservation_id NOT IN/.test(ALLOC)
+ok('⑨入れ直しは OR IGNORE にしない', /INSERT INTO reservation_allocations/.test(ALLOC) && !/INSERT OR IGNORE INTO reservation_allocations/.test(ALLOC),
+  '全部消したあとなので衝突しない。OR IGNORE だと消し損ねたとき黙って古い行が残る');
+ok('⑨★流し直すと正しくなる（対象期間を全部消して入れ直す）',
+  /DELETE FROM reservation_allocations[\s\S]{0,160}?WHERE customer_id = \? AND resv_month >= \? AND resv_month <= \?/.test(ALLOC)
+  && !/reservation_id NOT IN/.test(ALLOC)
   && /allocationInsertStatements\(al, now, \{ customerId: cid, fromMonth: from, toMonth: to \}\)/.test(ROUTE),
-  'INSERT OR IGNORE だけだと消化先の変更が反映されない。「見た予約を消す」だけだと、予約が削除された場合に古い引当が残る');
+  'NOT IN で残すと、消化先が変わった予約の古い引当が消えず、INSERT OR IGNORE も無視する');
+ok('⑨★計算できなかった会員には何もしない',
+  /if \(!built\.computed\) return \[\];/.test(ALLOC),
+  'ok:false は「予約が0件」ではなく「計算できなかった」。消すと used が0になり、枠を超えて予約できてしまう');
 ok('⑨★予約の月を別に持つ',
   /resvMonth: mk/.test(ALLOC) && /resv_month/.test(ALLOC),
   'month_key は月額専用。チケットや振替がどの月の予約かを持たないと、期間で絞れない');

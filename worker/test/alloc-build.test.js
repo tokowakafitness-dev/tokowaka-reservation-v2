@@ -85,18 +85,19 @@ console.log('=== 4. 入れる文の形（★二度入れても二重に増えな
   const b = buildAllocationsForCustomer('C1', CONTRACTS, [ses('r1', jst(2026, 10, 5, 10))], null, OPTS);
   const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
   eq('④消す文＋入れる文', st.length, 2);
+  eq('④消す文の引数は 会員1＋期間2', st[0].args.length, 3);
   ok('④予約の月を入れる', /resv_month/.test(st[1].sql) && st[1].args.includes('2026-10'),
     'month_key は月額専用。チケットや振替がどの月の予約かを別に持たないと、期間で絞れない');
   ok('④★先に消す（流し直したとき消化先の変更が反映される）',
     /^DELETE FROM reservation_allocations/.test(st[0].sql.trim()),
     'INSERT OR IGNORE だけだと壊れはしないが正しくもならない。枠は新しく used は古いまま');
-  ok('④★期間で絞って、今回見なかったものを落とす（差分）',
+  ok('④★対象期間の引当を全部消してから入れ直す',
     /WHERE customer_id = \? AND resv_month >= \? AND resv_month <= \?/.test(st[0].sql)
-    && /reservation_id NOT IN/.test(st[0].sql),
-    '「見た予約を消す」だけだと、予約が削除された／期間外へ移った場合に古い引当が残る');
-  ok('④他の月の引当に触れない', /resv_month >= \? AND resv_month <= \?/.test(st[0].sql));
-  ok('④★INSERT OR IGNORE である', /INSERT OR IGNORE INTO reservation_allocations/.test(st[1].sql),
-    'ON CONFLICT DO UPDATE にすると、トリガーが二度動いて used が二重に増える');
+    && !/NOT IN/.test(st[0].sql),
+    'NOT IN で残すと、消化先が変わった予約の古い引当が消えず、INSERT OR IGNORE も無視する＝最初の問題に戻る');
+  ok('④他の月・他の会員には触れない', /customer_id = \? AND resv_month >= \? AND resv_month <= \?/.test(st[0].sql));
+  ok('④★入れ直しは OR IGNORE にしない', !/INSERT OR IGNORE/.test(st[1].sql),
+    '全部消したあとなので衝突しない。OR IGNORE だと消し損ねたとき黙って古い行が残る');
   ok('④列を明示している', /\(reservation_id, customer_id, source, month_key, pack_id, units, resv_month, decided_at\)/.test(st[1].sql));
   eq('④引数の数', st[1].args.length, 8);
   // 範囲を渡さなければ消さない（既存の呼び方を壊さない）
@@ -124,21 +125,30 @@ console.log('=== 6. 振替は枠もチケットも使わない ===');
     '振替は月額の枠もチケットも減らさない');
 }
 
-console.log('=== 7. ★超過に転じた予約も「見た」に数える（古い引当を消すため） ===');
+console.log('=== 7. ★計算できなかったときは何も消さない ===');
 {
-  // 枠3回ぶん（月額2＋チケット1）に対して予約5件 → 2件が超過
+  const broken = [
+    { row: crow({ method: 'チケット', type: 'チケット', ticket: 2 }), cols: COLS,
+      start: new Date(jst(2026, 10, 1)), end: null, idx: 0 },   // 期限なし＝計算が止まる
+  ];
+  const b = buildAllocationsForCustomer('C9', broken, [ses('r1', jst(2026, 10, 5, 10))], null, OPTS);
+  ok('⑦計算できていない', b.computed === false);
+  const st = allocationInsertStatements(b, 1000, { customerId: 'C9', fromMonth: '2026-10', toMonth: '2026-11' });
+  eq('⑦★文を1つも出さない（消さない・入れない）', st.length, 0);
+  // ok:false は「予約が0件」ではなく「計算できなかった」。
+  // ここで消すと、その会員の引当が全部消えて used が0になり、
+  // 残数が実際より**多く**見える＝枠を超えて予約できてしまう。
+}
+
+console.log('=== 8. 超過に転じた予約は行を作らない（全消しするので古い引当も残らない）===');
+{
   const many = [1, 2, 3, 4, 5].map((i) => ses('y' + i, jst(2026, 10, i * 3, 10)));
   const b = buildAllocationsForCustomer('C1', CONTRACTS, many, null, OPTS);
-  eq('⑦行は3件', b.rows.length, 3);
-  eq('⑦★見た予約は5件（超過の2件も含む）', b.seenIds.length, 5);
-  ok('⑦★消す対象に超過の予約も入る',
-    b.seenIds.length > b.rows.length,
-    '行を作る予約だけを消すと、前回引当があり今回超過に転じた予約の古い引当が残り、used が過大になる');
-
+  ok('⑧計算は通っている', b.computed === true);
+  eq('⑧行は3件', b.rows.length, 3);
+  eq('⑧あふれた2件', b.skippedUnallocated, 2);
   const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
-  const delSql = st[0].sql;
-  eq('⑦消す文の引数は 会員1＋期間2＋予約5', st[0].args.length, 8);
-  ok('⑦消す文の差し込みの数が合う', (delSql.match(/\?/g) || []).length === 8);
+  eq('⑧消す文1＋入れる文3', st.length, 4);
 }
 
 console.log('');

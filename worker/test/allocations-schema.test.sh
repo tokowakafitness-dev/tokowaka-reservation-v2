@@ -217,34 +217,41 @@ ok "⑯★超過に転じた E2 の引当が消える" "$(q "SELECT COUNT(*) FRO
 ok "⑯★used が1に戻る（過大なまま残らない）" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C4';")" "1"
 ok "⑯E1 の引当は残る" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='E1';")" "1"
 
-echo "=== 17. ★予約が消えた／期間外へ移ったときも used が戻ること（差分で消す） ==="
-#   予約そのものが消えると、その予約IDは「今回見た」に現れない。
-#   「見た予約を消す」方式だと古い引当が残り、used が過大なまま＝予約できなくなる。
-#   期間で絞って、今回見なかったものを落とす（差分）。
-q "INSERT INTO monthly_quota VALUES ('C5','2026-12',4,0,0);" >/dev/null
-q "INSERT OR IGNORE INTO reservation_allocations
+echo "=== 17. ★全部消して全部入れる（消化先の変更・消えた予約・超過への転落、すべてに効く） ==="
+q "INSERT INTO monthly_quota VALUES ('C5','2026-12',4,0,0);
+   INSERT INTO ticket_packs  VALUES ('P5','C5','normal',2,0,0,99999999999,0);" >/dev/null
+q "INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
    VALUES ('F1','C5','monthly','2026-12',NULL,1,'2026-12',100),
           ('F2','C5','monthly','2026-12',NULL,1,'2026-12',100);" >/dev/null
-ok "⑰2件ぶん使っている" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5';")" "2"
-# F2 の予約が削除された。今回見たのは F1 だけ。
-q "DELETE FROM reservation_allocations
-    WHERE customer_id='C5' AND resv_month >= '2026-12' AND resv_month <= '2026-12'
-      AND reservation_id NOT IN ('F1');" >/dev/null
-ok "⑰★消えた予約の引当が落ちる" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='F2';")" "0"
-ok "⑰★used が1に戻る"           "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5';")" "1"
-ok "⑰残る予約の引当は保たれる"   "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='F1';")" "1"
+ok "⑰2件ぶん使っている" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5' AND month_key='2026-12';")" "2"
+
+#   流し直し：F1 はチケットから引く形に変わり、F2 の予約は消えた
+q "DELETE FROM reservation_allocations WHERE customer_id='C5' AND resv_month >= '2026-12' AND resv_month <= '2026-12';
+   INSERT INTO reservation_allocations
+     (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
+   VALUES ('F1','C5','ticket',NULL,'P5',1,'2026-12',200);" >/dev/null
+ok "⑰★月額が0に戻る（消化先の変更が反映される）" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5' AND month_key='2026-12';")" "0"
+ok "⑰★チケットが1になる"                        "$(q "SELECT used FROM ticket_packs WHERE pack_id='P5';")" "1"
+ok "⑰★消えた予約の引当は残らない"               "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='F2';")" "0"
 
 echo "=== 18. 期間の外の引当には触れないこと ==="
-q "INSERT INTO monthly_quota VALUES ('C5','2026-09',4,0,0);" >/dev/null
-q "INSERT OR IGNORE INTO reservation_allocations
+q "INSERT INTO monthly_quota VALUES ('C5','2026-09',4,0,0);
+   INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
    VALUES ('G1','C5','monthly','2026-09',NULL,1,'2026-09',100);" >/dev/null
-q "DELETE FROM reservation_allocations
-    WHERE customer_id='C5' AND resv_month >= '2026-12' AND resv_month <= '2026-12'
-      AND reservation_id NOT IN ('F1');" >/dev/null
-ok "⑱★9月の引当は残る"       "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='G1';")" "1"
-ok "⑱9月の枠も減ったまま"     "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5' AND month_key='2026-09';")" "1"
+q "DELETE FROM reservation_allocations WHERE customer_id='C5' AND resv_month >= '2026-12' AND resv_month <= '2026-12';" >/dev/null
+ok "⑱★9月の引当は残る"   "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='G1';")" "1"
+ok "⑱9月の枠も減ったまま" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5' AND month_key='2026-09';")" "1"
+
+echo "=== 19. 他の会員の引当には触れないこと ==="
+q "INSERT INTO monthly_quota VALUES ('C6','2026-12',4,0,0);
+   INSERT INTO reservation_allocations
+     (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
+   VALUES ('H1','C6','monthly','2026-12',NULL,1,'2026-12',100);" >/dev/null
+q "DELETE FROM reservation_allocations WHERE customer_id='C5' AND resv_month >= '2026-12' AND resv_month <= '2026-12';" >/dev/null
+ok "⑲★別の会員の引当は残る" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='H1';")" "1"
+ok "⑲別の会員の枠も減ったまま" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C6';")" "1"
 
 echo ""
 if [ "$fail" -eq 0 ]; then echo "✅ 引当と枠の守り: $pass passed / 0 failed"; else echo "❌ 引当と枠の守り: $pass passed / $fail failed"; fi

@@ -36,7 +36,10 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
   //   seenIds … 今回「見た」予約のID。行を作らなかったもの（超過・問題あり）も含める。
   //   ★消す対象はこれ。行を作る予約（rows）だけを消すと、
   //     **前回は引当があったが今回は超過に転じた予約**の古い引当が残り、used が過大になる。
-  const out = { rows: [], seenIds: [], skippedUnallocated: 0, issues: [] };
+  //   computed … 計算が最後まで通ったか。false のときは**何も消さない**。
+  //     ok:false は「予約が0件」ではなく「計算できなかった」。
+  //     消してしまうと、その会員の引当が全部消え、used が0になって残数が実際より多く見える。
+  const out = { rows: [], computed: false, skippedUnallocated: 0, issues: [] };
 
   const res = _lbComputeRemaining(
     customerId, rows, sessions, nowKey, targetDateMs, carryRate, opening,
@@ -47,17 +50,15 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
   //   割り当ての結論そのものが信用できない状態で行を作ると、used が実際とずれる。
   if (!res || res.ok === false) {
     out.issues.push({ customerId, code: 'REMAINING_NOT_OK', detail: JSON.stringify((res && res.issues) || []) });
-    return out;
+    return out;   // computed は false のまま＝呼び出し側は何も消さない
   }
+  out.computed = true;
 
   const per = Array.isArray(res.perSession) ? res.perSession : [];
   for (const ps of per) {
     if (!ps || !ps.sessionId) continue;
     const mk = String(ps.monthKey || '');
     if (!mk || mk < String(fromMonth) || mk > String(toMonth)) continue;   // 対象の範囲だけ
-
-    // ★対象の範囲に入った時点で「見た」とみなす。この先どう転んでも、古い引当は消す。
-    out.seenIds.push(String(ps.sessionId));
 
     // 割り当たらなかった＝枠を使っていない。行を作らない（超過として見えるようにする）。
     if (ps.alloc === 'unallocated') { out.skippedUnallocated++; continue; }
@@ -98,7 +99,7 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
 /**
  * 引当をD1へ入れる文を組み立てる。
  *
- *   ★「消してから入れる」。
+ *   ★「全部消してから、全部入れる」。
  *     `INSERT OR IGNORE` だけだと、**壊れはしないが正しくもならない**。
  *     既にある引当は無視されるので、契約を直して流し直しても消化先が古いまま残る。
  *     一方で枠（quota）は流すたびに最新になるため、**枠は新しく used は古い**という
@@ -113,31 +114,33 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
 export function allocationInsertStatements(built, nowMs, scope) {
   const stmts = [];
 
-  // ① まず消す（返却のトリガーが used を戻す）
+  // ① まず、対象期間の引当を**全部消す**（返却のトリガーが used を戻す）
   //
-  //   ★消し方は「期間で絞って、今回見なかったものを落とす」（差分）。
-  //     「今回見た予約を消す」だけでは足りない。次のどれも seenIds に現れないため：
-  //       ・予約が削除された
-  //       ・日付が変わって対象期間の外へ移った
-  //       ・計算が要確認（ok:false）で perSession が出なかった
-  //     これらの古い引当が残ると used が過大になり、**残数が実際より少なく見えて
-  //     予約できなくなる**（Codex関門②の指摘・2026-10-07）。
+  //   ★「今回見た予約を残す」形にしてはいけない（Codex関門②・4回目）。
+  //     NOT IN で残すと、消化先が月額→チケットに変わった予約の古い引当が消えず、
+  //     INSERT OR IGNORE も既存行として無視する。**最初の問題に戻る。**
+  //     全部消して全部入れ直せば、消化先の変更も、消えた予約も、超過に転じた予約も、
+  //     すべて1つの形で正しくなる。
   //
-  //   resv_month（予約が属する月）で期間を絞る。month_key は月額専用なので使えない。
+  //   ★消すのは「計算が最後まで通ったとき」だけ。
+  //     ok:false は「予約が0件」ではなく「計算できなかった」。
+  //     そこで消すと、その会員の引当が全部消えて used が0になり、
+  //     残数が実際より**多く**見える＝枠を超えて予約できてしまう。
   if (scope && scope.customerId && scope.fromMonth && scope.toMonth) {
-    const keep = (built.seenIds && built.seenIds.length) ? built.seenIds : [];
-    const notIn = keep.length ? ` AND reservation_id NOT IN (${keep.map(() => '?').join(',')})` : '';
+    if (!built.computed) return [];   // 計算できていない＝この会員には何もしない
     stmts.push({
       sql: `DELETE FROM reservation_allocations
-             WHERE customer_id = ? AND resv_month >= ? AND resv_month <= ?${notIn}`,
-      args: [scope.customerId, scope.fromMonth, scope.toMonth, ...keep],
+             WHERE customer_id = ? AND resv_month >= ? AND resv_month <= ?`,
+      args: [scope.customerId, scope.fromMonth, scope.toMonth],
     });
   }
 
   // ② 入れ直す
   for (const r of built.rows) {
     stmts.push({
-      sql: `INSERT OR IGNORE INTO reservation_allocations
+      // 直前に全部消しているので衝突しない。OR IGNORE にすると、
+      //   消し損ねたときに**黙って古い行が残る**。衝突したら止めるのが正しい。
+      sql: `INSERT INTO reservation_allocations
               (reservation_id, customer_id, source, month_key, pack_id, units, resv_month, decided_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [r.reservationId, r.customerId, r.source, r.monthKey, r.packId, r.units, r.resvMonth, nowMs],
