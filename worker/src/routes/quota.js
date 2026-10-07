@@ -237,11 +237,33 @@ export async function quotaStatus(request, env) {
   ]);
   const coverage = {};
   for (const r of (cov.results || [])) coverage[String(r.c)] = Number(r.n || 0);
+
+  // ★「上限なし扱い」の行がどれかを返す（2026-10-08）。
+  //   件数だけ分かっても直せない。どの会員のどの月かが分からないと、
+  //   台帳のどの行を直すのかオーナーに伝えられない。
+  //   氏名は出さない（この結果は合言葉なしで読める経路に載る）。
+  //   同じ理由で、覆い方が入っていない行（作り直しの取り残し）も返す。
+  const detail = {};
+  if (coverage.unlimited) {
+    const r = await env.DB.prepare(
+      `SELECT customer_id, month_key FROM monthly_quota
+        WHERE coverage = 'unlimited' ORDER BY customer_id, month_key LIMIT 20`
+    ).all();
+    detail.unlimited = (r.results || []).map((x) => `${x.customer_id} ${x.month_key}`);
+  }
+  if (coverage['(未設定)']) {
+    const r = await env.DB.prepare(
+      `SELECT customer_id, month_key FROM monthly_quota
+        WHERE coverage IS NULL ORDER BY customer_id, month_key LIMIT 20`
+    ).all();
+    detail.notSet = (r.results || []).map((x) => `${x.customer_id} ${x.month_key}`);
+  }
   return json({
     ok: true,
     monthly: { rows: Number(m?.n || 0), used: Number(m?.used || 0) },
     packs: { rows: Number(p?.n || 0), used: Number(p?.used || 0) },
     coverage,   // { limited: n, uncovered: n, unlimited: n, '(未設定)': n }
+    coverageDetail: detail,   // { unlimited: ['顧客ID 月', …], notSet: [...] }（氏名は出さない）
   });
 }
 

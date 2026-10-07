@@ -2095,6 +2095,15 @@ function quotaBuildText(args) {
     o.push('   契約が覆っていない（繰越だけ）: ' + (cv.uncovered || 0) + '行');
     o.push('   🔴頻度が空＝上限なし扱い: ' + (cv.unlimited || 0) + '行'
            + ((cv.unlimited || 0) ? '（★この契約はD1へ移すと予約が通りません。agenda.md の判断待ち）' : ''));
+    //   件数だけでは直せない。どの会員のどの月かを出す（氏名は出さない）。
+    var cd = st.coverageDetail || {};
+    if (cd.unlimited && cd.unlimited.length) {
+      o.push('      該当: ' + cd.unlimited.join(' / '));
+      o.push('      → この顧客IDで `remaining` を引けば契約行が分かります');
+    }
+    if (cd.notSet && cd.notSet.length) {
+      o.push('      覆い方が入っていない行: ' + cd.notSet.join(' / '));
+    }
     if (cv['(未設定)']) {
       o.push('   ★覆い方が入っていない: ' + cv['(未設定)'] + '行（作り直しの取り残し。作り直してください）');
     }
