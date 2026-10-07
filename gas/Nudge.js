@@ -49,6 +49,10 @@
 // この版の印。中身を変えたら必ず書き換える。
 var LB_NUDGE_BUILD = '2026-10-06a 追いかけ送信（期間の来店者へ1人1通・文面は「先日」）';
 
+// ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
+//   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
+var LB_NUDGE_LOCK_WAIT_MS = 30000;
+
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
 var LB_NUDGE_LOG_SCAN = 3000;           // 再送判定で見る直近行数（新しい行が上＝これで足りる）
@@ -1024,7 +1028,7 @@ function _lbNudgeSend(plan, nowMs, alreadyLocked) {
   // ★同時に2つ走らせない（2026-10-05）。
   //   通常の入口（lbNudgeDaily）は、一覧を作る前からロックを取っている（alreadyLocked=true）。
   //   ここで取り直すのは、将来この関数が単独で呼ばれたときに裸にならないようにするため。
-  //   待たずに諦める（tryLock(0)）。待って送るより、送らない方が安全。
+  //   待ち時間は LB_NUDGE_LOCK_WAIT_MS（下の★を参照）。
   var _lock = null;
   if (!alreadyLocked) {
     try { _lock = LockService.getScriptLock(); } catch (e) { _lock = null; }
@@ -1034,7 +1038,8 @@ function _lbNudgeSend(plan, nowMs, alreadyLocked) {
       Logger.log('nudge 中止：排他ロックを使えないため何も送りません');
       return res;
     }
-    if (!_lock.tryLock(0)) {
+    if (!_lock.tryLock(LB_NUDGE_LOCK_WAIT_MS)) {
+      _lbNudgeLogLockMiss('send');
       res.success = false; res.code = 'ALREADY_RUNNING';
       Logger.log('nudge 中止：別の実行が動いています（二重送信を避けるため何も送りません）');
       return res;
@@ -1064,6 +1069,22 @@ function _lbNudgeSend(plan, nowMs, alreadyLocked) {
   }
   Logger.log('nudge: ' + JSON.stringify({ sent: res.sent, failed: res.failed, deferred: res.deferred, counts: plan.counts }));
   return res;
+}
+
+// ロックが取れずに1通も送れなかったことを記録に残す（2026-10-07）。
+//   ★ログだけだと誰も気づかない。来店翌日A/Bは「昨日来た人」が条件なので、
+//     この日に送れなかった方は**翌日には対象から外れ、永久に取りこぼす**。
+//   結果を 'lock_miss' として残し、健康診断と一覧から見えるようにする。
+//   記録に書けなくても送信の判断は変えない（ここで例外を投げない）。
+function _lbNudgeLogLockMiss(where) {
+  try {
+    var sh = _lbNudgeLogSheet();
+    var when = Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm');
+    sh.insertRowsAfter(1, 1);
+    sh.getRange(2, 1, 1, LB_NUDGE_LOG_COLS)
+      .setValues([["'" + when, 'lock_miss', '', String(where || ''), 'lock_miss',
+                   '排他ロックが取れず1通も送れませんでした。この日の対象者は翌日には条件から外れます。']]);
+  } catch (e) { Logger.log('lock_miss を記録できませんでした: ' + e.message); }
 }
 
 // 送信の直前に1行だけ書き、その行番号を返す（必ず2行目＝いちばん上に挿入する）。
@@ -1282,7 +1303,11 @@ function lbNudgeCatchUp(fromYmd, toYmd) {
   var lock = null;
   try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
   if (!lock) { Logger.log('nudge 中止：排他ロックを使えないため何も送りません'); return { success: false, code: 'LOCK_UNAVAILABLE' }; }
-  if (!lock.tryLock(0)) { Logger.log('nudge 中止：別の実行が動いています'); return { success: false, code: 'ALREADY_RUNNING' }; }
+  if (!lock.tryLock(LB_NUDGE_LOCK_WAIT_MS)) {
+    _lbNudgeLogLockMiss('catchup');
+    Logger.log('nudge 中止：別の実行が動いています（' + (LB_NUDGE_LOCK_WAIT_MS / 1000) + '秒待っても取れず）');
+    return { success: false, code: 'ALREADY_RUNNING' };
+  }
   try {
     Logger.log('追いかけ送信：来店 ' + r.label + ' を対象にします');
     return _lbNudgeSend(lbNudgePlanAll(ms, r), ms, true);
@@ -1303,12 +1328,24 @@ function lbNudgeDaily(nowMs) {
   // ★ロックそのものが使えないなら送らない（2026-10-05）。
   //   ここで null のまま先へ進むと、**何も守っていないのに「ロック済み」として**送ることになる。
   //   2つ走れば同じ人に2通届く。守れないときは送らない。
+//   ★待ち時間を入れる（2026-10-07）。
+//     当初は待ち時間を 0 にしていた（待たずに諦める）。「待って送るより送らない方が安全」と考えたが、
+//     **運用初日に実際に取りこぼした。** 10/07 10:43 の自動送信が1通も送らずに終わっている。
+//     GASの ScriptLock はプロジェクト全体で1つ。このプロジェクトにはトリガーが18個あり、
+//     edgeJobPoll は1分ごと、lbCalSyncTick・warmupCache・pushToEdge* も頻繁に動く。
+//     **たまたま重なっただけで送信が丸ごと飛ぶ。**
+//     しかも来店翌日A/Bは「昨日来た人」が条件なので、翌日には対象から外れて**永久に取りこぼす**。
+//     待って取れた場合も安全である（ロックを取ってから対象を決めるので、先に送った実行の記録が見える）。
+//     他の処理も 5〜15秒待っている（EdgeJob.js:139 は5秒、LineBooking.js:3989 は15秒）。
   if (!lock) {
     Logger.log('nudge 中止：排他ロックを使えないため何も送りません');
     return { success: false, code: 'LOCK_UNAVAILABLE', enabled: _lbNudgeEnabled(), sent: 0, failed: 0, deferred: 0 };
   }
-  if (!lock.tryLock(0)) {
-    Logger.log('nudge 中止：別の実行が動いています（二重送信を避けるため何も送りません）');
+  if (!lock.tryLock(LB_NUDGE_LOCK_WAIT_MS)) {
+    // ★取れなかったことを**記録に残す**。ログだけだと誰も気づかない。
+    //   この日の対象者は翌日には条件から外れる＝取りこぼしたまま終わる。
+    _lbNudgeLogLockMiss('daily');
+    Logger.log('nudge 中止：別の実行が動いています（' + (LB_NUDGE_LOCK_WAIT_MS / 1000) + '秒待っても取れず）');
     return { success: false, code: 'ALREADY_RUNNING', enabled: _lbNudgeEnabled(), sent: 0, failed: 0, deferred: 0 };
   }
   try {

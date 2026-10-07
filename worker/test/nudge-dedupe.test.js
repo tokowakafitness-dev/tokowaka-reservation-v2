@@ -49,8 +49,9 @@ ok('②★全員送ってから一括で書く関数は無い',
 
 // ---------- ③ 同時に2つ走らせない ----------
 ok('③ロックを取る', /LockService\.getScriptLock\(\)/.test(SRC));
-ok('③★取れなければ待たずに中止', /_lock\.tryLock\(0\)/.test(SRC) && /res\.code = 'ALREADY_RUNNING'/.test(SRC),
-  '待って送ると、待っていた方が同じ人に2通目を送る');
+ok('③★取れなければ中止（ただし少し待つ）',
+  /_lock\.tryLock\(LB_NUDGE_LOCK_WAIT_MS\)/.test(SRC) && /res\.code = 'ALREADY_RUNNING'/.test(SRC),
+  '待たずに諦めると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07に実際に起きた）');
 ok('③必ず解放する', /\} finally \{[\s\S]{0,120}releaseLock\(\)/.test(SRC));
 
 // ---------- ④ 分からないものは「送った」とみなす ----------
@@ -77,7 +78,7 @@ ok('⑥★一覧を二重にログへ出さない',
 //     2つの実行が同時に一覧を作ると、どちらも「まだ誰にも送っていない」記録を読む。
 //     先に送った方が解放したあと、もう一方が古い一覧のまま送る＝同じ人に2通届く。
 ok('⑦入口でロックを取ってから一覧を作る',
-  /function lbNudgeDaily[\s\S]{0,900}?lock\.tryLock\(0\)[\s\S]{0,600}?_lbNudgeSend\(lbNudgePlanAll\(ms\), ms, true\)/.test(SRC),
+  /function lbNudgeDaily[\s\S]{0,2000}?lock\.tryLock\(LB_NUDGE_LOCK_WAIT_MS\)[\s\S]{0,900}?_lbNudgeSend\(lbNudgePlanAll\(ms\), ms, true\)/.test(SRC),
   'plan を作ってからロックを取る順序に戻っている');
 ok('⑦送信側はロック済みを受け取る', /function _lbNudgeSend\(plan, nowMs, alreadyLocked\)/.test(SRC));
 ok('⑦単独で呼ばれたときは自分で取る', /if \(!alreadyLocked\) \{\s*\n\s*try \{ _lock = LockService\.getScriptLock\(\)/.test(SRC));
@@ -125,7 +126,7 @@ ok('⑫期間が不正なら何もしない', /code: 'BAD_RANGE'/.test(SRC));
 
 // ★追いかけ送信も、毎日の送信と同じ守りを通ること
 ok('⑫★ロックを一覧の前に取る',
-  /function lbNudgeCatchUp\(fromYmd, toYmd\)[\s\S]{0,700}?lock\.tryLock\(0\)[\s\S]{0,400}?_lbNudgeSend\(lbNudgePlanAll\(ms, r\), ms, true\)/.test(SRC),
+  /function lbNudgeCatchUp\(fromYmd, toYmd\)[\s\S]{0,700}?lock\.tryLock\(LB_NUDGE_LOCK_WAIT_MS\)[\s\S]{0,700}?_lbNudgeSend\(lbNudgePlanAll\(ms, r\), ms, true\)/.test(SRC),
   '一覧を作ってからロックを取ると、毎日の送信と同時に走ったとき同じ人へ2通行く');
 ok('⑫★ロックが使えなければ送らない',
   /function lbNudgeCatchUp\(fromYmd, toYmd\)[\s\S]{0,500}?LOCK_UNAVAILABLE/.test(SRC));
@@ -196,6 +197,26 @@ ok('⑭一覧で見分けられる',
   && /noMonthlyPlan: '月額の契約が無い/.test(SRC),
   '異常だけが目に入るようにする。正常と同じ見た目だと毎回調べ直すことになる');
 ok('⑭両方とも集計に初期値がある', /remainBroken: 0, noMonthlyPlan: 0,/.test(SRC));
+
+// ---------- ⑮ ロックが取れずに丸ごと取りこぼす ----------
+//   ★2026-10-07、運用初日に実際に起きた。10:43 の自動送信が1通も送らずに終わった。
+//     tryLock(0)＝待たずに諦める、にしていたため。
+//     GASの ScriptLock はプロジェクト全体で1つ。トリガーは18個あり、edgeJobPoll は1分ごと。
+//     たまたま重なっただけで送信が飛ぶ。しかも来店翌日A/Bは「昨日来た人」が条件なので、
+//     翌日には対象から外れて**永久に取りこぼす**。
+//     待って取れた場合も安全（ロックを取ってから対象を決める＝先に送った実行の記録が見える）。
+ok('⑮待ち時間の定数がある', /var LB_NUDGE_LOCK_WAIT_MS = 30000;/.test(SRC));
+ok('⑮★どの入口も待たずに諦めない',
+  !/tryLock\(0\)/.test(SRC) && /tryLock\(LB_NUDGE_LOCK_WAIT_MS\)/.test(SRC),
+  '0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ');
+ok('⑮3つの入口すべてに効いている',
+  (SRC.match(/tryLock\(LB_NUDGE_LOCK_WAIT_MS\)/g) || []).length === 3,
+  'lbNudgeDaily / lbNudgeCatchUp / _lbNudgeSend');
+ok('⑮★取れなかったことを記録に残す',
+  /function _lbNudgeLogLockMiss\(where\)/.test(SRC)
+  && /_lbNudgeLogLockMiss\('daily'\)/.test(SRC) && /_lbNudgeLogLockMiss\('catchup'\)/.test(SRC),
+  'ログだけだと誰も気づかない。その日の対象者は翌日には条件から外れる');
+ok('⑮記録に書けなくても送信の判断は変えない', /lock_miss を記録できませんでした/.test(SRC));
 
 console.log(`\n${fail ? '❌' : '✅'} リマインドの二重送信 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

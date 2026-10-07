@@ -1881,6 +1881,27 @@ function dailyHealthCheck(dryRun) {
     }
   } catch (e) {}
 
+  // ---- 予約を促すリマインドが取りこぼしていないか（2026-10-07）----
+  //   ★ロックが取れずに1通も送れなかった日があると、その日の対象者は
+  //     翌日には条件（昨日来店）から外れて**永久に取りこぼす**。
+  //     2026-10-07 の運用初日に実際に起きた。黙って消えるのを止める。
+  try {
+    var nsh = _lbSheet('nudge_log');
+    if (nsh && nsh.getLastRow() > 1) {
+      var nscan = Math.min(50, nsh.getLastRow() - 1);
+      var nvals = nsh.getRange(2, 1, nscan, 6).getValues();
+      var missN = 0, missWhen = '';
+      for (var ni = 0; ni < nvals.length; ni++) {
+        if (String(nvals[ni][4]) !== 'lock_miss') continue;
+        var nd = _lbParseResvDate(String(nvals[ni][0] || '').replace(/^'/, ''));
+        if (!nd || (now.getTime() - nd.getTime()) > 48 * 3600000) continue;   // 直近2日ぶんだけ見る
+        missN++; if (!missWhen) missWhen = Utilities.formatDate(nd, tz, 'M/d HH:mm');
+      }
+      if (missN) add('nudge_lock_miss', 'リマインド', 'high', missN,
+        'ロックが取れず1通も送れなかった回が' + missN + '回あります（直近 ' + missWhen + '）。その日の対象者は取りこぼしています。');
+    }
+  } catch (e) {}
+
   // ---- 記録（推移が見えるよう追記）----
   if (!dryRun) {
     try {
