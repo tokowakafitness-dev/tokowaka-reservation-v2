@@ -45,7 +45,7 @@ ok('②計算側の null と突き合わせる',
   /\(d1Monthly === null && calcMonthly === null\) \|\| \(Number\(d1Monthly\) === Number\(calcMonthly\)\)/.test(V));
 
 // ---------- 3. 1人でも違えば「合っていない」 ----------
-ok('③★食い違いがあれば ok を false にする', /if \(out\.differ\) out\.ok = false;/.test(V),
+ok('③★食い違いがあれば落とす', /if \(out\.differ\) out\.pageOk = false;/.test(V),
   '「だいたい合っている」で先に進むと、その人の残数が変わる');
 ok('③食い違った会員を名指しで返す', /out\.diffs\.push\(\{/.test(V));
 ok('③手がかりを添える（枠の行があるか・使った数）',
@@ -77,12 +77,15 @@ ok('⑦既存の /verify とは別の道', /url\.pathname === '\/quota\/verify'/
 ok('⑧★今月以外は比べない',
   /if \(month !== nowMonthKeyJst\(now\)\)/.test(V) && /ONLY_CURRENT_MONTH/.test(V),
   'D1は指定月を読み、計算はいまの残数を返す。別の月を比べて、たまたま同じなら「一致」と出る');
-ok('⑧★比べられない人がいたら合格にしない', /if \(out\.skipped\) out\.ok = false;/.test(V));
-ok('⑧★1人も比べていなければ合格にしない', /if \(!out\.checked\) out\.ok = false;/.test(V));
-ok('⑧★途中までなら合格にしない', /if \(!out\.done\) out\.ok = false;/.test(V));
+ok('⑧★比べられない人がいたら合格にしない', /if \(out\.skipped\) out\.pageOk = false;/.test(V));
+ok('⑧★1人も比べていなければ合格にしない', /if \(!out\.checked\) out\.pageOk = false;/.test(V));
+ok('⑧★途中までなら合格にしない', /if \(!out\.done\) out\.pageOk = false;/.test(V));
 ok('⑧比べられなかった理由を残す', /out\.skippedWhy\[input\.reason\]/.test(V),
   '件数だけだと、なぜ比べられなかったのか追えない');
-ok('⑧判定を一言で返す', /out\.verdict = out\.ok \? 'AGREE_ALL'/.test(V));
+ok('⑧★判定の名前が「このページ限り」と分かる',
+  /out\.pageVerdict = out\.pageOk \? 'PAGE_AGREE'/.test(V)
+  && !/AGREE_ALL/.test(V),
+  'ok / AGREE_ALL という名前だと、Workerを直接読む人が全体の合否と誤認する');
 
 // ---------- 9. ★D1にだけ残った行（孤児）を見つける ----------
 //   比べているのは計算側に居る会員だけ。契約が消えた会員の枠や引当がD1に残っていても、
@@ -92,12 +95,14 @@ ok('⑨孤児の枠を数える',
 ok('⑨孤児の引当を数える',
   /FROM reservation_allocations\s*\n\s*WHERE customer_id NOT IN \(SELECT DISTINCT customer_id FROM calc_contract_rows\)/.test(V));
 ok('⑨★孤児があれば合格にしない',
-  /if \(out\.orphans\.quotaRows \|\| out\.orphans\.packRows \|\| out\.orphans\.allocRows\) out\.ok = false;/.test(V));
+  /if \(out\.orphans\.quotaRows \|\| out\.orphans\.packRows \|\| out\.orphans\.allocRows\) out\.pageOk = false;/.test(V));
 
 // ---------- 10. ★全ページを集計して判断する（ページ単位で判断しない） ----------
 //   Codex関門②の2回目。ページごとの判定を見ると、前のページの食い違いを見落とす。
 //   最後のページ単体が「一致」でも、2ページ目に食い違いがあれば全体は一致ではない。
-ok('⑩ページ限りの判定であることを名前で示す', /out\.pageOk = out\.ok;/.test(V));
+ok('⑩★全体の合否を示す名前を返さない',
+  !/\bout\.ok\b/.test(V) && /pageOk: true/.test(V),
+  'ok という名前が残っていると、このページだけの結果を全体の合否と読んでしまう');
 ok('⑩★呼ぶ側が全ページを集計して判断する',
   /var allGood = v\.done && v\.checked > 0 && v\.differ === 0 && v\.skipped === 0/.test(GAS),
   'ページごとの pageOk を見て決めると、前のページの食い違いを見落とす');

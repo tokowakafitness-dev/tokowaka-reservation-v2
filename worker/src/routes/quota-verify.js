@@ -78,11 +78,14 @@ export async function verifyQuota(request, env) {
   const ids = (r.results || []).map((x) => String(x.customer_id)).filter(Boolean);
 
   const out = {
-    ok: true, month, customers: ids.length, checked: 0,
+    // ★名前を pageOk / pageVerdict にする（2026-10-07・Codex関門②の3回目）。
+    //   ok という名前にすると、**このページだけの結果を全体の合否と読んでしまう。**
+    //   全体の判定は、呼ぶ側が全ページを集計して出す（gas/PushToEdge.js の allGood）。
+    pageOk: true, month, customers: ids.length, checked: 0,
     agree: 0, differ: 0, skipped: 0,
     diffs: [],          // 食い違った会員（氏名は出さない）
     skippedWhy: {},     // 比べられなかった理由の内訳（黙って落とさない）
-    next: null, done: false, verdict: '',
+    next: null, done: false, pageVerdict: '',
   };
 
   for (const cid of ids) {
@@ -135,17 +138,16 @@ export async function verifyQuota(request, env) {
 
   // ★ここで出すのは**このページだけ**の判定（2026-10-07・Codex関門②の2回目）。
   //   呼ぶ側は全ページを集計して判断すること。最後のページだけを見て
-  //   「AGREE_ALL だから全員一致」と読むと、前のページの食い違いを見落とす。
+  //   このページが「一致」でも全員一致とは限らない。前のページの食い違いを見落とす。
   //   その取り違えを防ぐため、名前を pageOk / pageVerdict にしてある。
   //
   //   ★「合格」と言えるのは、**全員を比べて全員が一致したとき**だけ（Codex関門②）。
   //   食い違い0でも、比べられていない人がいれば合格ではない。
   //   ここを緩めると「一致した」と誤認したまま段階3-bへ進み、顧客の残数が変わる。
-  if (out.differ) out.ok = false;                 // 1人でも食い違えば駄目
-  if (out.skipped) out.ok = false;                // 比べられない人がいても駄目
-  if (!out.checked) out.ok = false;               // 1人も比べていないのに合格にしない
-  if (!out.done) out.ok = false;                  // 途中までなら合格にしない（続きがある）
-  out.pageOk = out.ok;   // ★このページだけの判定。全体の判定は呼ぶ側が集計して出す
+  if (out.differ) out.pageOk = false;             // 1人でも食い違えば駄目
+  if (out.skipped) out.pageOk = false;            // 比べられない人がいても駄目
+  if (!out.checked) out.pageOk = false;           // 1人も比べていないのに合格にしない
+  if (!out.done) out.pageOk = false;              // 途中までなら合格にしない（続きがある）
   // ★D1にだけ残っている行（孤児）を数える（最後のページでだけ・Codex関門②）。
   //   比べているのは「計算側に居る会員」だけ。契約が消えた会員の枠や引当が
   //   D1に残っていても、ここまでの検査には現れない。
@@ -167,10 +169,11 @@ export async function verifyQuota(request, env) {
     ]);
     out.orphans = { quotaRows: Number(orphanQ?.n || 0), packRows: Number(orphanP?.n || 0),
                     allocRows: Number(orphanA?.n || 0) };
-    if (out.orphans.quotaRows || out.orphans.packRows || out.orphans.allocRows) out.ok = false;
+    if (out.orphans.quotaRows || out.orphans.packRows || out.orphans.allocRows) out.pageOk = false;
   }
 
-  out.verdict = out.ok ? 'AGREE_ALL'
+  //   ★「全員一致」とは言わない。「このページでは食い違いが無かった」までしか言えない。
+  out.pageVerdict = out.pageOk ? 'PAGE_AGREE'
     : (out.differ ? 'DIFFER'
     : (out.skipped ? 'HAS_SKIPPED'
     : ((out.orphans && (out.orphans.quotaRows || out.orphans.packRows || out.orphans.allocRows)) ? 'HAS_ORPHANS' : 'INCOMPLETE')));
