@@ -16,6 +16,7 @@ import { handleIngest } from './routes/ingest.js';
 import { handleCalSync } from './routes/calsync.js';
 import { handleCalCompare } from './routes/calcompare.js';
 import { buildQuota, quotaStatus } from './routes/quota.js';
+import { verifyQuota } from './routes/quota-verify.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
@@ -135,6 +136,10 @@ export default {
     //   合言葉で守る。お客様のブラウザからは呼ばせない（CORSも許さない）。
     if (url.pathname === '/quota/build') return buildQuota(request, env);
     if (url.pathname === '/quota/status') return quotaStatus(request, env);
+    // D1の枠と引当から出した残数が、計算と一致するか（読み取りだけ）。
+    //   ★既存の /verify とは別物。あちらは「GASの計算 vs Workerの計算」で、
+    //     同じコードを回すので合って当然。こちらは「計算 vs D1の行」を比べる。
+    if (url.pathname === '/quota/verify') return verifyQuota(request, env);
 
     if (url.pathname === '/calc') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });

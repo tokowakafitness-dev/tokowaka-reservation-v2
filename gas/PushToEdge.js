@@ -1945,9 +1945,74 @@ function _edgeQuotaStatus() {
   return JSON.parse(res.getContentText());
 }
 
-/** 作業依頼から呼ぶ：枠を作れるか試す／実際に作る／いま入っている数を見る。氏名は出さない。 */
+// D1の枠と引当から出した残数が、計算と一致するかを突き合わせる（2026-10-07）。
+//   ★「D1を正本にしてよいか」はここが一致するかで決まる。
+//     正本にするとは、残数を計算で出すのをやめて**行から読む**こと。
+//     行から読んだ値が計算と違えば、顧客の残数が変わる。
+function _edgeQuotaVerify(opts) {
+  var o = opts || {};
+  var url = _edgeProp('EDGE_URL');
+  var secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) throw new Error('EDGE_URL / EDGE_SECRET が未設定です');
+  var base = url.replace(/\/+$/, '');
+  var limit = Math.max(1, Math.min(Number(o.limit || 5) || 5, 8));
+  var maxPages = Math.max(1, Math.min(Number(o.maxPages || 12) || 12, 40));
+  var month = String(o.month || '');
+  var after = String(o.after || '');
+  var total = { pages: 0, checked: 0, agree: 0, differ: 0, skipped: 0, diffs: [], lastAfter: after, done: false };
+
+  for (var p = 0; p < maxPages; p++) {
+    var q = '?limit=' + limit + '&after=' + encodeURIComponent(after) + (month ? '&month=' + encodeURIComponent(month) : '');
+    var res = UrlFetchApp.fetch(base + '/quota/verify' + q, {
+      method: 'get', headers: { 'X-Ingest-Secret': secret }, muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) throw new Error('quota/verify が失敗（HTTP ' + res.getResponseCode() + '・after=' + after + '）: ' + res.getContentText().slice(0, 200));
+    var r = JSON.parse(res.getContentText());
+    total.pages++;
+    total.checked += Number(r.checked || 0);
+    total.agree += Number(r.agree || 0);
+    total.differ += Number(r.differ || 0);
+    total.skipped += Number(r.skipped || 0);
+    for (var i = 0; i < (r.diffs || []).length; i++) total.diffs.push(r.diffs[i]);
+    if (r.done || !r.next) { total.done = true; break; }
+    after = String(r.next); total.lastAfter = after;
+    Utilities.sleep(200);
+  }
+  return total;
+}
+
+/** 作業依頼から呼ぶ：枠を作れるか試す／実際に作る／いま入っている数を見る／突き合わせる。氏名は出さない。 */
 function quotaBuildText(args) {
   var a0 = args || {};
+  // args.verify を付けたら、D1の行と計算を突き合わせる
+  if (a0.verify === true || a0.verify === '1') {
+    var v = _edgeQuotaVerify({ month: a0.month, limit: a0.limit, after: a0.after, maxPages: a0.maxPages });
+    var vo = [];
+    vo.push('=== D1の行と計算の突き合わせ（' + (a0.month || '今月') + '）===');
+    vo.push('★見ているのは「計算の答え」と「D1の枠・引当から読んだ答え」が同じか。');
+    vo.push('　 ここが一致して初めて、残数の読み取りをD1へ向けられます。');
+    vo.push('');
+    vo.push('回した回数: ' + v.pages + ' ／ 比べた会員 ' + v.checked + '名'
+            + (v.done ? ' ／ 最後まで到達' : ' ／ ★途中（続き after=' + v.lastAfter + '）'));
+    vo.push('一致 ' + v.agree + '名 ／ ★食い違い ' + v.differ + '名 ／ 比べられず ' + v.skipped + '名');
+    if (v.diffs.length) {
+      vo.push('');
+      vo.push('── 食い違った会員');
+      for (var k = 0; k < Math.min(v.diffs.length, 20); k++) {
+        var d = v.diffs[k];
+        vo.push('   ・' + d.customerId
+                + '  月額 計算=' + d.monthly.calc + ' / D1=' + d.monthly.d1
+                + '  チケット 計算=' + d.ticket.calc + ' / D1=' + d.ticket.d1
+                + (d.quotaRow ? '  （枠=' + d.quotaRow.quota + ' 使った=' + d.quotaRow.used + '）' : '  （枠の行なし）'));
+      }
+      if (v.diffs.length > 20) vo.push('   …ほか ' + (v.diffs.length - 20) + '名');
+    } else if (v.checked) {
+      vo.push('');
+      vo.push('✅ 比べた全員で一致しました。D1の行から正しい残数が読めています。');
+    }
+    var vt = vo.join('\n'); Logger.log(vt); return vt;
+  }
+
   // args.status を付けたら、作らずに「いま入っている数」だけを返す
   if (a0.status === true || a0.status === '1') {
     var st = _edgeQuotaStatus();
