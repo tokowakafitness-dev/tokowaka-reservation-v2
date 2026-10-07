@@ -55,8 +55,8 @@ ok('④読み込まれている', /import \{ buildQuota, quotaStatus \} from '\.
 
 // ---------- 5. ★used に触れない（設計の不変条件） ----------
 ok('⑤★更新で used を書き換えない',
-  !/DO UPDATE SET[\s\S]{0,200}?used\s*=/.test(BUILD),
-  '既にある枠の used を書き換えると、使った数が消える。動かすのはトリガーだけ');
+  !/DO UPDATE SET[\s\S]{0,300}?\bused\s*=/.test(BUILD),
+  'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
 ok('⑤新しく作るときだけ used=0', /VALUES \(\?, \?, \?, 0, \?\)/.test(BUILD));
 ok('⑤枠を直接UPDATEする文が無い',
   !/UPDATE monthly_quota|UPDATE ticket_packs/.test(BUILD) && !/UPDATE monthly_quota|UPDATE ticket_packs/.test(ROUTE),

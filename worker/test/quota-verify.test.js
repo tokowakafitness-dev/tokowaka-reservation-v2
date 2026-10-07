@@ -29,13 +29,15 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 ok('①計算の答えを出している', /_lbComputeRemaining\(cid, input\.rows, input\.sessions/.test(V));
 ok('①★D1の行から読んでいる（計算し直していない）',
   /SELECT quota, used FROM monthly_quota WHERE customer_id = \? AND month_key = \?/.test(V)
-  && /SELECT total, used FROM ticket_packs/.test(V),
+  && /SELECT total, used, opening_used FROM ticket_packs/.test(V),
   'ここで計算し直すと、同じコードの比較になり意味が無い');
 ok('①月額は 枠−使った数', /Number\(mq\.quota\) - Number\(mq\.used\)/.test(V));
 ok('①チケットは有効なぶんの残りを足す',
-  /valid_from <= \? AND valid_to >= \?/.test(V)
-  && /Math\.max\(0, Number\(p\.total\) - Number\(p\.used\)\)/.test(V),
+  /valid_from <= \? AND valid_to >= \?/.test(V),
   '期限切れ・開始前のパックを数えると、計算側（ticketRem）とずれる');
+ok('①★移行前に使った枚数も引く',
+  /Number\(p\.total\) - Number\(p\.opening_used \|\| 0\) - Number\(p\.used\)/.test(V),
+  '台帳は9月からだが店舗は3月オープン。3〜8月の消化を引かないと残りが多く見える');
 
 // ---------- 2. 「枠が無い」と「残り0」を取り違えない ----------
 ok('②★枠の行が無ければ null（月額契約が無いの意味）',

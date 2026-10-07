@@ -45,6 +45,8 @@ out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0009_booking_allocations.sql" 2>
 ok "⓪0009 を無加工で当てられる" "${out:-OK}" "OK"
 out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0010_alloc_resv_month.sql" 2>&1)"
 ok "⓪0010 を無加工で当てられる" "${out:-OK}" "OK"
+out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0011_pack_opening_used.sql" 2>&1)"
+ok "⓪0011 を無加工で当てられる" "${out:-OK}" "OK"
 
 ok "⓪4列が足された" \
   "$(q "SELECT COUNT(*) FROM pragma_table_info('reservations')
@@ -79,8 +81,8 @@ case "$out" in *duplicate*) ok "⓪二度目は duplicate column で止まる（
 
 # ---------- ここから、守りそのものの検査 ----------
 q "INSERT INTO monthly_quota VALUES ('C1','2026-10',4,0,0);
-   INSERT INTO ticket_packs  VALUES ('P1','C1','normal',2,0,0,99999999999,0);
-   INSERT INTO ticket_packs  VALUES ('P2','C1','pair',  2,0,0,99999999999,0);" >/dev/null
+   INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P1','C1','normal',2,0,0,99999999999,0);
+   INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P2','C1','pair',  2,0,0,99999999999,0);" >/dev/null
 
 echo "=== 1. 引当を作ると枠が減る（確保＝引当が同じ出来事） ==="
 q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R1','C1','monthly','2026-10',NULL,1,100);" >/dev/null
@@ -189,7 +191,7 @@ echo "=== 15. ★流し直すと「正しくなる」こと（消してから入
 #   契約を直して流し直したとき、消化先が月額→チケットに変わっても古い引当が残り、
 #   枠は新しく used は古い、というちぐはぐな状態になる（Codex関門②の指摘）。
 q "INSERT INTO monthly_quota VALUES ('C3','2026-12',2,0,0);
-   INSERT INTO ticket_packs  VALUES ('P3','C3','normal',2,0,0,99999999999,0);" >/dev/null
+   INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P3','C3','normal',2,0,0,99999999999,0);" >/dev/null
 # 1回目：月額から引く
 q "DELETE FROM reservation_allocations WHERE customer_id='C3' AND reservation_id IN ('D1');
    INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('D1','C3','monthly','2026-12',NULL,1,100);" >/dev/null
@@ -219,7 +221,7 @@ ok "⑯E1 の引当は残る" "$(q "SELECT COUNT(*) FROM reservation_allocations
 
 echo "=== 17. ★全部消して全部入れる（消化先の変更・消えた予約・超過への転落、すべてに効く） ==="
 q "INSERT INTO monthly_quota VALUES ('C5','2026-12',4,0,0);
-   INSERT INTO ticket_packs  VALUES ('P5','C5','normal',2,0,0,99999999999,0);" >/dev/null
+   INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P5','C5','normal',2,0,0,99999999999,0);" >/dev/null
 q "INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
    VALUES ('F1','C5','monthly','2026-12',NULL,1,'2026-12',100),
@@ -274,6 +276,30 @@ case "$r" in *UNIQUE*|*constraint*) ok "⑳★主キーが衝突しない" "衝�
 ok "⑳★9月の枠が戻る"   "$(q "SELECT used FROM monthly_quota WHERE customer_id='C7' AND month_key='2026-09';")" "0"
 ok "⑳★12月の枠が減る"  "$(q "SELECT used FROM monthly_quota WHERE customer_id='C7' AND month_key='2026-12';")" "1"
 ok "⑳行は1件のまま"     "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='J1';")" "1"
+
+echo "=== 21. ★棚卸しの引継ぎ（移行前に使った枚数）が残りに効くこと ==="
+#   店舗は3月オープンだが、LINE予約の台帳は9月から。3〜8月の消化は棚卸しで引き継ぐ。
+#   計算側はそれを「使った数の初期値」にしている。D1側も持たないと残りが多く見え、
+#   使えないはずのチケットが使えてしまう（2026-10-07 オーナー指摘）。
+q "INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,opening_used,valid_from,valid_to,updated_at)
+   VALUES ('P9','C9','normal',10,0,6,0,99999999999,0);" >/dev/null
+ok "㉑買った枚数は10"           "$(q "SELECT total FROM ticket_packs WHERE pack_id='P9';")" "10"
+ok "㉑移行前に6枚使っている"   "$(q "SELECT opening_used FROM ticket_packs WHERE pack_id='P9';")" "6"
+ok "㉑★残りは4（10−6−0）"     "$(q "SELECT total - opening_used - used FROM ticket_packs WHERE pack_id='P9';")" "4"
+
+#   さらに引当を1件入れると、残りは3になる
+q "INSERT INTO monthly_quota VALUES ('C9','2026-10',4,0,0);
+   INSERT INTO reservation_allocations
+     (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
+   VALUES ('K1','C9','ticket',NULL,'P9',1,'2026-10',100);" >/dev/null
+ok "㉑引当でさらに1枚減る"     "$(q "SELECT used FROM ticket_packs WHERE pack_id='P9';")" "1"
+ok "㉑★残りは3（10−6−1）"     "$(q "SELECT total - opening_used - used FROM ticket_packs WHERE pack_id='P9';")" "3"
+
+#   ★opening_used は引当の作り直しで消えない（used とは別の列だから）
+q "DELETE FROM reservation_allocations WHERE reservation_id='K1';" >/dev/null
+ok "㉑引当を消すと used が戻る"      "$(q "SELECT used FROM ticket_packs WHERE pack_id='P9';")" "0"
+ok "㉑★移行前のぶんは残ったまま"    "$(q "SELECT opening_used FROM ticket_packs WHERE pack_id='P9';")" "6"
+ok "㉑★残りは4に戻る（3〜8月ぶんは消えない）" "$(q "SELECT total - opening_used - used FROM ticket_packs WHERE pack_id='P9';")" "4"
 
 echo ""
 if [ "$fail" -eq 0 ]; then echo "✅ 引当と枠の守り: $pass passed / 0 failed"; else echo "❌ 引当と枠の守り: $pass passed / $fail failed"; fi

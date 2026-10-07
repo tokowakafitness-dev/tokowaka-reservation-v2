@@ -100,7 +100,10 @@ console.log('=== 4. ★used を書かない（枠を動かすのはトリガー�
 
   ok('④★月額：更新で used に触れない', !/DO UPDATE SET[\s\S]*used/.test(monthlySql),
     '既にある枠の used を書き換えると、使った数が消える');
-  ok('④★チケット：更新で used に触れない', !/DO UPDATE SET[\s\S]*used/.test(packSql));
+  //   ★opening_used は別の列。used（引当が動かす数）とは意味が違う。
+  //     検査が列名の一部で誤って反応しないよう、単語の境界で見る。
+  ok('④★チケット：更新で used に触れない', !/DO UPDATE SET[\s\S]*\bused\s*=/.test(packSql),
+    'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
   ok('④新しく作るときだけ used=0', /VALUES \(\?, \?, \?, 0, \?\)/.test(monthlySql));
   ok('④枠の大きさは更新する', /quota = excluded\.quota/.test(monthlySql));
   ok('④チケットの枚数も更新する', /total = excluded\.total/.test(packSql));
@@ -175,6 +178,32 @@ console.log('=== 9. 使える回数が0の月には枠を作らない ===');
   eq('⑨枠を作らない', b.monthly.length, 0);
   // 「枠が無い」と「枠が0」を区別する。0の行を作ると、引当のEXISTSは通るのに
   // 条件で弾かれ、どちらの状態か分からなくなる。
+}
+
+console.log('=== 10. ★棚卸しの引継ぎ（移行前に使った枚数）を持ち回る ===');
+//   店舗は3月オープンだが、LINE予約の台帳は9月から。3〜8月の消化は棚卸しで引き継ぐ。
+//   計算側はそれを「使った数の初期値」にしている（allocate.js の openingPacks）。
+//   D1側も持たないと残りが多く見え、使えないはずのチケットが使えてしまう。
+{
+  const withOpening = buildQuotaForCustomer('C1', CONTRACTS, [], 
+    { packsUsed: {} }, OPTS);
+  ok('⑩棚卸しが空なら0', withOpening.packs.every((p) => p.openingUsed === 0));
+
+  //   棚卸しに「このpackを2枚使った」と記録がある場合
+  const pid = withOpening.packs[0] && withOpening.packs[0].packId;
+  ok('⑩packId が取れる', !!pid);
+  if (pid) {
+    const b2 = buildQuotaForCustomer('C1', CONTRACTS, [], { packsUsed: { [pid]: 2 } }, OPTS);
+    const p2 = b2.packs.find((x) => x.packId === pid);
+    eq('⑩★移行前の2枚が入る', p2 && p2.openingUsed, 2);
+
+    const st = quotaUpsertStatements(b2, 1000);
+    const packSql = st.find((x) => x.sql.includes('ticket_packs')).sql;
+    ok('⑩★更新で opening_used も直す', /opening_used = excluded\.opening_used/.test(packSql),
+      '棚卸しが直ったら反映されないと、古い引継ぎのまま残る');
+    ok('⑩★used には触れない', !/DO UPDATE SET[\s\S]*\bused = /.test(packSql),
+      '使った数を動かすのはトリガーだけ、という不変条件を守る');
+  }
 }
 
 console.log('');

@@ -112,6 +112,12 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
     out.issues.push({ customerId, code: 'ENTITLEMENT_ISSUES', detail: JSON.stringify(ent.issues) });
     return out;
   }
+  // ★棚卸しの引継ぎ（移行前に既に使っていた枚数）を拾う。
+  //   計算側はこれを「使った数の初期値」にしている（allocate.js の openingPacks）。
+  //   D1側は引当だけが used を増やすので、これを別に持たないと残りが多く見える。
+  //   店舗は3月オープンだが台帳は9月から。3〜8月の消化はここに入っている。
+  const openingPacks = (opening && (opening.packsUsed || opening.packs)) || {};
+
   const packs = (ent && ent.entitlements && ent.entitlements.packs) || [];
   for (const p of packs) {
     if (!p || !p.packId) continue;
@@ -129,6 +135,8 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
       // そのまま入れると日付として扱えないので 0 に寄せる。
       validFrom: (p.availableAt > -8e15) ? Number(p.availableAt) : 0,
       validTo: Number(p.expiresAt),
+      //   移行前に既に使っていた枚数。無ければ0。
+      openingUsed: Math.max(0, Number(openingPacks[String(p.packId)] || 0)),
     });
   }
 
@@ -155,13 +163,16 @@ export function quotaUpsertStatements(built, nowMs) {
   }
   for (const p of built.packs) {
     stmts.push({
-      sql: `INSERT INTO ticket_packs (pack_id, customer_id, kind, total, used, valid_from, valid_to, updated_at)
-            VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+      //   opening_used は「移行前に既に使っていた枚数」。棚卸しが直れば更新される。
+      //   used（引当で増える数）には触れない＝設計の不変条件を守る。
+      sql: `INSERT INTO ticket_packs (pack_id, customer_id, kind, total, used, opening_used, valid_from, valid_to, updated_at)
+            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
             ON CONFLICT(pack_id) DO UPDATE SET
               customer_id = excluded.customer_id, kind = excluded.kind, total = excluded.total,
+              opening_used = excluded.opening_used,
               valid_from = excluded.valid_from, valid_to = excluded.valid_to,
               updated_at = excluded.updated_at`,
-      args: [p.packId, p.customerId, p.kind, p.total, p.validFrom, p.validTo, nowMs],
+      args: [p.packId, p.customerId, p.kind, p.total, p.openingUsed, p.validFrom, p.validTo, nowMs],
     });
   }
   return stmts;

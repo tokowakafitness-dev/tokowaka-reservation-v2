@@ -102,7 +102,7 @@ export async function verifyQuota(request, env) {
       env.DB.prepare('SELECT quota, used FROM monthly_quota WHERE customer_id = ? AND month_key = ?')
         .bind(cid, month).first(),
       env.DB.prepare(
-        `SELECT total, used FROM ticket_packs
+        `SELECT total, used, opening_used FROM ticket_packs
           WHERE customer_id = ? AND valid_from <= ? AND valid_to >= ?`
       ).bind(cid, now, now).all(),
     ]);
@@ -111,7 +111,11 @@ export async function verifyQuota(request, env) {
     const d1Monthly = mq ? (Number(mq.quota) - Number(mq.used)) : null;
     //   チケット：いま有効なパックの残りを足す（計算側 ticketRem と同じ数え方）
     let d1Ticket = 0;
-    for (const p of (tp.results || [])) d1Ticket += Math.max(0, Number(p.total) - Number(p.used));
+    //   残り ＝ 買った枚数 − 移行前に使った枚数 − 引当で使った枚数
+    //   opening_used を引かないと、3〜8月の消化が反映されず残りが多く見える。
+    for (const p of (tp.results || [])) {
+      d1Ticket += Math.max(0, Number(p.total) - Number(p.opening_used || 0) - Number(p.used));
+    }
 
     const calcMonthly = (a.monthlyRem == null) ? null : Number(a.monthlyRem);
     const calcTicket = Number(a.ticketRem || 0);
