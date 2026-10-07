@@ -1884,17 +1884,19 @@ function _edgeQuotaBuild(opts) {
   var base = url.replace(/\/+$/, '');
 
   var dry = (o.write === true) ? '0' : '1';          // ★既定は書かない
+  var alloc = (o.alloc === true) ? '1' : '';         // 引当も作るか（枠だけ作ると used が0のまま）
   var from = String(o.from || '');
   var to = String(o.to || '');
   var limit = Math.max(1, Math.min(Number(o.limit || 5) || 5, 8));
   var maxPages = Math.max(1, Math.min(Number(o.maxPages || 12) || 12, 40));   // 1回の実行で回す上限
 
   var after = String(o.after || '');
-  var total = { pages: 0, customers: 0, monthlyRows: 0, packRows: 0, wrote: 0,
+  var total = { pages: 0, customers: 0, monthlyRows: 0, packRows: 0, allocRows: 0, overflow: 0, wrote: 0,
                 skipped: [], issues: [], lastAfter: after, done: false };
 
   for (var p = 0; p < maxPages; p++) {
     var q = '?dry=' + dry + '&limit=' + limit + '&after=' + encodeURIComponent(after)
+          + (alloc ? '&alloc=1' : '')
           + (from ? '&from=' + encodeURIComponent(from) : '')
           + (to ? '&to=' + encodeURIComponent(to) : '');
     var res = UrlFetchApp.fetch(base + '/quota/build' + q, {
@@ -1911,6 +1913,8 @@ function _edgeQuotaBuild(opts) {
     total.customers += Number(r.customers || 0);
     total.monthlyRows += Number(r.monthlyRows || 0);
     total.packRows += Number(r.packRows || 0);
+    total.allocRows += Number(r.allocRows || 0);
+    total.overflow += Number(r.overflow || 0);
     total.wrote += Number(r.wrote || 0);
     // 問題は全部ためる（件数だけだと、何が起きたか分からない）
     for (var i = 0; i < (r.skipped || []).length; i++) total.skipped.push(r.skipped[i]);
@@ -1955,7 +1959,8 @@ function quotaBuildText(args) {
   }
   var a = a0;
   var write = (a.write === true || a.write === '1');
-  var t = _edgeQuotaBuild({ write: write, from: a.from, to: a.to, limit: a.limit, after: a.after, maxPages: a.maxPages });
+  var alloc = (a.alloc === true || a.alloc === '1');
+  var t = _edgeQuotaBuild({ write: write, alloc: alloc, from: a.from, to: a.to, limit: a.limit, after: a.after, maxPages: a.maxPages });
 
   var out = [];
   out.push('=== 枠を作る（' + (write ? '⚠️ 実際に書きました' : '試しただけ・書いていません') + '） ===');
@@ -1964,6 +1969,14 @@ function quotaBuildText(args) {
            + (t.done ? ' ／ 最後まで到達' : ' ／ ★途中（続き after=' + t.lastAfter + '）'));
   out.push('作られる枠: 月額 ' + t.monthlyRows + '行 ／ チケット ' + t.packRows + '組'
            + (write ? ' ／ 書いた文 ' + t.wrote : ''));
+  if (alloc) {
+    out.push('作られる引当: ' + t.allocRows + '件'
+             + ' ／ 枠に入りきらなかった予約 ' + t.overflow + '件（＝超過。行は作らない）');
+    out.push('　※ 引当を入れるとトリガーが「使った数」を増やします。これで残数が実際の値になります。');
+  } else {
+    out.push('※ 引当は作っていません（args に alloc:true を付けると作ります）。');
+    out.push('　 引当が無いと「使った数」は0のまま＝誰も使っていないことになります。');
+  }
 
   if (t.skipped.length) {
     out.push('');

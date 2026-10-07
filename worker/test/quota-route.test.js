@@ -20,6 +20,7 @@ const ROOT = join(HERE, '../..');
 const ROUTE = readFileSync(join(ROOT, 'worker/src/routes/quota.js'), 'utf8');
 const INDEX = readFileSync(join(ROOT, 'worker/src/index.js'), 'utf8');
 const BUILD = readFileSync(join(ROOT, 'worker/src/lib/quota-build.js'), 'utf8');
+const ALLOC = readFileSync(join(ROOT, 'worker/src/lib/alloc-build.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
@@ -86,6 +87,23 @@ ok('⑧★問い合わせ自体を区切る',
 ok('⑧続きの印を返す', /summary\.next = \(ids\.length === limit\) \? ids\[ids\.length - 1\] : null;/.test(ROUTE));
 ok('⑧終わったことが分かる', /summary\.done = \(summary\.next === null\);/.test(ROUTE));
 ok('⑧1人を指定したときは区切らない', /} else \{\s*\n\s*summary\.done = true;/.test(ROUTE));
+
+// ---------- 9. 引当を作るとき ----------
+//   ★枠だけ作って引当を作らないと used が0のまま＝「誰も使っていない」ことになる。
+//     逆に引当を二度入れると used が二重に増える＝残数が実際より減る。
+ok('⑨引当は明示したときだけ作る', /const withAlloc = url\.searchParams\.get\('alloc'\) === '1';/.test(ROUTE),
+  '枠だけ作り直したい場面があるので、別の指定にしておく');
+ok('⑨★枠と引当を同じ書き込みで入れる', /quotaUpsertStatements\(built, now\)\.concat\(allocStmts\)/.test(ROUTE),
+  '枠が先・引当が後。引当のINSERTは枠の行を親として見る');
+ok('⑨★二度入れても増えない形', /INSERT OR IGNORE INTO reservation_allocations/.test(ALLOC),
+  'ON CONFLICT DO UPDATE にすると、トリガーが二度動いて used が二重に増える');
+ok('⑨あふれた予約は行にしない', /if \(ps\.alloc === 'unallocated'\) \{ out\.skippedUnallocated\+\+; continue; \}/.test(ALLOC),
+  '超過は「防ぐのではなく見せる」（決定0068）。行を作ると超過が見えなくなる');
+ok('⑨あふれた件数を返す', /summary\.overflow \+= al\.skippedUnallocated;/.test(ROUTE));
+ok('⑨計算が要確認なら引当を作らない', /code: 'REMAINING_NOT_OK'/.test(ALLOC));
+ok('⑨★割り当て方を決め直していない',
+  !/used\s*[<>+]/.test(ALLOC) && /_lbComputeRemaining/.test(ALLOC),
+  'ここで決め直すと、GASの残数とD1の残数が実装の違いでずれる');
 
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 枠を作る窓口 検証: ${pass} passed / ${fail} failed`);

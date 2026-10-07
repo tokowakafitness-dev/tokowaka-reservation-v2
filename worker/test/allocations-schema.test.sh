@@ -162,6 +162,26 @@ ok "⑪同じ時間に地下を使う予約は1件だけ" \
 ok "⑪オンラインは地下の勘定に入らない" "$(q "SELECT occupies_facility FROM reservations WHERE reservation_id='R8';")" "0"
 ok "⑪オンラインでもトレーナーは埋まる" "$(q "SELECT occupies_trainer FROM reservations WHERE reservation_id='R8';")" "1"
 
+echo "=== 12. 引当を二度入れても used が二重に増えない（移行のやり直しに耐える） ==="
+#   ★移行は何度も流し直す。INSERT OR IGNORE でなければ、流すたびに used が増えて残数が減る。
+q "INSERT INTO monthly_quota VALUES ('C2','2026-11',4,0,0);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations VALUES ('M1','C2','monthly','2026-11',NULL,1,100);" >/dev/null
+ok "⑫1回目で used が1" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
+q "INSERT OR IGNORE INTO reservation_allocations VALUES ('M1','C2','monthly','2026-11',NULL,1,200);" >/dev/null
+ok "⑫★2回目は何も起きない" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
+ok "⑫行も1件のまま" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='M1';")" "1"
+
+echo "=== 13. 作り直すときは、消してから入れる（返却が正しく戻す） ==="
+q "DELETE FROM reservation_allocations WHERE reservation_id='M1';" >/dev/null
+ok "⑬消すと used が戻る" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "0"
+q "INSERT OR IGNORE INTO reservation_allocations VALUES ('M1','C2','monthly','2026-11',NULL,1,300);" >/dev/null
+ok "⑬入れ直すと used が1" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
+
+echo "=== 14. 振替は枠を減らさない ==="
+q "INSERT OR IGNORE INTO reservation_allocations VALUES ('T1','C2','transfer',NULL,NULL,1,100);" >/dev/null
+ok "⑭振替の引当は作れる" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='T1';")" "1"
+ok "⑭★月額の枠は減らない" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
+
 echo ""
 if [ "$fail" -eq 0 ]; then echo "✅ 引当と枠の守り: $pass passed / 0 failed"; else echo "❌ 引当と枠の守り: $pass passed / $fail failed"; fi
 exit $([ "$fail" -eq 0 ] && echo 0 || echo 1)

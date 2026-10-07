@@ -16,6 +16,7 @@
 
 import { loadCalcInput } from '../calc.js';
 import { buildQuotaForCustomer, quotaUpsertStatements } from '../lib/quota-build.js';
+import { buildAllocationsForCustomer, allocationInsertStatements } from '../lib/alloc-build.js';
 
 /** 'YYYY-MM' を1つ進める */
 function nextMonthKey(monthKey) {
@@ -64,6 +65,9 @@ export async function buildQuota(request, env) {
   //     失敗したページは next を返さないので、呼ぶ側は**直前に渡した after** を覚えておく。
   const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 5) || 5, 8));
   const after = (url.searchParams.get('after') || '').trim();
+  // 引当も作るか。枠だけ作っても used は0のままなので、移行では両方要る。
+  //   ただし「枠だけ作り直したい」場面もあるので、別の指定にしておく。
+  const withAlloc = url.searchParams.get('alloc') === '1';
 
   if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
     return json({ ok: false, reason: 'BAD_RANGE', from, to }, 400);
@@ -91,7 +95,7 @@ export async function buildQuota(request, env) {
     //     after を空にしてもう一度流せば、UPSERT なので重複の害は無い。
     next: null, done: false,
     retryFrom: after,   // このページが失敗したら、ここからやり直す
-    monthlyRows: 0, packRows: 0, wrote: 0,
+    monthlyRows: 0, packRows: 0, allocRows: 0, overflow: 0, wrote: 0, withAlloc,
     skipped: [],       // 計算入力が揃っていない会員（理由つき）
     issues: [],        // 枠を作れなかった月・パック（理由つき）
   };
@@ -113,8 +117,24 @@ export async function buildQuota(request, env) {
     summary.packRows += built.packs.length;
     for (const is of built.issues) summary.issues.push({ ...is, customerId: mask(is.customerId) });
 
+    // ★引当も同じ呼び出しで作る（withAlloc=1 のときだけ）。
+    //   枠だけ作って引当を作らないと、used が0のまま＝「誰も使っていない」ことになる。
+    //   枠と引当は対で意味を持つので、作る順序を間違えないよう同じ場所で扱う。
+    //   （枠が先・引当が後。引当のINSERTは枠の行を親として見る）
+    let allocStmts = [];
+    if (withAlloc) {
+      const al = buildAllocationsForCustomer(cid, input.rows, input.sessions, input.opening, {
+        fromMonth: from, toMonth: to, nowKey: nowMonthKeyJst(now),
+        targetDateMs: now, carryRate,
+      });
+      summary.allocRows += al.rows.length;
+      summary.overflow += al.skippedUnallocated;
+      for (const is of al.issues) summary.issues.push({ ...is, customerId: mask(is.customerId), at: 'alloc' });
+      allocStmts = allocationInsertStatements(al, now);
+    }
+
     if (!dry) {
-      const stmts = quotaUpsertStatements(built, now);
+      const stmts = quotaUpsertStatements(built, now).concat(allocStmts);
       if (stmts.length) {
         await env.DB.batch(stmts.map((s) => env.DB.prepare(s.sql).bind(...s.args)));
         summary.wrote += stmts.length;
