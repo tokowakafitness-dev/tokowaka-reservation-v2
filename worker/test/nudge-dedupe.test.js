@@ -217,6 +217,11 @@ ok('⑮★取れなかったことを記録に残す',
   && /_lbNudgeLogLockMiss\('daily'\)/.test(SRC) && /_lbNudgeLogLockMiss\('catchup'\)/.test(SRC),
   'ログだけだと誰も気づかない。その日の対象者は翌日には条件から外れる');
 ok('⑮記録に書けなくても送信の判断は変えない', /lock_miss を記録できませんでした/.test(SRC));
+ok('⑮★nudge_log には書かない（行番号をずらして未達を送信済みにしてしまう）',
+  /PropertiesService\.getScriptProperties\(\)\.setProperty\(LB_NUDGE_LOCK_MISS_KEY/.test(SRC)
+  && !/lock_miss[\s\S]{0,200}?insertRowsAfter/.test(SRC),
+  'この関数はロックを持たずに呼ばれる。nudge_log の2行目に挿入すると、送信中の実行が覚えている行番号がずれる');
+ok('⑮直近20件だけ持つ', /arr\.slice\(0, 20\)/.test(SRC));
 
 console.log(`\n${fail ? '❌' : '✅'} リマインドの二重送信 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

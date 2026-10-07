@@ -53,6 +53,9 @@ var LB_NUDGE_BUILD = '2026-10-06a 追いかけ送信（期間の来店者へ1人
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
 var LB_NUDGE_LOCK_WAIT_MS = 30000;
 
+// ロックが取れずに送れなかった回の記録（設定に置く。nudge_log には書かない＝上のコメント参照）。
+var LB_NUDGE_LOCK_MISS_KEY = 'LB_NUDGE_LOCK_MISS';
+
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
 var LB_NUDGE_LOG_SCAN = 3000;           // 再送判定で見る直近行数（新しい行が上＝これで足りる）
@@ -1074,16 +1077,21 @@ function _lbNudgeSend(plan, nowMs, alreadyLocked) {
 // ロックが取れずに1通も送れなかったことを記録に残す（2026-10-07）。
 //   ★ログだけだと誰も気づかない。来店翌日A/Bは「昨日来た人」が条件なので、
 //     この日に送れなかった方は**翌日には対象から外れ、永久に取りこぼす**。
-//   結果を 'lock_miss' として残し、健康診断と一覧から見えるようにする。
-//   記録に書けなくても送信の判断は変えない（ここで例外を投げない）。
+//
+//   ★nudge_log には書かない（Codex関門②の指摘）。
+//     この関数は**ロックを持っていない状態で**呼ばれる（ロックが取れなかったから）。
+//     nudge_log の2行目に挿入すると、同時に走っている送信処理が覚えている行番号（必ず2）が
+//     ずれる。結果の書き戻しが照合に失敗して何も書かず、'sending' のまま残り、
+//     **送信に失敗していても再送されない＝未達を送信済み扱いにする。**
+//     設定（Script Properties）に置けば、他の処理の行番号に触れない。
 function _lbNudgeLogLockMiss(where) {
   try {
-    var sh = _lbNudgeLogSheet();
-    var when = Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm');
-    sh.insertRowsAfter(1, 1);
-    sh.getRange(2, 1, 1, LB_NUDGE_LOG_COLS)
-      .setValues([["'" + when, 'lock_miss', '', String(where || ''), 'lock_miss',
-                   '排他ロックが取れず1通も送れませんでした。この日の対象者は翌日には条件から外れます。']]);
+    var arr = [];
+    try { arr = JSON.parse(_lbProp(LB_NUDGE_LOCK_MISS_KEY) || '[]'); } catch (e) { arr = []; }
+    if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
+    arr.unshift({ at: new Date().getTime(), where: String(where || '') });
+    arr = arr.slice(0, 20);   // 直近20件だけ持つ（設定の値を際限なく太らせない）
+    PropertiesService.getScriptProperties().setProperty(LB_NUDGE_LOCK_MISS_KEY, JSON.stringify(arr));
   } catch (e) { Logger.log('lock_miss を記録できませんでした: ' + e.message); }
 }
 
