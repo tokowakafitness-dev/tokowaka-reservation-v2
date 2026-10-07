@@ -40,7 +40,7 @@ jobs:
           args="$(jq -c '.args' ops/job.json)"
 
           case "$op" in
-            audit|verify|previewMerge|testConnection|pushAll|remaining|remainingAt|nudgePreview) : ;;
+            audit|verify|previewMerge|testConnection|pushAll|remaining|remainingAt|nudgePreview|quotaBuild) : ;;
             *) echo "::error::許可されていない作業です: $op"; exit 1 ;;
           esac
           if ! printf '%s' "$rid" | grep -Eq '^[A-Za-z0-9_-]{24,64}$'; then
