@@ -138,8 +138,21 @@ export async function buildQuota(request, env) {
     if (!dry) {
       const stmts = quotaUpsertStatements(built, now).concat(allocStmts);
       if (stmts.length) {
-        await env.DB.batch(stmts.map((s) => env.DB.prepare(s.sql).bind(...s.args)));
-        summary.wrote += stmts.length;
+        try {
+          await env.DB.batch(stmts.map((s) => env.DB.prepare(s.sql).bind(...s.args)));
+          summary.wrote += stmts.length;
+        } catch (e) {
+          // ★どの会員で、何が起きたかを返す（2026-10-07）。
+          //   ここで黙って500を返すと、呼ぶ側には「error code 1101」しか届かず、
+          //   原因に辿り着けない。会員と理由を持って帰る。
+          //   バッチは原子的なので、この会員ぶんは何も書かれていない。
+          summary.ok = false;
+          summary.failedAt = { customerId: mask(cid), after,
+                               detail: String((e && e.message) || e).slice(0, 300) };
+          summary.done = false;
+          summary.next = null;
+          return json(summary, 200);   // 200で返す。中身を読んでもらうため
+        }
       }
     }
   }
