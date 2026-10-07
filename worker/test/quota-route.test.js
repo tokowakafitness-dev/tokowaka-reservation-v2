@@ -97,10 +97,14 @@ ok('⑨★枠と引当を同じ書き込みで入れる', /quotaUpsertStatements
   '枠が先・引当が後。引当のINSERTは枠の行を親として見る');
 ok('⑨★二度入れても増えない形', /INSERT OR IGNORE INTO reservation_allocations/.test(ALLOC),
   'ON CONFLICT DO UPDATE にすると、トリガーが二度動いて used が二重に増える');
-ok('⑨★流し直すと正しくなる（先に消す）',
-  /DELETE FROM reservation_allocations\s*\n\s*WHERE customer_id = \? AND reservation_id IN/.test(ALLOC)
+ok('⑨★流し直すと正しくなる（期間で絞って差分で消す）',
+  /DELETE FROM reservation_allocations[\s\S]{0,120}?WHERE customer_id = \? AND resv_month >= \? AND resv_month <= \?/.test(ALLOC)
+  && /reservation_id NOT IN/.test(ALLOC)
   && /allocationInsertStatements\(al, now, \{ customerId: cid, fromMonth: from, toMonth: to \}\)/.test(ROUTE),
-  'INSERT OR IGNORE だけだと、消化先が変わっても古い引当が残る。枠は新しく used は古い状態になる');
+  'INSERT OR IGNORE だけだと消化先の変更が反映されない。「見た予約を消す」だけだと、予約が削除された場合に古い引当が残る');
+ok('⑨★予約の月を別に持つ',
+  /resvMonth: mk/.test(ALLOC) && /resv_month/.test(ALLOC),
+  'month_key は月額専用。チケットや振替がどの月の予約かを持たないと、期間で絞れない');
 ok('⑨あふれた予約は行にしない', /if \(ps\.alloc === 'unallocated'\) \{ out\.skippedUnallocated\+\+; continue; \}/.test(ALLOC),
   '超過は「防ぐのではなく見せる」（決定0068）。行を作ると超過が見えなくなる');
 ok('⑨あふれた件数を返す', /summary\.overflow \+= al\.skippedUnallocated;/.test(ROUTE));

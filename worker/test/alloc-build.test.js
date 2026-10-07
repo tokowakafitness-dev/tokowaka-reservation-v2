@@ -85,16 +85,20 @@ console.log('=== 4. 入れる文の形（★二度入れても二重に増えな
   const b = buildAllocationsForCustomer('C1', CONTRACTS, [ses('r1', jst(2026, 10, 5, 10))], null, OPTS);
   const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
   eq('④消す文＋入れる文', st.length, 2);
+  ok('④予約の月を入れる', /resv_month/.test(st[1].sql) && st[1].args.includes('2026-10'),
+    'month_key は月額専用。チケットや振替がどの月の予約かを別に持たないと、期間で絞れない');
   ok('④★先に消す（流し直したとき消化先の変更が反映される）',
     /^DELETE FROM reservation_allocations/.test(st[0].sql.trim()),
     'INSERT OR IGNORE だけだと壊れはしないが正しくもならない。枠は新しく used は古いまま');
-  ok('④消す範囲はこの会員の、今回見た予約',
-    /WHERE customer_id = \? AND reservation_id IN \(\?\)/.test(st[0].sql),
-    '他の会員や他の月の引当に触れない');
+  ok('④★期間で絞って、今回見なかったものを落とす（差分）',
+    /WHERE customer_id = \? AND resv_month >= \? AND resv_month <= \?/.test(st[0].sql)
+    && /reservation_id NOT IN/.test(st[0].sql),
+    '「見た予約を消す」だけだと、予約が削除された／期間外へ移った場合に古い引当が残る');
+  ok('④他の月の引当に触れない', /resv_month >= \? AND resv_month <= \?/.test(st[0].sql));
   ok('④★INSERT OR IGNORE である', /INSERT OR IGNORE INTO reservation_allocations/.test(st[1].sql),
     'ON CONFLICT DO UPDATE にすると、トリガーが二度動いて used が二重に増える');
-  ok('④列を明示している', /\(reservation_id, customer_id, source, month_key, pack_id, units, decided_at\)/.test(st[1].sql));
-  eq('④引数の数', st[1].args.length, 7);
+  ok('④列を明示している', /\(reservation_id, customer_id, source, month_key, pack_id, units, resv_month, decided_at\)/.test(st[1].sql));
+  eq('④引数の数', st[1].args.length, 8);
   // 範囲を渡さなければ消さない（既存の呼び方を壊さない）
   eq('④範囲が無ければ入れるだけ', allocationInsertStatements(b, 1000).length, 1);
 }
@@ -133,8 +137,8 @@ console.log('=== 7. ★超過に転じた予約も「見た」に数える（古
 
   const st = allocationInsertStatements(b, 1000, { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });
   const delSql = st[0].sql;
-  eq('⑦消す文の引数は 会員1＋予約5', st[0].args.length, 6);
-  ok('⑦消す文に5件ぶんの差し込みがある', (delSql.match(/\?/g) || []).length === 6);
+  eq('⑦消す文の引数は 会員1＋期間2＋予約5', st[0].args.length, 8);
+  ok('⑦消す文の差し込みの数が合う', (delSql.match(/\?/g) || []).length === 8);
 }
 
 console.log('');

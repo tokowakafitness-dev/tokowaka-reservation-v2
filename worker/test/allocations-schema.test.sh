@@ -43,6 +43,8 @@ sqlite3 "$DB" "INSERT INTO reservations
 # ★ここが本番そのもの。grep も除外もしない
 out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0009_booking_allocations.sql" 2>&1)"
 ok "⓪0009 を無加工で当てられる" "${out:-OK}" "OK"
+out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0010_alloc_resv_month.sql" 2>&1)"
+ok "⓪0010 を無加工で当てられる" "${out:-OK}" "OK"
 
 ok "⓪4列が足された" \
   "$(q "SELECT COUNT(*) FROM pragma_table_info('reservations')
@@ -81,7 +83,7 @@ q "INSERT INTO monthly_quota VALUES ('C1','2026-10',4,0,0);
    INSERT INTO ticket_packs  VALUES ('P2','C1','pair',  2,0,0,99999999999,0);" >/dev/null
 
 echo "=== 1. 引当を作ると枠が減る（確保＝引当が同じ出来事） ==="
-q "INSERT INTO reservation_allocations VALUES ('R1','C1','monthly','2026-10',NULL,1,100);" >/dev/null
+q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R1','C1','monthly','2026-10',NULL,1,100);" >/dev/null
 ok "①引当で used が1になる" "$(q 'SELECT used FROM monthly_quota;')" "1"
 
 echo "=== 2. 枠を使い切ったら引当が作れない（★致命的だった穴①） ==="
@@ -108,33 +110,33 @@ q "DELETE FROM reservation_allocations WHERE reservation_id='R3';" >/dev/null
 ok "④★もう一度消しても二重に戻らない" "$(q 'SELECT used FROM monthly_quota;')" "4"
 
 echo "=== 5. units の制約（★負数だと予約のたびに残数が増える） ==="
-r=$(q "INSERT INTO reservation_allocations VALUES ('R9','C1','monthly','2026-10',NULL,-1,100);")
+r=$(q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R9','C1','monthly','2026-10',NULL,-1,100);")
 case "$r" in *CHECK*) ok "⑤負の units は弾かれる" "ng" "ng";; *) ok "⑤負の units は弾かれる" "通った:$r" "ng";; esac
-r=$(q "INSERT INTO reservation_allocations VALUES ('R9','C1','monthly','2026-10',NULL,2,100);")
+r=$(q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R9','C1','monthly','2026-10',NULL,2,100);")
 case "$r" in *CHECK*) ok "⑤月額に units=2 は弾かれる" "ng" "ng";; *) ok "⑤月額に units=2 は弾かれる" "通った:$r" "ng";; esac
 
 echo "=== 6. ペアは1名来店（units=1）も正当 ==="
-q "INSERT INTO reservation_allocations VALUES ('R4','C1','pair',NULL,'P2',1,100);" >/dev/null
+q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R4','C1','pair',NULL,'P2',1,100);" >/dev/null
 ok "⑥ペア1名が作れる"   "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='R4';")" "1"
 ok "⑥ペアpackが1枚減る" "$(q "SELECT used FROM ticket_packs WHERE pack_id='P2';")" "1"
-q "INSERT INTO reservation_allocations VALUES ('R5','C1','pair',NULL,'P2',2,100);" >/dev/null
+q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R5','C1','pair',NULL,'P2',2,100);" >/dev/null
 ok "⑥★ペア2名は2枚減る（pairがトリガーから漏れていない）" "$(q "SELECT used FROM ticket_packs WHERE pack_id='P2';")" "3"
 
 echo "=== 7. source と親の対応が固定されている ==="
-r=$(q "INSERT INTO reservation_allocations VALUES ('R9','C1','monthly',NULL,'P1',1,100);")
+r=$(q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R9','C1','monthly',NULL,'P1',1,100);")
 case "$r" in *CHECK*) ok "⑦月額なのに pack を指すのは弾かれる" "ng" "ng";; *) ok "⑦月額なのに pack を指すのは弾かれる" "通った:$r" "ng";; esac
-r=$(q "INSERT INTO reservation_allocations VALUES ('R9','C1','ticket','2026-10',NULL,1,100);")
+r=$(q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R9','C1','ticket','2026-10',NULL,1,100);")
 case "$r" in *CHECK*) ok "⑦チケットなのに月を指すのは弾かれる" "ng" "ng";; *) ok "⑦チケットなのに月を指すのは弾かれる" "通った:$r" "ng";; esac
 
 echo "=== 8. 親の無い引当は作れない（外部キー・D1は既定で有効） ==="
-r=$(q "INSERT INTO reservation_allocations VALUES ('R9','C1','ticket',NULL,'NOPACK',1,100);")
+r=$(q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R9','C1','ticket',NULL,'NOPACK',1,100);")
 case "$r" in *FOREIGN*|*constraint*) ok "⑧存在しないpackは弾かれる" "ng" "ng";; *) ok "⑧存在しないpackは弾かれる" "通った:$r" "ng";; esac
-r=$(q "INSERT INTO reservation_allocations VALUES ('R9','C9','monthly','2099-01',NULL,1,100);")
+r=$(q "INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R9','C9','monthly','2099-01',NULL,1,100);")
 case "$r" in *FOREIGN*|*constraint*) ok "⑧存在しない月額の枠も弾かれる" "ng" "ng";; *) ok "⑧存在しない月額の枠も弾かれる" "通った:$r" "ng";; esac
 
 echo "=== 9. 最後の砦：予約が無ければバッチ全体が失敗する（★致命的だった穴②） ==="
 q "BEGIN;
-   INSERT INTO reservation_allocations VALUES ('R6','C1','ticket',NULL,'P1',1,100);
+   INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R6','C1','ticket',NULL,'P1',1,100);
    INSERT INTO op_log (op_id,reservation_id,created_at)
      VALUES ('OP1',(SELECT reservation_id FROM reservations WHERE reservation_id='R6'),100);
    COMMIT;" >/dev/null 2>&1
@@ -143,7 +145,7 @@ ok "⑨★枠も減っていない" "$(q "SELECT used FROM ticket_packs WHERE pa
 
 echo "=== 10. 予約があれば通る（正常系が止まっていないこと） ==="
 q "BEGIN;
-   INSERT INTO reservation_allocations VALUES ('R7','C1','ticket',NULL,'P1',1,100);
+   INSERT INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('R7','C1','ticket',NULL,'P1',1,100);
    INSERT INTO reservations (reservation_id,customer_id,trainer_id,start_at,end_at,kind,status,created_at)
      SELECT 'R7','C1','T1',5000,6000,'normal','booked',100
       WHERE EXISTS (SELECT 1 FROM reservation_allocations WHERE reservation_id='R7');
@@ -165,20 +167,20 @@ ok "⑪オンラインでもトレーナーは埋まる" "$(q "SELECT occupies_t
 echo "=== 12. 引当を二度入れても used が二重に増えない（移行のやり直しに耐える） ==="
 #   ★移行は何度も流し直す。INSERT OR IGNORE でなければ、流すたびに used が増えて残数が減る。
 q "INSERT INTO monthly_quota VALUES ('C2','2026-11',4,0,0);" >/dev/null
-q "INSERT OR IGNORE INTO reservation_allocations VALUES ('M1','C2','monthly','2026-11',NULL,1,100);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('M1','C2','monthly','2026-11',NULL,1,100);" >/dev/null
 ok "⑫1回目で used が1" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
-q "INSERT OR IGNORE INTO reservation_allocations VALUES ('M1','C2','monthly','2026-11',NULL,1,200);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('M1','C2','monthly','2026-11',NULL,1,200);" >/dev/null
 ok "⑫★2回目は何も起きない" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
 ok "⑫行も1件のまま" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='M1';")" "1"
 
 echo "=== 13. 作り直すときは、消してから入れる（返却が正しく戻す） ==="
 q "DELETE FROM reservation_allocations WHERE reservation_id='M1';" >/dev/null
 ok "⑬消すと used が戻る" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "0"
-q "INSERT OR IGNORE INTO reservation_allocations VALUES ('M1','C2','monthly','2026-11',NULL,1,300);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('M1','C2','monthly','2026-11',NULL,1,300);" >/dev/null
 ok "⑬入れ直すと used が1" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
 
 echo "=== 14. 振替は枠を減らさない ==="
-q "INSERT OR IGNORE INTO reservation_allocations VALUES ('T1','C2','transfer',NULL,NULL,1,100);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('T1','C2','transfer',NULL,NULL,1,100);" >/dev/null
 ok "⑭振替の引当は作れる" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='T1';")" "1"
 ok "⑭★月額の枠は減らない" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
 
@@ -190,12 +192,12 @@ q "INSERT INTO monthly_quota VALUES ('C3','2026-12',2,0,0);
    INSERT INTO ticket_packs  VALUES ('P3','C3','normal',2,0,0,99999999999,0);" >/dev/null
 # 1回目：月額から引く
 q "DELETE FROM reservation_allocations WHERE customer_id='C3' AND reservation_id IN ('D1');
-   INSERT OR IGNORE INTO reservation_allocations VALUES ('D1','C3','monthly','2026-12',NULL,1,100);" >/dev/null
+   INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('D1','C3','monthly','2026-12',NULL,1,100);" >/dev/null
 ok "⑮1回目は月額が1" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C3';")" "1"
 ok "⑮チケットは0"    "$(q "SELECT used FROM ticket_packs WHERE pack_id='P3';")" "0"
 # 2回目：同じ予約がチケットから引かれるように変わった（契約を直した等）
 q "DELETE FROM reservation_allocations WHERE customer_id='C3' AND reservation_id IN ('D1');
-   INSERT OR IGNORE INTO reservation_allocations VALUES ('D1','C3','ticket',NULL,'P3',1,200);" >/dev/null
+   INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('D1','C3','ticket',NULL,'P3',1,200);" >/dev/null
 ok "⑮★月額が0に戻る"      "$(q "SELECT used FROM monthly_quota WHERE customer_id='C3';")" "0"
 ok "⑮★チケットが1になる"  "$(q "SELECT used FROM ticket_packs WHERE pack_id='P3';")" "1"
 ok "⑮行は1件のまま"        "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='D1';")" "1"
@@ -204,16 +206,45 @@ echo "=== 16. ★契約が減って超過に転じたら、古い引当が消え
 #   前回は引当済み・今回は超過（unallocated）になった予約を消さないと、
 #   used が過大なまま残り、残数が実際より少なく見えて予約できなくなる（Codex関門②）。
 q "INSERT INTO monthly_quota VALUES ('C4','2026-12',2,0,0);" >/dev/null
-q "INSERT OR IGNORE INTO reservation_allocations VALUES ('E1','C4','monthly','2026-12',NULL,1,100);
-   INSERT OR IGNORE INTO reservation_allocations VALUES ('E2','C4','monthly','2026-12',NULL,1,100);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('E1','C4','monthly','2026-12',NULL,1,100);
+   INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('E2','C4','monthly','2026-12',NULL,1,100);" >/dev/null
 ok "⑯2件ぶん使っている" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C4';")" "2"
 # 契約が減って枠が1になり、E2 が超過に転じた。見た予約は E1・E2 の両方。
 q "UPDATE monthly_quota SET quota = 1 WHERE customer_id='C4';" >/dev/null
 q "DELETE FROM reservation_allocations WHERE customer_id='C4' AND reservation_id IN ('E1','E2');
-   INSERT OR IGNORE INTO reservation_allocations VALUES ('E1','C4','monthly','2026-12',NULL,1,200);" >/dev/null
+   INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('E1','C4','monthly','2026-12',NULL,1,200);" >/dev/null
 ok "⑯★超過に転じた E2 の引当が消える" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='E2';")" "0"
 ok "⑯★used が1に戻る（過大なまま残らない）" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C4';")" "1"
 ok "⑯E1 の引当は残る" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='E1';")" "1"
+
+echo "=== 17. ★予約が消えた／期間外へ移ったときも used が戻ること（差分で消す） ==="
+#   予約そのものが消えると、その予約IDは「今回見た」に現れない。
+#   「見た予約を消す」方式だと古い引当が残り、used が過大なまま＝予約できなくなる。
+#   期間で絞って、今回見なかったものを落とす（差分）。
+q "INSERT INTO monthly_quota VALUES ('C5','2026-12',4,0,0);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations
+     (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
+   VALUES ('F1','C5','monthly','2026-12',NULL,1,'2026-12',100),
+          ('F2','C5','monthly','2026-12',NULL,1,'2026-12',100);" >/dev/null
+ok "⑰2件ぶん使っている" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5';")" "2"
+# F2 の予約が削除された。今回見たのは F1 だけ。
+q "DELETE FROM reservation_allocations
+    WHERE customer_id='C5' AND resv_month >= '2026-12' AND resv_month <= '2026-12'
+      AND reservation_id NOT IN ('F1');" >/dev/null
+ok "⑰★消えた予約の引当が落ちる" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='F2';")" "0"
+ok "⑰★used が1に戻る"           "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5';")" "1"
+ok "⑰残る予約の引当は保たれる"   "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='F1';")" "1"
+
+echo "=== 18. 期間の外の引当には触れないこと ==="
+q "INSERT INTO monthly_quota VALUES ('C5','2026-09',4,0,0);" >/dev/null
+q "INSERT OR IGNORE INTO reservation_allocations
+     (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
+   VALUES ('G1','C5','monthly','2026-09',NULL,1,'2026-09',100);" >/dev/null
+q "DELETE FROM reservation_allocations
+    WHERE customer_id='C5' AND resv_month >= '2026-12' AND resv_month <= '2026-12'
+      AND reservation_id NOT IN ('F1');" >/dev/null
+ok "⑱★9月の引当は残る"       "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='G1';")" "1"
+ok "⑱9月の枠も減ったまま"     "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5' AND month_key='2026-09';")" "1"
 
 echo ""
 if [ "$fail" -eq 0 ]; then echo "✅ 引当と枠の守り: $pass passed / 0 failed"; else echo "❌ 引当と枠の守り: $pass passed / $fail failed"; fi

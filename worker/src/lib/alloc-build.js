@@ -29,7 +29,7 @@ function monthKeyJst(ms) {
  * 1人ぶんの引当を組み立てる。
  *
  * @returns {{rows: Array, skippedUnallocated: number, issues: Array}}
- *   rows … [{ reservationId, customerId, source, monthKey, packId, units }]
+ *   rows … [{ reservationId, customerId, source, monthKey, packId, units, resvMonth }]
  */
 export function buildAllocationsForCustomer(customerId, rows, sessions, opening, opts) {
   const { fromMonth, toMonth, nowKey, targetDateMs, carryRate } = opts;
@@ -65,13 +65,13 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
     // 振替は枠もチケットも使わない。引当の行としては残すが、親は指さない。
     if (ps.alloc === 'transfer') {
       out.rows.push({ reservationId: String(ps.sessionId), customerId,
-                      source: 'transfer', monthKey: null, packId: null, units: 1 });
+                      source: 'transfer', monthKey: null, packId: null, units: 1, resvMonth: mk });
       continue;
     }
 
     if (ps.alloc === 'monthly') {
       out.rows.push({ reservationId: String(ps.sessionId), customerId,
-                      source: 'monthly', monthKey: mk, packId: null, units: 1 });
+                      source: 'monthly', monthKey: mk, packId: null, units: 1, resvMonth: mk });
       continue;
     }
 
@@ -85,7 +85,7 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
         continue;
       }
       out.rows.push({ reservationId: String(ps.sessionId), customerId,
-                      source, monthKey: null, packId: String(ps.packId), units });
+                      source, monthKey: null, packId: String(ps.packId), units, resvMonth: mk });
       continue;
     }
 
@@ -114,28 +114,33 @@ export function allocationInsertStatements(built, nowMs, scope) {
   const stmts = [];
 
   // ① まず消す（返却のトリガーが used を戻す）
+  //
+  //   ★消し方は「期間で絞って、今回見なかったものを落とす」（差分）。
+  //     「今回見た予約を消す」だけでは足りない。次のどれも seenIds に現れないため：
+  //       ・予約が削除された
+  //       ・日付が変わって対象期間の外へ移った
+  //       ・計算が要確認（ok:false）で perSession が出なかった
+  //     これらの古い引当が残ると used が過大になり、**残数が実際より少なく見えて
+  //     予約できなくなる**（Codex関門②の指摘・2026-10-07）。
+  //
+  //   resv_month（予約が属する月）で期間を絞る。month_key は月額専用なので使えない。
   if (scope && scope.customerId && scope.fromMonth && scope.toMonth) {
-    //   ★消すのは「今回見た予約」すべて。行を作る予約だけではない。
-    //     契約が減って引当済みの予約が超過に転じたとき、その予約は rows に入らない。
-    //     rows だけを消すと**古い引当が残り、used が過大なままになる**＝
-    //     残数が実際より少なく見え、予約できなくなる（Codex関門②の指摘・2026-10-07）。
-    const ids = (built.seenIds && built.seenIds.length) ? built.seenIds : built.rows.map((r) => r.reservationId);
-    if (ids.length) {
-      stmts.push({
-        sql: `DELETE FROM reservation_allocations
-               WHERE customer_id = ? AND reservation_id IN (${ids.map(() => '?').join(',')})`,
-        args: [scope.customerId, ...ids],
-      });
-    }
+    const keep = (built.seenIds && built.seenIds.length) ? built.seenIds : [];
+    const notIn = keep.length ? ` AND reservation_id NOT IN (${keep.map(() => '?').join(',')})` : '';
+    stmts.push({
+      sql: `DELETE FROM reservation_allocations
+             WHERE customer_id = ? AND resv_month >= ? AND resv_month <= ?${notIn}`,
+      args: [scope.customerId, scope.fromMonth, scope.toMonth, ...keep],
+    });
   }
 
   // ② 入れ直す
   for (const r of built.rows) {
     stmts.push({
       sql: `INSERT OR IGNORE INTO reservation_allocations
-              (reservation_id, customer_id, source, month_key, pack_id, units, decided_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      args: [r.reservationId, r.customerId, r.source, r.monthKey, r.packId, r.units, nowMs],
+              (reservation_id, customer_id, source, month_key, pack_id, units, resv_month, decided_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [r.reservationId, r.customerId, r.source, r.monthKey, r.packId, r.units, r.resvMonth, nowMs],
     });
   }
   return stmts;
