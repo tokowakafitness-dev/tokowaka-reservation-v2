@@ -111,6 +111,8 @@ ok('⑩★全体の合否を示す名前を返さない',
 ok('⑩★呼ぶ側が全ページを集計して判断する',
   /var allGood = v\.done && v\.checked > 0 && v\.differ === 0 && v\.skipped === 0/.test(GAS),
   'ページごとの pageOk を見て決めると、前のページの食い違いを見落とす');
+ok('⑩★使いすぎも条件に入れる', /&& v\.overUsedPacks === 0/.test(GAS),
+  '書き込みを止める前に入った壊れた値は残る。読み取りをD1へ向ける前に必ず見つける');
 ok('⑩★孤児も条件に入れる',
   /&& v\.orphans && !v\.orphans\.quotaRows && !v\.orphans\.packRows && !v\.orphans\.allocRows/.test(GAS));
 ok('⑩合格でないときは理由を全部並べる',

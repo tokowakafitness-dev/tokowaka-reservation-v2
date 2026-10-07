@@ -1960,7 +1960,7 @@ function _edgeQuotaVerify(opts) {
   var month = String(o.month || '');
   var after = String(o.after || '');
   var total = { pages: 0, checked: 0, agree: 0, differ: 0, skipped: 0, diffs: [],
-                skippedWhy: {}, orphans: null, lastAfter: after, done: false };
+                skippedWhy: {}, orphans: null, overUsedPacks: 0, lastAfter: after, done: false };
 
   for (var p = 0; p < maxPages; p++) {
     var q = '?limit=' + limit + '&after=' + encodeURIComponent(after) + (month ? '&month=' + encodeURIComponent(month) : '');
@@ -1974,6 +1974,7 @@ function _edgeQuotaVerify(opts) {
     total.agree += Number(r.agree || 0);
     total.differ += Number(r.differ || 0);
     total.skipped += Number(r.skipped || 0);
+    total.overUsedPacks += Number(r.overUsedPacks || 0);
     for (var i = 0; i < (r.diffs || []).length; i++) total.diffs.push(r.diffs[i]);
     //   比べられなかった理由と、D1にだけ残った行（孤児）もためる。
     //   ★孤児は最後のページでしか返らないので、上書きでよい。
@@ -2002,9 +2003,13 @@ function quotaBuildText(args) {
     vo.push('回した回数: ' + v.pages + ' ／ 比べた会員 ' + v.checked + '名'
             + (v.done ? ' ／ 最後まで到達' : ' ／ ★途中（続き after=' + v.lastAfter + '）'));
     vo.push('一致 ' + v.agree + '名 ／ ★食い違い ' + v.differ + '名 ／ 比べられず ' + v.skipped + '名');
+    if (v.overUsedPacks) {
+      vo.push('★買った枚数を超えて使っているチケットがある会員: ' + v.overUsedPacks + '名（直すまでD1へ向けない）');
+    }
     // ★「全員一致」と言えるのは、全ページを集計して次が**すべて**満たされたとき。
     //   ページごとの判定（pageOk）を見て決めない。前のページの食い違いを見落とす。
     var allGood = v.done && v.checked > 0 && v.differ === 0 && v.skipped === 0
+                  && v.overUsedPacks === 0
                   && v.orphans && !v.orphans.quotaRows && !v.orphans.packRows && !v.orphans.allocRows;
 
     if (v.orphans) {
@@ -2039,6 +2044,7 @@ function quotaBuildText(args) {
       if (!v.checked) vo.push('　 ・1人も比べられていない');
       if (v.differ) vo.push('　 ・食い違いが ' + v.differ + '名');
       if (v.skipped) vo.push('　 ・比べられなかった人が ' + v.skipped + '名');
+      if (v.overUsedPacks) vo.push('　 ・買った枚数を超えて使っているチケットがある（' + v.overUsedPacks + '名）');
       if (v.orphans && (v.orphans.quotaRows || v.orphans.packRows || v.orphans.allocRows)) {
         vo.push('　 ・D1にだけ残った行がある（契約が無い会員の枠や引当）');
       }
