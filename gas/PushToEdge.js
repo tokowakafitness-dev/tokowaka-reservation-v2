@@ -1924,9 +1924,36 @@ function _edgeQuotaBuild(opts) {
   return total;
 }
 
-/** 作業依頼から呼ぶ：枠を作れるか試す／実際に作る。氏名は出さない。 */
+// いまD1に入っている枠を数える（書き込みの結果を、報告ではなく実物で確かめる）。
+//   ★「何件作れるか」と「何件入っているか」は別のこと。
+//     作る側の報告だけを見ると、書けていなくても気づけない。
+function _edgeQuotaStatus() {
+  var url = _edgeProp('EDGE_URL');
+  var secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) throw new Error('EDGE_URL / EDGE_SECRET が未設定です');
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/quota/status', {
+    method: 'get', headers: { 'X-Ingest-Secret': secret }, muteHttpExceptions: true
+  });
+  var code = res.getResponseCode();
+  if (code !== 200) throw new Error('quota/status が失敗（HTTP ' + code + '）: ' + res.getContentText().slice(0, 200));
+  return JSON.parse(res.getContentText());
+}
+
+/** 作業依頼から呼ぶ：枠を作れるか試す／実際に作る／いま入っている数を見る。氏名は出さない。 */
 function quotaBuildText(args) {
-  var a = args || {};
+  var a0 = args || {};
+  // args.status を付けたら、作らずに「いま入っている数」だけを返す
+  if (a0.status === true || a0.status === '1') {
+    var st = _edgeQuotaStatus();
+    var o = [];
+    o.push('=== いまD1に入っている枠 ===');
+    o.push('月額の枠: ' + st.monthly.rows + '行（使った数の合計 ' + st.monthly.used + '）');
+    o.push('チケット: ' + st.packs.rows + '組（使った数の合計 ' + st.packs.used + '）');
+    o.push('');
+    o.push('※ 使った数が0なら、まだ引当を作っていないということ（これから入れる）。');
+    var t0 = o.join('\n'); Logger.log(t0); return t0;
+  }
+  var a = a0;
   var write = (a.write === true || a.write === '1');
   var t = _edgeQuotaBuild({ write: write, from: a.from, to: a.to, limit: a.limit, after: a.after, maxPages: a.maxPages });
 
