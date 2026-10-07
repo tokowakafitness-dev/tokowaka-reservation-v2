@@ -50,11 +50,19 @@ export async function buildQuota(request, env) {
   const to = (url.searchParams.get('to') || nextMonthKey(from)).trim();
   const carryRate = Number(url.searchParams.get('rate') || '') || 1 / 3;
   // ★一度に処理する人数を区切る（2026-10-07・Codex関門②の指摘）。
-  //   会員1人につき loadCalcInput が5本のクエリを投げる。39名を一気に回すと
-  //   200を超え、Workerのサブリクエスト上限に当たる。しかも会員ごとに書くので、
-  //   途中で止まると**一部の会員だけ枠が書かれた状態**になる。
-  //   区切って、続きの印（next）を返す。既存の押し出し（_edgePushHome）と同じ作法。
-  const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 10) || 10, 25));
+  //   会員1人につき loadCalcInput が5本のクエリを投げる。全員を一気に回すと
+  //   Workerのサブリクエスト上限（50）に当たる。
+  //
+  //   数え方：選択1 ＋ 会員数×5（読み取り）＋ 会員数（書き込み）
+  //     5名 → 1 + 25 + 5 = 31   ← 既定。余裕がある
+  //     8名 → 1 + 40 + 8 = 49   ← 上限。ここを超えさせない
+  //   最初は既定10・上限25にしていたが、10名で61回になり超過する。数え間違いだった。
+  //
+  //   ★途中で止まったら、同じ after からもう一度呼ぶ。
+  //     枠の書き込みは UPSERT なので、同じ会員を二度処理しても結果は変わらない
+  //     （used には触れないので、使った数も壊れない）。
+  //     失敗したページは next を返さないので、呼ぶ側は**直前に渡した after** を覚えておく。
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 5) || 5, 8));
   const after = (url.searchParams.get('after') || '').trim();
 
   if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
@@ -77,7 +85,12 @@ export async function buildQuota(request, env) {
   const summary = {
     ok: true, dry, from, to, customers: ids.length,
     // 続きがあるときだけ次の印を返す。呼ぶ側はこれが無くなるまで繰り返す。
+    //   ★done になったあと、もう一周する。
+    //     処理している間に customer_id が after より小さい会員が増えると取りこぼす
+    //     （契約が新しく入るのは通常めったに無いが、取りこぼすと枠が無い＝予約できない）。
+    //     after を空にしてもう一度流せば、UPSERT なので重複の害は無い。
     next: null, done: false,
+    retryFrom: after,   // このページが失敗したら、ここからやり直す
     monthlyRows: 0, packRows: 0, wrote: 0,
     skipped: [],       // 計算入力が揃っていない会員（理由つき）
     issues: [],        // 枠を作れなかった月・パック（理由つき）

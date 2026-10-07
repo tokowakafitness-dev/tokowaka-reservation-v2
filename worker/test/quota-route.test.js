@@ -73,8 +73,12 @@ ok('⑦月の形と前後関係を見る',
 //   ★会員1人につき loadCalcInput が5本のクエリを投げる。39名を一気に回すと200を超え、
 //     Workerのサブリクエスト上限に当たる。しかも会員ごとに書くので、途中で止まると
 //     **一部の会員だけ枠が書かれた状態**になる（2026-10-07 Codex関門②の指摘）。
-ok('⑧区切りの指定がある', /const limit = Math\.max\(1, Math\.min\(Number\(url\.searchParams\.get\('limit'\) \|\| 10\) \|\| 10, 25\)\)/.test(ROUTE));
-ok('⑧★上限がある（大きな値を渡されても膨らまない）', /, 25\)\)/.test(ROUTE));
+ok('⑧区切りの指定がある', /const limit = Math\.max\(1, Math\.min\(Number\(url\.searchParams\.get\('limit'\) \|\| 5\) \|\| 5, 8\)\)/.test(ROUTE));
+ok('⑧★上限は8（1+8×5+8=49でサブリクエスト上限50に収まる）', /, 8\)\)/.test(ROUTE),
+  '最初は上限25にしていたが、10名で61回になり超過する。数え方を間違えていた');
+ok('⑧失敗したときのやり直し位置を返す', /retryFrom: after,/.test(ROUTE),
+  '失敗したページは next を返さないので、呼ぶ側が直前の after を覚えている必要がある');
+ok('⑧★二度処理しても壊れないことを書いてある', /UPSERT なので、同じ会員を二度処理しても結果は変わらない/.test(ROUTE));
 ok('⑧続きの位置を受け取る', /const after = \(url\.searchParams\.get\('after'\) \|\| ''\)\.trim\(\);/.test(ROUTE));
 ok('⑧★問い合わせ自体を区切る',
   /WHERE customer_id > \? ORDER BY customer_id LIMIT \?/.test(ROUTE),
