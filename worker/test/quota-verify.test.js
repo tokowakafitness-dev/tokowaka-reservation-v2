@@ -52,9 +52,9 @@ ok('③手がかりを添える（枠の行があるか・使った数）',
   '数が違うだけでは、枠が無いのか使った数がずれたのか分からない');
 
 // ---------- 4. 比べられなかった人を「一致」に数えない ----------
-ok('④入力が揃わなければ skipped', /if \(!input\.ok\) \{ out\.skipped\+\+; continue; \}/.test(V));
+ok('④入力が揃わなければ skipped', /if \(!input\.ok\) \{ out\.skipped\+\+;/.test(V));
 ok('④★計算できなければ skipped（一致に数えない）',
-  /if \(!a \|\| a\.ok === false\) \{ out\.skipped\+\+; continue; \}/.test(V),
+  /if \(!a \|\| a\.ok === false\) \{ out\.skipped\+\+;/.test(V),
   '計算できない人を「一致」に入れると、合っている人数が水増しされる');
 
 // ---------- 5. 守り ----------
@@ -70,6 +70,28 @@ ok('⑥続きの印を返す', /out\.next = \(ids\.length === limit\) \? ids\[id
 // ---------- 7. 道が通っている ----------
 ok('⑦ルーティングにある', /url\.pathname === '\/quota\/verify'/.test(INDEX));
 ok('⑦既存の /verify とは別の道', /url\.pathname === '\/quota\/verify'/.test(INDEX) && /verifyQuota/.test(INDEX));
+
+// ---------- 8. ★「一致した」と誤認する経路を塞ぐ ----------
+//   Codex関門②の指摘（2026-10-07）。どれも「合格」と出してはいけない状態。
+ok('⑧★今月以外は比べない',
+  /if \(month !== nowMonthKeyJst\(now\)\)/.test(V) && /ONLY_CURRENT_MONTH/.test(V),
+  'D1は指定月を読み、計算はいまの残数を返す。別の月を比べて、たまたま同じなら「一致」と出る');
+ok('⑧★比べられない人がいたら合格にしない', /if \(out\.skipped\) out\.ok = false;/.test(V));
+ok('⑧★1人も比べていなければ合格にしない', /if \(!out\.checked\) out\.ok = false;/.test(V));
+ok('⑧★途中までなら合格にしない', /if \(!out\.done\) out\.ok = false;/.test(V));
+ok('⑧比べられなかった理由を残す', /out\.skippedWhy\[input\.reason\]/.test(V),
+  '件数だけだと、なぜ比べられなかったのか追えない');
+ok('⑧判定を一言で返す', /out\.verdict = out\.ok \? 'AGREE_ALL'/.test(V));
+
+// ---------- 9. ★D1にだけ残った行（孤児）を見つける ----------
+//   比べているのは計算側に居る会員だけ。契約が消えた会員の枠や引当がD1に残っていても、
+//   会員ごとの比較には現れない。段階3-bでD1を直接読むなら、その行も読まれる。
+ok('⑨孤児の枠を数える',
+  /FROM monthly_quota\s*\n\s*WHERE customer_id NOT IN \(SELECT DISTINCT customer_id FROM calc_contract_rows\)/.test(V));
+ok('⑨孤児の引当を数える',
+  /FROM reservation_allocations\s*\n\s*WHERE customer_id NOT IN \(SELECT DISTINCT customer_id FROM calc_contract_rows\)/.test(V));
+ok('⑨★孤児があれば合格にしない',
+  /if \(out\.orphans\.quotaRows \|\| out\.orphans\.allocRows\) out\.ok = false;/.test(V));
 
 console.log('');
 console.log(`${fail ? '❌' : '✅'} D1と計算の突き合わせ 検証: ${pass} passed / ${fail} failed`);

@@ -62,6 +62,14 @@ export async function verifyQuota(request, env) {
   const carryRate = Number(url.searchParams.get('rate') || '') || 1 / 3;
 
   if (!/^\d{4}-\d{2}$/.test(month)) return json({ ok: false, reason: 'BAD_MONTH', month }, 400);
+  // ★今月しか比べられない（2026-10-07・Codex関門②）。
+  //   D1側は指定された月の行を読むが、計算側は「いまの残数」を返す。
+  //   別の月を指定すると、**違う月どうしを比べて、たまたま同じ値なら「一致」と出る**。
+  //   過去や未来の月を比べたいなら、計算側もその時点で呼び直す作りが要る。それは別の工程。
+  if (month !== nowMonthKeyJst(now)) {
+    return json({ ok: false, reason: 'ONLY_CURRENT_MONTH', month, current: nowMonthKeyJst(now),
+                  detail: 'D1は指定月を読み、計算はいまの残数を返すため、別の月は比べられません' }, 400);
+  }
 
   const r = await env.DB.prepare(
     `SELECT DISTINCT customer_id FROM calc_contract_rows
@@ -73,17 +81,18 @@ export async function verifyQuota(request, env) {
     ok: true, month, customers: ids.length, checked: 0,
     agree: 0, differ: 0, skipped: 0,
     diffs: [],          // 食い違った会員（氏名は出さない）
-    next: null, done: false,
+    skippedWhy: {},     // 比べられなかった理由の内訳（黙って落とさない）
+    next: null, done: false, verdict: '',
   };
 
   for (const cid of ids) {
     const input = await loadCalcInput(env, cid);
-    if (!input.ok) { out.skipped++; continue; }
+    if (!input.ok) { out.skipped++; out.skippedWhy[input.reason] = (out.skippedWhy[input.reason] || 0) + 1; continue; }
 
     // ---- ① 計算の答え ----
     const a = _lbComputeRemaining(cid, input.rows, input.sessions, nowMonthKeyJst(now), now,
                                   carryRate, input.opening, false, true);
-    if (!a || a.ok === false) { out.skipped++; continue; }
+    if (!a || a.ok === false) { out.skipped++; out.skippedWhy.REMAINING_NOT_OK = (out.skippedWhy.REMAINING_NOT_OK || 0) + 1; continue; }
 
     // ---- ② D1の行から読んだ答え ----
     const [mq, tp] = await Promise.all([
@@ -123,6 +132,36 @@ export async function verifyQuota(request, env) {
 
   out.next = (ids.length === limit) ? ids[ids.length - 1] : null;
   out.done = (out.next === null);
-  if (out.differ) out.ok = false;   // 1人でも食い違えば「合っていない」
+
+  // ★「合格」と言えるのは、**全員を比べて全員が一致したとき**だけ（Codex関門②）。
+  //   食い違い0でも、比べられていない人がいれば合格ではない。
+  //   ここを緩めると「一致した」と誤認したまま段階3-bへ進み、顧客の残数が変わる。
+  if (out.differ) out.ok = false;                 // 1人でも食い違えば駄目
+  if (out.skipped) out.ok = false;                // 比べられない人がいても駄目
+  if (!out.checked) out.ok = false;               // 1人も比べていないのに合格にしない
+  if (!out.done) out.ok = false;                  // 途中までなら合格にしない（続きがある）
+  // ★D1にだけ残っている行（孤児）を数える（最後のページでだけ・Codex関門②）。
+  //   比べているのは「計算側に居る会員」だけ。契約が消えた会員の枠や引当が
+  //   D1に残っていても、ここまでの検査には現れない。
+  //   段階3-bでD1を直接読むなら、その行も読まれる＝誰かの残数として現れうる。
+  if (out.done) {
+    const [orphanQ, orphanA] = await Promise.all([
+      env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM monthly_quota
+          WHERE customer_id NOT IN (SELECT DISTINCT customer_id FROM calc_contract_rows)`
+      ).first(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM reservation_allocations
+          WHERE customer_id NOT IN (SELECT DISTINCT customer_id FROM calc_contract_rows)`
+      ).first(),
+    ]);
+    out.orphans = { quotaRows: Number(orphanQ?.n || 0), allocRows: Number(orphanA?.n || 0) };
+    if (out.orphans.quotaRows || out.orphans.allocRows) out.ok = false;   // 孤児があれば合格にしない
+  }
+
+  out.verdict = out.ok ? 'AGREE_ALL'
+    : (out.differ ? 'DIFFER'
+    : (out.skipped ? 'HAS_SKIPPED'
+    : ((out.orphans && (out.orphans.quotaRows || out.orphans.allocRows)) ? 'HAS_ORPHANS' : 'INCOMPLETE')));
   return json(out);
 }
