@@ -100,6 +100,11 @@ function _ejRun(op, args) {
     // args.date（'2026-09-29'）を渡すと、その日を「今日」として一覧する。
     //   過去の実データで「誰に何が送られたか」を確かめるため。読み取りだけ。
     case 'nudgePreview':   return _ejScrub(lbNudgePreview(_ejDateMs(args && args.date)));
+    // 契約から「枠」を作る（段階3-a の土台・2026-10-07）。
+    //   args = { from:'2026-10', to:'2026-11', write:true }
+    //   ★write を明示しない限り**書かない**（試すだけ）。
+    //     枠はすべての残数の土台で、間違えると全員の残数が動く。
+    case 'quotaBuild':     return _ejScrub(quotaBuildText(args || {}));
     case 'pushAll':        return _ejScrub(pushToEdgeAllText());
     default: throw new Error('許可されていない作業です：' + op);
   }

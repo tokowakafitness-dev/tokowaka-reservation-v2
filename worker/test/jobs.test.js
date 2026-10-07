@@ -109,7 +109,11 @@ eq('正しければ登録できる',
   const env = makeEnv([{ request_id: ID, op: 'pushAll', args: null, status: 'pending' }]);
   const [, b] = await j(await handleJobs(post({ action: 'claim' }, 'S'), env));
   eq('★写しを書き換える作業は印を付けて渡す', b.job.isWrite, true);
-  eq('pushAll だけが書き換え扱い', [..._forTest.WRITE_OPS], ['pushAll']);
+  // ★書き込みを伴う作業はここに並べる。読み取り専用と扱いが変わるので、
+  //   新しく足したら必ずこの表も直す（足し忘れると、書く作業が読み取り扱いになる）。
+  //   quotaBuild は args.write を付けたときだけ書くが、「書くかもしれない」ものは
+  //   ここに入れておく（安全側）。
+  eq('書き換え扱いの作業がこの表と一致する', [..._forTest.WRITE_OPS].sort(), ['pushAll', 'quotaBuild'].sort());
 }
 
 // ---------- 7. 結果は長すぎれば切る ----------

@@ -1858,3 +1858,112 @@ function calCompareMonthText(ym) {
   say('   D1の読み書き・鮮度判定・世代の公開は calCompareSweep の責務です。両方が要ります。');
   return out.join('\n');
 }
+
+// ============================================================
+// 枠を作る（段階3-a の土台・2026-10-07）
+// ============================================================
+//   Worker の /quota/build を呼んで、契約から monthly_quota / ticket_packs を作る。
+//
+//   ★なぜGASから呼ぶのか
+//     Workerの窓口は合言葉（EDGE_SECRET）で守ってある。合言葉を持っているのはGASだけ。
+//     CEOは secrets を読めないので、作業依頼（job）→GAS→Worker の順で辿る。
+//
+//   ★既定は「書かない」
+//     Worker側も dry が既定だが、ここでも明示する。
+//     枠はすべての残数の土台で、間違えると全員の残数が動く。
+//
+//   ★人数で区切って、続きがある限り繰り返す
+//     会員1人につきWorkerが5本のクエリを投げる。一度に回すとサブリクエスト上限に当たる。
+//     next が返る限り after を進める。1回の実行で止まっても、同じ after からやり直せる
+//     （枠の書き込みは UPSERT で used に触れないため、二度処理しても壊れない）。
+function _edgeQuotaBuild(opts) {
+  var o = opts || {};
+  var url = _edgeProp('EDGE_URL');
+  var secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) throw new Error('EDGE_URL / EDGE_SECRET が未設定です');
+  var base = url.replace(/\/+$/, '');
+
+  var dry = (o.write === true) ? '0' : '1';          // ★既定は書かない
+  var from = String(o.from || '');
+  var to = String(o.to || '');
+  var limit = Math.max(1, Math.min(Number(o.limit || 5) || 5, 8));
+  var maxPages = Math.max(1, Math.min(Number(o.maxPages || 12) || 12, 40));   // 1回の実行で回す上限
+
+  var after = String(o.after || '');
+  var total = { pages: 0, customers: 0, monthlyRows: 0, packRows: 0, wrote: 0,
+                skipped: [], issues: [], lastAfter: after, done: false };
+
+  for (var p = 0; p < maxPages; p++) {
+    var q = '?dry=' + dry + '&limit=' + limit + '&after=' + encodeURIComponent(after)
+          + (from ? '&from=' + encodeURIComponent(from) : '')
+          + (to ? '&to=' + encodeURIComponent(to) : '');
+    var res = UrlFetchApp.fetch(base + '/quota/build' + q, {
+      method: 'get',
+      headers: { 'X-Ingest-Secret': secret },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    var text = res.getContentText();
+    if (code !== 200) throw new Error('quota/build が失敗（HTTP ' + code + '・after=' + after + '）: ' + text.slice(0, 200));
+
+    var r = JSON.parse(text);
+    total.pages++;
+    total.customers += Number(r.customers || 0);
+    total.monthlyRows += Number(r.monthlyRows || 0);
+    total.packRows += Number(r.packRows || 0);
+    total.wrote += Number(r.wrote || 0);
+    // 問題は全部ためる（件数だけだと、何が起きたか分からない）
+    for (var i = 0; i < (r.skipped || []).length; i++) total.skipped.push(r.skipped[i]);
+    for (var j = 0; j < (r.issues || []).length; j++) total.issues.push(r.issues[j]);
+
+    if (r.done || !r.next) { total.done = true; break; }
+    after = String(r.next);
+    total.lastAfter = after;
+    Utilities.sleep(200);   // Workerを急かさない
+  }
+  return total;
+}
+
+/** 作業依頼から呼ぶ：枠を作れるか試す／実際に作る。氏名は出さない。 */
+function quotaBuildText(args) {
+  var a = args || {};
+  var write = (a.write === true || a.write === '1');
+  var t = _edgeQuotaBuild({ write: write, from: a.from, to: a.to, limit: a.limit, after: a.after, maxPages: a.maxPages });
+
+  var out = [];
+  out.push('=== 枠を作る（' + (write ? '⚠️ 実際に書きました' : '試しただけ・書いていません') + '） ===');
+  out.push('対象の月: ' + (a.from || '(今月)') + ' 〜 ' + (a.to || '(翌月)'));
+  out.push('回した回数: ' + t.pages + ' ／ 会員 ' + t.customers + '名'
+           + (t.done ? ' ／ 最後まで到達' : ' ／ ★途中（続き after=' + t.lastAfter + '）'));
+  out.push('作られる枠: 月額 ' + t.monthlyRows + '行 ／ チケット ' + t.packRows + '組'
+           + (write ? ' ／ 書いた文 ' + t.wrote : ''));
+
+  if (t.skipped.length) {
+    out.push('');
+    out.push('── 計算入力が揃わず飛ばした会員 ' + t.skipped.length + '名');
+    var why = {};
+    for (var i = 0; i < t.skipped.length; i++) {
+      var k = String(t.skipped[i].reason || '?');
+      (why[k] = why[k] || []).push(t.skipped[i].customerId);
+    }
+    for (var w in why) if (why.hasOwnProperty(w)) out.push('   ・' + w + '：' + why[w].length + '名（' + why[w].slice(0, 8).join(' ') + '）');
+  }
+  if (t.issues.length) {
+    out.push('');
+    out.push('── 枠を作れなかった ' + t.issues.length + '件（★これが残っていると、その会員はD1で予約できません）');
+    for (var j = 0; j < Math.min(t.issues.length, 20); j++) {
+      var is = t.issues[j];
+      out.push('   ・' + is.customerId + ' ' + (is.monthKey || '') + ' ' + is.code + ' ' + String(is.detail || '').slice(0, 120));
+    }
+    if (t.issues.length > 20) out.push('   …ほか ' + (t.issues.length - 20) + '件');
+  }
+  if (!t.skipped.length && !t.issues.length) {
+    out.push('');
+    out.push('✅ 全員ぶんの枠を作れました（問題なし）');
+  }
+  out.push('');
+  out.push('===== ここまで =====');
+  var txt = out.join('\n');
+  Logger.log(txt);
+  return txt;
+}

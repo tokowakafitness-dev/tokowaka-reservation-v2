@@ -7,9 +7,12 @@
 //   結果を読む            … request_id を知っていることが鍵
 //   ★結果に個人情報を入れない。読み取りに合言葉が要らないため。
 
-const OPS = new Set(['audit', 'verify', 'previewMerge', 'testConnection', 'pushAll', 'remaining', 'remainingAt', 'nudgePreview']);
+const OPS = new Set(['audit', 'verify', 'previewMerge', 'testConnection', 'pushAll', 'remaining', 'remainingAt', 'nudgePreview', 'quotaBuild']);
 // 写しを書き換える作業は点検と分ける（Codexの指摘）。二重起動も防ぐ。
-const WRITE_OPS = new Set(['pushAll']);
+// 書き込みを伴う作業。承認や記録の扱いが読み取り専用と変わる。
+//   ★quotaBuild は args.write を付けたときだけ書く。付けなければ試すだけ。
+//     「書くかもしれない」ものはここに入れておく（安全側）。
+const WRITE_OPS = new Set(['pushAll', 'quotaBuild']);
 
 const MAX_RESULT = 60000;      // 返す文字数の上限。途中で切れたことが分かるようにする
 const JOB_TTL_MS = 24 * 3600000;
