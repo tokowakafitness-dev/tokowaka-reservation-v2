@@ -69,6 +69,20 @@ ok('⑥入力が揃わない会員は飛ばす', /if \(!input\.ok\) \{[\s\S]{0,3
 ok('⑦月の形と前後関係を見る',
   /!\/\^\\d\{4\}-\\d\{2\}\$\/\.test\(from\) \|\| !\/\^\\d\{4\}-\\d\{2\}\$\/\.test\(to\) \|\| from > to/.test(ROUTE));
 
+// ---------- 8. 一度に処理する人数を区切る ----------
+//   ★会員1人につき loadCalcInput が5本のクエリを投げる。39名を一気に回すと200を超え、
+//     Workerのサブリクエスト上限に当たる。しかも会員ごとに書くので、途中で止まると
+//     **一部の会員だけ枠が書かれた状態**になる（2026-10-07 Codex関門②の指摘）。
+ok('⑧区切りの指定がある', /const limit = Math\.max\(1, Math\.min\(Number\(url\.searchParams\.get\('limit'\) \|\| 10\) \|\| 10, 25\)\)/.test(ROUTE));
+ok('⑧★上限がある（大きな値を渡されても膨らまない）', /, 25\)\)/.test(ROUTE));
+ok('⑧続きの位置を受け取る', /const after = \(url\.searchParams\.get\('after'\) \|\| ''\)\.trim\(\);/.test(ROUTE));
+ok('⑧★問い合わせ自体を区切る',
+  /WHERE customer_id > \? ORDER BY customer_id LIMIT \?/.test(ROUTE),
+  '全件取ってから切ると、読み取りの量は減らない');
+ok('⑧続きの印を返す', /summary\.next = \(ids\.length === limit\) \? ids\[ids\.length - 1\] : null;/.test(ROUTE));
+ok('⑧終わったことが分かる', /summary\.done = \(summary\.next === null\);/.test(ROUTE));
+ok('⑧1人を指定したときは区切らない', /} else \{\s*\n\s*summary\.done = true;/.test(ROUTE));
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 枠を作る窓口 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -49,24 +49,35 @@ export async function buildQuota(request, env) {
   const from = (url.searchParams.get('from') || nowMonthKeyJst(now)).trim();
   const to = (url.searchParams.get('to') || nextMonthKey(from)).trim();
   const carryRate = Number(url.searchParams.get('rate') || '') || 1 / 3;
+  // ★一度に処理する人数を区切る（2026-10-07・Codex関門②の指摘）。
+  //   会員1人につき loadCalcInput が5本のクエリを投げる。39名を一気に回すと
+  //   200を超え、Workerのサブリクエスト上限に当たる。しかも会員ごとに書くので、
+  //   途中で止まると**一部の会員だけ枠が書かれた状態**になる。
+  //   区切って、続きの印（next）を返す。既存の押し出し（_edgePushHome）と同じ作法。
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 10) || 10, 25));
+  const after = (url.searchParams.get('after') || '').trim();
 
   if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
     return json({ ok: false, reason: 'BAD_RANGE', from, to }, 400);
   }
 
   // 対象の会員を決める。計算入力（契約）に載っている人だけ。
+  //   customer_id の順に並べ、limit 件ずつ。after より後ろから続ける。
   let ids;
   if (only) {
     ids = [only];
   } else {
     const r = await env.DB.prepare(
-      'SELECT DISTINCT customer_id FROM calc_contract_rows ORDER BY customer_id'
-    ).all();
+      `SELECT DISTINCT customer_id FROM calc_contract_rows
+        WHERE customer_id > ? ORDER BY customer_id LIMIT ?`
+    ).bind(after, limit).all();
     ids = (r.results || []).map((x) => String(x.customer_id)).filter(Boolean);
   }
 
   const summary = {
     ok: true, dry, from, to, customers: ids.length,
+    // 続きがあるときだけ次の印を返す。呼ぶ側はこれが無くなるまで繰り返す。
+    next: null, done: false,
     monthlyRows: 0, packRows: 0, wrote: 0,
     skipped: [],       // 計算入力が揃っていない会員（理由つき）
     issues: [],        // 枠を作れなかった月・パック（理由つき）
@@ -96,6 +107,14 @@ export async function buildQuota(request, env) {
         summary.wrote += stmts.length;
       }
     }
+  }
+
+  // 続きの印。1人指定のときは区切らない。
+  if (!only) {
+    summary.next = (ids.length === limit) ? ids[ids.length - 1] : null;
+    summary.done = (summary.next === null);
+  } else {
+    summary.done = true;
   }
 
   // ★氏名は出さない。顧客IDも下4桁だけ。
