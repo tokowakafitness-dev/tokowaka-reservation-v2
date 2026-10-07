@@ -15,7 +15,7 @@
 //     used は引当のトリガーが動かす。ここで入れると二重に数える。
 //     既存の予約から引当を作る工程（移行）が、used を正しい値にする。
 
-import { _lbRowsToEntitlements, _lbComputeRemaining } from '../allocate.js';
+import { _lbRowsToEntitlements, _lbComputeRemaining, _lbPackPrefix } from '../allocate.js';
 
 /** 'YYYY-MM' を1つ進める */
 function nextMonthKey(monthKey) {
@@ -118,6 +118,31 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
   //   店舗は3月オープンだが台帳は9月から。3〜8月の消化はここに入っている。
   const openingPacks = (opening && (opening.packsUsed || opening.packs)) || {};
 
+  //   ★棚卸しの鍵を、いまの pack へ**計算側とまったく同じやり方で**割り当てる。
+  //     合成ID（CT<from>_<to>_<idx>）はチケットを足すと末尾の番号がずれる。
+  //     完全一致だけで引くと、ずれた分が 0 になり、**使えないチケットが使えるように見える**
+  //     （Codex関門②の指摘・2026-10-07）。
+  //     計算側は「完全一致 → 末尾を除いた prefix が一意に一致」の順で解決している
+  //     （allocate.js の opening解決）。同じ関数（_lbPackPrefix）を使って揃える。
+  const packsForOpening = (ent && ent.entitlements && ent.entitlements.packs) || [];
+  const byPrefix = {};
+  for (const pk of packsForOpening) {
+    const pfx = _lbPackPrefix(pk.packId);
+    if (pfx !== pk.packId) (byPrefix[pfx] = byPrefix[pfx] || []).push(pk);   // 合成IDだけ索引に入れる
+  }
+  const openingByPackId = {};
+  for (const key of Object.keys(openingPacks)) {
+    const n = Math.max(0, Number(openingPacks[key] || 0));
+    if (packsForOpening.some((x) => x.packId === key)) { openingByPackId[key] = n; continue; }   // ①完全一致
+    const kpfx = _lbPackPrefix(key);
+    if (kpfx !== key) {
+      const cand = byPrefix[kpfx] || [];
+      if (cand.length === 1) { openingByPackId[cand[0].packId] = n; continue; }                  // ②prefix が一意に一致
+    }
+    //   どれにも当たらない／曖昧 ＝ 計算側は停止する（fail-loud）。ここでも問題として残す。
+    out.issues.push({ customerId, code: 'OPENING_PACK_UNRESOLVED', detail: key });
+  }
+
   const packs = (ent && ent.entitlements && ent.entitlements.packs) || [];
   for (const p of packs) {
     if (!p || !p.packId) continue;
@@ -136,7 +161,12 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
       validFrom: (p.availableAt > -8e15) ? Number(p.availableAt) : 0,
       validTo: Number(p.expiresAt),
       //   移行前に既に使っていた枚数。無ければ0。
-      openingUsed: Math.max(0, Number(openingPacks[String(p.packId)] || 0)),
+      //   計算側は opening <= 買った枚数 を要求して、超えたら停止する。ここでも同じにする。
+      openingUsed: (() => {
+        const n = Math.max(0, Number(openingByPackId[String(p.packId)] || 0));
+        if (n > total) { out.issues.push({ customerId, code: 'OPENING_OVER_TOTAL', detail: `${p.packId} ${n}>${total}` }); return total; }
+        return n;
+      })(),
     });
   }
 

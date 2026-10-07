@@ -1228,6 +1228,6 @@ if (typeof module !== 'undefined' && module.exports) {
 export {
   _lbRowsToEntitlements, _lbResvValsToSessions, _lbComputeRemaining, _lbBookability,
   _lbMonthlyCoverage, _lbResolveRegistration, _lbBuildAllocationRecords,
-  _lbAllocationCanonical, _lbResolveCarryCap,
+  _lbAllocationCanonical, _lbResolveCarryCap, _lbPackPrefix,
   LB_CARRY_CAP_TABLE, LB_ALLOC_LOGIC_VERSION, LB_ALLOC_CANONICAL_VERSION, LB_ALLOC_ACCEPTED_VERSIONS,
 };

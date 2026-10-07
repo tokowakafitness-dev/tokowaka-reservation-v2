@@ -85,6 +85,7 @@ export async function verifyQuota(request, env) {
     agree: 0, differ: 0, skipped: 0,
     diffs: [],          // 食い違った会員（氏名は出さない）
     skippedWhy: {},     // 比べられなかった理由の内訳（黙って落とさない）
+    overUsedPacks: 0,   // 買った枚数を超えて使っているチケット（0に丸めず数える）
     next: null, done: false, pageVerdict: '',
   };
 
@@ -113,8 +114,19 @@ export async function verifyQuota(request, env) {
     let d1Ticket = 0;
     //   残り ＝ 買った枚数 − 移行前に使った枚数 − 引当で使った枚数
     //   opening_used を引かないと、3〜8月の消化が反映されず残りが多く見える。
+    //
+    //   ★使いすぎ（opening_used + used > total）を 0 に丸めて隠さない（Codex関門②）。
+    //     丸めると、計算側も0なので「一致」と出てしまい、異常が見えなくなる。
+    //     買った枚数を超えて使っている状態は、それ自体が直すべきこと。
+    let overUse = 0;
     for (const p of (tp.results || [])) {
-      d1Ticket += Math.max(0, Number(p.total) - Number(p.opening_used || 0) - Number(p.used));
+      const rest = Number(p.total) - Number(p.opening_used || 0) - Number(p.used);
+      if (rest < 0) overUse += -rest;
+      d1Ticket += Math.max(0, rest);
+    }
+    if (overUse) {
+      out.overUsedPacks = (out.overUsedPacks || 0) + 1;
+      out.pageOk = false;
     }
 
     const calcMonthly = (a.monthlyRem == null) ? null : Number(a.monthlyRem);

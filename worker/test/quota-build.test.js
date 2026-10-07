@@ -206,6 +206,41 @@ console.log('=== 10. ★棚卸しの引継ぎ（移行前に使った枚数）�
   }
 }
 
+console.log('=== 11. ★チケットを足して合成IDがずれても、棚卸しが追従する ===');
+//   合成ID（CT<from>_<to>_<idx>）はチケットを足すと末尾の番号がずれる。
+//   完全一致だけで引くと、ずれた分が0になり**使えないチケットが使えるように見える**
+//   （Codex関門②の指摘）。計算側は「完全一致 → prefix が一意に一致」で解決している。
+{
+  const b = buildQuotaForCustomer('C1', CONTRACTS, [], null, OPTS);
+  const pid = b.packs[0].packId;
+  ok('⑪合成IDである', /^CT\d+_\d+_\d+$/.test(pid), `packId=${pid}`);
+
+  //   棚卸しの鍵が、末尾の番号だけ違う形で記録されている場合
+  const shifted = pid.replace(/_\d+$/, '_99');
+  const b2 = buildQuotaForCustomer('C1', CONTRACTS, [], { packsUsed: { [shifted]: 2 } }, OPTS);
+  const p2 = b2.packs.find((x) => x.packId === pid);
+  eq('⑪★末尾がずれても引き継がれる', p2 && p2.openingUsed, 2);
+  eq('⑪問題として残らない', b2.issues.filter((x) => x.code === 'OPENING_PACK_UNRESOLVED').length, 0);
+
+  //   どれにも当たらない鍵は、計算側と同じく問題として残す（黙って0にしない）
+  const b3 = buildQuotaForCustomer('C1', CONTRACTS, [], { packsUsed: { 'CT1_2_0': 1 } }, OPTS);
+  ok('⑪★当たらない鍵は問題として残す',
+    b3.issues.some((x) => x.code === 'OPENING_PACK_UNRESOLVED'),
+    '黙って0にすると、使ったはずの枚数が復活する');
+}
+
+console.log('=== 12. 棚卸しが買った枚数を超えていたら問題にする ===');
+{
+  const b = buildQuotaForCustomer('C1', CONTRACTS, [], null, OPTS);
+  const pid = b.packs[0].packId;
+  const total = b.packs[0].total;
+  const b2 = buildQuotaForCustomer('C1', CONTRACTS, [], { packsUsed: { [pid]: total + 5 } }, OPTS);
+  ok('⑫問題として残す', b2.issues.some((x) => x.code === 'OPENING_OVER_TOTAL'),
+    '計算側も opening <= 買った枚数 を要求して、超えたら停止する');
+  const p2 = b2.packs.find((x) => x.packId === pid);
+  eq('⑫買った枚数で止める', p2 && p2.openingUsed, total);
+}
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 枠を作る処理 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
