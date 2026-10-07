@@ -224,14 +224,24 @@ export async function buildQuota(request, env) {
 export async function quotaStatus(request, env) {
   const deny = requireSecret(request, env);
   if (deny) return deny;
-  const [m, p] = await Promise.all([
+  const [m, p, cov] = await Promise.all([
     env.DB.prepare('SELECT COUNT(*) AS n, SUM(used) AS used FROM monthly_quota').first(),
     env.DB.prepare('SELECT COUNT(*) AS n, SUM(used) AS used FROM ticket_packs').first(),
+    // ★契約の覆い方の内訳（2026-10-07）。unlimited が1件でもあれば、
+    //   「頻度欄が空の月額契約」が実在するということ。オーナーの判断の材料になる。
+    //   NULL（coverage が入っていない行）も数える＝作り直しの取り残しに気づける。
+    env.DB.prepare(
+      `SELECT COALESCE(coverage, '(未設定)') AS c, COUNT(*) AS n
+         FROM monthly_quota GROUP BY COALESCE(coverage, '(未設定)')`
+    ).all(),
   ]);
+  const coverage = {};
+  for (const r of (cov.results || [])) coverage[String(r.c)] = Number(r.n || 0);
   return json({
     ok: true,
     monthly: { rows: Number(m?.n || 0), used: Number(m?.used || 0) },
     packs: { rows: Number(p?.n || 0), used: Number(p?.used || 0) },
+    coverage,   // { limited: n, uncovered: n, unlimited: n, '(未設定)': n }
   });
 }
 

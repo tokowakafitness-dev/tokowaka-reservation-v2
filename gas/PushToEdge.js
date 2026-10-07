@@ -2087,6 +2087,18 @@ function quotaBuildText(args) {
     o.push('月額の枠: ' + st.monthly.rows + '行（使った数の合計 ' + st.monthly.used + '）');
     o.push('チケット: ' + st.packs.rows + '組（使った数の合計 ' + st.packs.used + '）');
     o.push('');
+    //   ★契約の覆い方の内訳（2026-10-07）。unlimited が1件でもあれば
+    //     「頻度欄が空の月額契約」が実在する＝オーナーの判断が要る。
+    var cv = st.coverage || {};
+    o.push('── 契約の覆い方の内訳');
+    o.push('   契約が覆っている（頻度あり）: ' + (cv.limited || 0) + '行');
+    o.push('   契約が覆っていない（繰越だけ）: ' + (cv.uncovered || 0) + '行');
+    o.push('   🔴頻度が空＝上限なし扱い: ' + (cv.unlimited || 0) + '行'
+           + ((cv.unlimited || 0) ? '（★この契約はD1へ移すと予約が通りません。agenda.md の判断待ち）' : ''));
+    if (cv['(未設定)']) {
+      o.push('   ★覆い方が入っていない: ' + cv['(未設定)'] + '行（作り直しの取り残し。作り直してください）');
+    }
+    o.push('');
     o.push('※ 使った数が0なら、まだ引当を作っていないということ（これから入れる）。');
     var t0 = o.join('\n'); Logger.log(t0); return t0;
   }
