@@ -139,12 +139,19 @@ export function allocationInsertStatements(built, nowMs, scope) {
     //   上の DELETE は期間で絞るので届かず、同じ主キーの INSERT が衝突して
     //   **バッチ全体が失敗する**＝流し直しが通らず、古い状態のまま止まる。
     //   入れる予約のIDで直接消しておけば、どこに残っていても片づく。
+    //   ★差し込みの数に上限がある（D1）。多すぎると文が通らないので小分けにする。
+    //     1顧客の引当がこの数を超えることは当面無いが、無言で落ちるより分けておく。
+    //   ★ここで消すのは「この会員の」引当だけ。予約IDが別の会員へ移った場合は
+    //     消せず衝突するが、実務上その経路は無い（IDは予約に紐づき、会員は変わらない）。
+    //     起きたらバッチ全体が失敗して止まるので、黙って壊れることはない。
     const ids = built.rows.map((r) => r.reservationId);
-    if (ids.length) {
+    const CHUNK = 80;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const part = ids.slice(i, i + CHUNK);
       stmts.push({
         sql: `DELETE FROM reservation_allocations
-               WHERE customer_id = ? AND reservation_id IN (${ids.map(() => '?').join(',')})`,
-        args: [scope.customerId, ...ids],
+               WHERE customer_id = ? AND reservation_id IN (${part.map(() => '?').join(',')})`,
+        args: [scope.customerId, ...part],
       });
     }
   }

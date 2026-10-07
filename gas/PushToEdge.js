@@ -1883,7 +1883,9 @@ function _edgeQuotaBuild(opts) {
   if (!url || !secret) throw new Error('EDGE_URL / EDGE_SECRET が未設定です');
   var base = url.replace(/\/+$/, '');
 
-  var dry = (o.write === true) ? '0' : '1';          // ★既定は書かない
+  // ★Worker側の指定は dry（1=書かない / 0=書く）。こちらは write で受けて変換する。
+  //   名前が違うので、どちらを見ているかを取り違えないよう明示しておく。
+  var dry = (o.write === true) ? '0' : '1';          // ★既定は書かない（write を明示したときだけ 0）
   var alloc = (o.alloc === true) ? '1' : '';         // 引当も作るか（枠だけ作ると used が0のまま）
   var from = String(o.from || '');
   var to = String(o.to || '');
