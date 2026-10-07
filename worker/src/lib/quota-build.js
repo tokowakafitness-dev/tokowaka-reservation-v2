@@ -85,12 +85,19 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
     }
     if (res.hasMonthly) hasMonthly = true;
 
-    // 契約がその月を覆っていなければ枠は無い（freq=0・avail=0）。行を作らない。
-    //   作ってしまうと「枠0の月」ができ、引当のEXISTSは通るが条件で弾かれる＝
-    //   「枠が無い」と「枠が0」が区別できなくなる。
-    if (!res.hasMonthly || !Number(res.freq)) continue;
+    // 枠を作るかどうかは **avail（頻度＋繰越）** で決める（2026-10-07 修正）。
+    //
+    //   ★以前は `freq`（その月の契約の頻度）だけを見ていた。
+    //     しかし契約が切れた月でも、**前月までの繰越が残っていれば月額から引ける**。
+    //     割当器はそれを正しく monthly と判定するのに、枠の行が無いので
+    //     引当の外部キーが通らず、本番の書き込みが落ちた（会員1名で確認）。
+    //
+    //   「契約の頻度があるか」ではなく「その月に使える回数があるか」が、枠の有無。
+    //   avail が 0 なら、その月は1回も使えない＝枠の行を作らない。
+    if (!res.hasMonthly) continue;
 
     const quota = Number(res.avail);
+    if (!quota) continue;   // その月に使える回数が無い＝枠は無い
     if (!Number.isFinite(quota) || quota < 0) {
       out.issues.push({ customerId, monthKey: mk, code: 'BAD_QUOTA', detail: String(res.avail) });
       continue;

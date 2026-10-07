@@ -127,6 +127,26 @@ export async function buildQuota(request, env) {
         fromMonth: from, toMonth: to, nowKey: nowMonthKeyJst(now),
         targetDateMs: now, carryRate,
       });
+      // ★引当の親（枠）が揃っているかを、書く前に確かめる（2026-10-07）。
+      //   枠を作る条件と引当を作る条件がずれていると、親の無い引当ができて
+      //   外部キー違反でバッチごと落ちる。本番で実際に起きた。
+      //   落ちてから原因を探すより、**ここで名指しで止める**。
+      const haveMonths = new Set(built.monthly.map((m) => m.monthKey));
+      const havePacks = new Set(built.packs.map((p) => p.packId));
+      for (const r of al.rows) {
+        if (r.source === 'monthly' && !haveMonths.has(r.monthKey)) {
+          al.issues.push({ customerId: cid, code: 'NO_QUOTA_ROW', detail: `${r.monthKey} の枠が無いのに月額の引当` });
+        }
+        if ((r.source === 'ticket' || r.source === 'pair') && !havePacks.has(r.packId)) {
+          al.issues.push({ customerId: cid, code: 'NO_PACK_ROW', detail: `${r.packId} が無いのにチケットの引当` });
+        }
+      }
+      //   1つでも親が無ければ、この会員は書かない（中途半端に入れない）
+      if (al.issues.some((x) => x.code === 'NO_QUOTA_ROW' || x.code === 'NO_PACK_ROW')) {
+        al.rows = [];
+        al.computed = false;   // 消しもしない
+      }
+
       summary.allocRows += al.rows.length;
       summary.overflow += al.skippedUnallocated;
       for (const is of al.issues) summary.issues.push({ ...is, customerId: mask(is.customerId), at: 'alloc' });

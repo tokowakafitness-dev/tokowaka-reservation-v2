@@ -141,6 +141,42 @@ console.log('=== 7. 月のキーを進める／範囲を見る ===');
   ok('⑦両端を含む', inRange('2026-09', '2026-09', '2026-11') && inRange('2026-11', '2026-09', '2026-11'));
 }
 
+console.log('=== 8. ★契約が切れても、繰越が残る月には枠を作る ===');
+//   ★2026-10-07 の本番で落ちた形。
+//     契約が10月で切れていても、9月までの繰越が残っていれば10月の予約は月額から引かれる。
+//     割当器はそれを monthly と判定するのに、枠の行が無いと引当の外部キーが通らず、
+//     書き込みがバッチごと落ちる。
+//     「契約の頻度があるか」ではなく「その月に使える回数があるか」で決める。
+{
+  // 月額2回の契約が 2026-09-30 で終了。10月は契約が無いが、9月の未消化が繰り越される。
+  const ended = [
+    { row: crow({ method: '月額', freq: 2 }), cols: COLS,
+      start: new Date(jst(2026, 8, 1)), end: new Date(jst(2026, 9, 30)), idx: 0 },
+  ];
+  const b = buildQuotaForCustomer('C8', ended, [], null,
+    { ...OPTS, fromMonth: '2026-09', toMonth: '2026-10' });
+  const sep = b.monthly.find((m) => m.monthKey === '2026-09');
+  const oct = b.monthly.find((m) => m.monthKey === '2026-10');
+  ok('⑧9月（契約がある月）の枠はある', !!sep);
+  ok('⑧★10月（契約は切れたが繰越がある月）の枠もある', !!oct,
+    'ここが無いと、割当器が monthly と判定した予約の引当が作れず、書き込みが落ちる');
+  if (oct) ok('⑧その枠は繰越ぶん', oct.quota > 0, `quota=${oct.quota}`);
+}
+
+console.log('=== 9. 使える回数が0の月には枠を作らない ===');
+{
+  // とっくに終わった契約。繰越も尽きている
+  const old = [
+    { row: crow({ method: '月額', freq: 2 }), cols: COLS,
+      start: new Date(jst(2026, 1, 1)), end: new Date(jst(2026, 2, 28)), idx: 0 },
+  ];
+  const b = buildQuotaForCustomer('C8', old, [], null,
+    { ...OPTS, fromMonth: '2026-10', toMonth: '2026-11' });
+  eq('⑨枠を作らない', b.monthly.length, 0);
+  // 「枠が無い」と「枠が0」を区別する。0の行を作ると、引当のEXISTSは通るのに
+  // 条件で弾かれ、どちらの状態か分からなくなる。
+}
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 枠を作る処理 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

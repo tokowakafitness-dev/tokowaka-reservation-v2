@@ -105,6 +105,12 @@ ok('⑨★流し直すと正しくなる（対象期間を全部消して入れ�
 ok('⑨★期間外から移ってきた引当も消す（主キー衝突を防ぐ）',
   /WHERE customer_id = \? AND reservation_id IN/.test(ALLOC),
   '日付が期間の外から中へ変わると、古い引当が期間外に残り、同じ主キーのINSERTでバッチ全体が落ちる');
+ok('⑨★引当の親（枠）が揃っているかを書く前に確かめる',
+  /code: 'NO_QUOTA_ROW'/.test(ROUTE) && /code: 'NO_PACK_ROW'/.test(ROUTE),
+  '枠を作る条件と引当を作る条件がずれると、外部キー違反でバッチごと落ちる。本番で実際に起きた');
+ok('⑨★親が無ければその会員は書かない',
+  /al\.rows = \[\];\s*\n\s*al\.computed = false;/.test(ROUTE),
+  '中途半端に入れない。消しもしない');
 ok('⑨★計算できなかった会員には何もしない',
   /if \(!built\.computed\) return \[\];/.test(ALLOC),
   'ok:false は「予約が0件」ではなく「計算できなかった」。消すと used が0になり、枠を超えて予約できてしまう');
