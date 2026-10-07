@@ -28,10 +28,36 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 // ---------- 1. 比べているものが正しい ----------
 ok('①計算の答えを出している', /_lbComputeRemaining\(cid, input\.rows, input\.sessions/.test(V));
 ok('①★D1の行から読んでいる（計算し直していない）',
-  /SELECT quota, used FROM monthly_quota WHERE customer_id = \? AND month_key = \?/.test(V)
+  /SELECT quota, coverage, used FROM monthly_quota WHERE customer_id = \? AND month_key = \?/.test(V)
   && /SELECT total, used, opening_used FROM ticket_packs/.test(V),
   'ここで計算し直すと、同じコードの比較になり意味が無い');
 ok('①月額は 枠−使った数', /Number\(mq\.quota\) - Number\(mq\.used\)/.test(V));
+//   ★契約が対象月を覆っていない月は、繰越が残っていても 0 を見せる。
+//     計算側（Allocate.js の monthlyRem）がそうしているため、同じ規則にする。
+//     quota をそのまま読むと「残り1」に見えて食い違う（全パターン検証 A5 で発覚）。経緯は 0012。
+ok('①★契約の覆い方で3つに分ける',
+  /cov === 'limited'/.test(V) && /cov === 'uncovered'/.test(V) && /cov === 'unlimited'/.test(V),
+  '1bitだと「頻度未設定（上限なし）」を「契約が切れた（残数0）」と取り違える');
+ok('①★coverage が入っていない行は一致と数えない',
+  /coverageMissing/.test(V) && /COVERAGE_NOT_SET/.test(V),
+  'この列を足す前の行には uncovered も unlimited も混ざっている。既定値で埋めると誤って一致する');
+//   ★表全体を見る2つの検査（Codex関門②の5回目）。
+//     枠の作り直しは UPSERT だけで、生成対象から外れた古い行を消さない。
+//     孤児検査は「契約が消えた会員」しか見ないので、残った行は別に数える。
+ok('①★表全体で coverage が NULL の行を数える',
+  /FROM monthly_quota WHERE coverage IS NULL/.test(V) && /staleCoverage/.test(V),
+  '作り直しで取り残された行は、照合した月の外にあると見つからない');
+ok('①★表全体で used > quota の行を数える（unlimited も含む）',
+  /FROM monthly_quota WHERE used > quota/.test(V) && /quotaInvariantBroken/.test(V),
+  'unlimited を overUsedMonths から外したので、ここが無いと引当の異常に気づけない');
+ok('①★どちらも不合格にする',
+  /if \(out\.staleCoverage \|\| out\.quotaInvariantBroken\) out\.pageOk = false;/.test(V));
+ok('①★判定の名前にも出す',
+  /HAS_STALE_COVERAGE/.test(V) && /QUOTA_INVARIANT_BROKEN/.test(V),
+  '数だけ返して判定名に出さないと、読み手が合格と思い込む');
+ok('①★月額の使いすぎも数える',
+  /Number\(mq\.used\) > Number\(mq\.quota\)/.test(V) && /overUsedMonths/.test(V),
+  '見せる残数は uncovered で0・unlimited で null になるので、表示では超過が消える');
 ok('①チケットは有効なぶんの残りを足す',
   /valid_from <= \? AND valid_to >= \?/.test(V),
   '期限切れ・開始前のパックを数えると、計算側（ticketRem）とずれる');
@@ -44,7 +70,8 @@ ok('①★使いすぎを0に丸めて隠さない',
 
 // ---------- 2. 「枠が無い」と「残り0」を取り違えない ----------
 ok('②★枠の行が無ければ null（月額契約が無いの意味）',
-  /const d1Monthly = mq \? \(Number\(mq\.quota\) - Number\(mq\.used\)\) : null;/.test(V),
+  /let d1Monthly = null[\s\S]{0,400}?if \(mq\) \{/.test(V)
+  && /else if \(cov === 'unlimited'\) d1Monthly = null;/.test(V),
   '0 にすると「月額契約があって残り0」と区別できない');
 ok('②計算側の null と突き合わせる',
   /\(d1Monthly === null && calcMonthly === null\) \|\| \(Number\(d1Monthly\) === Number\(calcMonthly\)\)/.test(V));
@@ -113,6 +140,15 @@ ok('⑩★呼ぶ側が全ページを集計して判断する',
   'ページごとの pageOk を見て決めると、前のページの食い違いを見落とす');
 ok('⑩★使いすぎも条件に入れる', /&& v\.overUsedPacks === 0/.test(GAS),
   '書き込みを止める前に入った壊れた値は残る。読み取りをD1へ向ける前に必ず見つける');
+ok('⑩★表全体の2つの検査も条件に入れる',
+  /&& v\.staleCoverage === 0 && v\.quotaInvariantBroken === 0/.test(GAS),
+  '最後のページでしか返らない値なので、入れ忘れると黙って通る');
+ok('⑩★表全体の検査は足さずに置き換える',
+  /if \(r\.staleCoverage != null\) total\.staleCoverage = Number\(r\.staleCoverage\);/.test(GAS),
+  '全表の件数をページごとに足すと、ページ数ぶん多く数えてしまう');
+ok('⑩★検査が走っていない（null）ときも合格にしない',
+  /v\.staleCoverage === 0/.test(GAS) && /v\.quotaInvariantBroken === 0/.test(GAS),
+  '初期値は null。=== 0 なので null では合格にならない');
 ok('⑩★孤児も条件に入れる',
   /&& v\.orphans && !v\.orphans\.quotaRows && !v\.orphans\.packRows && !v\.orphans\.allocRows/.test(GAS));
 ok('⑩合格でないときは理由を全部並べる',

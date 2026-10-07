@@ -85,24 +85,46 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
     }
     if (res.hasMonthly) hasMonthly = true;
 
-    // 枠を作るかどうかは **avail（頻度＋繰越）** で決める（2026-10-07 修正）。
+    // 枠を作るかどうかは **計算側の monthlyRem の出し方に合わせる**（2026-10-07）。
     //
-    //   ★以前は `freq`（その月の契約の頻度）だけを見ていた。
-    //     しかし契約が切れた月でも、**前月までの繰越が残っていれば月額から引ける**。
-    //     割当器はそれを正しく monthly と判定するのに、枠の行が無いので
-    //     引当の外部キーが通らず、本番の書き込みが落ちた（会員1名で確認）。
+    //   経緯：最初は `freq`（その月の契約の頻度）だけを見ていた。
+    //     契約が切れた月でも繰越が残っていれば割当器が monthly と判定するため、
+    //     枠の行が無く外部キーが通らず、本番の書き込みが落ちた。
+    //     そこで `avail`（頻度＋繰越）に変えたが、**今度は計算と食い違った。**
     //
-    //   「契約の頻度があるか」ではなく「その月に使える回数があるか」が、枠の有無。
-    //   avail が 0 なら、その月は1回も使えない＝枠の行を作らない。
+    //   ★計算側の決まり（allocate.js の monthlyRem）：
+    //       契約が無い                  → null（月額の契約が無い）
+    //       契約が対象月を覆わない      → **0**（繰越があっても使えない）
+    //       頻度 > 0                    → 枠 − 使った数
+    //       頻度が未設定                → null（上限なし扱い）
+    //
+    //   つまり **契約が対象月を覆っていなければ、繰越が残っていても残数は0**。
+    //   業務上「契約が切れたら使えない」ということ。D1もそれに合わせる。
+    //   ただし枠の行そのものは作る（下の coverage を参照）。
     if (!res.hasMonthly) continue;
 
     const quota = Number(res.avail);
     if (!quota) continue;   // その月に使える回数が無い＝枠は無い
+
+    //   ★契約が対象月を覆っていない月でも、**枠の行は作る**。
+    //     作らないと引当の親が無く、外部キーで落ちる（本番で実際に落ちた）。
+    //     そのうえで「どう覆っているか」を3状態で持ち、見せる残数は読む側で決める。
+    //       uncovered  契約が覆っていない      → 見せる残数 0
+    //       limited    覆って頻度がある        → 見せる残数 quota − used
+    //       unlimited  覆っているが頻度未設定  → 見せる残数 null（上限なし）
+    //     1bit（覆っている/いない）では unlimited を uncovered と混同する（0012 に詳述）。
+    //     ★計算側（_lbComputeRemaining）が返す coverage をそのまま使う。
+    //       ここで freq から導き直すと、同じ取り違えを繰り返す。
+    const coverage = res.coverage;
+    if (coverage !== 'uncovered' && coverage !== 'limited' && coverage !== 'unlimited') {
+      out.issues.push({ customerId, monthKey: mk, code: 'BAD_COVERAGE', detail: String(coverage) });
+      continue;
+    }
     if (!Number.isFinite(quota) || quota < 0) {
       out.issues.push({ customerId, monthKey: mk, code: 'BAD_QUOTA', detail: String(res.avail) });
       continue;
     }
-    out.monthly.push({ customerId, monthKey: mk, quota });
+    out.monthly.push({ customerId, monthKey: mk, quota, coverage });
   }
 
   // ---- チケット（契約行から直接作る。買った単位がそのまま1行）----
@@ -184,11 +206,12 @@ export function quotaUpsertStatements(built, nowMs) {
   const stmts = [];
   for (const m of built.monthly) {
     stmts.push({
-      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at)
-            VALUES (?, ?, ?, 0, ?)
+      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, coverage, used, updated_at)
+            VALUES (?, ?, ?, ?, 0, ?)
             ON CONFLICT(customer_id, month_key) DO UPDATE SET
-              quota = excluded.quota, updated_at = excluded.updated_at`,
-      args: [m.customerId, m.monthKey, m.quota, nowMs],
+              quota = excluded.quota, coverage = excluded.coverage,
+              updated_at = excluded.updated_at`,
+      args: [m.customerId, m.monthKey, m.quota, m.coverage, nowMs],
     });
   }
   for (const p of built.packs) {

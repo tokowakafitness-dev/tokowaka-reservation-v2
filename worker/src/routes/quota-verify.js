@@ -86,6 +86,10 @@ export async function verifyQuota(request, env) {
     diffs: [],          // 食い違った会員（氏名は出さない）
     skippedWhy: {},     // 比べられなかった理由の内訳（黙って落とさない）
     overUsedPacks: 0,   // 買った枚数を超えて使っているチケット（0に丸めず数える）
+    overUsedMonths: 0,  // 枠を超えて使っている月（表示では消えるので行そのものを見る）
+    coverageMissing: 0, // coverage がまだ入っていない行（作り直していない＝比べられない）
+    staleCoverage: null,        // 表全体で coverage が NULL の行（最後のページで数える）
+    quotaInvariantBroken: null, // 表全体で used > quota の行（最後のページで数える）
     next: null, done: false, pageVerdict: '',
   };
 
@@ -100,7 +104,7 @@ export async function verifyQuota(request, env) {
 
     // ---- ② D1の行から読んだ答え ----
     const [mq, tp] = await Promise.all([
-      env.DB.prepare('SELECT quota, used FROM monthly_quota WHERE customer_id = ? AND month_key = ?')
+      env.DB.prepare('SELECT quota, coverage, used FROM monthly_quota WHERE customer_id = ? AND month_key = ?')
         .bind(cid, month).first(),
       env.DB.prepare(
         `SELECT total, used, opening_used FROM ticket_packs
@@ -109,7 +113,44 @@ export async function verifyQuota(request, env) {
     ]);
 
     //   月額：枠が無い月は「月額の契約が無い」とみなす（計算側の null に合わせる）
-    const d1Monthly = mq ? (Number(mq.quota) - Number(mq.used)) : null;
+    //
+    //   ★見せる残数は coverage で3つに分かれる（計算側 Allocate.js の monthlyRem と同じ規則）。
+    //       uncovered  契約が覆っていない      → 0（繰越が残っていても使えない）
+    //       limited    覆って頻度がある        → quota − used
+    //       unlimited  覆っているが頻度未設定  → null（上限なし）
+    //     quota はそのまま「割当器が引ける回数」として残す（消化の記録用）。
+    //
+    //   ★coverage が NULL の行は「まだ作り直していない」。一致とは数えない（0012 に詳述）。
+    //     この列を足す前のコードは avail で行を作っていたので、既にある行には
+    //     uncovered も unlimited も混ざっている可能性がある。既定値で埋めると、
+    //     本当は0やnullを見せるべき行が数値を見せ、それが「一致」として通ってしまう。
+    let d1Monthly = null, coverageMissing = false;
+    if (mq) {
+      const cov = mq.coverage;
+      if (cov === 'limited') d1Monthly = Number(mq.quota) - Number(mq.used);
+      else if (cov === 'uncovered') d1Monthly = 0;
+      else if (cov === 'unlimited') d1Monthly = null;
+      else coverageMissing = true;   // NULL や想定外の値
+    }
+    if (coverageMissing) {
+      out.coverageMissing = (out.coverageMissing || 0) + 1;
+      out.pageOk = false;
+      out.skipped++;
+      out.skippedWhy.COVERAGE_NOT_SET = (out.skippedWhy.COVERAGE_NOT_SET || 0) + 1;
+      continue;   // 比べられない。作り直してから出直す
+    }
+
+    //   ★月額の使いすぎ（used > quota）も数える（2026-10-07・Codex関門②の4回目）。
+    //     見せる残数は uncovered なら0・unlimited なら null になるので、
+    //     「枠1に対して2回使っている」状態が表示の上では消える。
+    //     スキーマは支払い前の仮押さえのために used > quota を許している（決定0068）ので、
+    //     表示に頼らず行そのものを見る必要がある。
+    //     ★unlimited を除くのは「契約の上限を超えた」という意味に限るため。
+    //       行そのものの異常（引当やトリガーの壊れ）は、下の全表検査で別に数える。
+    if (mq && mq.coverage !== 'unlimited' && Number(mq.used) > Number(mq.quota)) {
+      out.overUsedMonths = (out.overUsedMonths || 0) + 1;
+      out.pageOk = false;
+    }
     //   チケット：いま有効なパックの残りを足す（計算側 ticketRem と同じ数え方）
     let d1Ticket = 0;
     //   残り ＝ 買った枚数 − 移行前に使った枚数 − 引当で使った枚数
@@ -191,12 +232,37 @@ export async function verifyQuota(request, env) {
     out.orphans = { quotaRows: Number(orphanQ?.n || 0), packRows: Number(orphanP?.n || 0),
                     allocRows: Number(orphanA?.n || 0) };
     if (out.orphans.quotaRows || out.orphans.packRows || out.orphans.allocRows) out.pageOk = false;
+
+    // ★表全体を2つの目で見る（2026-10-07・Codex関門②の5回目）。
+    //   上の孤児検査は「契約が消えた会員」しか見ていない。次の2つは漏れる：
+    //
+    //   ① coverage が入っていない行
+    //      枠を作り直す処理は UPSERT だけで、**生成対象から外れた古い行を消さない**。
+    //      範囲外の月や、条件が変わって作られなくなった月の行は NULL のまま残る。
+    //      上の照合は「照合した月」しか見ないので、別の月に残った行は見つからない。
+    //      その行をD1から読めば、誰かの残数として現れうる。
+    //
+    //   ② used > quota の行（coverage を問わず全部）
+    //      quota は「割当器が引ける回数」。割当器とトリガーが正常なら、
+    //      unlimited であっても used が quota を超えることはない。
+    //      超えていたら利用の超過ではなく、**引当・トリガー・手作業の異常**。
+    //      上の overUsedMonths は「契約の上限超え」に意味を絞っているので、
+    //      ここで別に数えないと unlimited の異常に気づけない。
+    const [noCov, broken] = await Promise.all([
+      env.DB.prepare('SELECT COUNT(*) AS n FROM monthly_quota WHERE coverage IS NULL').first(),
+      env.DB.prepare('SELECT COUNT(*) AS n FROM monthly_quota WHERE used > quota').first(),
+    ]);
+    out.staleCoverage = Number(noCov?.n || 0);          // 作り直していない／取り残された行
+    out.quotaInvariantBroken = Number(broken?.n || 0);  // used が quota を超えている行
+    if (out.staleCoverage || out.quotaInvariantBroken) out.pageOk = false;
   }
 
   //   ★「全員一致」とは言わない。「このページでは食い違いが無かった」までしか言えない。
   out.pageVerdict = out.pageOk ? 'PAGE_AGREE'
     : (out.differ ? 'DIFFER'
     : (out.skipped ? 'HAS_SKIPPED'
-    : ((out.orphans && (out.orphans.quotaRows || out.orphans.packRows || out.orphans.allocRows)) ? 'HAS_ORPHANS' : 'INCOMPLETE')));
+    : ((out.orphans && (out.orphans.quotaRows || out.orphans.packRows || out.orphans.allocRows)) ? 'HAS_ORPHANS'
+    : (out.staleCoverage ? 'HAS_STALE_COVERAGE'
+    : (out.quotaInvariantBroken ? 'QUOTA_INVARIANT_BROKEN' : 'INCOMPLETE')))));
   return json(out);
 }

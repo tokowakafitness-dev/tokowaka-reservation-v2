@@ -57,7 +57,10 @@ ok('④読み込まれている', /import \{ buildQuota, quotaStatus \} from '\.
 ok('⑤★更新で used を書き換えない',
   !/DO UPDATE SET[\s\S]{0,300}?\bused\s*=/.test(BUILD),
   'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
-ok('⑤新しく作るときだけ used=0', /VALUES \(\?, \?, \?, 0, \?\)/.test(BUILD));
+//   列が増えても壊れないように、列の並びと「used の位置に 0 が直書き」をセットで見る
+ok('⑤新しく作るときだけ used=0',
+  /\(customer_id, month_key, quota, coverage, used, updated_at\)/.test(BUILD)
+  && /VALUES \(\?, \?, \?, \?, 0, \?\)/.test(BUILD));
 ok('⑤枠を直接UPDATEする文が無い',
   !/UPDATE monthly_quota|UPDATE ticket_packs/.test(BUILD) && !/UPDATE monthly_quota|UPDATE ticket_packs/.test(ROUTE),
   'アプリ側のSQLに枠のUPDATEが現れたら、それは設計からの逸脱');

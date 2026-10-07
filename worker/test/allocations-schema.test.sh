@@ -47,6 +47,26 @@ out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0010_alloc_resv_month.sql" 2>&1)
 ok "⓪0010 を無加工で当てられる" "${out:-OK}" "OK"
 out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0011_pack_opening_used.sql" 2>&1)"
 ok "⓪0011 を無加工で当てられる" "${out:-OK}" "OK"
+out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0012_quota_coverage.sql" 2>&1)"
+ok "⓪0012 を無加工で当てられる" "${out:-OK}" "OK"
+
+#   ★coverage は「契約がこの月をどう覆っているか」の3状態。
+#     既定値を入れてはいけない（0012 の冒頭に理由）。この列を足す前の行には
+#     uncovered も unlimited も混ざっている可能性があり、既定で埋めると
+#     本当は0やnullを見せるべき行が数値を見せ、それが「一致」として通ってしまう。
+ok "⓪coverage に既定値は無い（NULL=未再構築）" \
+  "$(q "SELECT COALESCE(dflt_value,'なし') FROM pragma_table_info('monthly_quota') WHERE name='coverage';")" "なし"
+ok "⓪既にある行は NULL のまま" \
+  "$(q "SELECT COUNT(*) FROM monthly_quota WHERE coverage IS NULL;")" "0"
+ok "⓪3つの値だけ受け付ける" \
+  "$(sqlite3 "$DB" "INSERT INTO monthly_quota (customer_id,month_key,quota,used,updated_at,coverage)
+       VALUES ('CX','2026-10',1,0,0,'bogus');" 2>&1 | grep -c 'CHECK constraint failed')" "1"
+ok "⓪3状態は通る" \
+  "$(q "INSERT INTO monthly_quota (customer_id,month_key,quota,used,updated_at,coverage)
+          VALUES ('CY','2026-10',1,0,0,'uncovered'),('CY','2026-11',1,0,0,'limited'),
+                 ('CY','2026-12',1,0,0,'unlimited');
+        SELECT COUNT(*) FROM monthly_quota WHERE customer_id='CY';")" "3"
+q "DELETE FROM monthly_quota WHERE customer_id IN ('CX','CY');" >/dev/null
 
 ok "⓪4列が足された" \
   "$(q "SELECT COUNT(*) FROM pragma_table_info('reservations')
@@ -80,7 +100,7 @@ case "$out" in *duplicate*) ok "⓪二度目は duplicate column で止まる（
   *) ok "⓪二度目は duplicate column で止まる（冪等ではない）" "通った:$out" "ng";; esac
 
 # ---------- ここから、守りそのものの検査 ----------
-q "INSERT INTO monthly_quota VALUES ('C1','2026-10',4,0,0);
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C1','2026-10',4,0,0);
    INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P1','C1','normal',2,0,0,99999999999,0);
    INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P2','C1','pair',  2,0,0,99999999999,0);" >/dev/null
 
@@ -168,7 +188,7 @@ ok "⑪オンラインでもトレーナーは埋まる" "$(q "SELECT occupies_t
 
 echo "=== 12. 引当を二度入れても used が二重に増えない（移行のやり直しに耐える） ==="
 #   ★移行は何度も流し直す。INSERT OR IGNORE でなければ、流すたびに used が増えて残数が減る。
-q "INSERT INTO monthly_quota VALUES ('C2','2026-11',4,0,0);" >/dev/null
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C2','2026-11',4,0,0);" >/dev/null
 q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('M1','C2','monthly','2026-11',NULL,1,100);" >/dev/null
 ok "⑫1回目で used が1" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C2';")" "1"
 q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('M1','C2','monthly','2026-11',NULL,1,200);" >/dev/null
@@ -190,7 +210,7 @@ echo "=== 15. ★流し直すと「正しくなる」こと（消してから入
 #   INSERT OR IGNORE だけだと壊れはしないが正しくもならない。
 #   契約を直して流し直したとき、消化先が月額→チケットに変わっても古い引当が残り、
 #   枠は新しく used は古い、というちぐはぐな状態になる（Codex関門②の指摘）。
-q "INSERT INTO monthly_quota VALUES ('C3','2026-12',2,0,0);
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C3','2026-12',2,0,0);
    INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P3','C3','normal',2,0,0,99999999999,0);" >/dev/null
 # 1回目：月額から引く
 q "DELETE FROM reservation_allocations WHERE customer_id='C3' AND reservation_id IN ('D1');
@@ -207,7 +227,7 @@ ok "⑮行は1件のまま"        "$(q "SELECT COUNT(*) FROM reservation_alloca
 echo "=== 16. ★契約が減って超過に転じたら、古い引当が消えること ==="
 #   前回は引当済み・今回は超過（unallocated）になった予約を消さないと、
 #   used が過大なまま残り、残数が実際より少なく見えて予約できなくなる（Codex関門②）。
-q "INSERT INTO monthly_quota VALUES ('C4','2026-12',2,0,0);" >/dev/null
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C4','2026-12',2,0,0);" >/dev/null
 q "INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('E1','C4','monthly','2026-12',NULL,1,100);
    INSERT OR IGNORE INTO reservation_allocations (reservation_id,customer_id,source,month_key,pack_id,units,decided_at) VALUES ('E2','C4','monthly','2026-12',NULL,1,100);" >/dev/null
 ok "⑯2件ぶん使っている" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C4';")" "2"
@@ -220,7 +240,7 @@ ok "⑯★used が1に戻る（過大なまま残らない）" "$(q "SELECT used
 ok "⑯E1 の引当は残る" "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='E1';")" "1"
 
 echo "=== 17. ★全部消して全部入れる（消化先の変更・消えた予約・超過への転落、すべてに効く） ==="
-q "INSERT INTO monthly_quota VALUES ('C5','2026-12',4,0,0);
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C5','2026-12',4,0,0);
    INSERT INTO ticket_packs (pack_id,customer_id,kind,total,used,valid_from,valid_to,updated_at) VALUES ('P5','C5','normal',2,0,0,99999999999,0);" >/dev/null
 q "INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
@@ -238,7 +258,7 @@ ok "⑰★チケットが1になる"                        "$(q "SELECT used FR
 ok "⑰★消えた予約の引当は残らない"               "$(q "SELECT COUNT(*) FROM reservation_allocations WHERE reservation_id='F2';")" "0"
 
 echo "=== 18. 期間の外の引当には触れないこと ==="
-q "INSERT INTO monthly_quota VALUES ('C5','2026-09',4,0,0);
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C5','2026-09',4,0,0);
    INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
    VALUES ('G1','C5','monthly','2026-09',NULL,1,'2026-09',100);" >/dev/null
@@ -247,7 +267,7 @@ ok "⑱★9月の引当は残る"   "$(q "SELECT COUNT(*) FROM reservation_alloc
 ok "⑱9月の枠も減ったまま" "$(q "SELECT used FROM monthly_quota WHERE customer_id='C5' AND month_key='2026-09';")" "1"
 
 echo "=== 19. 他の会員の引当には触れないこと ==="
-q "INSERT INTO monthly_quota VALUES ('C6','2026-12',4,0,0);
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C6','2026-12',4,0,0);
    INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
    VALUES ('H1','C6','monthly','2026-12',NULL,1,'2026-12',100);" >/dev/null
@@ -259,8 +279,8 @@ echo "=== 20. ★期間の外から中へ日付が変わった予約（主キー
 #   予約の日付が9月→12月に変わると、古い引当は resv_month='2026-09' のまま残る。
 #   期間（12月）で絞る DELETE は届かず、同じ主キーの INSERT が衝突してバッチ全体が落ちる。
 #   入れる予約のIDでも消しておけば、どこに残っていても片づく。
-q "INSERT INTO monthly_quota VALUES ('C7','2026-09',4,0,0);
-   INSERT INTO monthly_quota VALUES ('C7','2026-12',4,0,0);
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C7','2026-09',4,0,0);
+   INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C7','2026-12',4,0,0);
    INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
    VALUES ('J1','C7','monthly','2026-09',NULL,1,'2026-09',100);" >/dev/null
@@ -288,7 +308,7 @@ ok "㉑移行前に6枚使っている"   "$(q "SELECT opening_used FROM ticket_
 ok "㉑★残りは4（10−6−0）"     "$(q "SELECT total - opening_used - used FROM ticket_packs WHERE pack_id='P9';")" "4"
 
 #   さらに引当を1件入れると、残りは3になる
-q "INSERT INTO monthly_quota VALUES ('C9','2026-10',4,0,0);
+q "INSERT INTO monthly_quota (customer_id, month_key, quota, used, updated_at) VALUES ('C9','2026-10',4,0,0);
    INSERT INTO reservation_allocations
      (reservation_id,customer_id,source,month_key,pack_id,units,resv_month,decided_at)
    VALUES ('K1','C9','ticket',NULL,'P9',1,'2026-10',100);" >/dev/null

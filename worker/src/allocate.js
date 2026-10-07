@@ -632,6 +632,14 @@ function _lbComputeRemaining(customerId, rows, sessions, nowKey, targetDateMs, c
     monthlyRem: monthlyRem, ticketTotal: ent.ticketTotal, ticketRem: ticketRem, ticketPacks: ticketPacks,
     ticketRemPair: ticketRemPair, ticketRemNormal: ticketRemNormal, pairPackMax: pairPackMax,   // ペア=人数回残（表示用・可否判定は_lbBookability）
     freq: covFreq || 0, avail: pm ? pm.quota : 0,
+    // ★契約の覆い方を3状態でそのまま返す（2026-10-07・Codex指摘）。
+    //   上の `freq: covFreq || 0` は、本来別の意味の2つを同じ0に潰している：
+    //     covFreq == null … 契約が対象月を覆っていない    → 残数0
+    //     covFreq === 0   … 覆っているが頻度が未設定      → 残数null（上限なし）
+    //   頻度欄が空の月額契約は freq=0 になり、問題としても扱われない（_lbRowsToEntitlements）。
+    //   D1に枠の行を作るとき、この区別が無いと「上限なし」の月を「残数0」として書いてしまう。
+    //   ★既存の `freq` は**変えない**（読み手が既にいる）。別の名前で足すだけ。
+    coverage: (covFreq == null) ? 'uncovered' : (Number(covFreq) > 0 ? 'limited' : 'unlimited'),
     // ★割当の結果（2026-10-04）。枠にもチケットにも割り当たらなかった予約は
     //   残数のどこにも現れない（monthlyRem は quota - used で、used は月額に
     //   割り当たった分だけ）。だから「枠8に予約10」でも残数は0で止まり、

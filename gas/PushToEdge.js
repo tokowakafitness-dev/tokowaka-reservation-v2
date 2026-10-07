@@ -1960,7 +1960,8 @@ function _edgeQuotaVerify(opts) {
   var month = String(o.month || '');
   var after = String(o.after || '');
   var total = { pages: 0, checked: 0, agree: 0, differ: 0, skipped: 0, diffs: [],
-                skippedWhy: {}, orphans: null, overUsedPacks: 0, lastAfter: after, done: false };
+                skippedWhy: {}, orphans: null, overUsedPacks: 0, overUsedMonths: 0, coverageMissing: 0,
+                staleCoverage: null, quotaInvariantBroken: null, lastAfter: after, done: false };
 
   for (var p = 0; p < maxPages; p++) {
     var q = '?limit=' + limit + '&after=' + encodeURIComponent(after) + (month ? '&month=' + encodeURIComponent(month) : '');
@@ -1975,6 +1976,11 @@ function _edgeQuotaVerify(opts) {
     total.differ += Number(r.differ || 0);
     total.skipped += Number(r.skipped || 0);
     total.overUsedPacks += Number(r.overUsedPacks || 0);
+    total.overUsedMonths += Number(r.overUsedMonths || 0);
+    total.coverageMissing += Number(r.coverageMissing || 0);
+    //   表全体の検査は最後のページでだけ返る。返ってきた値をそのまま採る（足さない）。
+    if (r.staleCoverage != null) total.staleCoverage = Number(r.staleCoverage);
+    if (r.quotaInvariantBroken != null) total.quotaInvariantBroken = Number(r.quotaInvariantBroken);
     for (var i = 0; i < (r.diffs || []).length; i++) total.diffs.push(r.diffs[i]);
     //   比べられなかった理由と、D1にだけ残った行（孤児）もためる。
     //   ★孤児は最後のページでしか返らないので、上書きでよい。
@@ -2003,13 +2009,29 @@ function quotaBuildText(args) {
     vo.push('回した回数: ' + v.pages + ' ／ 比べた会員 ' + v.checked + '名'
             + (v.done ? ' ／ 最後まで到達' : ' ／ ★途中（続き after=' + v.lastAfter + '）'));
     vo.push('一致 ' + v.agree + '名 ／ ★食い違い ' + v.differ + '名 ／ 比べられず ' + v.skipped + '名');
+    if (v.coverageMissing) {
+      vo.push('★契約の覆い方がまだ入っていない枠の行: ' + v.coverageMissing + '件'
+            + '（枠を作り直すと入る。入るまで比べられない）');
+    }
+    if (v.overUsedMonths) {
+      vo.push('★枠を超えて使っている月がある会員: ' + v.overUsedMonths + '名（直すまでD1へ向けない）');
+    }
+    if (v.staleCoverage) {
+      vo.push('★契約の覆い方が入っていない枠の行（表全体）: ' + v.staleCoverage + '件'
+            + '（作り直しで取り残された行。消すか作り直すまでD1へ向けない）');
+    }
+    if (v.quotaInvariantBroken) {
+      vo.push('🚨使った数が枠を超えている行（表全体）: ' + v.quotaInvariantBroken + '件'
+            + '（引当かトリガーの異常。原因を特定するまでD1へ向けない）');
+    }
     if (v.overUsedPacks) {
       vo.push('★買った枚数を超えて使っているチケットがある会員: ' + v.overUsedPacks + '名（直すまでD1へ向けない）');
     }
     // ★「全員一致」と言えるのは、全ページを集計して次が**すべて**満たされたとき。
     //   ページごとの判定（pageOk）を見て決めない。前のページの食い違いを見落とす。
     var allGood = v.done && v.checked > 0 && v.differ === 0 && v.skipped === 0
-                  && v.overUsedPacks === 0
+                  && v.overUsedPacks === 0 && v.overUsedMonths === 0 && v.coverageMissing === 0
+                  && v.staleCoverage === 0 && v.quotaInvariantBroken === 0
                   && v.orphans && !v.orphans.quotaRows && !v.orphans.packRows && !v.orphans.allocRows;
 
     if (v.orphans) {
@@ -2045,6 +2067,10 @@ function quotaBuildText(args) {
       if (v.differ) vo.push('　 ・食い違いが ' + v.differ + '名');
       if (v.skipped) vo.push('　 ・比べられなかった人が ' + v.skipped + '名');
       if (v.overUsedPacks) vo.push('　 ・買った枚数を超えて使っているチケットがある（' + v.overUsedPacks + '名）');
+      if (v.overUsedMonths) vo.push('　 ・枠を超えて使っている月がある（' + v.overUsedMonths + '名）');
+      if (v.coverageMissing) vo.push('　 ・契約の覆い方が入っていない行がある（' + v.coverageMissing + '件・作り直しが必要）');
+      if (v.staleCoverage !== 0) vo.push('　 ・表全体の覆い方の検査が済んでいない（staleCoverage=' + v.staleCoverage + '）');
+      if (v.quotaInvariantBroken !== 0) vo.push('　 ・表全体の不変条件の検査が済んでいない（quotaInvariantBroken=' + v.quotaInvariantBroken + '）');
       if (v.orphans && (v.orphans.quotaRows || v.orphans.packRows || v.orphans.allocRows)) {
         vo.push('　 ・D1にだけ残った行がある（契約が無い会員の枠や引当）');
       }

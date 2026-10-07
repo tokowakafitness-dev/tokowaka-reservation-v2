@@ -104,7 +104,9 @@ console.log('=== 4. ★used を書かない（枠を動かすのはトリガー�
   //     検査が列名の一部で誤って反応しないよう、単語の境界で見る。
   ok('④★チケット：更新で used に触れない', !/DO UPDATE SET[\s\S]*\bused\s*=/.test(packSql),
     'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
-  ok('④新しく作るときだけ used=0', /VALUES \(\?, \?, \?, 0, \?\)/.test(monthlySql));
+  //   列が増えても壊れないように、「used の位置に 0 が直書きされている」ことだけ見る
+  ok('④新しく作るときだけ used=0', /\(customer_id, month_key, quota, coverage, used, updated_at\)/.test(monthlySql)
+    && /VALUES \(\?, \?, \?, \?, 0, \?\)/.test(monthlySql), monthlySql);
   ok('④枠の大きさは更新する', /quota = excluded\.quota/.test(monthlySql));
   ok('④チケットの枚数も更新する', /total = excluded\.total/.test(packSql));
 }
@@ -163,7 +165,11 @@ console.log('=== 8. ★契約が切れても、繰越が残る月には枠を作
   ok('⑧9月（契約がある月）の枠はある', !!sep);
   ok('⑧★10月（契約は切れたが繰越がある月）の枠もある', !!oct,
     'ここが無いと、割当器が monthly と判定した予約の引当が作れず、書き込みが落ちる');
+  //   枠は繰越ぶん入れる（割当器がそこから引くため）。
+  //   ただし coverage='uncovered' ＝ 契約が覆っていない月。見せる残数は読む側で0にする。
+  //   （計算側 Allocate.js の monthlyRem と同じ規則。経緯は 0012 の冒頭）
   if (oct) ok('⑧その枠は繰越ぶん', oct.quota > 0, `quota=${oct.quota}`);
+  if (oct) eq('⑧★ただし契約は覆っていない（coverage=uncovered）', oct.coverage, 'uncovered');
 }
 
 console.log('=== 9. 使える回数が0の月には枠を作らない ===');
