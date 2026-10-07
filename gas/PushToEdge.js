@@ -1959,7 +1959,8 @@ function _edgeQuotaVerify(opts) {
   var maxPages = Math.max(1, Math.min(Number(o.maxPages || 12) || 12, 40));
   var month = String(o.month || '');
   var after = String(o.after || '');
-  var total = { pages: 0, checked: 0, agree: 0, differ: 0, skipped: 0, diffs: [], lastAfter: after, done: false };
+  var total = { pages: 0, checked: 0, agree: 0, differ: 0, skipped: 0, diffs: [],
+                skippedWhy: {}, orphans: null, lastAfter: after, done: false };
 
   for (var p = 0; p < maxPages; p++) {
     var q = '?limit=' + limit + '&after=' + encodeURIComponent(after) + (month ? '&month=' + encodeURIComponent(month) : '');
@@ -1974,6 +1975,12 @@ function _edgeQuotaVerify(opts) {
     total.differ += Number(r.differ || 0);
     total.skipped += Number(r.skipped || 0);
     for (var i = 0; i < (r.diffs || []).length; i++) total.diffs.push(r.diffs[i]);
+    //   比べられなかった理由と、D1にだけ残った行（孤児）もためる。
+    //   ★孤児は最後のページでしか返らないので、上書きでよい。
+    for (var w in (r.skippedWhy || {})) if (r.skippedWhy.hasOwnProperty(w)) {
+      total.skippedWhy[w] = (total.skippedWhy[w] || 0) + Number(r.skippedWhy[w] || 0);
+    }
+    if (r.orphans) total.orphans = r.orphans;
     if (r.done || !r.next) { total.done = true; break; }
     after = String(r.next); total.lastAfter = after;
     Utilities.sleep(200);
@@ -1995,6 +2002,21 @@ function quotaBuildText(args) {
     vo.push('回した回数: ' + v.pages + ' ／ 比べた会員 ' + v.checked + '名'
             + (v.done ? ' ／ 最後まで到達' : ' ／ ★途中（続き after=' + v.lastAfter + '）'));
     vo.push('一致 ' + v.agree + '名 ／ ★食い違い ' + v.differ + '名 ／ 比べられず ' + v.skipped + '名');
+    // ★「全員一致」と言えるのは、全ページを集計して次が**すべて**満たされたとき。
+    //   ページごとの判定（pageOk）を見て決めない。前のページの食い違いを見落とす。
+    var allGood = v.done && v.checked > 0 && v.differ === 0 && v.skipped === 0
+                  && v.orphans && !v.orphans.quotaRows && !v.orphans.packRows && !v.orphans.allocRows;
+
+    if (v.orphans) {
+      vo.push('D1にだけ残った行: 枠 ' + v.orphans.quotaRows + ' ／ チケット ' + v.orphans.packRows
+              + ' ／ 引当 ' + v.orphans.allocRows + '（契約が無い会員の行。0であるべき）');
+    } else {
+      vo.push('D1にだけ残った行: ★最後まで到達していないため、まだ数えていません');
+    }
+    var swk = [];
+    for (var w2 in v.skippedWhy) if (v.skippedWhy.hasOwnProperty(w2)) swk.push(w2 + ' ' + v.skippedWhy[w2] + '名');
+    if (swk.length) vo.push('比べられなかった理由: ' + swk.join(' / '));
+
     if (v.diffs.length) {
       vo.push('');
       vo.push('── 食い違った会員');
@@ -2006,9 +2028,21 @@ function quotaBuildText(args) {
                 + (d.quotaRow ? '  （枠=' + d.quotaRow.quota + ' 使った=' + d.quotaRow.used + '）' : '  （枠の行なし）'));
       }
       if (v.diffs.length > 20) vo.push('   …ほか ' + (v.diffs.length - 20) + '名');
-    } else if (v.checked) {
-      vo.push('');
-      vo.push('✅ 比べた全員で一致しました。D1の行から正しい残数が読めています。');
+    }
+    vo.push('');
+    if (allGood) {
+      vo.push('✅ 全員で一致しました。D1の行から正しい残数が読めています。');
+      vo.push('　 （全員を比べ、食い違い0・比べられない人0・D1にだけ残った行0）');
+    } else {
+      vo.push('⚠️ まだ「全員一致」とは言えません。次のどれかが残っています：');
+      if (!v.done) vo.push('　 ・最後まで到達していない（続き after=' + v.lastAfter + '）');
+      if (!v.checked) vo.push('　 ・1人も比べられていない');
+      if (v.differ) vo.push('　 ・食い違いが ' + v.differ + '名');
+      if (v.skipped) vo.push('　 ・比べられなかった人が ' + v.skipped + '名');
+      if (v.orphans && (v.orphans.quotaRows || v.orphans.packRows || v.orphans.allocRows)) {
+        vo.push('　 ・D1にだけ残った行がある（契約が無い会員の枠や引当）');
+      }
+      vo.push('　 ★ここが全部片づくまで、残数の読み取りをD1へ向けてはいけません。');
     }
     var vt = vo.join('\n'); Logger.log(vt); return vt;
   }

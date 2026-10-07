@@ -20,6 +20,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
 const V = readFileSync(join(ROOT, 'worker/src/routes/quota-verify.js'), 'utf8');
 const INDEX = readFileSync(join(ROOT, 'worker/src/index.js'), 'utf8');
+const GAS = readFileSync(join(ROOT, 'gas/PushToEdge.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
@@ -91,7 +92,30 @@ ok('⑨孤児の枠を数える',
 ok('⑨孤児の引当を数える',
   /FROM reservation_allocations\s*\n\s*WHERE customer_id NOT IN \(SELECT DISTINCT customer_id FROM calc_contract_rows\)/.test(V));
 ok('⑨★孤児があれば合格にしない',
-  /if \(out\.orphans\.quotaRows \|\| out\.orphans\.allocRows\) out\.ok = false;/.test(V));
+  /if \(out\.orphans\.quotaRows \|\| out\.orphans\.packRows \|\| out\.orphans\.allocRows\) out\.ok = false;/.test(V));
+
+// ---------- 10. ★全ページを集計して判断する（ページ単位で判断しない） ----------
+//   Codex関門②の2回目。ページごとの判定を見ると、前のページの食い違いを見落とす。
+//   最後のページ単体が「一致」でも、2ページ目に食い違いがあれば全体は一致ではない。
+ok('⑩ページ限りの判定であることを名前で示す', /out\.pageOk = out\.ok;/.test(V));
+ok('⑩★呼ぶ側が全ページを集計して判断する',
+  /var allGood = v\.done && v\.checked > 0 && v\.differ === 0 && v\.skipped === 0/.test(GAS),
+  'ページごとの pageOk を見て決めると、前のページの食い違いを見落とす');
+ok('⑩★孤児も条件に入れる',
+  /&& v\.orphans && !v\.orphans\.quotaRows && !v\.orphans\.packRows && !v\.orphans\.allocRows/.test(GAS));
+ok('⑩合格でないときは理由を全部並べる',
+  /まだ「全員一致」とは言えません/.test(GAS)
+  && /最後まで到達していない/.test(GAS) && /食い違いが/.test(GAS) && /比べられなかった人が/.test(GAS));
+ok('⑩★D1へ向けてはいけないと書いてある', /残数の読み取りをD1へ向けてはいけません/.test(GAS));
+ok('⑩比べられなかった理由をページ間で足す',
+  /total\.skippedWhy\[w\] = \(total\.skippedWhy\[w\] \|\| 0\) \+ Number\(r\.skippedWhy\[w\] \|\| 0\)/.test(GAS));
+
+// ---------- 11. 孤児の検査に3つの表すべてを含める ----------
+ok('⑪枠・チケット・引当の3つを数える',
+  /FROM monthly_quota\s*\n\s*WHERE customer_id NOT IN/.test(V)
+  && /FROM ticket_packs\s*\n\s*WHERE customer_id NOT IN/.test(V)
+  && /FROM reservation_allocations\s*\n\s*WHERE customer_id NOT IN/.test(V),
+  'チケットが抜けていた（Codex指摘）。1つでも漏れると、そこに残った行が見えない');
 
 console.log('');
 console.log(`${fail ? '❌' : '✅'} D1と計算の突き合わせ 検証: ${pass} passed / ${fail} failed`);
