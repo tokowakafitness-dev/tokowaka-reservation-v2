@@ -571,8 +571,11 @@ function _edgeCalcContracts(customers) {
 // 予約台帳の行をそのまま写す
 function _edgeCalcReservations() {
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
-  if (!sh) return null;
-  var last = sh.getLastRow(); if (last < 2) return null;
+  if (!sh) return null;                     // シートが無い／読めない＝送らない
+  //   ★ヘッダだけ（予約0件）は**正常**なので空配列を返す（2026-10-08・Codex関門②）。
+  //     null にすると「読めなかった」と同じ扱いになり、二重書きが永遠に進まない。
+  //     送り先は0件＋全件走査のとき削除を止める作りなので、全体同期も安全。
+  var last = sh.getLastRow(); if (last < 2) return [];
   var v = sh.getRange(2, 1, last - 1, Math.max(15, sh.getLastColumn())).getValues();
   var out = [];
   for (var i = 0; i < v.length; i++) {
@@ -763,6 +766,11 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     //
     //   ★3つとも成功したときだけ真にする。1つでも落ちたら画面は待つ側に倒れる
     //     （遅いほうが、古い残数を見せるより良い）。
+    // ★二重書き（2026-10-08・段階3-a）。
+    //   計算入力と枠・引当の作り直しは**ここでやらない**（予約確定の応答を待たせない）。
+    //   待ち行列に積み、速い道（1秒後）か心拍（15分ごと）が処理する。設計第4節。
+    try { lbDwEnqueue(cid); } catch (e) { Logger.log('[dw] 積めませんでした: ' + (e && e.message)); }
+
     var _syncedHome = pushToEdgeHomeFor(cid, nm);                   // 残数
     var _syncedResv = (_edgePushReservationsFor(cid) !== false);    // その人の予約
 
@@ -874,8 +882,14 @@ function _pushToEdgeSlotsImpl() {
 
 // 残数を含まない押し出し。10秒程度で終わるので短い間隔で回せる。
 function pushToEdgeLight() {
-  pushToEdgeAll(false);
-  _edgeHealJobTrigger();   // ついでに、見回りが止まっていたら戻す
+  // ★それぞれ別の try で囲む（2026-10-08・Codex関門②）。
+  //   以前は押し出しのあとに二重書きを呼んでいた。**押し出しが落ちると
+  //   二重書きの心拍まで届かない。**「15分ごとに必ず再送する」が嘘になる。
+  try { pushToEdgeAll(false); } catch (e) { Logger.log('[edge] 押し出しで例外: ' + (e && e.message)); }
+  try { _edgeHealJobTrigger(); } catch (e) { Logger.log('[edge] 見回りの回復で例外: ' + (e && e.message)); }
+  // 二重書きの心拍：速い道（_lbCalSyncAfterWrite）が働かなかったぶんを15分ごとに拾う。
+  //   新しいトリガーを作らないためにここへ相乗りする（上限20本・設計第4節）。
+  try { lbDualWriteDrain(); } catch (e) { Logger.log('[dw] 心拍で例外: ' + (e && e.message)); }
 }
 
 // 見回り（1分ごと）が消えていたら作り直す。
@@ -1377,6 +1391,11 @@ function _lbCleanCalSyncAfterTriggers() {
 function _lbCalSyncAfterWrite() {
   try { lbCalSyncTick(); }
   catch (e) { Logger.log('[calsync] 予約直後の同期に失敗（1分ごとの同期で追いつきます）: ' + (e && e.message)); }
+  // ★二重書きの速い道（2026-10-08・段階3-a）。
+  //   このトリガーは予約系の書き込みの1秒後に一度だけ動く。そこへ相乗りする。
+  //   失敗しても待ち行列に残るので、心拍（15分ごと）が拾う。
+  try { lbDualWriteDrain(); }
+  catch (e) { Logger.log('[dw] 速い道で例外（心拍で追いつきます）: ' + (e && e.message)); }
   _lbCleanCalSyncAfterTriggers();   // 役目を終えたら自分を消す（トリガー上限20件に溜めない）
 }
 

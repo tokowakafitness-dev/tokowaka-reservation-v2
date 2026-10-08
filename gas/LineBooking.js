@@ -167,20 +167,29 @@ function doPost(e) {
     if (!auth.ok) return _lbJson({ success:false, code:'UNAUTHORIZED' });
     var lineUserId = auth.lineUserId;   // ★以降これだけを信用する
 
+    // ★書き込みのあと必ず写しを直す（2026-10-08・Codex関門①で判明した漏れ）。
+    //   いま生きている経路は doGet → handleLineGet → _lbDispatch → edgeAfterWrite。
+    //   この doPost は旧経路だが**公開Web Appなので到達可能**で、
+    //   `edgeAfterWrite` を通らないため予約してもD1に伝わらなかった。
+    //   case ごとに return せず、1つの出口にまとめる。
+    var _res;
     switch (action) {
-      case 'verifyMembership':   return _lbJson(verifyMembership(lineUserId, body.code));
-      case 'getMemberStatus':    return _lbJson(getMemberStatus(lineUserId));
-      case 'getTrainers':        return _lbJson(getTrainers());
-      case 'getTrainerSlots':    return _lbJson(getTrainerSlots(body));
-      case 'makeReservationLine':return _lbJson(makeReservationLine(lineUserId, body));
+      case 'verifyMembership':   _res = verifyMembership(lineUserId, body.code); break;
+      case 'getMemberStatus':    _res = getMemberStatus(lineUserId); break;
+      case 'getTrainers':        _res = getTrainers(); break;
+      case 'getTrainerSlots':    _res = getTrainerSlots(body); break;
+      case 'makeReservationLine':_res = makeReservationLine(lineUserId, body); break;
       case 'makeReservationLineProxy': {
         var tr = requireTrainer(lineUserId);           // 案B：トレーナー権限を確認
-        if (!tr) return _lbJson({ success: false, code: 'FORBIDDEN' });
-        return _lbJson(makeReservationLineProxy(tr, body));
+        _res = tr ? makeReservationLineProxy(tr, body) : { success: false, code: 'FORBIDDEN' };
+        break;
       }
       // Phase 4以降: getMyReservations/cancelReservation/changeReservation/confirmAttendance
-      default: return _lbJson({ success:false, code:'UNKNOWN_ACTION' });
+      default: _res = { success:false, code:'UNKNOWN_ACTION' };
     }
+    // 中央出口と同じ形。action 名も同じ前置き（line_）に揃える
+    try { edgeAfterWrite('line_' + action, body, _res, lineUserId); } catch (e) {}
+    return _lbJson(_res);
   } catch (err) {
     Logger.log('doPost エラー: ' + err.message);
     return _lbJson({ success:false, code:'SERVER_ERROR' });
@@ -216,6 +225,8 @@ function liffApi(payloadJson) {
       }
       default: res = { success: false, code: 'UNKNOWN_ACTION' };
     }
+    // ★doPost と同じ理由（2026-10-08・Codex関門①）。旧経路でも写しを直す。
+    try { edgeAfterWrite('line_' + action, body, res, lineUserId); } catch (e) {}
     return JSON.stringify(res);
   } catch (err) {
     Logger.log('liffApi エラー: ' + err.message);
@@ -1902,6 +1913,20 @@ function dailyHealthCheck(dryRun) {
         'ロックが取れず1通も送れなかった回が' + missN + '回あります（直近 ' + missWhen + '）。その日の対象者は取りこぼしています。');
     }
   } catch (e) {}
+
+  // ---- 二重書き（段階3-a・2026-10-08）----
+  //   ★新しいトリガーは作らない。この日次点検に相乗りする（上限20本・設計第4節）。
+  //   「14日連続で食い違い0件」を待つ代わりに、**毎日照合して食い違いを見つける。**
+  //   放置すると積み上がる（2026-10-08 朝、一晩で1名ズレた）。
+  try {
+    var dw = lbDwDailyCheck();
+    for (var dwi = 0; dwi < dw.length; dwi++) {
+      add(dw[dwi].key, '二重書き', dw[dwi].severity, dw[dwi].count, dw[dwi].detail);
+    }
+  } catch (e) {
+    add('dualwrite_check_fail', '二重書き', 'high', 1,
+        '二重書きの点検そのものが失敗しました: ' + (e && e.message));
+  }
 
   // ---- 記録（推移が見えるよう追記）----
   if (!dryRun) {
@@ -4494,6 +4519,19 @@ function syncExistingReservations(dryRun) {
     }
     if (!dryRun) {
       if (appendRows.length) resvSh.getRange(resvSh.getLastRow() + 1, 1, appendRows.length, 15).setValues(appendRows);   // まとめてsetValues（Codex#3）※col15=attendee_count まで
+      // ★二重書き（2026-10-08・段階3-a・Codex関門①で判明した漏れ）。
+      //   カレンダー取込は中央出口（handleLineGet → edgeAfterWrite）を通らないため、
+      //   ここで足した予約はD1の引当に反映されない（翌日の完全同期まで）。
+      //   取り込んだ会員を重複なく待ち行列へ積む（3列目＝customer_id）。
+      try {
+        var _dwSeen = {};
+        for (var _dw = 0; _dw < appendRows.length; _dw++) {
+          var _dwCid = String(appendRows[_dw][2] || '');
+          if (!_dwCid || _dwSeen[_dwCid]) continue;
+          _dwSeen[_dwCid] = 1;
+          lbDwEnqueue(_dwCid);
+        }
+      } catch (e) { Logger.log('[dw] カレンダー取込ぶんを積めませんでした: ' + (e && e.message)); }
       // line_unlinked は毎回clearContentsで再構築（削除→作成の消失窓を回避・Codex#11）
       var ss = _lbSs();
       var ush = ss.getSheetByName('line_unlinked') || ss.insertSheet('line_unlinked');
@@ -6704,6 +6742,12 @@ function autoBookRecurringPatterns() {
   for (var k = 0; k < order.length; k++) {
     var c2 = order[k], agg = byCustomer[c2];
     for (var ri = 0; ri < agg.rows.length; ri++) sh.getRange(agg.rows[ri], RP_COL.LAST_MONTH).setValue(targetKey);   // 冪等マーク
+    // ★二重書き（2026-10-08・段階3-a・Codex関門①で判明した漏れ）。
+    //   この処理は _lbReserveCore を直接呼び、中央出口を通らない。
+    //   ★1件でも予約できた会員だけ積む。order には予約できなかった会員も入る。
+    if (agg.booked.length) {
+      try { lbDwEnqueue(c2); } catch (e) { Logger.log('[dw] 固定枠ぶんを積めませんでした: ' + (e && e.message)); }
+    }
     try { _lbNotifyAutoBook(c2, agg.booked, agg.skipped); } catch (e) { Logger.log('自動予約通知失敗(' + c2 + '): ' + e.message); }
   }
   Logger.log('autoBookRecurringPatterns 完了: ' + order.length + '顧客 / 対象月 ' + targetKey);
