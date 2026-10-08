@@ -1840,7 +1840,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-09a 押し出しの元栓／支払い待ち／翌月解放／振替の件数';
+var LB_HEALTH_BUILD = '2026-10-09b トリガーの揃い／押し出しの元栓／支払い待ち／翌月解放';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1955,6 +1955,58 @@ function dailyHealthCheck(dryRun) {
         'ロックが取れず1通も送れなかった回が' + missN + '回あります（直近 ' + missWhen + '）。その日の対象者は取りこぼしています。');
     }
   } catch (e) {}
+
+  // ---- 定期処理（トリガー）が揃っているか（2026-10-09）----
+  //   ★いままで塞いだ見張りは、どれも「定期処理が動いている」ことが前提。
+  //     トリガーが消えると、その処理が黙って止まる。
+  //     個別には「○時間動いていない」で気づける作りもあるが、**全部には無い。**
+  //     トリガーそのものを数えるのが、いちばん確実で安い。
+  //   ★消える原因：setupTriggers の作り直し、手で削除、GASの上限（20本）に当たる。
+  try {
+    var _trs = ScriptApp.getProjectTriggers();
+    var _have = {};
+    for (var _ti = 0; _ti < _trs.length; _ti++) {
+      var _h = _trs[_ti].getHandlerFunction();
+      _have[_h] = (_have[_h] || 0) + 1;
+    }
+    //   ★止まったら困るもの（止まったときに何が起きるかを書いておく）
+    var _need = [
+      ['dailyHealthCheck',  'この点検そのもの。止まるとすべての見張りが黙る'],
+      ['lbNudgeDaily',      'リマインド。顧客に届かない＋この点検の見張りも止まる'],
+      ['sendLineReminders', '前日リマインド。顧客に届かない'],
+      ['pushToEdgeLight',   '写しの押し出しと二重書きの心拍。D1が古くなる'],
+      ['pushToEdgeFullSync','深夜の完全同期。消えた行がD1に残り続ける'],
+      ['dailySync',         'カレンダー取込。予約が台帳に入らない'],
+      ['edgeJobPoll',       '作業依頼の見回り。CEOが調査・修復を回せなくなる'],
+      ['syncContractStatus','退会・失効の反映。期限切れの会員が予約できてしまう'],
+    ];
+    var _missing = [];
+    for (var _ni = 0; _ni < _need.length; _ni++) {
+      if (!_have[_need[_ni][0]]) _missing.push(_need[_ni][0] + '（' + _need[_ni][1] + '）');
+    }
+    if (_missing.length) {
+      add('trigger_missing', '定期処理', 'high', _missing.length,
+          '🚨 定期処理が登録されていません: ' + _missing.join(' ／ ')
+          + '　setupTriggers を実行し直すと戻ります。');
+    }
+    //   ★上限（20本）に近いと、新しいトリガーが作れず**黙って失敗する**
+    if (_trs.length >= 18) {
+      add('trigger_near_limit', '定期処理', 'warn', _trs.length,
+          'トリガーが ' + _trs.length + '本あります（GASの上限は20本）。'
+          + '上限に当たると新しい一回限りトリガーが作れず、二重書きの速い道などが黙って止まります。');
+    }
+    //   ★同じ処理が二重に登録されていると、二重送信・二重書き込みが起きる
+    var _dup = [];
+    for (var _k in _have) if (_have.hasOwnProperty(_k) && _have[_k] > 1) _dup.push(_k + '×' + _have[_k]);
+    if (_dup.length) {
+      add('trigger_dup', '定期処理', 'high', _dup.length,
+          '🚨 同じ処理が二重に登録されています: ' + _dup.join(' ／ ')
+          + '　同じ人に2通届く・同じ行を2回書く恐れがあります。');
+    }
+  } catch (e) {
+    add('trigger_check_fail', '定期処理', 'high', 1,
+        'トリガーの点検そのものが失敗しました: ' + (e && e.message));
+  }
 
   // ---- 押し出しの元栓が開いているか（2026-10-08）----
   //   ★EDGE_PUSH_ON が '1' でなければ、写しの押し出しも二重書きも**丸ごと動かない。**
