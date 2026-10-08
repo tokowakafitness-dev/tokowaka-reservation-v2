@@ -1849,6 +1849,14 @@ function dailyHealthCheck(dryRun) {
   var stamp = Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm');
   var issues = [];   // { key, area, severity, count, detail }
   Logger.log('dailyHealthCheck 版: ' + LB_HEALTH_BUILD);
+  //   ★走った時刻を残す（2026-10-09）。
+  //     この点検は「悪化したときだけ」メールを送る。だから**点検そのものが止まると
+  //     何も届かず、沈黙が正常と区別できない。** 自分では気づけないので、
+  //     別の処理（リマインドの日次）が「最後に走った時刻」を見張る。
+  if (!dryRun) {
+    try { PropertiesService.getScriptProperties().setProperty('LB_HEALTH_LAST', String(Date.now())); }
+    catch (e) { Logger.log('点検の実行時刻を残せませんでした: ' + (e && e.message)); }
+  }
   function add(key, area, severity, count, detail) {
     if (!count) return;
     issues.push({ key: key, area: area, severity: severity, count: count, detail: String(detail || '').slice(0, 300) });

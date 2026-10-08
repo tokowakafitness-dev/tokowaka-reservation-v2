@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-08a 翌月解放は「翌月に押さえられる回数」で判断（当月の残数で判断しない）';
+var LB_NUDGE_BUILD = '2026-10-09a 翌月解放の判断／日次点検が止まっていないかを見張る';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -792,6 +792,42 @@ function _lbNudgeFirstOfMonth(logs, customerId, now) {
   return true;
 }
 
+// 日次点検が止まっていないかを見る。止まっていればオーナーへメールで知らせる。
+//   ★なぜリマインドから見るのか：点検は「悪化したときだけ」送るので、
+//     止まっても沈黙が続くだけ。沈黙と正常を区別できない。
+//     毎日動く別の処理から「最後に走った時刻」を見るしかない。
+function _lbNudgeWatchHealthCheck(nowMs) {
+  var last = Number(_lbProp('LB_HEALTH_LAST') || 0);
+  var hours = last ? Math.floor((nowMs - last) / 3600000) : -1;
+  //   36時間＝1日分飛んでも許す（実行の揺れ・手動停止の猶予）。2日飛んだら知らせる
+  if (last && hours < 36) return;
+  //   1日1回までにする（毎日同じメールが来ると読まれなくなる）
+  var notifiedKey = 'LB_HEALTH_ALERT_AT';
+  var lastAlert = Number(_lbProp(notifiedKey) || 0);
+  if (lastAlert && (nowMs - lastAlert) < 20 * 3600000) return;
+
+  var msg = (last === 0)
+    ? '日次点検（dailyHealthCheck）が一度も走った記録がありません。'
+    : ('日次点検（dailyHealthCheck）が ' + hours + '時間走っていません（最終 '
+       + Utilities.formatDate(new Date(last), SETTINGS.TIMEZONE, 'M/d HH:mm') + '）。');
+  Logger.log('[health] ' + msg);
+  try {
+    var to = _lbAlertEmail();
+    if (to) {
+      GmailApp.sendEmail(to, '【要対処】日次点検が止まっています',
+        msg + '\n\n'
+        + '点検は「悪化したときだけ」メールを送る作りです。つまり**止まっていても沈黙が続き、'
+        + '正常と区別できません。**\n'
+        + 'そのため、この見張りは毎日10時のリマインドから行っています。\n\n'
+        + '確かめること：\n'
+        + '　・GASのトリガー一覧に dailyHealthCheck があるか\n'
+        + '　・実行ログにエラーが出ていないか（6分の制限に当たっていないか）\n'
+        + '　・setupTriggers を実行し直すと戻ります\n');
+      PropertiesService.getScriptProperties().setProperty(notifiedKey, String(nowMs));
+    }
+  } catch (e) { Logger.log('[health] 通知に失敗: ' + (e && e.message)); }
+}
+
 // 共通して入れる事実（transfer を除く3種で使う）。
 //   remain=今月の月額残 / carry=そのうち繰り越せる回数 / days=今月の残り日数。
 //   remain が null＝残数を算出できない（degraded）＝送らない側へ倒す。
@@ -1373,6 +1409,14 @@ function lbNudgeCatchUp(fromYmd, toYmd) {
 
 function lbNudgeDaily(nowMs) {
   var ms = (nowMs != null) ? nowMs : new Date().getTime();
+  //   ★日次点検が止まっていないかを**ここから**見張る（2026-10-09）。
+  //     点検は「悪化したときだけ」メールを送る。だから**点検そのものが止まると
+  //     何も届かず、沈黙が正常と区別できない。**
+  //     点検は自分では気づけないので、毎日動く別の処理から見る。
+  //     ここ（毎日10時のリマインド）は点検（7時）の3時間後に動くので都合がよい。
+  //     ★見張る側も止まったら？ → そのときは**リマインドが届かない**ので
+  //       オーナーが気づく（顧客に届くものだから）。だからここに置く。
+  try { _lbNudgeWatchHealthCheck(ms); } catch (e) { Logger.log('点検の見張りで例外: ' + (e && e.message)); }
   // ★ロックは「誰に送るかを決める前」に取る（2026-10-05）。
   //   送信だけを囲っても足りない。2つの実行が同時に一覧を作ると、どちらも
   //   「まだ誰にも送っていない」記録を読む。先に送った方がロックを解放したあと、
