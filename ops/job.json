@@ -1,1 +1,1 @@
-{"op":"remaining","requestId":"job-20261008135900-8b6adef2","args":{"name":"國安,今別府,片山"}}
+{"op":"quotaBuild","requestId":"job-20261008142816-513e93d3","args":{"write":true,"alloc":true,"from":"2026-09","to":"2026-12","limit":5,"maxPages":12}}
