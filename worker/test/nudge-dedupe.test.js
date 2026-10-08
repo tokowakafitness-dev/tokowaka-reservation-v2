@@ -24,6 +24,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
 const SRC = readFileSync(join(ROOT, 'gas/Nudge.js'), 'utf8');
 
+//   日次点検は LineBooking.js 側にある
+const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
+
 let pass = 0, fail = 0;
 function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
 
@@ -95,6 +98,26 @@ ok('⑦★集計の初期値がある',
   '初期値が無いと ++ が NaN になり、対象外の集計から消える');
 ok('⑦★表示のラベルがある',
   /nextMonthNoPlan: '[^']+'/.test(SRC) && /nextMonthNoQuota: '[^']+'/.test(SRC));
+// ---------- ⑧ ★送れなかったことに気づける（2026-10-08・オーナーの指摘）----------
+//   「対象外の一覧に出る」だけでは、私が見たときにしか分からない。
+//   解放の判定は25日にしか走らないので、**その日に気づかなければ取り返せない。**
+//   記録して、日次点検（オーナーへのメール）に載せる。
+ok('⑧記録する鍵がある', /LB_NUDGE_OPEN_MISS_KEY = 'LB_NUDGE_OPEN_MISS'/.test(SRC));
+ok('⑧記録する関数がある', /function _lbNudgeNoteOpenMiss\(monthKey, n\)/.test(SRC));
+ok('⑧★解放日にだけ記録する',
+  /if \(_plan && _plan\.isOpenDay\)/.test(SRC)
+  && /nextMonthNoPlan \|\| 0/.test(SRC));
+ok('⑧行番号に依存しない場所に置く（設定）',
+  /setProperty\(LB_NUDGE_OPEN_MISS_KEY/.test(SRC),
+  'シートの行に書くと他の処理の行番号がずれる（2026-10-07の事故と同じ形）');
+ok('⑧際限なく溜めない', /arr\.slice\(0, 12\)/.test(SRC));
+//   日次点検に出ること（LineBooking 側）
+ok('⑧★日次点検に出る', /nudge_open_miss/.test(LB),
+  '記録しても誰も読まなければ、気づけないのと同じ');
+ok('⑧点検の文面に「いま契約を入れても飛ばない」と書いている',
+  /いま契約を入れても案内は飛びません/.test(LB));
+ok('⑧古い記録で毎日言わない', /10 \* 86400000/.test(LB));
+
 ok('⑦ラベルに運用上の注意を書いている',
   /25日より後に契約を入れると案内が飛びません/.test(SRC),
   '解放日にしか判定しないので、契約の入力が遅れると届かない');
@@ -107,9 +130,14 @@ ok('⑥★一覧を二重にログへ出さない',
 //   ★送信だけを囲っても足りない（2026-10-05 Codex指摘）。
 //     2つの実行が同時に一覧を作ると、どちらも「まだ誰にも送っていない」記録を読む。
 //     先に送った方が解放したあと、もう一方が古い一覧のまま送る＝同じ人に2通届く。
+//   ★一覧を作るのはロックの中。2026-10-08 に、解放日の取りこぼしを記録するため
+//     `lbNudgePlanAll(ms)` を変数に受けるようにしたので、順序の検査もその形で見る。
 ok('⑦入口でロックを取ってから一覧を作る',
-  /function lbNudgeDaily[\s\S]{0,2000}?lock\.tryLock\(LB_NUDGE_LOCK_WAIT_MS\)[\s\S]{0,900}?_lbNudgeSend\(lbNudgePlanAll\(ms\), ms, true\)/.test(SRC),
+  /function lbNudgeDaily[\s\S]{0,2000}?lock\.tryLock\(LB_NUDGE_LOCK_WAIT_MS\)[\s\S]{0,900}?var _plan = lbNudgePlanAll\(ms\);/.test(SRC),
   'plan を作ってからロックを取る順序に戻っている');
+ok('⑦★その一覧をそのまま送信へ渡す（作り直さない）',
+  /return _lbNudgeSend\(_plan, ms, true\);/.test(SRC),
+  '送信側で作り直すと、ロックの中で決めた一覧と変わりうる');
 ok('⑦送信側はロック済みを受け取る', /function _lbNudgeSend\(plan, nowMs, alreadyLocked\)/.test(SRC));
 ok('⑦単独で呼ばれたときは自分で取る', /if \(!alreadyLocked\) \{\s*\n\s*try \{ _lock = LockService\.getScriptLock\(\)/.test(SRC));
 

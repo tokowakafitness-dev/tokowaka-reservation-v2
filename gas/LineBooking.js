@@ -1914,6 +1914,26 @@ function dailyHealthCheck(dryRun) {
     }
   } catch (e) {}
 
+  // ---- 解放日に「翌月の契約が無くて案内を送れなかった人」（2026-10-08）----
+  //   ★解放の判定は25日にしか走らない。その日に翌月の契約が入っていなければ、
+  //     **後から入れても案内は飛ばない。** ここで出さないと誰も気づかない。
+  //   運用：翌月の契約は24日までに入れる。入れ忘れた月はここに出る。
+  try {
+    var om = [];
+    try { om = JSON.parse(_lbProp('LB_NUDGE_OPEN_MISS') || '[]'); } catch (e) { om = []; }
+    if (Object.prototype.toString.call(om) === '[object Array]' && om.length) {
+      var last = om[0];
+      var lastN = Number(last && last.n || 0);
+      //   直近の解放日ぶんだけ見る（過去の記録は残すが、毎日は言わない）
+      if (lastN && (now.getTime() - Number(last.at || 0)) <= 10 * 86400000) {
+        add('nudge_open_miss', 'リマインド', 'warn', lastN,
+            String(last.monthKey || '') + 'の解放日に、翌月を覆う契約が無くて案内を送れなかった方が'
+            + lastN + '名います。解放日（25日）にしか判定しないため、**いま契約を入れても案内は飛びません。**'
+            + '翌月の契約は24日までに入れてください。該当者は nudgePreview の対象外一覧（nextMonthNoPlan）で分かります。');
+      }
+    }
+  } catch (e) {}
+
   // ---- 二重書き（段階3-a・2026-10-08）----
   //   ★新しいトリガーは作らない。この日次点検に相乗りする（上限20本・設計第4節）。
   //   「14日連続で食い違い0件」を待つ代わりに、**毎日照合して食い違いを見つける。**

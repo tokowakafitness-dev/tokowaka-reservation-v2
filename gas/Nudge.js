@@ -55,6 +55,11 @@ var LB_NUDGE_LOCK_WAIT_MS = 30000;
 
 // ロックが取れずに送れなかった回の記録（設定に置く。nudge_log には書かない＝上のコメント参照）。
 var LB_NUDGE_LOCK_MISS_KEY = 'LB_NUDGE_LOCK_MISS';
+// ★解放日に「翌月を覆う契約が無くて案内を送れなかった人」を記録する鍵（2026-10-08）。
+//   解放の判定は25日にしか走らない。**その日に契約が入っていなければ、後で入れても飛ばない。**
+//   記録しておかないと、誰も気づかない（点検の出力は私が見たときだけ）。
+//   日次点検（dailyHealthCheck）がこれを見て、オーナーへのメールに載せる。
+var LB_NUDGE_OPEN_MISS_KEY = 'LB_NUDGE_OPEN_MISS';
 
 var LB_NUDGE_LOG_SHEET = 'nudge_log';   // 送信記録（再送抑止の正本）
 var LB_NUDGE_LOG_COLS = 6;              // 送信日時 / 種別 / customer_id / 対象キー / 結果 / 詳細
@@ -1121,6 +1126,20 @@ function _lbNudgeLogLockMiss(where) {
   } catch (e) { Logger.log('lock_miss を記録できませんでした: ' + e.message); }
 }
 
+// ★解放日に「翌月の契約が無くて送れなかった」人数を記録する（2026-10-08）。
+//   行番号に依存しない場所（Script Properties）に置く＝lock_miss と同じ理由。
+function _lbNudgeNoteOpenMiss(monthKey, n) {
+  try {
+    if (!n) return;
+    var arr = [];
+    try { arr = JSON.parse(_lbProp(LB_NUDGE_OPEN_MISS_KEY) || '[]'); } catch (e) { arr = []; }
+    if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
+    arr.unshift({ at: new Date().getTime(), monthKey: String(monthKey || ''), n: Number(n) });
+    arr = arr.slice(0, 12);   // 直近12回（＝1年ぶん）
+    PropertiesService.getScriptProperties().setProperty(LB_NUDGE_OPEN_MISS_KEY, JSON.stringify(arr));
+  } catch (e) { Logger.log('解放日の取りこぼしを記録できませんでした: ' + e.message); }
+}
+
 // 送信の直前に1行だけ書き、その行番号を返す（必ず2行目＝いちばん上に挿入する）。
 //   書けなければ例外を投げる＝呼び出し側が送信を止める。記録できない送信は、
 //   次の実行で同じ人にもう一度送ることになるため。
@@ -1385,7 +1404,17 @@ function lbNudgeDaily(nowMs) {
     return { success: false, code: 'ALREADY_RUNNING', enabled: _lbNudgeEnabled(), sent: 0, failed: 0, deferred: 0 };
   }
   try {
-    return _lbNudgeSend(lbNudgePlanAll(ms), ms, true);   // 第3引数＝ロックは取得済み
+    var _plan = lbNudgePlanAll(ms);
+    //   ★解放日に「翌月を覆う契約が無くて送れなかった人」を記録する（2026-10-08）。
+    //     解放の判定は25日にしか走らない。その日に契約が入っていなければ、
+    //     **後から入れても案内は飛ばない。** 記録しないと誰も気づかない。
+    //     日次点検がこれを読んでオーナーへのメールに載せる。
+    try {
+      if (_plan && _plan.isOpenDay) {
+        _lbNudgeNoteOpenMiss(_plan.monthKey, Number((_plan.skipped || {}).nextMonthNoPlan || 0));
+      }
+    } catch (e) { Logger.log('解放日の取りこぼしの記録に失敗: ' + (e && e.message)); }
+    return _lbNudgeSend(_plan, ms, true);   // 第3引数＝ロックは取得済み
   } finally {
     if (lock) { try { lock.releaseLock(); } catch (e) { } }
   }
