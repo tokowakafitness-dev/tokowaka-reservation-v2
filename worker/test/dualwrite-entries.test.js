@@ -233,8 +233,9 @@ console.log('=== 10. ★待ち行列が壊れたとき（Codex関門②）===');
     /MAX_QUEUE: 80,/.test(DW),
     '200名だと全部取り置き中で16.6KB。Script Properties の上限9KBを超える');
   ok('⑩★書く直前にバイト数も見る',
-    /var LIMIT = 8500;/.test(DW) && /json\.length > LIMIT/.test(DW),
-    '人数だけでは守れない（項目が増える・顧客IDが長くなる）');
+    /var LIMIT = 8500;/.test(DW) && /_bytes\(json\) > LIMIT/.test(DW),
+    '人数だけでは守れない（項目が増える・顧客IDが長くなる）。'
+    + '文字数で測ると、日本語など1文字が複数バイトの値が入ったとき足りない');
   ok('⑩容量で捨てたぶんも記録する',
     /待ち行列が容量を超えたので古い/.test(DW) && /OVERFLOW_PROP/.test(DW));
 }
