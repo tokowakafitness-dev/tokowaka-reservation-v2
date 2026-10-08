@@ -10,14 +10,20 @@
 //   （2026-10-07）と同じ形。**「呼び出し箇所を数える」検査では意味が無い。**
 //   数えるべきものを5つに分けて固定する。
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
 const PE = readFileSync(join(ROOT, 'gas/PushToEdge.js'), 'utf8');
-const DW = readFileSync(join(ROOT, 'gas/DualWrite.js'), 'utf8');
+//   二重書きは PushToEdge.js の中の節（独立ファイルにすると反映が止まる・2026-10-08）
+const DW = (() => {
+  const a = PE.indexOf('// ===== DUALWRITE:BEGIN =====');
+  const b = PE.indexOf('// ===== DUALWRITE:END =====');
+  if (a < 0 || b < 0) throw new Error('二重書きの節が見つかりません');
+  return PE.slice(a, b);
+})();
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
@@ -266,6 +272,43 @@ console.log('=== 11. ★1回の実行が長くなりすぎないこと（Codex�
   ok('⑪★心拍は押し出しが落ちても動く',
     /try \{ pushToEdgeAll\(false\); \} catch[\s\S]{0,400}?try \{ lbDualWriteDrain\(\); \}/.test(PE),
     '同じ try に入れると、押し出しが落ちると心拍まで届かない');
+}
+
+console.log('=== 13. ★反映が入ったかを一目で確かめられること ===');
+{
+  //   2026-10-08、新しいファイル（DualWrite.js）が許可一覧に無くて反映が止まっていたのに、
+  //   出力が前日と同じで区別がつかなかった。版の印が無いと「反映したつもり」に気づけない。
+  ok('⑬版の印がある', /var LB_EDGE_BUILD = '[^']+';/.test(PE));
+  ok('⑬状態の出力に版の印を載せる', /o\.push\('版の印: ' \+ LB_EDGE_BUILD\);/.test(PE));
+  ok('⑬二重書きの状態も同じ窓口で見える', /o\.push\(lbDualWriteStatusText\(\)\);/.test(PE));
+  ok('⑬状態が読めなくても窓口ごと落ちない',
+    /状態が読めませんでした: /.test(PE),
+    '待ち行列が壊れていても、枠の状態を見る窓口そのものは使えなければならない');
+}
+
+console.log('=== 14. ★GASのファイルが反映の許可一覧と揃っていること ===');
+{
+  //   ★2026-10-08 の失敗そのもの。
+  //     新しいファイル（DualWrite.js）が許可一覧に無く、反映が「想定外のファイルが
+  //     あります」で**全体ごと止まった。** しかも出力が前日と同じで気づけなかった。
+  //     許可一覧は「増減させるときは人間のレビューが入る」ための安全装置なので
+  //     CEOの権限では直せない。**だからここで、押す前に気づけるようにする。**
+  const WF = (() => {
+    try { return readFileSync(join(ROOT, '.github/workflows/gas-deploy.yml'), 'utf8'); }
+    catch (_) { return ''; }
+  })();
+  ok('⑭反映のワークフローが読める', !!WF);
+  if (WF) {
+    const m = WF.match(/const allowed = \[([\s\S]*?)\]\.sort\(\);/);
+    ok('⑭許可一覧が読める', !!m);
+    const allowed = m ? (m[1].match(/'([^']+)'/g) || []).map((x) => x.replace(/'/g, '')) : [];
+    const pushable = (n) => /\.(js|gs|ts|html)$/i.test(n) || n === 'appsscript.json';
+    const found = readdirSync(join(ROOT, 'gas')).filter(pushable);
+    const extra = found.filter((f) => !allowed.includes(f));
+    const missing = allowed.filter((f) => !found.includes(f));
+    eq('⑭★許可一覧に無いGASファイルが無い（あると反映が全体ごと止まる）', extra, []);
+    eq('⑭★許可一覧にあるのに存在しないファイルが無い（あると本番から関数が消える）', missing, []);
+  }
 }
 
 console.log('');

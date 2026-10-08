@@ -18,7 +18,18 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const SRC = readFileSync(join(ROOT, 'gas/DualWrite.js'), 'utf8');
+//   ★二重書きは gas/PushToEdge.js の中の節（DUALWRITE:BEGIN〜END）。
+//     独立ファイルにすると、GASの反映の許可一覧（ワークフロー）と一致せず
+//     反映が全体ごと止まる（2026-10-08 に実際に止まった）。
+//     ここでは節だけを切り出して動かす（PushToEdge.js 全体を動かすには
+//     シートやカレンダーの身代わりが大量に必要になる）。
+const SRC = (() => {
+  const all = readFileSync(join(ROOT, 'gas/PushToEdge.js'), 'utf8');
+  const a = all.indexOf('// ===== DUALWRITE:BEGIN =====');
+  const b = all.indexOf('// ===== DUALWRITE:END =====');
+  if (a < 0 || b < 0) throw new Error('二重書きの節が見つかりません（印を変えたらここも直す）');
+  return all.slice(a, b);
+})();
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
