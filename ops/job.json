@@ -1,1 +1,1 @@
-{"op":"remaining","requestId":"job-20261008224145-7c5a9ffb","args":{"name":"検証用"}}
+{"op":"quotaBuild","requestId":"job-20261008224305-3a3d719b","args":{"write":true,"alloc":true,"from":"2026-09","to":"2026-12","limit":5,"maxPages":13}}
