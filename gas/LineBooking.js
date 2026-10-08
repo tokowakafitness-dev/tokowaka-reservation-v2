@@ -6476,7 +6476,16 @@ function cancelReservationLine(lineUserId, reservationId) {
         if (trId) _lbPush(trId, '【予約キャンセル】' + customerName + '様\n日時：' + s + (free ? '\n（無料取消）' : '\n（当日消化）'), 'cancel_trainer');
       }
 
-      return { success: true, penalty: !free };
+      //   ★会員IDを返す（2026-10-08・二重書きの穴を塞ぐ）。
+      //     返さないと、edgeAfterWrite は lineUserId から会員を引く。
+      //     **トレーナーが取り消したとき、それはトレーナーのIDなので会員が特定できず、
+      //     D1の引当が更新されないまま残る。** 翌朝の照合で食い違いとして出るだけで、
+      //     その間ずっと古い残数がD1に入っている。
+      //     行（r[2]=customer_id）から読めるのだから、返すのが正しい。
+      //   ★氏名は返さない（2026-10-08・Codex関門②）。
+      //     edgeAfterWrite は氏名が無ければ customerId から引き直す。
+      //     応答に不要な個人情報を増やす理由がない。
+      return { success: true, penalty: !free, customerId: String(r[2] || '') };
     }
     return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
   } finally {
@@ -6569,7 +6578,11 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
     if (trId) _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(new Date(newStartISO)), 'change_trainer');
   }
 
-  return { success: true, penalty: !free, newReservationId: made.reservationId };
+  //   ★取消と同じ理由で会員IDを返す（2026-10-08）。
+  //     トレーナーが変更したときに会員が特定できず、D1の引当が更新されない。
+  //   ★氏名は返さない（取消と同じ理由）
+  return { success: true, penalty: !free, newReservationId: made.reservationId,
+           customerId: String(r[2] || '') };
 }
 
 // ============================================================
@@ -6807,7 +6820,13 @@ function deleteRecurringPattern(lineUserId, patternId) {
     if (!re) return { success: false, code: 'NOT_FOUND' };
     re.sh.deleteRow(re.rowIndex);
   } finally { lock.releaseLock(); }
-  return { success: true };
+  //   ★会員IDを返す（2026-10-08・Codex関門②）。
+  //     固定枠の削除そのものは引当を変えない（既に作られた予約は残る）。
+  //     ただし呼び出しは customerId を渡さないので、返さないと
+  //     edgeAfterWrite が**操作したトレーナー**を会員と見てしまう。
+  //     その場合は「会員が特定できず」で止まるだけだが、入口によって
+  //     伝え方が揃っていないほうが危うい。既に cid を読んでいるのだから返す。
+  return { success: true, customerId: cid };
 }
 
 // ============================================================
