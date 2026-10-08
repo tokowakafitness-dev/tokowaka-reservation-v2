@@ -134,6 +134,27 @@ for (const fn of ['makeRecurringReservationLine', 'makeBatchReservationLine',
     'トレーナーも操作できるなら、customerId を返す必要がある');
 }
 
+console.log('=== 6. ★押し出しの元栓が切れたら気づけること ===');
+//   ★EDGE_PUSH_ON が '1' でなければ、写しの押し出しも二重書きも**丸ごと動かない。**
+//     既定は停止（安全側）なので、切れたことに誰も気づかない経路があった（2026-10-08 に発見）。
+//     切れると D1 は止まった時点の値で固まる。読み取りをD1へ向けたあとなら
+//     **顧客に古い残数を見せ続ける。**
+ok('⑥元栓の判定は1箇所', /function _edgeEnabled\(\) \{ return _edgeProp\('EDGE_PUSH_ON'\) === '1'; \}/.test(PE));
+//   ★条件式と出力を**ひと続きで**見る。別々に見ると、条件を if (false) に
+//     差し替えても両方の文字列が残って通ってしまう（実際に通った）。
+ok('⑥★日次点検で元栓を見る',
+  /if \(_lbProp\('EDGE_PUSH_ON'\) !== '1'\) \{[\s\S]{0,200}?add\('edge_push_off'/.test(LB),
+  '照合は「計算とD1が合うか」しか見ない。元栓そのものを見る必要がある');
+ok('⑥★いちばん高い重大度で出す',
+  /add\('edge_push_off', 'D1', 'high'/.test(LB));
+ok('⑥何が止まるかを書いている',
+  /写しの更新と二重書きが\*\*丸ごと止まっています。\*\*/.test(LB));
+ok('⑥直し方を書いている', /Script Properties で EDGE_PUSH_ON を 1 にしてください/.test(LB));
+
+console.log('=== 7. 日次点検の版の印 ===');
+ok('⑦版の印がある', /var LB_HEALTH_BUILD = '[^']+';/.test(LB),
+  '直したのに結果が変わらないとき、反映されていないのか本当に変わらないのかを見分ける');
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 入口が会員を伝えられるか 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

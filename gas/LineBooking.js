@@ -1840,7 +1840,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-08a 支払い待ち／翌月解放の取りこぼし／振替の件数を出す';
+var LB_HEALTH_BUILD = '2026-10-09a 押し出しの元栓／支払い待ち／翌月解放／振替の件数';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1945,6 +1945,20 @@ function dailyHealthCheck(dryRun) {
       }
       if (missN) add('nudge_lock_miss', 'リマインド', 'high', missN,
         'ロックが取れず1通も送れなかった回が' + missN + '回あります（直近 ' + missWhen + '）。その日の対象者は取りこぼしています。');
+    }
+  } catch (e) {}
+
+  // ---- 押し出しの元栓が開いているか（2026-10-08）----
+  //   ★EDGE_PUSH_ON が '1' でなければ、写しの押し出しも二重書きも**丸ごと動かない。**
+  //     既定は停止（安全側）なので、切れたことに誰も気づかない経路があった。
+  //     切れると D1 は止まった時点の値で固まり、残数の読み取りをD1へ向けたあとなら
+  //     **顧客に古い残数を見せ続ける。** いちばん高い重大度で出す。
+  try {
+    if (_lbProp('EDGE_PUSH_ON') !== '1') {
+      add('edge_push_off', 'D1', 'high', 1,
+          '🚨 押し出しの元栓（EDGE_PUSH_ON）が 1 ではありません。'
+          + '写しの更新と二重書きが**丸ごと止まっています。**'
+          + 'D1は止まった時点の値で固まります。Script Properties で EDGE_PUSH_ON を 1 にしてください。');
     }
   } catch (e) {}
 
