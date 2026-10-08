@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-06a 追いかけ送信（期間の来店者へ1人1通・文面は「先日」）';
+var LB_NUDGE_BUILD = '2026-10-08a 翌月解放は「翌月に押さえられる回数」で判断（当月の残数で判断しない）';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -809,14 +809,30 @@ function _lbNudgeFacts(m, now) {
   return { remain: remain, why: why, carry: carry, days: _lbNudgeDaysLeft(now), quota: quota, carriedIn: carriedIn };
 }
 
-// 翌月に押さえていただきたい回数（②'固定枠なしの {quota}）。翌月時点の月額残が本命、
-//   取れなければ契約の頻度へ倒す（0回分お押さえください、という文面を出さないため）。
-function _lbNudgeNextQuota(m, now, fallbackQuota) {
+// 翌月に押さえていただける回数。**翌月の月額残だけを見る。**
+//   null＝算出できない（契約が翌月を覆っていない／計算が壊れている）。
+//
+//   ★以前は「取れなければ当月の契約頻度へ倒す」作りだった（2026-10-08に廃止）。
+//     倒すと、翌月の契約が無い会員にも当月の回数で案内してしまう。
+//     しかも「0回分お押さえください」を避けるための細工だったので、
+//     **本来の答え（送らない）を隠していた。**
+//
+//   ★これが無いと顧客に嘘をつく（Codex関門③で発見）：
+//     頻度0の規則変更で、夏目さんの月額残が null → 0 になる。
+//     解放日の判定は null だけを除いていたので、0 は通ってしまう。
+//     翌月（11月）の契約が未定なのに「11月分の予約が可能になりました」、
+//     固定枠があれば「11月分を自動で取りました」と**断言する文面**が飛ぶ。
+//   → 翌月に押さえられる回数が1以上でなければ、そもそも送らない。
+function _lbNudgeNextRemain(m, now) {
   try {
     var h = _lbBuildHome(m.customerId, m.name, m.lang, _lbNudgeNextMonthDate(now).getTime());
-    if (h && h.type && h.monthlyRemaining != null && Number(h.monthlyRemaining) > 0) return Number(h.monthlyRemaining);
-  } catch (e) { Logger.log('翌月の回数算出に失敗（契約頻度で代用）: ' + e.message); }
-  return fallbackQuota;
+    if (!h || !h.type) return null;                        // 月額の契約が無い
+    if (h.monthlyRemaining == null) return null;           // 算出できない
+    return Number(h.monthlyRemaining);
+  } catch (e) {
+    Logger.log('翌月の回数算出に失敗（解放の案内は送りません）: ' + (e && e.message));
+    return null;
+  }
 }
 
 // ============================================================
@@ -846,6 +862,10 @@ function lbNudgePlanAll(nowMs, range) {
                transferUsed: 0, transferExpired: 0, transferNone: 0,
                monthAlreadySent: 0, visitATooSoon: 0, noRemain: 0, remainUnknown: 0, noEvent: 0,
                remainBroken: 0, noMonthlyPlan: 0,
+               //   ★初期値を必ず置く（2026-10-08・Codex関門③）。
+               //     置かないと ++ が NaN になり、**対象外の集計から消える。**
+               //     例外は出ないので、黙って見えなくなるのがいちばん悪い。
+               nextMonthNoPlan: 0, nextMonthNoQuota: 0,
                sentToday: 0, dupMember: 0 }
   };
 
@@ -914,12 +934,18 @@ function lbNudgePlanAll(nowMs, range) {
         if (le && le.keys[plan.monthKey]) { reasons.push('monthAlreadySent'); }
         else {
           var f2 = needFacts();
+          //   ★翌月に押さえられる回数で判断する（2026-10-08・Codex関門③）。
+          //     当月の残数で判断すると、翌月の契約が無い会員にも
+          //     「翌月分の予約が可能になりました」と送ってしまう。
+          var nextRem = _lbNudgeNextRemain(m, now);
           if (f2.remain === null) reasons.push(f2.why === 'broken' ? 'remainBroken' : 'noMonthlyPlan');
+          else if (nextRem === null) reasons.push('nextMonthNoPlan');     // 翌月を覆う契約が無い
+          else if (!(nextRem > 0)) reasons.push('nextMonthNoQuota');      // 翌月に押さえる枠が無い
           else {
             var pats = recur[m.customerId] || [];
             var label = pats.map(function (p) { return _lbRecurLabel(p.weekday, p.time, m.lang); }).join('／');
             cand.push({ kind: LB_NUDGE_KIND.MONTH_OPEN, key: plan.monthKey, pattern: label,
-                        quota: label ? 0 : _lbNudgeNextQuota(m, now, f2.quota) });   // 固定枠ありの文面に {quota} は出ない
+                        quota: label ? 0 : nextRem });   // 固定枠ありの文面に {quota} は出ない
           }
         }
       }
@@ -1145,6 +1171,8 @@ var _LB_NUDGE_SKIP_LABEL = {
   monthAlreadySent: 'その月は送信済み', visitATooSoon: '前回の来店翌日Aから日が浅い',
   noRemain: '月額残が0', remainUnknown: '残数が算出できない', noEvent: '該当する出来事なし',
   remainBroken: '🚨 残数の計算が止まっている（その会員は予約できません）', noMonthlyPlan: '月額の契約が無い（チケットのみ等・正常）',
+  nextMonthNoPlan: '翌月を覆う契約が無い（更新待ち。★25日より後に契約を入れると案内が飛びません）',
+  nextMonthNoQuota: '翌月に押さえる枠が無い（0回分の案内は出さない）',
   sentToday: '今日すでに送信済み', dupMember: '名簿に同じ会員の行が重複',
   notVisitKind: '来店以外（追いかけでは送らない）', catchUpDone: 'この期間の追いかけは送信済み'
 };

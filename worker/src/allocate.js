@@ -578,16 +578,27 @@ function _lbResvValsToSessions(vals, customerId, parseDate) {
   return out;
 }
 
-// 対象月をカバーする月額行の最大frequency（null=カバー行なし・0=freq未設定degraded）
+// 対象月をカバーする月額行の頻度（null=カバー行なし・0=その月の付与が0回）
+// ★枠を決める行と**同じ行**の頻度を返す（2026-10-08・Codex関門①）。
+//   以前は「覆っている行の頻度の最大」を返していた。ところが枠そのものは
+//   `_lbMonthlyForMonth`（開始がいちばん新しい行）で計算している。**食い違う。**
+//     例：05/01〜07/05 頻度4 と 07/05〜09/30 頻度2 が7月で重なる会員
+//         → 返す頻度は4、枠は2＋繰越
+//         → 画面の内訳が「頻度4／繰越＝枠−4」となり、**繰越が負**になる
+//   返す頻度は、実際に枠を決めた行のものでなければならない。
 function _lbMonthlyCoverage(monthlyRows, monthKey) {
-  var tOrd = _lbMonthOrd(monthKey), covFreq = null;
+  var tOrd = _lbMonthOrd(monthKey), best = null, bestFrom = null;
   for (var m = 0; m < (monthlyRows || []).length; m++) {
     var mr = monthlyRows[m];
     var fO = mr.serviceFrom != null ? _lbMonthOrd(_lbMonthKeyJst(mr.serviceFrom)) : -1e9;
     var tO = mr.serviceTo != null ? _lbMonthOrd(_lbMonthKeyJst(mr.serviceTo)) : 1e9;
-    if (tOrd >= fO && tOrd <= tO) { if (covFreq == null || mr.frequency > covFreq) covFreq = mr.frequency; }
+    if (tOrd >= fO && tOrd <= tO) {
+      if (best === null || fO > bestFrom) { best = mr; bestFrom = fO; }
+    }
   }
-  return covFreq;
+  //   同じ開始月で頻度が割れている場合は、割当器が REVIEW_REQUIRED を立てて
+  //   残数そのものを「要確認」にする（_lbMonthlyForMonth の conflict）。ここでは選ぶだけ。
+  return best ? Number(best.frequency || 0) : null;
 }
 
 // 表示用残数（純粋）。targetDateMs＝対象日（チケットは対象日に有効なpackのみ計上＝C1表示側）。
@@ -623,23 +634,33 @@ function _lbComputeRemaining(customerId, rows, sessions, nowKey, targetDateMs, c
   ticketPacks.sort(function (a, b) { return a.expireMs - b.expireMs; });   // FEFO＝先に切れる順
   var covFreq = _lbMonthlyCoverage(ent.entitlements.monthlyRows, tKey);
   var monthlyRem;
-  if (!ent.hasMonthly) monthlyRem = null;
+  if (!ent.hasMonthly) monthlyRem = null;            // ★月額契約が無い（これだけが null の意味）
   else if (covFreq == null) monthlyRem = 0;          // 契約が対象月をカバーしない
-  else if (covFreq > 0) monthlyRem = pm ? pm.monthlyRemaining : 0;
-  else monthlyRem = null;                            // freq未設定＝degraded無制限
+  else monthlyRem = pm ? pm.monthlyRemaining : 0;    // 覆っている＝枠−使った数
+  // ★頻度0を「上限なし」にしない（2026-10-08・オーナー承認）。
+  //   頻度0は「その月の付与が0回」という意思表示。
+  //     実例：9月まで月2回 → 10月は契約未定だが期間中として扱いたいので頻度0で登録し、
+  //           9月の繰越1回だけを使う（オーナー説明・会員#4537）
+  //   以前は covFreq === 0 を null（上限なし）として返し、予約可否も無条件に通していた。
+  //   **画面は「残り0」と出すのに、予約は何回でも通る**という逆向きのずれが起きていた。
+  //   枠＝頻度＋繰越。頻度0なら繰越ぶんだけ。使い切れば予約できない。
+  //   設計：ops/design/08-freq-zero-means-zero.md
   return { ok: res.ok && ent.issues.length === 0, issues: res.issues.concat(ent.issues),
     hasMonthly: ent.hasMonthly, hasTicket: ent.hasTicket,
     monthlyRem: monthlyRem, ticketTotal: ent.ticketTotal, ticketRem: ticketRem, ticketPacks: ticketPacks,
     ticketRemPair: ticketRemPair, ticketRemNormal: ticketRemNormal, pairPackMax: pairPackMax,   // ペア=人数回残（表示用・可否判定は_lbBookability）
     freq: covFreq || 0, avail: pm ? pm.quota : 0,
-    // ★契約の覆い方を3状態でそのまま返す（2026-10-07・Codex指摘）。
-    //   上の `freq: covFreq || 0` は、本来別の意味の2つを同じ0に潰している：
-    //     covFreq == null … 契約が対象月を覆っていない    → 残数0
-    //     covFreq === 0   … 覆っているが頻度が未設定      → 残数null（上限なし）
-    //   頻度欄が空の月額契約は freq=0 になり、問題としても扱われない（_lbRowsToEntitlements）。
-    //   D1に枠の行を作るとき、この区別が無いと「上限なし」の月を「残数0」として書いてしまう。
-    //   ★既存の `freq` は**変えない**（読み手が既にいる）。別の名前で足すだけ。
-    coverage: (covFreq == null) ? 'uncovered' : (Number(covFreq) > 0 ? 'limited' : 'unlimited'),
+    // ★契約の覆い方をそのまま返す（2026-10-07・Codex指摘／2026-10-08 に2状態へ）。
+    //   上の `freq: covFreq || 0` は、覆っていない（null）と頻度0を同じ0に潰す。
+    //   D1に枠の行を作るとき、その区別が無いと「覆っていない月」を「枠あり」と
+    //   書いてしまう（または逆）。だから別の名前で明示的に返す。
+    //   ★2026-10-08：頻度0は「月0回」になったので、覆っていれば常に 'limited'。
+    //     （以前は頻度0を 'unlimited' として別扱いしていた。設計08で廃止）
+    //   ★既存の `freq` は**変えない**（読み手が既にいる）。
+    //   ★2状態になった（2026-10-08）。頻度0も 'limited'（枠＝繰越ぶん）。
+    //     'unlimited' は**もう作られない**。ただしD1には以前作られた行が残りうるので、
+    //     列の定義と照合側は3状態を扱えるままにしておく（0012・quota-verify）。
+    coverage: (covFreq == null) ? 'uncovered' : 'limited',
     // ★割当の結果（2026-10-04）。枠にもチケットにも割り当たらなかった予約は
     //   残数のどこにも現れない（monthlyRem は quota - used で、used は月額に
     //   割り当たった分だけ）。だから「枠8に予約10」でも残数は0で止まり、
@@ -650,7 +671,7 @@ function _lbComputeRemaining(customerId, rows, sessions, nowKey, targetDateMs, c
 
 // 予約可否判定（純粋・C1/C3の核）：対象日時の仮セッションを割当器に投入し monthly/pack に割り当たるかで判定。
 //   excludeStartMs＝変更元の旧セッション開始（そのsessionを除外して判定＝変更の残数中立を正しく評価）。
-//   degraded（対象月カバー＆freq未設定）は無制限として probe より優先。
+//   ★頻度0を無制限として扱う例外は廃止した（2026-10-08）。枠に入るかどうかだけで決める。
 //   attendeeCount/packKind＝ペア予約の来店人数(1/2)と消化先。probeを本番と同一属性で投入するので、
 //   「合計残は足りるが単一packに2枚無い」「ペアpackが期限切れで通常packだけ残る」も正しく不可になる。
 function _lbBookability(customerId, rows, sessions, nowKey, targetDateMs, carryRate, excludeStartMs, opening, attendeeCount, packKind, carryFromContractStart) {
@@ -661,7 +682,12 @@ function _lbBookability(customerId, rows, sessions, nowKey, targetDateMs, carryR
   }
   var tKey = _lbMonthKeyJst(targetDateMs);
   var covFreq = _lbMonthlyCoverage(ent.entitlements.monthlyRows, tKey);
-  var degradedUnlimited = ent.hasMonthly && (covFreq === 0);   // 対象月カバー行あり・freq未設定
+  // ★degradedUnlimited（頻度0＝上限なし）は廃止した（2026-10-08・オーナー承認）。
+  //   頻度0は「その月の付与が0回」という意思表示。枠＝繰越ぶんだけ。
+  //   以前はここで canBook を無条件に true にしていたため、
+  //   **画面は「残り0」と出すのに予約は何回でも通る**状態だった。
+  //   予約可否は「枠に入るかどうか」の通常の判定に一本化する。
+  //   設計：ops/design/08-freq-zero-means-zero.md
   // 旧枠を除外（変更）。同時刻の複数除外を防ぐため、一致する非振替sessionを「1件だけ」除外。
   var base = [], excluded = false;
   for (var i = 0; i < (sessions || []).length; i++) {
@@ -686,7 +712,7 @@ function _lbBookability(customerId, rows, sessions, nowKey, targetDateMs, carryR
   var wantUnits = (attendeeCount == null || attendeeCount === '') ? 1 : Number(attendeeCount);
   if (!(wantUnits === 1 || wantUnits === 2) || (wantUnits === 2 && wantKind !== 'pair')) {
     return { ok: false, issues: ent.issues.concat([{ code: 'INVALID_ATTENDEE_COUNT', detail: String(attendeeCount) }]),
-      canBook: false, consumeType: '', degradedUnlimited: false, code: 'INVALID_ATTENDEE_COUNT' };
+      canBook: false, consumeType: '', code: 'INVALID_ATTENDEE_COUNT' };
   }
   var before = _allocatedCount(base);
   var probe = { sessionId: '__probe__', startAt: targetDateMs, channel: 'line',
@@ -694,18 +720,14 @@ function _lbBookability(customerId, rows, sessions, nowKey, targetDateMs, carryR
   var after = _allocatedCount(base.concat([probe]));
   // 純増判定：probe追加で割当総数がちょうど+1（＝誰も押し出さずに実際に1枠増える）なら予約可。
   //   ペアは加えて「ペアpackへ人数ぶん割り当たったこと」を要求（合計残での通過を防ぐ）。
-  var canBook, consumeType;
-  if (degradedUnlimited && wantKind !== 'pair') { canBook = true; consumeType = 'monthly'; }   // ペアはdegraded無制限の対象外（pack必須）
-  else {
-    canBook = (after.n === before.n + 1);
-    if (canBook && wantKind === 'pair') {
-      var pp = after.probe;
-      canBook = !!(pp && pp.alloc === 'pack' && (pp.units == null ? 1 : pp.units) === wantUnits && (pp.packKind || 'normal') === 'pair');
-    }
-    consumeType = canBook ? (after.probeAlloc === 'monthly' ? 'monthly' : (after.probeAlloc === 'pack' ? 'ticket' : '')) : '';
+  var canBook = (after.n === before.n + 1);
+  if (canBook && wantKind === 'pair') {
+    var pp = after.probe;
+    canBook = !!(pp && pp.alloc === 'pack' && (pp.units == null ? 1 : pp.units) === wantUnits && (pp.packKind || 'normal') === 'pair');
   }
+  var consumeType = canBook ? (after.probeAlloc === 'monthly' ? 'monthly' : (after.probeAlloc === 'pack' ? 'ticket' : '')) : '';
   return { ok: after.ok && ent.issues.length === 0, issues: ent.issues,
-    canBook: canBook, consumeType: consumeType, degradedUnlimited: (degradedUnlimited && wantKind !== 'pair') };
+    canBook: canBook, consumeType: consumeType };
 }
 
 // ═══ 段階5-2：会計projection（純粋・Node検証可・H-1境界）＝残数projectionと厳密に分ける ═══

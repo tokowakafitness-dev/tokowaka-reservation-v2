@@ -238,7 +238,7 @@ export async function quotaStatus(request, env) {
   const coverage = {};
   for (const r of (cov.results || [])) coverage[String(r.c)] = Number(r.n || 0);
 
-  // ★「上限なし扱い」の行がどれかを返す（2026-10-08）。
+  // ★旧「上限なし」の行がどれかを返す（2026-10-08）。新しくは作られない。
   //   件数だけ分かっても直せない。どの会員のどの月かが分からないと、
   //   台帳のどの行を直すのかオーナーに伝えられない。
   //   氏名は出さない（この結果は合言葉なしで読める経路に載る）。

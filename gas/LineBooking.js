@@ -3633,7 +3633,9 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
   else {
     // 「通常経路が使えるか」は履歴に月額行があるかではなく“対象月に実際に使える枠があるか”で見る
     //   （過去に終了した月額契約が残っているだけでペア単独会員の予約を拒否しないため・Codex指摘）。
-    var monthlyRoute = (disp.monthlyRem == null) ? !!disp.hasMonthly          // null＝degraded無制限（月額行あり）
+    //   ★null の意味は「月額契約が無い」だけになった（2026-10-08・頻度0は月0回へ）。
+    //     そのとき hasMonthly も false なので、この式はそのまま正しく働く。
+    var monthlyRoute = (disp.monthlyRem == null) ? !!disp.hasMonthly
       : (disp.monthlyRem > 0);
     var normalRoute = monthlyRoute || (disp.ticketRemNormal || 0) > 0;
     wantKind = (!normalRoute && (disp.ticketRemPair || 0) > 0) ? 'pair' : 'normal';
@@ -3648,8 +3650,9 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
   // ★月額(通常/モニター)契約の種別を求める（2026-10-05）。予約タイトルの種別を決めるのに使う。
   //   contractType は最新の契約行から来るため、追加チケット行が並列にあると 'チケット' になる。
   //   月額枠を消化した予約が チケット_ に化けるのを防ぐため、月額契約の種別を別に渡す。
-  //   ★degraded（頻度0の月額契約＝無制限扱い）の早期returnより前で求める。後ろに置くと、
-  //     その経路だけ contractType（＝チケット行）を見てしまい、月額の予約が チケット_ に化ける（Codex関門③）。
+  //   ★以前あった「頻度0＝無制限」の早期returnより前で求める作りにしていた。後ろに置くと、
+  //     その経路だけ contractType（＝チケット行）を見てしまい、月額の予約が チケット_ に化けた（Codex関門③）。
+  //     その早期returnは 2026-10-08 に廃止したが、求める位置はここのままでよい。
   //   選び方は findMaster（billing側）と揃える＝予約日時点で有効な月額行のうち開始日が最も新しいもの。
   //   種別を「モニター優先」で決めると、新しい通常契約があっても古いモニター契約が勝って売上内訳がずれる。
   var _monthlyType = '', _monthlyStart = -1;
@@ -3662,7 +3665,9 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
     var _st = _rr.start ? _rr.start.getTime() : 0;
     if (_st >= _monthlyStart) { _monthlyStart = _st; _monthlyType = (_mt.indexOf('モニター') >= 0) ? 'モニター' : '通常'; }
   }
-  if (b.degradedUnlimited) return { ok: true, remaining: null, consumeType: 'monthly', packKind: 'normal', monthlyType: _monthlyType };   // 移行期degraded＝無制限維持
+  //   ★「頻度0＝無制限」の早期returnは廃止した（2026-10-08・オーナー承認）。
+  //     残すと、無くした概念の分岐が残って読む人を誤らせる。
+  //     頻度0の月は枠＝繰越ぶんだけ。下の通常の計算がそれを返す。
   return { ok: true, remaining: (disp.monthlyRem || 0) + (disp.ticketRem || 0),
            monthlyRem: disp.monthlyRem, ticketRem: disp.ticketRem,
            ticketRemPair: disp.ticketRemPair, ticketRemNormal: disp.ticketRemNormal,

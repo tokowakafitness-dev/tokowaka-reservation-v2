@@ -68,7 +68,37 @@ ok('⑤失敗したら success を倒す', /res\.failed\+\+; res\.success = fals
   '監視が success だけを見ると部分失敗を見逃す');
 
 // ---------- ⑥ 版の印が更新されている ----------
-ok('⑥版の印', /LB_NUDGE_BUILD = '2026-10-06a/.test(SRC), '直したのに出力が変わらないときの切り分けに要る');
+//   ★印の値を固定する。上げ忘れるとここが落ちる＝気づける（直すたびに更新する）
+ok('⑥版の印', /LB_NUDGE_BUILD = '2026-10-08a/.test(SRC), '直したのに出力が変わらないときの切り分けに要る');
+// ---------- ⑦ ★翌月解放は「翌月に押さえられる回数」で判断する（2026-10-08・Codex関門③）----------
+//   頻度0の規則変更で、ある会員の月額残が null → 0 になった。
+//   解放日の判定は null だけを除いていたので 0 は通り、
+//   **翌月の契約が未定なのに「翌月分の予約が可能になりました」**が飛ぶところだった。
+//   固定枠があれば「翌月分を自動で取りました」と断言する文面になる。
+ok('⑦翌月の残数を見る関数がある', /function _lbNudgeNextRemain\(m, now\)/.test(SRC));
+ok('⑦★当月の頻度へ倒さない（倒すと翌月契約の無い会員に案内が飛ぶ）',
+  !/_lbNudgeNextQuota/.test(SRC),
+  '以前は翌月が取れないとき当月の契約頻度へ倒していた');
+ok('⑦月額契約が無ければ null', /if \(!h \|\| !h\.type\) return null;/.test(SRC));
+ok('⑦算出できなければ null', /if \(h\.monthlyRemaining == null\) return null;/.test(SRC));
+ok('⑦例外のときも送らない側へ倒す',
+  /解放の案内は送りません/.test(SRC) && /return null;\s*\n\s*\}\s*\n\}/.test(SRC));
+ok('⑦★翌月を覆う契約が無ければ送らない', /reasons\.push\('nextMonthNoPlan'\)/.test(SRC));
+ok('⑦★翌月に押さえる枠が無ければ送らない',
+  /else if \(!\(nextRem > 0\)\) reasons\.push\('nextMonthNoQuota'\)/.test(SRC),
+  '0回分を押さえてください、という案内を出さない');
+ok('⑦文面に載せる回数は翌月の残数', /quota: label \? 0 : nextRem/.test(SRC));
+//   ★対象外の集計に初期値とラベルが無いと、++ が NaN になり**黙って見えなくなる**
+//     （例外は出ない。Codex関門③の2回目で発見）
+ok('⑦★集計の初期値がある',
+  /nextMonthNoPlan: 0, nextMonthNoQuota: 0/.test(SRC),
+  '初期値が無いと ++ が NaN になり、対象外の集計から消える');
+ok('⑦★表示のラベルがある',
+  /nextMonthNoPlan: '[^']+'/.test(SRC) && /nextMonthNoQuota: '[^']+'/.test(SRC));
+ok('⑦ラベルに運用上の注意を書いている',
+  /25日より後に契約を入れると案内が飛びません/.test(SRC),
+  '解放日にしか判定しないので、契約の入力が遅れると届かない');
+
 ok('⑥★一覧を二重にログへ出さない',
   /lbNudgeCatchUpPreview\(FROM, TO\);   \/\/ 一覧は中でログに出る/.test(SRC),
   '同じ一覧が2回出ると、2回送ったように見えて確認を誤る');

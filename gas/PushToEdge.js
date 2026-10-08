@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-08b 二重書き（待ち行列・4つの入口・日次照合）／覆い方の内訳と該当行';
+var LB_EDGE_BUILD = '2026-10-08c 頻度0は月0回（上限なしを廃止）／二重書き／覆い方の内訳';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -2120,13 +2120,13 @@ function quotaBuildText(args) {
     o.push('── 契約の覆い方の内訳');
     o.push('   契約が覆っている（頻度あり）: ' + (cv.limited || 0) + '行');
     o.push('   契約が覆っていない（繰越だけ）: ' + (cv.uncovered || 0) + '行');
-    o.push('   🔴頻度が空＝上限なし扱い: ' + (cv.unlimited || 0) + '行'
-           + ((cv.unlimited || 0) ? '（★この契約はD1へ移すと予約が通りません。agenda.md の判断待ち）' : ''));
-    //   件数だけでは直せない。どの会員のどの月かを出す（氏名は出さない）。
+    //   ★2026-10-08 以降、'unlimited' は**新しく作られない**（頻度0は月0回＝limited）。
+    //     ここに出るのは、それより前に作られた古い行。作り直せば消える。
+    o.push('   旧「上限なし」のまま残っている行: ' + (cv.unlimited || 0) + '行'
+           + ((cv.unlimited || 0) ? '（★枠を作り直してください。古い規則の行です）' : ''));
     var cd = st.coverageDetail || {};
     if (cd.unlimited && cd.unlimited.length) {
       o.push('      該当: ' + cd.unlimited.join(' / '));
-      o.push('      → この顧客IDで `remaining` を引けば契約行が分かります');
     }
     if (cd.notSet && cd.notSet.length) {
       o.push('      覆い方が入っていない行: ' + cd.notSet.join(' / '));
