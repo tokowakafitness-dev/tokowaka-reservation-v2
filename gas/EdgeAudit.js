@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-08a 頻度0/空欄/数でない月額行の一覧（対象月で絞る）／全会員の枠の表をopから';
+var LB_AUDIT_BUILD = '2026-10-08b 締めの状態を読む／検証用の会員を作る（lbVerifySetupMember）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2709,3 +2709,103 @@ function _mqNum(v, w) {
   return (pad > 0 ? new Array(pad + 1).join(' ') : '') + t;
 }
 function _mqRule(n) { return new Array(Math.max(n, 10) + 1).join('─'); }
+
+// ============================================================
+// 検証用の会員を作る（段階3-a の最後の確認に使う）
+//
+//   ★なぜ要るのか（設計 ops/design/09-entry-verify-run.md 第4節）
+//     自然には起きない6つの入口（代行・一括・振替・未登録客・ブロック・後付け紐付け）を
+//     1回通して、二重書きが動くことを確かめたい。うち4つは会員が必要。
+//     実在の会員を使うと、**取消が失敗したときその方の残数が狂ったまま残る。**
+//     だから触っても誰も困らない会員を1人だけ作る（オーナー承認・2026-10-08）。
+//
+//   ★LINEには連携しない。通知が実在の誰かに飛ぶ経路を最初から作らない。
+//   ★氏名に「予約しないでください」と入れる。各種の一覧に出ても一目で分かる。
+//   ★何度実行しても増えない（同じ顧客IDがあれば作らない）。
+//
+//   オーナーはGASエディタでこれを1回実行するだけ。
+// ============================================================
+
+var LB_VERIFY_CUSTOMER_ID = 'CVERIFY0000001';
+var LB_VERIFY_NAME = '検証用（予約しないでください）';
+var LB_VERIFY_PHONE = '000-0000-0000';
+
+function lbVerifySetupMember() {
+  var out = [];
+  function say(s) { out.push(s); Logger.log(s); }
+  say('===== 検証用の会員を作る =====');
+  say('版: ' + LB_AUDIT_BUILD);
+  say('顧客ID: ' + LB_VERIFY_CUSTOMER_ID + ' ／ 氏名: ' + LB_VERIFY_NAME);
+  say('');
+
+  // ---- ① 名簿 ----
+  var msh = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!msh) { say('⛔ 名簿が読めません。中止します。'); return out.join('\n'); }
+  var already = false;
+  if (msh.getLastRow() >= 2) {
+    var mv = msh.getRange(2, 1, msh.getLastRow() - 1, MAP_COL.CUSTOMER_ID).getValues();
+    for (var i = 0; i < mv.length; i++) {
+      if (String(mv[i][MAP_COL.CUSTOMER_ID - 1]) === LB_VERIFY_CUSTOMER_ID) { already = true; break; }
+    }
+  }
+  if (already) {
+    say('① 名簿：すでにあります（何もしません）');
+  } else {
+    var row = [];
+    for (var c = 0; c < MAP_COL.LANG; c++) row.push('');
+    //   ★LINE_USER_ID は空のまま＝LINE未連携。通知が飛ぶ経路を作らない
+    row[MAP_COL.CUSTOMER_ID - 1]   = LB_VERIFY_CUSTOMER_ID;
+    row[MAP_COL.NAME - 1]          = LB_VERIFY_NAME;
+    row[MAP_COL.PHONE - 1]         = LB_VERIFY_PHONE;
+    row[MAP_COL.CONTRACT_TYPE - 1] = '通常';
+    row[MAP_COL.CONTRACT_STAT - 1] = 'active';
+    row[MAP_COL.AUTH_STATE - 1]    = 'verified';   // 照合済み扱い（残数の計算に乗せるため）
+    row[MAP_COL.NOTE - 1]          = '検証用。段階3-aの入口確認に使う。予約を入れないでください。';
+    msh.getRange(msh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+    say('① 名簿：1行追加しました（LINE未連携・照合済み扱い）');
+  }
+
+  // ---- ② 契約 ----
+  var csh = null;
+  try { csh = _lbContractSheet(); } catch (e) { csh = null; }
+  if (!csh || csh.getLastRow() < 1) { say('⛔ 契約シートが読めません。名簿だけ作りました。'); return out.join('\n'); }
+  var headers = csh.getRange(1, 1, 1, csh.getLastColumn()).getValues()[0];
+  var cols = _lbContractCols(headers);
+  if (cols.name < 0 || cols.method < 0 || cols.freq < 0 || cols.start < 0) {
+    say('⛔ 契約シートの見出しが読めません（お客様名／残数方式／頻度／開始日）。中止します。');
+    return out.join('\n');
+  }
+  var hasContract = false;
+  if (csh.getLastRow() >= 2) {
+    var cv = csh.getRange(2, 1, csh.getLastRow() - 1, csh.getLastColumn()).getValues();
+    for (var j = 0; j < cv.length; j++) {
+      if (String(cv[j][cols.name] || '').indexOf('検証用') >= 0) { hasContract = true; break; }
+    }
+  }
+  if (hasContract) {
+    say('② 契約：すでにあります（何もしません）');
+  } else {
+    var crow = [];
+    for (var k = 0; k < csh.getLastColumn(); k++) crow.push('');
+    crow[cols.name]   = LB_VERIFY_NAME;
+    crow[cols.type]   = '通常';
+    crow[cols.method] = '月額';
+    //   ★頻度8＝多めに持たせる。振替の下準備で1回消費するため（設計09 第5節）
+    crow[cols.freq]   = 8;
+    //   ★開始は今月の初日。終了は空＝継続（検証のたびに直さなくて済む）
+    var now = new Date();
+    crow[cols.start]  = Utilities.formatDate(new Date(now.getFullYear(), now.getMonth(), 1),
+                                             SETTINGS.TIMEZONE, 'yyyy/MM/dd');
+    if (cols.phone >= 0) crow[cols.phone] = LB_VERIFY_PHONE;
+    //   ★単価を入れる。入れないと、もし将来この月を締めたとき
+    //     MONTHLY_PRICE_MISSING で月全体が止まる（検証用の1名が全員を止める）
+    if (cols.ticketPrice >= 0) crow[cols.ticketPrice] = 10800;
+    csh.getRange(csh.getLastRow() + 1, 1, 1, crow.length).setValues([crow]);
+    say('② 契約：1行追加しました（月額・頻度8・開始=今月初日・終了なし・単価10800）');
+  }
+
+  say('');
+  say('次：lbVerifyEntriesRun() で6つの入口を通します（まだ実装中）。');
+  say('※ この会員は各種の一覧に1名増えます。氏名で見分けられます。');
+  return out.join('\n');
+}
