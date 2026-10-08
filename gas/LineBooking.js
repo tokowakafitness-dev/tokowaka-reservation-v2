@@ -1428,6 +1428,11 @@ function _lbCollectPace(freshContracts) {
   var elapsedPct = Math.round(dayNow / daysInMonth * 100);
 
   var monthly = [], ticket = [], done = [], checked = 0, members = 0;
+  //   ★支払い待ち（枠を超えて押さえた予約）を**この走査の中で**数える（2026-10-08）。
+  //     別に走査を足すと、全会員の契約と予約をもう一度読むことになる
+  //     （refreshPaceBoard は33名で60秒級・契約の全読込も実測59秒・Codex関門②）。
+  //     home には既に overageCount がある。それを足すだけで済む。
+  var pendingPay = { members: 0, sessions: 0, names: [] };
   var broken = [], noContract = [], typeCount = { monthly: 0, ticket: 0, both: 0 };
   var ticketDone = 0;
   var mapSh = _lbSheet(LINE_BOOKING.MAP_SHEET);
@@ -1443,6 +1448,14 @@ function _lbCollectPace(freshContracts) {
       if (h && h.reviewRequired) { broken.push(nm); continue; }        // 残数を確定できない＝データ不備（debugDataHealthの担当）
       if (!h || !h.type) { noContract.push(nm); continue; }            // 契約が見つからない＝退会・契約切れ・氏名不一致
       checked++;
+      //   支払い待ち：枠を超えて押さえた予約。異常ではなく、支払い確認後の
+      //   チケット付与で相殺する運用（オーナー説明 2026-10-08）。
+      //   ★ただし相殺しないまま月が終わると、1名でも未裁定で月全体が締まらない。
+      var _ovN = Number((h && h.overageCount) || 0);
+      if (_ovN > 0) {
+        pendingPay.members++; pendingPay.sessions += _ovN;
+        if (pendingPay.names.length < 20) pendingPay.names.push(nm + '(' + _ovN + '件)');
+      }
       if (h.type === 'monthly') typeCount.monthly++;
       else if (h.type === 'ticket') typeCount.ticket++;
       else if (h.type === 'both') typeCount.both++;
@@ -1479,7 +1492,9 @@ function _lbCollectPace(freshContracts) {
            monthly: monthly, ticket: ticket, done: done.length, checked: checked,
            // 内訳（合計が合うように、会員数と行数を分けて持つ）
            members: members, typeCount: typeCount, monthlyDone: done.length, ticketDone: ticketDone,
-           broken: broken, noContract: noContract };
+           broken: broken, noContract: noContract,
+           //   支払い待ち（枠を超えて押さえた予約）。この走査の中で数えた
+           pendingPay: pendingPay };
 }
 
 // GASエディタから実行して全体を眺める（読み取りのみ・契約は最新を読む）
@@ -1598,7 +1613,11 @@ function refreshPaceBoard() {
       elapsedPct: r.month.elapsedPct, daysLeft: r.month.daysLeft, checked: r.checked, done: r.done,
       members: r.members, typeCount: r.typeCount, monthlyDone: r.monthlyDone, ticketDone: r.ticketDone,
       brokenCount: r.broken.length, brokenNames: r.broken.slice(0, 20),
-      noContractCount: r.noContract.length, noContractNames: r.noContract.slice(0, 20)
+      noContractCount: r.noContract.length, noContractNames: r.noContract.slice(0, 20),
+      //   支払い待ち（枠を超えて押さえた予約）。日次点検がここから読む＝走査は1回だけ
+      pendingPayMembers: (r.pendingPay || {}).members || 0,
+      pendingPaySessions: (r.pendingPay || {}).sessions || 0,
+      pendingPayNames: (r.pendingPay || {}).names || []
     }));
   } catch (e) { Logger.log('pace metaの保存に失敗: ' + e.message); }
   Logger.log('refreshPaceBoard: ' + rows.length + '行を書き出し（' + stamp + '）');
@@ -1913,6 +1932,44 @@ function dailyHealthCheck(dryRun) {
         'ロックが取れず1通も送れなかった回が' + missN + '回あります（直近 ' + missWhen + '）。その日の対象者は取りこぼしています。');
     }
   } catch (e) {}
+
+  // ---- 支払い待ち（枠を超えて押さえた予約）が月末まで残っていないか（2026-10-08）----
+  //   ★オーナーの運用：未登録顧客の予定を作るとき、既存顧客の未払いチケット分を先に押さえる。
+  //     次回のセッションで支払いをいただき、トレーナーが確認してからチケットを付与して相殺する。
+  //   ★異常ではない。**ただし締めは待ってくれない。**
+  //     相殺しないまま月が終わると、1名でも未裁定で**月全体が締まらない**（FAIL_CLOSED）。
+  //     月初に締めようとして初めて止まるのでは遅い。月末が近いうちに出す。
+  //   ★数は消化ペースの集計（上で既に走った refreshPaceBoard）から読む。
+  //     別に走査を足すと全会員の契約と予約をもう一度読む（33名で60秒級）。
+  try {
+    var _lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    var _daysLeft = _lastDay - now.getDate();
+    var _ppM = Number(meta.pendingPayMembers || 0);
+    var _ppS = Number(meta.pendingPaySessions || 0);
+    if (_daysLeft <= 7 && _ppM > 0) {
+      //   ★3日以内は件数が同じでも知らせる（2026-10-08・Codex関門②）。
+      //     悪化の判定は「同じ名前の件数が増えたか」だけを見るので、
+      //     warn のまま件数が変わらないと high のメールが飛ばない。
+      //     締まらなくなる予告は、件数ではなく**日付で**強くする必要がある。
+      //     名前を分けることで「増えた」と判定され、必ず知らせる。
+      var _ppKey = (_daysLeft <= 3) ? 'pending_payment_overage_urgent' : 'pending_payment_overage';
+      add(_ppKey, '請求', (_daysLeft <= 3 ? 'high' : 'warn'), _ppM,
+          '枠を超えて押さえた予約（支払い待ち）が ' + _ppS + '件 / ' + _ppM + '名に残っています'
+          + '（月末まで' + _daysLeft + '日）。支払いを確認してチケットを付与すれば相殺されます。'
+          + '**このまま月が終わると、1名でも残っていれば月全体が締まりません。**'
+          + ' 該当：' + (meta.pendingPayNames || []).slice(0, 8).join('、'));
+    }
+    //   ★集計そのものが走っていなければ、0件と報告しない（2026-10-08・Codex関門②）。
+    //     「読めなかった」を「支払い待ちは無い」と言うと、締まらなくなる直前に気づけない。
+    if (_daysLeft <= 7 && meta.pendingPayMembers == null) {
+      add('pending_payment_unknown', '請求', 'high', 1,
+          '支払い待ちの件数が分かりません（消化ペースの集計が走っていない）。'
+          + '月末まで' + _daysLeft + '日。`remaining` の args.quotaTable で手で確かめてください。');
+    }
+  } catch (e) {
+    add('pending_payment_check_fail', '請求', 'high', 1,
+        '支払い待ちの点検そのものが失敗しました: ' + (e && e.message));
+  }
 
   // ---- 解放日に「翌月の契約が無くて案内を送れなかった人」（2026-10-08）----
   //   ★解放の判定は25日にしか走らない。その日に翌月の契約が入っていなければ、

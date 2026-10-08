@@ -2585,8 +2585,21 @@ function _monthlyQuotaTableText(nowMs) {
         if (_ps.monthKey === nowKey) _unCur++;
         else if (_ps.monthKey === nextKey) _unNext++;
       }
-      if (_unCur > 0) flags.push('今月が' + _unCur + '件超過');
-      if (_unNext > 0) flags.push('翌月が' + _unNext + '件超過');
+      //   ★これは異常ではなく「支払い待ち」（2026-10-08・オーナー説明）。
+      //     未登録顧客の予定を作るとき、既存顧客の未払いチケット分を先に押さえる運用がある。
+      //     次回のセッションで支払いをいただき、**トレーナーが確認してからチケットを付与**して
+      //     この超過を相殺する。だから「超過」だけ出すと異常に見えてしまう。
+      //   ★ただし締めは待ってくれない。相殺しないまま月が終わると
+      //     1名でも未裁定で**月全体が締まらない**（_lbCloseMonth の FAIL_CLOSED）。
+      //     だから「支払い待ち」と出しつつ、月末が近いときは強く出す。
+      //   月末まであと何日か（締まらなくなる前に強く出すため）
+      var _dEnd = new Date(nowMs);
+      var _dLeft = Math.max(0, new Date(_dEnd.getFullYear(), _dEnd.getMonth() + 1, 0).getDate() - _dEnd.getDate());
+      if (_unCur > 0) {
+        flags.push('支払い待ち' + _unCur + '件（チケット付与で相殺）'
+                   + (_dLeft <= 7 ? '／🚨月末まで' + _dLeft + '日・このままだと月全体が締まりません' : ''));
+      }
+      if (_unNext > 0) flags.push('翌月の支払い待ち' + _unNext + '件');
     }
     var line = _mqPad(nm, 8) + _mqNum(freq, 5) + _mqNum(carry, 5)
              + _mqNum(avail, 5) + _mqNum(curShow, 5) + _mqNum(rem, 5)
