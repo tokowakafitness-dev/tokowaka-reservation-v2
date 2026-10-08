@@ -1835,6 +1835,12 @@ function refreshContractForApp(lineUserId) {
 //     本当に新しい問題が埋もれる。件数が減った/横ばいなら静かにしている。
 //   トリガーは setupLineTriggers（毎日 6:30＝ペース集計の直後）。
 // ============================================================
+// ★日次点検の版の印（2026-10-08）。
+//   点検の内容を直したのに結果が変わらないとき、「反映されていない」のか
+//   「本当に変わらない」のかを見分けられないと切り分けられない。
+//   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
+//   **直したらここを上げる。**
+var LB_HEALTH_BUILD = '2026-10-08a 支払い待ち／翌月解放の取りこぼし／振替の件数を出す';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1842,6 +1848,7 @@ function dailyHealthCheck(dryRun) {
   var tz = SETTINGS.TIMEZONE, now = new Date();
   var stamp = Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm');
   var issues = [];   // { key, area, severity, count, detail }
+  Logger.log('dailyHealthCheck 版: ' + LB_HEALTH_BUILD);
   function add(key, area, severity, count, detail) {
     if (!count) return;
     issues.push({ key: key, area: area, severity: severity, count: count, detail: String(detail || '').slice(0, 300) });
@@ -1863,6 +1870,14 @@ function dailyHealthCheck(dryRun) {
     add('resv_dup_slot', '予約', 'high', dh.dupSlot.length, '同一日時に2行＝実質の重複: ' + dh.dupSlot.join(' / '));
     add('resv_unlinked', '予約', 'warn', dh.unlinked, '未紐付け＝消化が計上されない: ' + (dh.unlinkedList || []).join(' / '));
     add('resv_future', '予約', 'info', dh.future.length, '予約窓より先の予約: ' + dh.future.join(' / '));
+    //   ★振替が起きたかを出す（2026-10-08・段階3-aの最後の条件）。
+    //     振替は会員本人のLINEからしか入口がなく、私が作って試せない。
+    //     自然に起きるのを待つしかないので、**起きたかどうか**を知る必要がある。
+    //     起きていて、かつD1の照合が一致していれば、その条件は満たされたと言える。
+    //     0件のうちは「まだ確認できていない」。害ではないので info で出す。
+    add('transfer_seen', '予約', 'info', Number(dh.transferAll || 0),
+        '振替で取られた予約が累計' + Number(dh.transferAll || 0) + '件（今月' + Number(dh.transferThisMonth || 0) + '件）。'
+        + '★二重書きの最後の確認（振替の入口）は、これが1件以上あって照合が一致していれば満たされます。');
   } catch (e) { add('datahealth_fail', '予約', 'high', 1, '予約データの点検に失敗: ' + e.message); }
 
   // ---- カレンダーと台帳の整合 ----
@@ -2144,6 +2159,14 @@ function debugDataHealth() {
   try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e) {}
   var out = ['=== 予約データの健康診断 ' + Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm') + '（読み取りのみ）==='];
   var dupEv = [], dupSlot = [], future = [];
+  //   ★振替の件数を数える（2026-10-08）。
+  //     段階3-a の最後の条件に「振替が1件起きた後の照合が一致」がある。
+  //     振替は会員本人のLINEからしか入口がなく、私が作って試せない
+  //     （検証用の会員はLINE未連携にしてある。通知が実在の誰かに飛ぶ経路を作らないため）。
+  //     だから**自然に起きるのを待つ**。待つには「起きたかどうか」が分からないと困る。
+  //     0件なら「まだ確認できていない」と分かる。読み取りは既にある走査に相乗りする。
+  var transferAll = 0, transferThisMonth = 0;
+  var _tmKey = _lbMonthKeyJst(now.getTime());
 
   // ---- ① 台帳の重複（残数の多重消化）----
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
@@ -2170,6 +2193,11 @@ function debugDataHealth() {
         else seenSlot[k2] = true;
       }
       // c) 予約窓より先の未来（固定枠の先取り等。想定外なら要確認）
+      //   入口（col9=channel）が transfer の行＝振替で取られた予約
+      if (String(v[i][9] || '') === 'transfer') {
+        transferAll++;
+        if (d && _lbMonthKeyJst(d.getTime()) === _tmKey) transferThisMonth++;
+      }
       if (d && d > horizon && st === 'confirmed') future.push(nm + ' ' + Utilities.formatDate(d, tz, 'M/d HH:mm') + '（担当' + String(v[i][5] || '') + '／channel=' + String(v[i][9] || '不明') + '）');
     }
   }
@@ -2226,7 +2254,8 @@ function debugDataHealth() {
   var txt = out.join('\n');
   Logger.log(txt);
   _LB_DATA_HEALTH_TEXT = txt;   // ★文字列でも取れるようにする（作業依頼から中身を見るため）
-  return { dupEv: dupEv, dupSlot: dupSlot, broken: broken, future: future, noContract: noContract, unlinked: unlinked, unlinkedList: unlinkedList, checked: checked };
+  return { dupEv: dupEv, dupSlot: dupSlot, broken: broken, future: future, noContract: noContract, unlinked: unlinked, unlinkedList: unlinkedList, checked: checked,
+           transferAll: transferAll, transferThisMonth: transferThisMonth };
 }
 
 // 健康診断の結果を文字列で返す（読み取りだけ）。

@@ -109,6 +109,30 @@ ok('⑥一度も締めていない場合をはっきり書く',
   '締めを回していないなら「月全体が締まらない」は現に起きていない');
 ok('⑥締めは手で実行するものだと書いてある', /締めは手で実行するものです/.test(EA));
 
+console.log('=== 6-b. 日次点検に版の印がある ===');
+//   ★直したのに結果が変わらないとき、「反映されていない」のか
+//     「本当に変わらない」のかを見分けられないと切り分けられない。
+//     2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
+ok('⑥-b 版の印がある', /var LB_HEALTH_BUILD = '[^']+';/.test(LB));
+ok('⑥-b 実行時にログへ出す', /Logger\.log\('dailyHealthCheck 版: ' \+ LB_HEALTH_BUILD\)/.test(LB));
+
+console.log('=== 7. 振替が起きたかを知れる（段階3-aの最後の条件）===');
+//   ★振替は会員本人のLINEからしか入口がなく、私が作って試せない
+//     （検証用の会員はLINE未連携。通知が実在の誰かに飛ぶ経路を作らないため）。
+//     自然に起きるのを待つしかない。待つには「起きたかどうか」が分からないと困る。
+ok('⑦入口が transfer の行を数える',
+  /String\(v\[i\]\[9\] \|\| ''\) === 'transfer'/.test(LB));
+ok('⑦累計と今月を分けて返す',
+  /transferAll: transferAll, transferThisMonth: transferThisMonth/.test(LB));
+ok('⑦★既にある走査に相乗りする（読み取りを増やさない）',
+  /var transferAll = 0, transferThisMonth = 0;/.test(LB)
+  && !/getRange\(2, 1, [^)]*\)\.getValues\(\);\s*\n\s*var transferAll/.test(LB));
+ok('⑦日次点検に出る', /transfer_seen/.test(LB));
+ok('⑦★条件の達成の仕方を書いてある',
+  /1件以上あって照合が一致していれば満たされます/.test(LB),
+  '数字だけ出しても、それが何の条件なのか後から分からない');
+ok('⑦害ではないので info', /add\('transfer_seen', '予約', 'info'/.test(LB));
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 支払い待ちの扱い 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
