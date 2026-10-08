@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-08b 締めの状態を読む／検証用の会員を作る（lbVerifySetupMember）';
+var LB_AUDIT_BUILD = '2026-10-09a 締めの状態／検証用の会員／日次点検をいま回す（healthCheckText）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2491,6 +2491,44 @@ function closingStatusText() {
   out.push('　 ・締めの売上計算では**対象外**（未割当は数えない）');
   out.push('　 ・カレンダー経路からは**外さない**＝旧billingで請求する（振替＝手動請求と同じ扱い）');
   out.push('　 ＝二重計上も計上漏れも起きない。起きるのは「その月の締めが実行できない」ことだけ。');
+  var t = out.join('\n');
+  Logger.log(t);
+  return t;
+}
+
+// 日次点検を走らせて結果を返す（読み取りだけ・メールは送らない）。
+//   ★CEOが作業依頼から点検を回せるようにする（2026-10-09）。
+//     いままでは点検の結果を見る手段が「オーナーのメール」だけだった。
+//     悪化したときしか届かないので、**いまの状態**を知りたいときに読めなかった。
+//   dryRun で呼ぶのでメールは飛ばず、記録も残さない。
+function healthCheckText() {
+  var out = [];
+  out.push('===== 日次点検（いま回した結果・メールは送っていません）=====');
+  out.push('版: ' + LB_AUDIT_BUILD);
+  out.push('');
+  var r = null;
+  try { r = dailyHealthCheck(true); }
+  catch (e) { out.push('⛔ 点検が落ちました: ' + (e && e.message)); var t0 = out.join('\n'); Logger.log(t0); return t0; }
+  out.push('点検時刻: ' + ((r && r.stamp) || '?'));
+  var iss = (r && r.issues) || [];
+  if (!iss.length) {
+    out.push('✅ 問題なし');
+  } else {
+    //   重い順に並べる（high → warn → info）
+    var order = { high: 0, warn: 1, info: 2 };
+    iss.sort(function (a, b) { return (order[a.severity] == null ? 3 : order[a.severity]) - (order[b.severity] == null ? 3 : order[b.severity]); });
+    var nH = 0, nW = 0;
+    for (var i = 0; i < iss.length; i++) {
+      if (iss[i].severity === 'high') nH++; else if (iss[i].severity === 'warn') nW++;
+    }
+    out.push('重い ' + nH + '件 ／ 注意 ' + nW + '件 ／ 全 ' + iss.length + '件');
+    out.push('');
+    for (var j = 0; j < iss.length; j++) {
+      var x = iss[j];
+      var mark = (x.severity === 'high') ? '🚨' : (x.severity === 'warn' ? '⚠️' : '　');
+      out.push(mark + ' [' + x.area + '] ' + x.count + '件 … ' + x.detail);
+    }
+  }
   var t = out.join('\n');
   Logger.log(t);
   return t;

@@ -174,6 +174,24 @@ ok('⑥-b ★二重登録も出す（同じ人に2通届く）',
   /trigger_dup/.test(LB) && /_have\[_k\] > 1/.test(LB));
 ok('⑥-b 点検そのものが失敗しても気づける', /trigger_check_fail/.test(LB));
 
+console.log('=== 6-c. 点検の結果を、いま読めること ===');
+//   ★いままで点検の結果は「悪化したときのオーナーのメール」でしか見えなかった。
+//     いまの状態を知りたいときに読めないと、確認が遅れる（CEOが回せない）。
+{
+  const EA2 = readFileSync(join(ROOT, 'gas/EdgeAudit.js'), 'utf8');
+  const EJ = readFileSync(join(ROOT, 'gas/EdgeJob.js'), 'utf8');
+  ok('⑥-c いま回す関数がある', /function healthCheckText\(\)/.test(EA2));
+  ok('⑥-c ★メールを送らない・記録も残さない（dryRun で呼ぶ）',
+    /dailyHealthCheck\(true\)/.test(EA2),
+    '確認のたびにメールが飛ぶと、本物の警告が埋もれる');
+  ok('⑥-c 重い順に並べる', /order = \{ high: 0, warn: 1, info: 2 \}/.test(EA2));
+  ok('⑥-c 点検が落ちても結果を返す', /⛔ 点検が落ちました: /.test(EA2));
+  ok('⑥-c ★新しいopを足さない（既存の窓口に寄せる）',
+    /args && args\.health\) return _ejScrub\(healthCheckText\(\)\)/.test(EJ)
+    && /case 'remaining'/.test(EJ),
+    '新しいopは許可一覧3箇所の更新がオーナー作業になる');
+}
+
 console.log('=== 7. 日次点検の版の印 ===');
 ok('⑦版の印がある', /var LB_HEALTH_BUILD = '[^']+';/.test(LB),
   '直したのに結果が変わらないとき、反映されていないのか本当に変わらないのかを見分ける');
