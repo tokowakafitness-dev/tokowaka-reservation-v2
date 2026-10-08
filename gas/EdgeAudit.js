@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-04a 版の印/契約の二重/月額会員の残数一覧/連続セッションの実測/過去のある時点の残数の再現';
+var LB_AUDIT_BUILD = '2026-10-08a 頻度0/空欄/数でない月額行の一覧（対象月で絞る）／全会員の枠の表をopから';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -80,8 +80,55 @@ function auditForEdgeMigrationText() {
     var oldest = null, names = {}, dupName = 0;
     // 終了日が空の行を、あとで一覧にするために控える（★行番号で示す＝氏名を出さずに直せる）
     var openEnded = [], rowsByName = {};
+    //   ★頻度0／空欄／数でない の月額行を控える（2026-10-08・関門③の確認用）。
+    //     頻度0は「その月の付与が0回」＝枠は繰越ぶんだけ（設計08）。
+    //     空欄は意思表示と区別できないので、同じ0として扱われる。
+    //     **予約可否が変わる会員はここに載る人だけ**なので、反映の前に必ず数える。
+    //
+    //   ★2つの取り違えを直した（Codex関門②）：
+    //     ① 月額かどうかの判定を**割当器と同じ形**にする。
+    //        割当器は `method.indexOf('チケット') || type.indexOf('チケット')` でチケットと見る
+    //        （_lbRowsToEntitlements の isT）。「月額」だけ見ると、方式が月額＋チケットの行や
+    //        種別にチケットを含む行を**月額として誤って拾う。**
+    //     ② **対象月（当月・翌月）を覆う行だけ**を数える。
+    //        全履歴から拾うと、終わった契約の頻度0行まで数えて影響範囲を過大に見せる。
+    var freqZero = [], freqZeroRows = 0;
+    var _nowMs0 = (typeof nowMs === 'number') ? nowMs : Date.now();
+    var _m0 = _lbMonthKeyJst(_nowMs0);
+    var _m1 = (function () { var d = new Date(_nowMs0); d.setMonth(d.getMonth() + 1);
+                             return _lbMonthKeyJst(d.getTime()); })();
     for (var i = 0; i < vals.length; i++) {
       var r = vals[i];
+      //   ★氏名が空の行も拾う（下の continue より前に置く）。
+      //     氏名が空でも契約行としてシートに在り、直すべき対象だから。
+      var _mth = String(cols.method >= 0 ? r[cols.method] : '');
+      var _typ = String(cols.type >= 0 ? r[cols.type] : '');
+      var _isT = (_mth.indexOf('チケット') >= 0) || (_typ.indexOf('チケット') >= 0);   // 割当器と同じ判定
+      if (!_isT) {
+        var _frqS = String((cols.freq >= 0 ? r[cols.freq] : '') == null ? ''
+                           : (cols.freq >= 0 ? r[cols.freq] : '')).replace(/^\s+|\s+$/g, '');
+        var _zero = (_frqS === '') || (isFinite(Number(_frqS)) && Number(_frqS) === 0);
+        var _bad  = (_frqS !== '') && !isFinite(Number(_frqS));   // 'abc' 等＝数でない
+        if (_zero || _bad) {
+          freqZeroRows++;
+          //   対象月（当月・翌月）を覆っているか。覆っていなければ影響しない
+          var _st0 = cols.start >= 0 ? _lbParseResvDate(r[cols.start]) : null;
+          var _en0 = cols.end >= 0 ? _lbParseResvDate(r[cols.end]) : null;
+          var _f0 = (_st0 && !isNaN(_st0.getTime())) ? _lbMonthKeyJst(_st0.getTime()) : '0000-00';
+          var _t0 = (_en0 && !isNaN(_en0.getTime())) ? _lbMonthKeyJst(_en0.getTime()) : '9999-99';
+          var _cov = [];
+          if (_f0 <= _m0 && _m0 <= _t0) _cov.push(_m0);
+          if (_f0 <= _m1 && _m1 <= _t0) _cov.push(_m1);
+          if (_cov.length) {
+            freqZero.push({ row: i + 2, blank: (_frqS === ''), bad: _bad, raw: _frqS,
+                            noName: !String(cols.name >= 0 ? r[cols.name] : '').replace(/^\s+|\s+$/g, ''),
+                            type: _typ, months: _cov.join('・'),
+                            start: cols.start >= 0 ? r[cols.start] : '',
+                            end: cols.end >= 0 ? r[cols.end] : '',
+                            cap: String(cols.carryCap >= 0 ? r[cols.carryCap] : '') });
+          }
+        }
+      }
       var nm = String(cols.name >= 0 ? r[cols.name] : '').replace(/^\s+|\s+$/g, '');
       if (!nm) { noName++; continue; }
       names[nm] = (names[nm] || 0) + 1;
@@ -116,6 +163,30 @@ function auditForEdgeMigrationText() {
     say('  顧客ID列 … ' + (cols.custId >= 0 ? ('あり／空欄 ' + noCustId + '件') : '（strictモードが off のため未使用）'));
     say('  pack_id列 … ' + (cols.packId >= 0 ? ('あり／チケット行で空欄 ' + noPackId + '件') : '（strictモードが off のため未使用）'));
     say('  同じ氏名が複数行にある人 … ' + dupName + '名（契約更新なら正常。別人の同名なら要注意）');
+
+    // ★頻度0／空欄の月額行（2026-10-08・設計08の確認用）。
+    //   頻度0は「その月の付与が0回」＝枠は繰越ぶんだけ。使い切れば予約できない。
+    //   **この規則を入れて予約可否が変わる会員は、ここに載る行を持つ人だけ。**
+    //   空欄は意思表示（0）と区別できないので同じ扱いになる＝0を入れて明示してほしい。
+    say('');
+    say('  ■ 頻度0／空欄の月額行（' + _m0 + '・' + _m1 + ' を覆うもの） ' + freqZero.length + '件'
+        + '　※全履歴では ' + freqZeroRows + '件'
+        + (freqZero.length ? '（★枠は繰越ぶんだけになります。行番号で示します）' : '（なし）'));
+    for (var fz = 0; fz < freqZero.length; fz++) {
+      var z = freqZero[fz];
+      say('    ' + z.row + '行目：'
+          + (z.bad ? ('🚨頻度が数でない「' + z.raw + '」') : (z.blank ? '🔴頻度が空欄' : '頻度0'))
+          + (z.noName ? ' / 🔴お客様名も空' : '')
+          + ' / ' + (z.type || '(種別なし)')
+          + ' / 覆う月 ' + z.months
+          + ' / 期間 ' + String(z.start || '(なし)') + '〜' + String(z.end || '(なし)')
+          + ' / 繰越上限 ' + (z.cap || '(既定)'));
+    }
+    if (freqZero.length) {
+      say('    → 空欄の行は 0 を入れてください（意図した0なのか入力漏れなのか区別できません）');
+      say('    → 頻度が数でない行は、残数の計算が NaN になります。必ず直してください');
+      say('    → この行を持つ会員の枠・消化・超過は `remaining` の args.quotaTable で一覧できます');
+    }
 
     // ★終了日が空の行の一覧。
     //   終了日が空＝ずっと有効。古い行の終了日を入れ忘れると、新旧2つの契約が
@@ -712,19 +783,17 @@ function _contractOddities(rows) {
                + '。月額として扱うのでチケット' + tick + '枚は残数に入りません。'
                + '月額のみなら枚数を空に、月額＋チケットなら方式を見直してください。');
     }
-    // ①-2 ★月額方式なのに頻度が空 → システムは「上限なし」として扱う（2026-10-07）
-    //   Allocate.js は `var freq = cc.freq >= 0 ? Number(r[cc.freq] || 0) : 0;` とするだけで、
-    //   空欄を問題として扱わない。その結果：
-    //     予約画面    受け付ける（degradedUnlimited として許可）
-    //     残数の表示  「上限なし」と出る
-    //     消化の記録  どこにも残らない（割当器は unallocated / NO_ENTITLEMENT にする）
-    //   D1を正本にすると、記録が残らない予約は作れない＝この予約は拒まれる。
-    //   **入力漏れなら、ここで気づけないと黙って上限なしになる。**
+    // ①-2 ★月額方式なのに頻度が空 → 0 として扱われる（2026-10-08 に規則を変更）
+    //   Allocate.js は `Number(r[cc.freq] || 0)` なので、空欄と 0 を同じ 0 として読む。
+    //   頻度0は「その月の付与が0回」＝枠は繰越ぶんだけ（オーナー承認・設計08）。
+    //   **意思表示としての0と、入力漏れの空欄を区別できない。**
+    //   予約は止めない（事故で空欄になったとき、正当な会員を拒むほうが害が大きい）。
+    //   そのかわりここで指摘して、直せるようにする。
     var freqBlank = (cell(rr, 'freq') === '' || cell(rr, 'freq') == null);
     if (method.indexOf('月額') >= 0 && freqBlank) {
       out.push(tag + ' 🔴残数方式=月額 なのに頻度が空欄です。'
-               + 'いまは「上限なし（何回でも予約できる）」として扱われ、消化の記録も残りません。'
-               + '入力漏れなら頻度を入れてください。');
+               + '頻度0と同じ扱いになり、その月の枠は繰越ぶんだけになります。'
+               + '意図した0なら 0 を入れてください（空欄と区別できません）。');
     }
     // ② チケット方式なのに頻度が入っている → 頻度は計算に入らない
     if (method.indexOf('チケット') >= 0 && freq > 0) {
@@ -1214,7 +1283,7 @@ function remainingAtText(args) {
       for (var k4 in bd.reasons) if (bd.reasons.hasOwnProperty(k4)) rk.push(k4 + ' ' + bd.reasons[k4] + '件');
       say('      割当できなかった理由：' + rk.join(' / '));
     }
-    say('    月額残 = ' + (ar.monthlyRem == null ? '(頻度未設定＝無制限扱い)' : ar.monthlyRem)
+    say('    月額残 = ' + (ar.monthlyRem == null ? '(月額契約なし)' : ar.monthlyRem)
         + ' ／ チケット残 = ' + ar.ticketRem
         + ' ／ ▶ その時点で予約できる残り = ' + A[mk3].total);
     if (later) say('    ◀ この月の予約は、この時点より後に ' + later + '件 増えています');
@@ -1865,8 +1934,9 @@ function _monthlyMembersRemainingNamedText(nowMs) {
 
     function remLine(label, mk, s) {
       if (!s) return '  ' + label + ' ' + mk + '：計算できませんでした';
-      var mr = (s.monthlyRem == null) ? '無制限扱い（頻度の入力なし）' : s.monthlyRem;
-      var tt = (s.monthlyRem == null) ? '不明' : ((s.monthlyRem || 0) + (s.ticketRem || 0));
+      //   ★null は「月額契約が無い」だけの意味になった（2026-10-08・頻度0は月0回へ）
+      var mr = (s.monthlyRem == null) ? '（月額契約なし）' : s.monthlyRem;
+      var tt = (s.monthlyRem == null) ? Number(s.ticketRem || 0) : ((s.monthlyRem || 0) + (s.ticketRem || 0));
       return '  ' + label + ' ' + mk + '：枠(頻度' + (s.freq == null ? '?' : s.freq) + '＋繰越)=' + s.avail
              + ' → 月額残=' + mr + ' ／ チケット残=' + (s.ticketRem || 0) + ' ／ 合計=' + tt
              + (s._ok === false ? '  ⚠️ 割当器が「要確認」' : '');
