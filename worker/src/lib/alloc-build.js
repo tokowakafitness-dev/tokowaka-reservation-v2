@@ -39,7 +39,15 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
   //   computed … 計算が最後まで通ったか。false のときは**何も消さない**。
   //     ok:false は「予約が0件」ではなく「計算できなかった」。
   //     消してしまうと、その会員の引当が全部消え、used が0になって残数が実際より多く見える。
-  const out = { rows: [], computed: false, skippedUnallocated: 0, issues: [] };
+  //   recordsFrom … その会員の「記録開始月」。これより前は完全な予約履歴として扱わない。
+  //     ★ここより前に引当が残っていること自体が不整合（2026-10-08・Codex関門①）。
+  //       いまの削除は期間内だけなので届かない。recordsFrom は棚卸しの承認・登録月・
+  //       LINKED_AT の書き換えで**後から縮む**ため、縮んだぶんが取り残される。
+  //   maxResvMonth … その会員の予約がある最も先の月。削除範囲の上端をここまで広げる。
+  //     「当月+2」と決め打つと、それより先の予約の引当が取り残される。
+  const out = { rows: [], computed: false, skippedUnallocated: 0, issues: [],
+                recordsFrom: (opening && opening.recordsFrom) ? String(opening.recordsFrom) : null,
+                maxResvMonth: null };
 
   const res = _lbComputeRemaining(
     customerId, rows, sessions, nowKey, targetDateMs, carryRate, opening,
@@ -58,6 +66,11 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
   for (const ps of per) {
     if (!ps || !ps.sessionId) continue;
     const mk = String(ps.monthKey || '');
+    //   行を作らない予約（超過・問題あり）も含めて最大月を見る。
+    //   削除範囲の上端なので、広いほうに倒す。
+    if (/^\d{4}-\d{2}$/.test(mk) && (out.maxResvMonth == null || mk > out.maxResvMonth)) {
+      out.maxResvMonth = mk;
+    }
     if (!mk || mk < String(fromMonth) || mk > String(toMonth)) continue;   // 対象の範囲だけ
 
     // 割り当たらなかった＝枠を使っていない。行を作らない（超過として見えるようにする）。
@@ -128,11 +141,31 @@ export function allocationInsertStatements(built, nowMs, scope) {
   //     残数が実際より**多く**見える＝枠を超えて予約できてしまう。
   if (scope && scope.customerId && scope.fromMonth && scope.toMonth) {
     if (!built.computed) return [];   // 計算できていない＝この会員には何もしない
+    //   ★上端は「指定された期間の終わり」と「その会員の予約の最も先の月」の広いほう。
+    //     期間を当月+2などと決め打つと、それより先の予約の引当が取り残される
+    //     （2026-10-08・Codex関門①）。
+    const delTo = (built.maxResvMonth && built.maxResvMonth > scope.toMonth)
+      ? built.maxResvMonth : scope.toMonth;
     stmts.push({
       sql: `DELETE FROM reservation_allocations
              WHERE customer_id = ? AND resv_month >= ? AND resv_month <= ?`,
-      args: [scope.customerId, scope.fromMonth, scope.toMonth],
+      args: [scope.customerId, scope.fromMonth, delTo],
     });
+
+    //   ★記録開始月より前に残っている引当も消す（2026-10-08・Codex関門①）。
+    //     上の削除は期間で絞るので届かない。recordsFrom は固定ではなく、
+    //     棚卸しの承認・会員の登録月・LINKED_AT の書き換えで**後から縮む**。
+    //     縮んだぶんの古い引当が残ると、used が過大なまま＝残数が実際より少なく見える。
+    //     記録開始月より前は「完全な予約履歴として扱わない領域」なので、
+    //     引当が存在すること自体が不整合。
+    //     ★recordsFrom が分からないときは消さない（範囲が決まらないのに消すほうが危険）。
+    if (built.recordsFrom && /^\d{4}-\d{2}$/.test(built.recordsFrom)) {
+      stmts.push({
+        sql: `DELETE FROM reservation_allocations
+               WHERE customer_id = ? AND resv_month < ?`,
+        args: [scope.customerId, built.recordsFrom],
+      });
+    }
 
     // ★期間の外に残っている「いま入れようとしている予約」も消す（Codex関門②・5回目）。
     //   予約の日付が期間の外から中へ変わると、古い引当は期間外のまま残る。

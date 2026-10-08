@@ -31,7 +31,8 @@ function makeEnv(secret = 'TEST-SECRET', current = []) {
     SHARED_SECRET: secret,
     DB: {
       prepare,
-      async batch(stmts) { for (const s of stmts) sql.push({ q: s._q, args: s._args }); return []; },
+      async batch(stmts) { for (const s of stmts) sql.push({ q: s._q, args: s._args });
+                           return stmts.map(() => ({ meta: { changes: 1 } })); },
     },
     KV: {
       async put(k, v, o) { kv.set(k, { v, o }); },
@@ -387,6 +388,78 @@ eq('空同士も真', _safeEqualForTest('', ''), true);
   eq('空なら削除を止める', b.skippedDelete, 'EMPTY_SOURCE');
   eq('★★そのとき同期時刻も押さない（古い行を新しい顔にしない）',
      env._sql.some((x) => /INSERT INTO sync_state/.test(x.q)), false);
+}
+
+// ============================================================
+// scope:'customer' ── その会員ぶんを世代で入れ替える（2026-10-08・段階3-a）
+//   これが無いと、取り消された予約の計算入力が D1 に残り続け、
+//   作り直してもその予約を「生きている」として引当を作る＝取消が永遠に伝わらない。
+// ============================================================
+console.log('=== scope:customer（会員ぶんの入れ替え）===');
+{
+  const env = makeEnv();
+  const row = { row_key: 'k1', customer_id: 'C1', row_json: '{}' };
+  const [s, b] = await json(await handleIngest(
+    req({ kind: 'calcReservations', scope: 'customer', customerId: 'C1', batchId: 9, rows: [row] }, 'TEST-SECRET'), env));
+  eq('①通る', s, 200);
+  const del = env._sql.filter((x) => /DELETE FROM calc_reservation_rows/.test(x.q));
+  eq('①★削除は1文', del.length, 1);
+  eq('①★会員で閉じている', /customer_id = \?/.test(del[0].q), true);
+  eq('①★この世代より古い行だけ消す', /synced_at IS NULL OR synced_at < \?/.test(del[0].q), true);
+  eq('①削除の引数は会員IDと世代', del[0].args, ['C1', 9]);
+  eq('①★同期時刻は押さない', env._sql.some((x) => /INSERT INTO sync_state/.test(x.q)), false);
+  eq('①入れた数と消した数を返す', [b.written, b.removed], [1, 1]);
+}
+{
+  //   ★中身が同じ行も必ず書く。書かないと世代が古いまま残り、削除で消える。
+  const same = { row_key: 'k1', customer_id: 'C1', row_json: '{}' };
+  const env = makeEnv('TEST-SECRET', [same]);
+  const [, b] = await json(await handleIngest(
+    req({ kind: 'calcReservations', scope: 'customer', customerId: 'C1', batchId: 9, rows: [same] }, 'TEST-SECRET'), env));
+  eq('②★同じ行でも飛ばさない', b.skipped, 0);
+  eq('②書いている', b.written, 1);
+}
+{
+  //   会員が指定されていなければ断る（削除の範囲が決まらない）
+  const env = makeEnv();
+  const [s, b] = await json(await handleIngest(
+    req({ kind: 'calcReservations', scope: 'customer', batchId: 9, rows: [] }, 'TEST-SECRET'), env));
+  eq('③★会員の指定が無ければ断る', [s, b.code], [400, 'CUSTOMER_REQUIRED']);
+  eq('③何も消していない', env._sql.some((x) => /DELETE/.test(x.q)), false);
+}
+{
+  //   他人の行が混ざっていたら断る。混ざったぶんだけ捨てると気づけない
+  const env = makeEnv();
+  const [s, b] = await json(await handleIngest(
+    req({ kind: 'calcReservations', scope: 'customer', customerId: 'C1', batchId: 9,
+          rows: [{ row_key: 'k1', customer_id: 'C1', row_json: '{}' },
+                 { row_key: 'k2', customer_id: 'C2', row_json: '{}' }] }, 'TEST-SECRET'), env));
+  eq('④★他人が混ざれば断る', [s, b.code], [400, 'CUSTOMER_MISMATCH']);
+  eq('④何も書いていない', env._sql.some((x) => /INSERT INTO calc_reservation_rows/.test(x.q)), false);
+}
+{
+  //   customer_id を持たない表では使えない（会員で閉じた削除ができない）
+  const env = makeEnv();
+  const [s, b] = await json(await handleIngest(
+    req({ kind: 'trainers', scope: 'customer', customerId: 'C1', batchId: 9, rows: [] }, 'TEST-SECRET'), env));
+  eq('⑤★customer_id の無い表は断る', [s, b.code], [400, 'SCOPE_NOT_SUPPORTED']);
+}
+{
+  //   ★rows が0件でも消す。その会員の予約が全部取り消された状態は正常。
+  //     「読めなかった」は送り手が送らない（_edgeCalcReservations は null を返す）。
+  const env = makeEnv();
+  const [s, b] = await json(await handleIngest(
+    req({ kind: 'calcReservations', scope: 'customer', customerId: 'C1', batchId: 9, rows: [] }, 'TEST-SECRET'), env));
+  eq('⑥★0件でも消す（最後の1件の取消が伝わる）', [s, b.removed], [200, 1]);
+  eq('⑥書いた行は0', b.written, 0);
+}
+{
+  //   deleteStale（表全体から消す）とは別物。混ぜたら断る
+  const env = makeEnv();
+  const [s, b] = await json(await handleIngest(
+    req({ kind: 'calcReservations', scope: 'customer', customerId: 'C1', batchId: 9,
+          deleteStale: true, rows: [] }, 'TEST-SECRET'), env));
+  eq('⑦★deleteStale と混ぜたら断る', [s, b.code], [400, 'SCOPE_CONFLICT']);
 }
 
 console.log(`\n取り込み口 検証: ${pass} passed / ${fail} failed`);

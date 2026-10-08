@@ -154,6 +154,40 @@ console.log('=== 8. 超過に転じた予約は行を作らない（全消しす
   eq('⑧消す文2＋入れる文3', st.length, 5);
 }
 
+console.log('=== 9. ★削除の範囲（2026-10-08・Codex関門①）===');
+{
+  //   期間を当月+1までと指定しても、その会員の予約が2026-12にあれば
+  //   削除の上端は 2026-12 まで広がらなければならない。
+  //   そうでないと、12月の引当が取り残されて used が過大になる。
+  const far = [ses('z1', jst(2026, 10, 5, 10)), ses('z2', jst(2026, 12, 20, 10))];
+  const b = buildAllocationsForCustomer('C1', CONTRACTS, far, null,
+    { ...OPTS, fromMonth: '2026-10', toMonth: '2026-12' });
+  eq('⑨予約の最大月を拾う', b.maxResvMonth, '2026-12');
+  const st = allocationInsertStatements(b, 1000,
+    { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-11' });   // 指定は11月まで
+  const del = st.filter((x) => /DELETE FROM reservation_allocations/.test(x.sql)
+                            && /resv_month >= \? AND resv_month <= \?/.test(x.sql));
+  eq('⑨期間の削除は1文', del.length, 1);
+  eq('⑨★上端が予約の最大月まで広がる', del[0].args[2], '2026-12');
+
+  //   記録開始月より前の削除。recordsFrom が無ければ消さない。
+  const b2 = buildAllocationsForCustomer('C1', CONTRACTS, far,
+    { carry: {}, packsUsed: {}, recordsFrom: '2026-10' },
+    { ...OPTS, fromMonth: '2026-10', toMonth: '2026-12' });
+  eq('⑨記録開始月を持ち回る', b2.recordsFrom, '2026-10');
+  const st2 = allocationInsertStatements(b2, 1000,
+    { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-12' });
+  const before = st2.filter((x) => /resv_month < \?/.test(x.sql));
+  eq('⑨★記録開始月より前を消す文がある', before.length, 1);
+  eq('⑨その境目は recordsFrom', before[0].args[1], '2026-10');
+  ok('⑨その削除も会員で絞っている', /customer_id = \?/.test(before[0].sql), before[0].sql);
+
+  const noRec = allocationInsertStatements(b, 1000,
+    { customerId: 'C1', fromMonth: '2026-10', toMonth: '2026-12' });
+  eq('⑨★記録開始月が分からなければ消さない',
+    noRec.filter((x) => /resv_month < \?/.test(x.sql)).length, 0);
+}
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 引当を作る処理 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

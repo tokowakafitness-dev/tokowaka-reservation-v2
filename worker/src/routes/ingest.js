@@ -159,10 +159,39 @@ async function ingest(request, env) {
   //   ★未指定・知らない値は**断る**。黙って partial 扱いにしない。
   //     安全に失敗することと、黙って劣化することは別。
   //     通してしまうと「なぜ遅いのか分からない」状態になり、原因を追えなくなる。
+  //     'customer' … **その会員ぶんを丸ごと入れ替える**（2026-10-08・段階3-a の二重書き）
+  //       予約が取り消されると、計算入力の行は送られてこなくなる（_edgeCalcReservations は
+  //       confirmed/consumed しか出さない）。partial は「含まれなかった行」を消さないので、
+  //       取り消された予約が D1 に残り続け、**取消が永遠に伝わらない。**
+  //       この指定は、その会員の行だけを世代で入れ替える。
+  //       ★削除の範囲は customer_id で必ず閉じる。deleteStale（表全体から消す）とは別物。
   const scope = String(body.scope || '');
-  if (scope !== 'all' && scope !== 'partial') {
+  if (scope !== 'all' && scope !== 'partial' && scope !== 'customer') {
     return jsonRes({ success: false, code: 'SCOPE_REQUIRED',
-                     detail: 'scope must be "all" or "partial"' }, 400);
+                     detail: 'scope must be "all", "partial" or "customer"' }, 400);
+  }
+
+  // ★scope:'customer' の守り（2026-10-08・Codex関門①）
+  const replaceCustomer = (scope === 'customer');
+  let onlyCustomer = '';
+  if (replaceCustomer) {
+    //   この表に customer_id が無ければ、会員で閉じた削除ができない
+    if (!conf.cols.includes('customer_id')) {
+      return jsonRes({ success: false, code: 'SCOPE_NOT_SUPPORTED',
+                       detail: `${kind} has no customer_id` }, 400);
+    }
+    onlyCustomer = String(body.customerId || '').trim();
+    if (!onlyCustomer) {
+      return jsonRes({ success: false, code: 'CUSTOMER_REQUIRED',
+                       detail: 'scope "customer" requires customerId' }, 400);
+    }
+    //   他人の行を書かせない。1行でも違えば断る（混ざったぶんだけ捨てると気づけない）
+    for (const r of (Array.isArray(body.rows) ? body.rows : [])) {
+      if (String(r && r.customer_id) !== onlyCustomer) {
+        return jsonRes({ success: false, code: 'CUSTOMER_MISMATCH',
+                         detail: 'rows contain another customer' }, 400);
+      }
+    }
   }
   // ★「消してよい」は「全件を走査した」より強い宣言。矛盾したら断る。
   //   partial なのに消すと、今回含まれなかっただけの行がまるごと消える。
@@ -226,18 +255,52 @@ async function ingest(request, env) {
   for (const r of rows) {
     const key = r[conf.key];
     if (key == null || key === '') continue;          // 主キーのない行は捨てる
-    if (!full && same(r, existing[String(key)])) { skipped++; continue; }
+    //   ★scope:'customer' のときは「中身が同じ行」も必ず書く（2026-10-08・Codex関門①）。
+    //     下で「この世代より古い行を消す」ので、書かないと**変わっていない正常な行が消える。**
+    if (!full && !replaceCustomer && same(r, existing[String(key)])) { skipped++; continue; }
     const vals = conf.cols.map((c) => (r[c] === undefined ? null : r[c])).concat([batchId]);
     stmts.push(env.DB.prepare(sql).bind(...vals));
   }
 
-  let written = 0;
-  if (stmts.length) {
-    await env.DB.batch(stmts);
-    written = stmts.length;
+  let removed = 0;
+
+  // ★scope:'customer'：その会員ぶんを世代で入れ替える（2026-10-08・段階3-a）
+  //
+  //   上で全行を batchId で書いた。ここで**その会員の、この世代より古い行**を消す。
+  //   これで「今回送られてこなかった行（＝取り消された予約）」が片づく。
+  //
+  //   ★NOT IN (…) にしない。取り込みは1回500行まで受けるので、会員1人で
+  //     最大501個のバインド変数になる。引当側は D1 の差し込み数上限を理由に
+  //     80件で分割している（alloc-build.js の CHUNK）。同じ線を越えてはいけない。
+  //
+  //   ★削除は customer_id で必ず閉じる。deleteStale（表全体から消す）とは別物。
+  //     ここを会員で閉じ忘れると、1人ぶんの押し出しで全員の行が消える。
+  //
+  //   ★rows が0件でも消す。その会員の予約が全部取り消された状態は**正常**。
+  //     「読めなかった」は送り手が送らない（_edgeCalcReservations は null を返す）。
+  //     ここで0件を理由に止めると、取消が最後の1件だったときに伝わらない。
+  if (replaceCustomer) {
+    stmts.push(
+      env.DB.prepare(
+        `DELETE FROM ${conf.table}
+          WHERE customer_id = ? AND (synced_at IS NULL OR synced_at < ?)`
+      ).bind(onlyCustomer, batchId)
+    );
   }
 
-  let removed = 0;
+  let written = 0;
+  if (stmts.length) {
+    //   ★書き込みと削除を**同じ batch に入れる**。
+    //     分けると、書けたのに消せなかった／消せたのに書けなかった状態が残る。
+    const res = await env.DB.batch(stmts);
+    written = stmts.length;
+    if (replaceCustomer) {
+      written -= 1;   // 最後の1文は削除
+      const last = res && res[res.length - 1];
+      removed = (last && last.meta && last.meta.changes) || 0;
+    }
+  }
+
   // ★0件で final を受けても消さない。元のシートが一時的に読めなかっただけの可能性がある。
   //   顧客や予約がまるごと消えると、会員が「未登録」に見え、予約も全部消える。
   //   ★allowEmpty を名乗れるのは固定枠だけに限る（2026-10-03・Codexの4回目の判定）。
