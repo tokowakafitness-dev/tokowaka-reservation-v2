@@ -2443,6 +2443,59 @@ function consecutiveSessions() { _lbAuditLogChunks(consecutiveSessionsText({ con
 //   ★GASエディタ専用（氏名を出すため）。作業依頼の結果URLには出さない。
 //   ★読み取りだけ。何も書き換えない。
 // ============================================================
+// 締めの状態（どの月が締まっているか・いま締めたら止まるか）。読み取りだけ。
+//   ★「超過のまま月を跨ぐと会計上どうなるか」を事実で答えるために作った（2026-10-08）。
+//     締めを実際に回しているかどうかで、答えが変わる。
+//   ★会計そのものは狂わない（下に書いた）。狂うのではなく「締めが実行できない」。
+function closingStatusText() {
+  var out = [];
+  out.push('===== 締めの状態（読み取りだけ）=====');
+  out.push('版: ' + LB_AUDIT_BUILD);
+  out.push('');
+  var sh = null, v = [];
+  try { sh = _lbAllocSheet(); v = _lbAllocRows(sh); }
+  catch (e) { out.push('台帳が読めません: ' + e.message); var t0 = out.join('\n'); Logger.log(t0); return t0; }
+  var tz = SETTINGS.TIMEZONE;
+  //   manifest 行＝その月の締めの結果。状態（CLOSED / STAGING 等）で分かる
+  var byMonth = {};
+  for (var i = 0; i < v.length; i++) {
+    if (String(v[i][0]) !== 'manifest') continue;
+    var mk = _lbMonthKeyCell(v[i][2], tz), st = String(v[i][3] || '');
+    (byMonth[mk] = byMonth[mk] || []).push({ state: st, members: Number(v[i][8] || 0), at: String(v[i][9] || '') });
+  }
+  var keys = Object.keys(byMonth).sort();
+  out.push('■ 締めの記録');
+  if (!keys.length) {
+    out.push('  ★1件もありません＝**締めを一度も実行していません。**');
+    out.push('  　つまり「支払い待ちが残ると月全体が締まらない」ことは、いまの運用では起きていません。');
+  } else {
+    for (var k = 0; k < keys.length; k++) {
+      var rs = byMonth[keys[k]], parts = [];
+      for (var r2 = 0; r2 < rs.length; r2++) parts.push(rs[r2].state + '(' + rs[r2].members + '名・' + rs[r2].at + ')');
+      out.push('  ' + keys[k] + '：' + parts.join(' / '));
+    }
+  }
+  out.push('');
+  out.push('■ いま締めようとしたら（当月・前月）');
+  var now = new Date();
+  var mks = [_lbMonthKeyJst(new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()),
+             _lbMonthKeyJst(now.getTime())];
+  for (var m = 0; m < mks.length; m++) {
+    var cl = null;
+    try { cl = getClosedAllocation(mks[m]); } catch (e) { cl = { ok: false, code: 'ERROR' }; }
+    out.push('  ' + mks[m] + '：' + (cl && cl.ok ? '締め済み' : ('未締め（' + ((cl && cl.code) || '?') + '）')));
+  }
+  out.push('');
+  out.push('※ 締めは手で実行するものです（自動のトリガーはありません）。');
+  out.push('※ 支払い待ち（枠を超えて押さえた予約）の会計上の扱い：');
+  out.push('　 ・締めの売上計算では**対象外**（未割当は数えない）');
+  out.push('　 ・カレンダー経路からは**外さない**＝旧billingで請求する（振替＝手動請求と同じ扱い）');
+  out.push('　 ＝二重計上も計上漏れも起きない。起きるのは「その月の締めが実行できない」ことだけ。');
+  var t = out.join('\n');
+  Logger.log(t);
+  return t;
+}
+
 function monthlyQuotaTable() {
   Logger.log(_monthlyQuotaTableText());
 }

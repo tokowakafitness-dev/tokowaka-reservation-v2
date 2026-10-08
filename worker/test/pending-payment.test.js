@@ -18,6 +18,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const EA = readFileSync(join(ROOT, 'gas/EdgeAudit.js'), 'utf8');
 const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
 const AL = readFileSync(join(ROOT, 'gas/Allocate.js'), 'utf8');
+const EJ = readFileSync(join(ROOT, 'gas/EdgeJob.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
@@ -77,6 +78,26 @@ ok('④付与の開始日は購入日', /rowArr\[cols\.start\]\s*=\s*Utilities\.
 ok('④★割当は日付順＝超過は月の後ろに寄る',
   /unallocated/.test(AL),
   '超過が後ろに寄るので、次回セッションでの付与（購入日から）でも相殺できる');
+
+console.log('=== 5. ★支払い待ちは「請求から消える」のではなく「旧経路で請求する」 ===');
+//   ★オーナーの問い「超過のまま月を跨ぐと会計上問題があるのか」に事実で答えるため、
+//     ここを検査で固定する（2026-10-08）。
+ok('⑤締めの売上計算では未割当を対象外にする',
+  /d\.alloc === 'transfer' \|\| d\.alloc === 'unallocated'\) continue;/.test(AL),
+  '新しい締めの経路では売上に乗らない');
+ok('⑤★カレンダー経路からは外さない（＝旧billingで請求する）',
+  /if \(alloc !== 'monthly' && alloc !== 'pack'\) \{ skippedNonRev\+\+; continue; \}/.test(AL),
+  '外すと請求が消える。振替（手動請求）と同じ扱いで、意図的に残している');
+ok('⑤その意図がコメントに書いてある',
+  /振替=手動請求\)・unallocated は/.test(AL) && /カレンダー経路のまま維持し除外しない/.test(AL));
+
+console.log('=== 6. 締めの状態を読める窓口（事実で答えるため）===');
+ok('⑥締めの状態を出す関数がある', /function closingStatusText\(\)/.test(EA));
+ok('⑥作業依頼から呼べる', /args && args\.closing\) return _ejScrub\(closingStatusText\(\)\)/.test(EJ));
+ok('⑥一度も締めていない場合をはっきり書く',
+  /締めを一度も実行していません/.test(EA),
+  '締めを回していないなら「月全体が締まらない」は現に起きていない');
+ok('⑥締めは手で実行するものだと書いてある', /締めは手で実行するものです/.test(EA));
 
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 支払い待ちの扱い 検証: ${pass} passed / ${fail} failed`);

@@ -87,6 +87,9 @@ function _ejRun(op, args) {
       //     既存の窓口に寄せる方針（2026-09-30）に合わせ、ここへ足す。
       //   用途：頻度0の規則を変える前に、**誰がどれだけ影響するか**をまとめて見る。
       if (args && args.quotaTable) return _ejScrub(_monthlyQuotaTableText());
+      // 締めの状態（どの月が締まっているか・いま締めたら止まるか）。読み取りだけ。
+      //   「超過のまま月を跨ぐと会計上どうなるか」を事実で答えるために足した（2026-10-08）。
+      if (args && args.closing) return _ejScrub(closingStatusText());
       // トレーナーの連続セッションの実測（読み取りだけ・制限は入れない）。args.days/args.gap で条件を変える
       if (args && args.consec) return _ejScrub(consecutiveSessionsText(args));
       // LINEの用途別の送信通数（args.usage='2026-09'）。当月は予約が入りきっていないので
