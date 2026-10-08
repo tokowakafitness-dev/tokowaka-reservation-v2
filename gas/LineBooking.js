@@ -1953,10 +1953,23 @@ function dailyHealthCheck(dryRun) {
       //     締まらなくなる予告は、件数ではなく**日付で**強くする必要がある。
       //     名前を分けることで「増えた」と判定され、必ず知らせる。
       var _ppKey = (_daysLeft <= 3) ? 'pending_payment_overage_urgent' : 'pending_payment_overage';
-      add(_ppKey, '請求', (_daysLeft <= 3 ? 'high' : 'warn'), _ppM,
+      //   ★「月全体が締まりません」は、月次の確定処理（closeAllocationMonth）を
+      //     **運用に入れているときだけ**の話（2026-10-08・オーナーに説明して判明）。
+      //     いまは手で実行するもので、回していない。会計の数字も狂わない
+      //     （未割当は旧カレンダー経路で請求される＝振替と同じ扱い）。
+      //     使っていない機能を理由に強く言うと、本当に困ることが埋もれる。
+      //     → 締めの記録があるときだけ、その一文を出す。
+      var _closedAny = false;
+      try {
+        var _csh = _lbSs().getSheetByName(LB_ALLOC_SHEET);
+        _closedAny = !!(_csh && _csh.getLastRow() >= 2);
+      } catch (e2) { _closedAny = false; }
+      add(_ppKey, '請求', (_daysLeft <= 3 && _closedAny ? 'high' : 'warn'), _ppM,
           '枠を超えて押さえた予約（支払い待ち）が ' + _ppS + '件 / ' + _ppM + '名に残っています'
           + '（月末まで' + _daysLeft + '日）。支払いを確認してチケットを付与すれば相殺されます。'
-          + '**このまま月が終わると、1名でも残っていれば月全体が締まりません。**'
+          + (_closedAny
+              ? '**このまま月が終わると、1名でも残っていれば月次の確定処理が止まります。**'
+              : '（月次の確定処理は使っていないので、月を跨いでも支障はありません）')
           + ' 該当：' + (meta.pendingPayNames || []).slice(0, 8).join('、'));
     }
     //   ★集計そのものが走っていなければ、0件と報告しない（2026-10-08・Codex関門②）。

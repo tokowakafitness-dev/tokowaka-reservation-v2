@@ -2649,8 +2649,10 @@ function _monthlyQuotaTableText(nowMs) {
       var _dEnd = new Date(nowMs);
       var _dLeft = Math.max(0, new Date(_dEnd.getFullYear(), _dEnd.getMonth() + 1, 0).getDate() - _dEnd.getDate());
       if (_unCur > 0) {
+        //   ★「月全体が締まりません」は月次の確定処理を使っているときだけの話。
+        //     いまは使っていない（2026-10-08 確認）。だから日数だけ添える。
         flags.push('支払い待ち' + _unCur + '件（チケット付与で相殺）'
-                   + (_dLeft <= 7 ? '／🚨月末まで' + _dLeft + '日・このままだと月全体が締まりません' : ''));
+                   + (_dLeft <= 7 ? '／月末まで' + _dLeft + '日' : ''));
       }
       if (_unNext > 0) flags.push('翌月の支払い待ち' + _unNext + '件');
     }
