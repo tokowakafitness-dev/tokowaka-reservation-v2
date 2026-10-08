@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-08c 頻度0は月0回（上限なしを廃止）／二重書き／覆い方の内訳';
+var LB_EDGE_BUILD = '2026-10-08d 頻度0は月0回／二重書きは見送りも記録する';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -2604,15 +2604,30 @@ function _edgeQuotaBuildOne(customerId, all) {
 // ------------------------------------------------------------
 
 function lbDualWriteDrain(limit) {
-  if (!_edgeEnabled()) return { skipped: 'EDGE_OFF' };
+  //   ★見送ったことも必ず記録する（2026-10-08・実際に見えなくなった）。
+  //     待ち行列に1名残っているのに「最後の処理: まだ一度も動いていません」と出た。
+  //     ロックが取れずに早く戻ると何も書き残さないため、
+  //     **「動いていない」と「動いたが見送った」が区別できなかった。**
+  //     成功だけ記録すると、落ちた理由が追えない（記憶 feedback_measure_failures_too）。
+  function _note(o) {
+    try {
+      o.at = Date.now();
+      PropertiesService.getScriptProperties().setProperty(LB_DW.LAST_PROP, JSON.stringify(o));
+    } catch (e) {}
+    return o;
+  }
+  if (!_edgeEnabled()) return _note({ skipped: 'EDGE_OFF' });
   var t0 = Date.now();
   var n = Number(limit || LB_DW.MAX_PER_RUN);
   var claim = _lbDwClaim(n);
-  if (claim === null) return { skipped: 'QUEUE_BROKEN_OR_LOCKED' };
+  if (claim === null) {
+    //   壊れている／ロックが取れなかった。どちらも次の実行で拾える
+    return _note({ skipped: 'QUEUE_BROKEN_OR_LOCKED' });
+  }
   var todo = claim.items, queued = claim.total;
   if (!todo.length) {
     //   ★実際の残り人数を返す。全員が処理中のとき0と報告してはいけない
-    return { done: 0, left: queued, allLeased: queued > 0 };
+    return _note({ done: 0, left: queued, allLeased: queued > 0 });
   }
 
   // ★台帳は**1回だけ**読む（2026-10-08・Codex関門②）。
@@ -2630,7 +2645,7 @@ function lbDualWriteDrain(limit) {
     for (var j = 0; j < todo.length; j++) back.push(todo[j].customerId);
     _lbDwReleaseMany(back);
     Logger.log('[dw] 台帳が読めないので今回は見送ります（' + back.length + '名を戻しました）');
-    return { skipped: 'LEDGER_UNREADABLE', left: queued };
+    return _note({ skipped: 'LEDGER_UNREADABLE', left: queued });
   }
 
   var done = 0, failed = 0, requeued = 0, overBudget = 0, anomaly = 0;
@@ -2715,7 +2730,15 @@ function lbDualWriteStatusText() {
   }
   var over = Number(p.getProperty(LB_DW.OVERFLOW_PROP) || 0);
   if (over) o.push('🚨 溢れて捨てた／積めなかった件数（累計）: ' + over + '（★照合で食い違いが出る原因になります）');
-  if (last.at) {
+  if (last.at && last.skipped) {
+    o.push('最後の処理: ' + Utilities.formatDate(new Date(Number(last.at)), SETTINGS.TIMEZONE, 'MM/dd HH:mm')
+           + '  ★見送りました（' + last.skipped + '）'
+           + (last.left != null ? ' / 残り' + last.left : ''));
+    if (last.skipped === 'QUEUE_BROKEN_OR_LOCKED') {
+      o.push('  → ロックが取れなかった（他の処理と重なった）か、待ち行列が壊れています。'
+             + '続くなら 1回に処理する人数か待ち時間を見直します');
+    }
+  } else if (last.at) {
     o.push('最後の処理: ' + Utilities.formatDate(new Date(Number(last.at)), SETTINGS.TIMEZONE, 'MM/dd HH:mm')
            + '  ' + (last.ms || 0) + 'ms'
            + ' / 成功' + (last.done || 0) + ' / 失敗' + (last.failed || 0)

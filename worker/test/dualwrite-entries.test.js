@@ -210,7 +210,19 @@ console.log('=== 9. ★同じ会員を2つの実行が同時に処理しない�
     /function _lbDwReleaseMany\(customerIds\)/.test(DW)
     && /_lbDwReleaseMany\(rest\);/.test(DW) && /_lbDwReleaseMany\(back\);/.test(DW));
   ok('⑨★全員が処理中のとき「残り0」と報告しない',
-    /return \{ done: 0, left: queued, allLeased: queued > 0 \};/.test(DW));
+    /_note\(\{ done: 0, left: queued, allLeased: queued > 0 \}\);/.test(DW));
+//   ★見送ったことも記録する（2026-10-08・実際に見えなくなった）。
+//     待ち行列に1名残っているのに「まだ一度も動いていません」と出た。
+//     ロックが取れずに早く戻ると何も書き残さず、
+//     「動いていない」と「動いたが見送った」が区別できなかった。
+ok('⑨★見送りも記録する（理由つき）',
+  /function _note\(o\)/.test(DW)
+  && /_note\(\{ skipped: 'EDGE_OFF' \}\)/.test(DW)
+  && /_note\(\{ skipped: 'QUEUE_BROKEN_OR_LOCKED' \}\)/.test(DW)
+  && /_note\(\{ skipped: 'LEDGER_UNREADABLE', left: queued \}\)/.test(DW),
+  '成功だけ記録すると、落ちた理由が追えない');
+ok('⑨見送りを状態表示でも出す',
+  /★見送りました（/.test(DW) && /ロックが取れなかった/.test(DW));
   ok('⑨★既に消えていたら成功に数えず異常として記録する',
     /anomaly\+\+;/.test(DW) && /取り置きが破れています/.test(DW),
     'D1には書けているが、取り置いた世代を安全に終えたとは言えない');
