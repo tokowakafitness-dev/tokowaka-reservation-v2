@@ -408,6 +408,15 @@ export async function quotaStatus(request, env) {
     generation = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
   }
 
+  //   ★shadow の表が入っているかも、ここで一緒に返す（2026-10-09）。
+  //     作業依頼の結果は私から読めない（この環境では gh が TLS で落ちる）。
+  //     オーナーに貼っていただく必要があるので、**1回の依頼で確かめる量を増やす。**
+  const shadowTables = {};
+  for (const t of ['remain_shadow_slot', 'remain_shadow', 'remain_shadow_sample']) {
+    try { await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first(); shadowTables[t] = true; }
+    catch (_) { shadowTables[t] = false; }
+  }
+
   // ★旧「上限なし」の行がどれかを返す（2026-10-08）。新しくは作られない。
   //   件数だけ分かっても直せない。どの会員のどの月かが分からないと、
   //   台帳のどの行を直すのかオーナーに伝えられない。
@@ -437,6 +446,7 @@ export async function quotaStatus(request, env) {
     stage3b,   // 3-bで足した2列の入り具合（base_freq の抜け・支払い待ちの件数）
     syncVersion,   // 会員ごとの世代（fresh/stale/ahead・3-bの鮮度の判定に使う）
     generation,    // 行ごとの世代（いまの世代／古い行／印の無い行・設計13）
+    shadowTables,  // shadow の3表が入っているか（1回の依頼で確かめる量を増やすため）
   });
 }
 

@@ -2204,6 +2204,45 @@ function quotaBuildText(args) {
            + ((b3.baseFreqMissing) ? '（★作り直しが必要。繰越が過大に見えます）' : '（✅ 全部入っています）'));
     o.push('   支払い待ち: ' + (b3.overageSessions || 0) + '件（' + (b3.overageMonths || 0) + 'か月に分布）');
 
+    //   ★会員ごとの世代（決定0076）と行ごとの世代（決定0078）、shadow の表（決定0077）。
+    //     作業依頼の結果はCEOから読めない（この環境では gh が TLS で落ちる）ので、
+    //     **1回の依頼で確かめる量を増やす。**
+    var sv = st.syncVersion || {};
+    o.push('');
+    o.push('── 会員ごとの世代（作り直しが入力に追いついているか）');
+    if (sv.table !== 'ok') {
+      o.push('   ★表がまだ入っていません（' + (sv.detail || 'customer_sync_version') + '）');
+    } else {
+      o.push('   行がある会員: ' + (sv.total || 0) + '名');
+      o.push('   ✅ 追いついている: ' + (sv.fresh || 0) + '名  ／  🔄 遅れている: ' + (sv.stale || 0) + '名');
+      o.push('   まだ作り直していない: ' + (sv.noBuilt || 0) + '名'
+             + ((sv.ahead) ? '  ／  ★あってはならない向き: ' + sv.ahead + '名' : ''));
+      if (sv.staleIds && sv.staleIds.length) o.push('   遅れている会員: ' + sv.staleIds.join(' / '));
+    }
+
+    var gen = st.generation || {};
+    o.push('');
+    o.push('── 行ごとの世代（顧客に出るのは「いまの世代」の行だけ）');
+    if (gen.table !== 'ok') {
+      o.push('   ★列がまだ入っていません（' + (gen.detail || 'built_version') + '）');
+    } else {
+      o.push('   枠　　: 全' + gen.quota.rows + '行 ／ いまの世代 ' + gen.quota.current
+             + ' ／ 古い行 ' + gen.quota.stale + ' ／ 印が無い ' + gen.quota.noMark);
+      o.push('   チケット: 全' + gen.packs.rows + '行 ／ いまの世代 ' + gen.packs.current
+             + ' ／ 古い行 ' + gen.packs.stale + ' ／ 印が無い ' + gen.packs.noMark);
+      o.push('   ※「印が無い」は作り直す前の行。古い行は**消さずに読まない**方針（決定0078）');
+    }
+
+    var sht = st.shadowTables || {};
+    var shk = Object.keys(sht);
+    if (shk.length) {
+      var shOk = 0;
+      for (var _s = 0; _s < shk.length; _s++) if (sht[shk[_s]]) shOk++;
+      o.push('');
+      o.push('── shadow の表: ' + shOk + '/' + shk.length + ' 入っています'
+             + (shOk === shk.length ? '（✅）' : '（★まだ比べられません）'));
+    }
+
     //   ★二重書きの状態も同じ窓口で見られるようにする（2026-10-08）。
     //     新しいopを足すと許可一覧（3箇所）の更新がオーナー作業になるため、ここへ寄せる。
     //     ★囲む理由：待ち行列が壊れている等でここが落ちても、
