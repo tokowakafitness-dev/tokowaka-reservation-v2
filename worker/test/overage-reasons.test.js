@@ -77,6 +77,22 @@ ok('⑤★その理由を書いている',
   '作り直す前は carryover が過大に見える（quota − 0 = quota）');
 ok('⑤overage は 0 が自然な初期値', /ADD COLUMN overage INTEGER NOT NULL DEFAULT 0;/.test(MG));
 
+console.log('=== 6. 入り具合を数えられること（読み取りをD1へ向ける前の確認）===');
+{
+  const QR = readFileSync(join(ROOT, 'worker/src/routes/quota.js'), 'utf8');
+  const PE = readFileSync(join(ROOT, 'gas/PushToEdge.js'), 'utf8');
+  ok('⑥★頻度が入っていない行を数える',
+    /SUM\(CASE WHEN base_freq IS NULL THEN 1 ELSE 0 END\) AS noFreq/.test(QR),
+    '入っていない行から繰越を作ると、quota 全部を繰越として見せてしまう');
+  ok('⑥支払い待ちの合計と、出ている月の数を数える',
+    /SUM\(COALESCE\(overage, 0\)\) AS ovSum/.test(QR)
+    && /SUM\(CASE WHEN COALESCE\(overage, 0\) > 0 THEN 1 ELSE 0 END\) AS ovRows/.test(QR));
+  ok('⑥結果に載せる', /stage3b,/.test(QR));
+  ok('⑥★窓口の出力に出す（私が確かめられる形）',
+    /頻度が入っていない行: /.test(PE) && /作り直しが必要。繰越が過大に見えます/.test(PE));
+  ok('⑥全部入っていれば分かる', /✅ 全部入っています/.test(PE));
+}
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 支払い待ちの数え方 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

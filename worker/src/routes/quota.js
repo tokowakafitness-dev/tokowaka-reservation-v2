@@ -247,6 +247,24 @@ export async function quotaStatus(request, env) {
   const coverage = {};
   for (const r of (cov.results || [])) coverage[String(r.c)] = Number(r.n || 0);
 
+  //   ★3-b で足した2列が入っているかを数える（2026-10-09）。
+  //     base_freq が NULL の行は「まだ作り直していない」。その行から繰越を作ると
+  //     quota 全部を繰越として見せてしまう。読み取りをD1へ向ける前に0件にする。
+  //     overage は「支払い待ち」。合計を出して、画面に出す前に実数を確かめられるようにする。
+  const b3 = await env.DB.prepare(
+    `SELECT COUNT(*) AS n,
+            SUM(CASE WHEN base_freq IS NULL THEN 1 ELSE 0 END) AS noFreq,
+            SUM(COALESCE(overage, 0)) AS ovSum,
+            SUM(CASE WHEN COALESCE(overage, 0) > 0 THEN 1 ELSE 0 END) AS ovRows
+       FROM monthly_quota`
+  ).first();
+  const stage3b = {
+    rows: Number(b3?.n || 0),
+    baseFreqMissing: Number(b3?.noFreq || 0),   // ★0でなければ作り直しが要る
+    overageSessions: Number(b3?.ovSum || 0),    // 支払い待ちの件数（全月の合計）
+    overageMonths: Number(b3?.ovRows || 0),     // それが出ている月の数
+  };
+
   // ★旧「上限なし」の行がどれかを返す（2026-10-08）。新しくは作られない。
   //   件数だけ分かっても直せない。どの会員のどの月かが分からないと、
   //   台帳のどの行を直すのかオーナーに伝えられない。
@@ -273,6 +291,7 @@ export async function quotaStatus(request, env) {
     packs: { rows: Number(p?.n || 0), used: Number(p?.used || 0) },
     coverage,   // { limited: n, uncovered: n, unlimited: n, '(未設定)': n }
     coverageDetail: detail,   // { unlimited: ['顧客ID 月', …], notSet: [...] }（氏名は出さない）
+    stage3b,   // 3-bで足した2列の入り具合（base_freq の抜け・支払い待ちの件数）
   });
 }
 
