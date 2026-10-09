@@ -245,6 +245,17 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
   ok('⑧地図にトリガー20本の上限がある', /トリガー \| 20本/.test(DOC));
   ok('⑧地図にバージョン200の上限がある', /バージョン \| 200/.test(DOC));
   ok('⑧地図に「反映はまとめて1回」がある', /反映はまとめて1回/.test(DOC));
+  //   ★版の印（2026-10-09 に上げ忘れて誤認した）
+  ok('⑧★地図が「版の印を上げる」と書いている',
+     /そのファイルの\*\*版の印を上げる\*\*/.test(DOC)
+     && /上げ忘れると「反映済みの変更を未反映だと誤認」する/.test(DOC));
+  const JOB = rd('gas/EdgeJob.js');
+  ok('⑧★作業依頼の仕組みにも版の印がある',
+     /var LB_JOB_BUILD = /.test(JOB) && /\[job ' \+ LB_JOB_BUILD \+ '\]/.test(JOB),
+     '結果の先頭に出るので、反映されたかが毎回分かる');
+  for (const v of ['LB_EDGE_BUILD', 'LB_AUDIT_BUILD', 'LB_HEALTH_BUILD', 'LB_NUDGE_BUILD', 'LB_JOB_BUILD']) {
+    ok(`⑧${v} が実在する`, new RegExp(`var ${v} = `).test(rd('gas/PushToEdge.js') + rd('gas/EdgeAudit.js') + rd('gas/LineBooking.js') + rd('gas/Nudge.js') + JOB));
+  }
 }
 
 // ---------- 8-b. ★作業依頼の出し方・読み方（地図の§8-2）----------

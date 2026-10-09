@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-09a 3-bの土台（頻度・支払い待ち）の入り具合を出す';
+var LB_EDGE_BUILD = '2026-10-09c 行の世代・主キーの集合の照合・shadowの心拍';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
