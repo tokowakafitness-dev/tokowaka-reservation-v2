@@ -11,8 +11,16 @@ import { readRemainDiag, monthKeyJst, monthRangeJst } from './remain-from-d1.js'
 export const SHADOW_MODE_ON = 'shadow';
 
 //   1日・会員・入口ごとの上限
-export const SLOT_MAX_TOTAL = 5;   // 時間帯3つ ＋ 世代2つぶん
-export const SLOT_MAX_VER = 2;     // そのうち世代の枠は2つまで
+//   ★5 → 3 に下げた（2026-10-09・関門③）。
+//     書き込みの最大は 1比較あたり**51行**（枠1＋_age1＋_completed1＋集計24＋標本24）。
+//     設計書は 50 と書いていた（_age を数えていなかった）。
+//     さらに _pre: と _age: は枠の外でも書かれる（各3回まで・理由の種類ぶん）。
+//     D1の1日10万行は shadow 専用ではなく、押し出し・写しの更新・引当と共用。
+//     使い切ると**押し出しが止まり、写しが古くなって画面がGASへ落ちる（遅くなる）**。
+//     40名 × 3入口 × 3回 × 51 ＝ 最大 約18,400行/日（ふだんは約4,700行）。
+//     ベースラインの母数は 40×3×3＝360比較/日あれば足りる。
+export const SLOT_MAX_TOTAL = 3;   // 時間帯の枠 ＋ 世代の枠（合わせて3）
+export const SLOT_MAX_VER = 1;     // ★そのうち世代の枠は1つまで（総数3のうち時間帯に2つ残す）
 
 //   写しの鮮度の線（既存のコードが持っている2つに合わせる）
 export const COMPARE_FRESH_MS = 10 * 60 * 1000;   // これ以内なら値を比べる（HOME_TTL_WARN_MS）

@@ -17,7 +17,7 @@ import {
   COMPARE_FRESH_MS, COPY_TOO_OLD_MS, scheduleShadow, runShadow, claimSlot,
   POST_SKIP_COUNT_MAX, SLOT_MAX_TOTAL as MAXT,
 } from '../src/lib/remain-shadow.js';
-import { readHome, readHomeDiag } from '../src/routes/boot.js';
+import { readHome, readHomeDiag, runDeferred } from '../src/routes/boot.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
@@ -69,7 +69,7 @@ function gasHomeKeys() {
      SKIP_FIELDS.join(',') === 'computedAt,stale,ageMs,month'
      && SKIP_FIELDS.every((k) => COMPARE_FIELDS.indexOf(k) < 0));
   ok('①その4つを readHome が実際に足している',
-     /value: \{ \.\.\.home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age \}/.test(BOOT),
+     /\.\.\.home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age,/.test(BOOT),
      'ここが変わったら、比べない鍵も変える');
 }
 
@@ -186,21 +186,19 @@ const D = '2026-10-09';
 // ★世代の枠は2つまで（これが無いと時間帯の枠が食い潰される）
 {
   ok('⑤-b 世代の枠1つめ', (await claimSlot(E, D, 'C1', 'boot', 'ver:1:1', 2000)) === true);
-  ok('⑤-b 世代の枠2つめ', (await claimSlot(E, D, 'C1', 'boot', 'ver:2:2', 2100)) === true);
-  ok('⑤-b★3つめは取れない', (await claimSlot(E, D, 'C1', 'boot', 'ver:3:3', 2200)) === false,
-     '午前に世代が5回変われば、午後と夜が1回も観測されなくなる');
-  ok('⑤-b★残りの時間帯はまだ取れる', (await claimSlot(E, D, 'C1', 'boot', 'time:00-07', 2300)) === true,
-     `いまの枠=${sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C1' AND entry='boot';`).trim()}`);
+  ok('⑤-b★2つめは取れない（世代の枠は1つ）', (await claimSlot(E, D, 'C1', 'boot', 'ver:2:2', 2100)) === false,
+     '世代が何度も変わっても、時間帯の枠を食い潰してはいけない');
   ok('⑤-b★総数の上限に達したら取れない',
      Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C1' AND entry='boot';`).trim()) === SLOT_MAX_TOTAL
-     && (await claimSlot(E, D, 'C1', 'boot', 'ver:9:9', 2400)) === false);
+     && (await claimSlot(E, D, 'C1', 'boot', 'time:00-07', 2300)) === false,
+     `いまの枠=${sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C1' AND entry='boot';`).trim()}`);
 }
 // ★上限を超えないことを、連続して叩いて確かめる
 {
   for (let i = 0; i < 20; i++) await claimSlot(E, D, 'C9', 'boot', `ver:${i}:${i}`, 3000 + i);
   const n = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C9' AND entry='boot';`).trim());
   const v = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C9' AND entry='boot' AND sample_key LIKE 'ver:%';`).trim());
-  ok('⑤-c★20回叩いても世代の枠は2つ', v === SLOT_MAX_VER, `世代の枠=${v}`);
+  ok('⑤-c★20回叩いても世代の枠は上限どおり', v === SLOT_MAX_VER, `世代の枠=${v}`);
   ok('⑤-c★総数も上限を超えない', n <= SLOT_MAX_TOTAL, `総数=${n}`);
 }
 //   ★壊して確かめる：世代の上限の条件を外したら、本当に超えるか
@@ -404,13 +402,34 @@ const D = '2026-10-09';
 
 // ---------- 11. どの入口から渡しているか（配線）----------
 {
+  //   ★defer に積む方式（関門③）。readHome の中では起動しない
   ok('⑪boot から渡している',
-     /readHome\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'boot' \}\)/.test(BOOT));
+     /readHome\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'boot', defer \}\)/.test(BOOT));
+  //   ★動的 import にしない（関門③の2周目）。
+  //     import() の Promise は waitUntil に登録されないため、応答後に
+  //     解決する前に isolate が終わりうる＝**静かに一度も動かない**。
+  ok('⑪★静的 import になっている',
+     /^import \{ scheduleShadow \} from '\.\.\/lib\/remain-shadow\.js';$/m.test(BOOT)
+     && !/import\('\.\.\/lib\/remain-shadow\.js'\)/.test(BOOT));
+  ok('⑪★早期 return でも起動する（compat）',
+     /if \(!cust\) \{ runDeferred\(defer\); return \{ verified: false \}; \}/.test(COMPAT)
+     && /if \(!home\) \{ runDeferred\(defer\); return \{ _fallback: true \}; \}/.test(COMPAT),
+     '!home は「写しが無い／壊れた」＝D1なら答えられるか、いちばん確かめたい場面');
+  ok('⑪★枠は会員×入口で3回（書き込み枠を守る）',
+     MAXT === 3 && /SLOT_MAX_VER = 1;/.test(SH),
+     '1比較で最大51行。D1の1日10万行は押し出しと共用');
+  ok('⑪★比較は本体のD1処理のあとで起動する',
+     /opts\.defer\.push\(\(\) => \{/.test(BOOT) && /export function runDeferred\(defer\)/.test(BOOT)
+     && /runDeferred\(defer\);   \/\/ ★本体のD1処理が全部終わってから比較を起動する/.test(BOOT),
+     'readHome の中で起動すると、handler の Promise.all がまだ終わっておらず本体と競合する');
   ok('⑪routeBoot が ctx を受け取っている', /export async function routeBoot\(\{ env, who, ctx \}\)/.test(BOOT));
   ok('⑪会員の起動（互換）から渡している',
-     /readHomeSafe\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'compat_member' \}\)/.test(COMPAT));
+     /readHomeSafe\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'compat_member', defer \}\)/.test(COMPAT));
   ok('⑪顧客カードから渡している',
-     /readHomeSafe\(env, customerId, undefined, \{ shadow: true, ctx, entry: 'compat_home' \}\)/.test(COMPAT));
+     /readHomeSafe\(env, customerId, undefined, \{ shadow: true, ctx, entry: 'compat_home', defer \}\)/.test(COMPAT));
+  ok('⑪★互換の2入口も本体のあとで起動する',
+     (COMPAT.match(/runDeferred\(defer\)/g) || []).length >= 3,
+     'compatMemberStatus と compatCustomerHome（_fallback の経路も）');
   //   ★予約の候補を選ぶ経路からは渡さない（候補を選び直すたびに呼ばれる）
   const bo = COMPAT.slice(COMPAT.indexOf('export async function compatBookingOptions'));
   ok('⑪★予約の候補の経路からは渡さない',
@@ -455,8 +474,14 @@ const D = '2026-10-09';
       async batch(st) { const r = []; for (const x of st) r.push(await x.run()); return r; },
     },
   };
-  const v = await readHome(fakeEnv, 'CWIRE', undefined, { shadow: true, ctx, entry: 'boot' });
-  ok('⑪-b★readHome を通すと比較が予約される', calls.length === 1,
+  //   ★defer 方式：readHome は積むだけ。runDeferred で初めて起動する
+  const defer = [];
+  const v = await readHome(fakeEnv, 'CWIRE', undefined, { shadow: true, ctx, entry: 'boot', defer });
+  ok('⑪-b★readHome の時点では起動しない', calls.length === 0 && defer.length === 1,
+     `waitUntil=${calls.length} / 積まれた数=${defer.length}。本体のD1処理と競合させない`);
+  runDeferred(defer);
+  await new Promise((r) => setTimeout(r, 10));   // 動的 import を待つ
+  ok('⑪-b★runDeferred で比較が予約される', calls.length === 1,
      `waitUntil が呼ばれた回数=${calls.length}。0なら shadow が一度も動かない`);
   ok('⑪-b 返るのは写し', v && v.monthlyRemaining === 3 && v._src === undefined);
   //   予約した処理が外へ例外を出さないことも確かめる
@@ -464,13 +489,18 @@ const D = '2026-10-09';
   try { await calls[0]; } catch (_) { threw = true; }
   ok('⑪-b★予約した処理は例外を外に出さない', threw === false);
 
-  //   opts を渡さない呼び出しでは予約されない
+  //   opts を渡さない呼び出しでは積まれない
   calls.length = 0;
+  const d2 = [];
   await readHome(fakeEnv, 'CWIRE', undefined);
-  ok('⑪-b★opts が無ければ比べない', calls.length === 0);
-  //   モードが off なら予約されない
+  await readHome(fakeEnv, 'CWIRE', undefined, { shadow: true, ctx, entry: 'boot' });   // defer を渡さない
+  ok('⑪-b★opts や defer が無ければ比べない', calls.length === 0);
+  //   モードが off なら、積まれても起動しない
+  const d3 = [];
   await readHome({ ...fakeEnv, LB_D1_REMAIN_MODE: 'off' }, 'CWIRE', undefined,
-                 { shadow: true, ctx, entry: 'boot' });
+                 { shadow: true, ctx, entry: 'boot', defer: d3 });
+  runDeferred(d3);
+  await new Promise((r) => setTimeout(r, 10));
   ok('⑪-b モードが off なら比べない', calls.length === 0);
 }
 

@@ -214,6 +214,21 @@ used               トリガーが新しい行に積み直す
 ★返り値には**写しに無いものが後から足される**：`month` / `computedAt` / `stale` / `ageMs`
 　→ shadow で比べるときは**この4つを除く**（でないと毎回必ず食い違う）
 
+### ★写しにしか無い値（D1からは作れない）
+```
+transferCredits   振替権（ホームの「振替 N回」＋予約画面の①通常/②振替の分岐）
+                  振替権は transfer_credits シートにしかない。D1に無い
+                  ★写しのトップレベルに入れている（月ごとに分かれない）
+                  ★手順4（顧客に出す）のときは**写しから補う**。
+                    補わないと顧客の画面から振替が消える
+```
+★2026-10-09 まで、これが**写しに入っていなかった**。
+　GASは memberStatus の `home` の**外**に置き、Workerは `home` の**中**を読んでいた
+　＝Worker経由では常に `{ available: 0 }`。**振替権を持つ会員が振替で予約できなかった。**
+　shadow のために「顧客に返す値の一覧」を作ろうとして初めて気づいた。
+→ 再発防止：`worker/test/home-fields.test.js` が
+　「Worker が `home.XXX` として読む鍵が全部そろっているか」を機械で確かめる。
+
 ### `readRemainDiag`（D1から作る・`worker/src/lib/remain-from-d1.js`）
 答えない理由：`no_customer` / `out_of_range` / `no_version_row` / `not_built` / `behind` /
 `read_failed` / `version_changed` / `row_count_missing` / `row_count_mismatch` /

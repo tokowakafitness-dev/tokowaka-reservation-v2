@@ -9,6 +9,8 @@
 //   stale（鮮度）を必ず返し、古ければ画面側が「更新中」を出せるようにする。
 
 import { customerScopeSql } from '../perms.js';
+//   ★静的 import（動的だと waitUntil に登録される前に isolate が終わりうる）
+import { scheduleShadow } from '../lib/remain-shadow.js';
 
 const HOME_TTL_WARN_MS = 10 * 60 * 1000;   // 10分より古ければ鮮度を疑う
 // ★これより古い写しは答えない（GASに聞き直す）。
@@ -69,21 +71,46 @@ function _homeShapeOk(h) {
  */
 export async function readHome(env, customerId, targetMs, opts) {
   const d = await readHomeDiag(env, customerId, targetMs);
-  if (opts && opts.shadow === true) {
-    //   ★例外を外に出さない。顧客の画面を壊してはいけない。
-    try {
-      const { scheduleShadow } = await import('../lib/remain-shadow.js');
-      scheduleShadow(env, {
-        //   ★入口の意思をそのまま渡す（2026-10-09・関門②の指摘）。
-        //     ここで落とすと scheduleShadow が必ず false を返し、
-        //     モードを 'shadow' にしても**一度も比べない**。
-        shadow: opts.shadow,
-        customerId, targetMs, entry: opts.entry, ctx: opts.ctx,
-        copyDiag: d, lang: opts.lang,
-      });
-    } catch (_) {}
+  //   ★比較は**ここで起動しない**（2026-10-09・関門③の指摘）。
+  //
+  //     `ctx.waitUntil(runShadow(...))` は runShadow を**その場で呼ぶ**。
+  //     readHome は handler の Promise.all の中で待たれているので、
+  //     本体の残りのD1読み取りが**まだ終わっていない**。
+  //     ＝比較のD1読み書きが本体と競合し、本体が上限やD1の障害を踏めば
+  //       handler ごと 500 になる＝**顧客の画面が壊れる。**
+  //
+  //     だから「あとで実行する関数」を opts.defer に積むだけにする。
+  //     handler が**結果を返す直前**に実行する（`runDeferred`）。
+  if (opts && opts.shadow === true && Array.isArray(opts.defer)) {
+    //   ★動的 import にしない（2026-10-09・関門③の2周目）。
+    //     import() の Promise は ctx.waitUntil に登録されないため、
+    //     handler が応答を返したあと import が解決する前に isolate が終わりうる
+    //     ＝**shadow が静かに一度も動かない**。
+    //     静的 import なら、この関数の中で同期的に scheduleShadow を呼べて、
+    //     その中で即座に waitUntil へ登録される。
+    opts.defer.push(() => {
+      try {
+        scheduleShadow(env, {
+          //   ★入口の意思をそのまま渡す（関門②の指摘）。
+          //     落とすと scheduleShadow が必ず false を返し、一度も比べない。
+          shadow: opts.shadow,
+          customerId, targetMs, entry: opts.entry, ctx: opts.ctx,
+          copyDiag: d, lang: opts.lang,
+        });
+      } catch (_) {}
+    });
   }
   return d.value;
+}
+
+/**
+ * handler が**結果を返す直前**に呼ぶ。積まれた比較を起動する。
+ *   ★何があっても例外を外に出さない。顧客の画面を壊してはいけない。
+ */
+export function runDeferred(defer) {
+  if (!Array.isArray(defer)) return;
+  for (const f of defer) { try { f(); } catch (_) {} }
+  defer.length = 0;
 }
 
 /**
@@ -138,7 +165,15 @@ export async function readHomeDiag(env, customerId, targetMs) {
   if (!computedAt) return { value: null, status: 'no_computed_at', month, computedAt: null, ageMs: null };
   const age = Date.now() - computedAt;
   return {
-    value: { ...home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age },
+    value: {
+      ...home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age,
+      //   ★振替権は写しの**トップレベル**に入っている（月ごとに分かれない）。
+      //     2026-10-09 まで写しに入っておらず、compat が home.transferCredits を
+      //     読んでいたため **常に { available: 0 }** になっていた。
+      //     ＝ホームの「振替 N回」が出ず、予約画面の「①通常／②振替」も出なかった。
+      //   ★古い写し（この鍵が無いもの）では undefined。呼ぶ側が 0 に落とす＝いまと同じ。
+      transferCredits: p.transferCredits,
+    },
     status: 'ok', month, computedAt, ageMs: age,
   };
 }
@@ -147,12 +182,16 @@ export async function routeBoot({ env, who, ctx }) {
   const now = Date.now();
   const trainers = await readTrainers(env);
 
+  //   ★比較（shadow）を積む場所。本体が終わってから実行する（関門③）
+  const defer = [];
+
   if (who.role === 'customer') {
     const [home, resv] = await Promise.all([
       //   ★この入口だけ shadow を有効にする（設計12 第3節の表）。
       //     ctx は index.js が全部の handler に渡しているので、
       //     「ctx があるから比べる」にはしない。**入口の意思を明示する。**
-      readHome(env, who.customerId, undefined, { shadow: true, ctx, entry: 'boot' }),
+      //   ★defer に積むだけ。実行は return の直前（本体のD1処理と競合させない）。
+      readHome(env, who.customerId, undefined, { shadow: true, ctx, entry: 'boot', defer }),
       env.DB.prepare(
         `SELECT reservation_id, trainer_id, start_at, end_at, kind, attendee_count, status
            FROM reservations
@@ -160,7 +199,7 @@ export async function routeBoot({ env, who, ctx }) {
           ORDER BY start_at LIMIT 50`
       ).bind(who.customerId, now).all(),
     ]);
-    return {
+    const out = {
       role: 'customer',
       name: who.name,
       customerId: who.customerId,
@@ -169,6 +208,8 @@ export async function routeBoot({ env, who, ctx }) {
       home,
       reservations: resv.results || [],
     };
+    runDeferred(defer);   // ★本体のD1処理が全部終わってから比較を起動する
+    return out;
   }
 
   // トレーナー／オーナー：担当顧客と、それぞれの今後の予約件数を1往復で取る

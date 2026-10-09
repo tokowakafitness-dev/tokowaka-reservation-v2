@@ -168,7 +168,10 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
     ok(`④地図に '${w}' が載っている`, DOC.indexOf(w) >= 0);
   }
   //   ★後から足される4つ
-  ok('④★付帯情報は4つ', /\{ \.\.\.home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age \}/.test(BOOT));
+  ok('④★付帯情報は4つ', /\.\.\.home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age,/.test(BOOT));
+  //   ★写しのトップレベルから返すもの（2026-10-09 に transferCredits を足した）
+  ok('④★写しにしか無い値も返す', /transferCredits: p\.transferCredits,/.test(BOOT),
+     'これが無いと Worker 経由で振替権が常に0になる');
   ok('④地図が「比べるときは除く」と書いている',
      /`month` \/ `computedAt` \/ `stale` \/ `ageMs`/.test(DOC) || /month` \/ `computedAt`/.test(DOC));
   //   shadow が実際にその4つを除いている

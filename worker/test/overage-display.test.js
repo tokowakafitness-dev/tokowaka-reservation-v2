@@ -140,8 +140,14 @@ eq('⑥文言が4言語ぶんある', (HTML.match(/overage_note:/g) || []).lengt
 // ---------- ⑦ D1の写しに新しい値が載ること（画面がWorker経由でも出るように）----------
 //   押し出しは _lbBuildHome の返り値をそのまま写すので、載るはず。
 //   ★ここが載っていないと、Worker経由の画面だけ超過が出ない（経路で見え方が変わる）。
+//   ★2026-10-09：payload に transferCredits を足した（顧客の画面に出る値で、
+//     写しに無いと Worker 経由で常に0になっていた）。だから「そのまま」ではなくなった。
+//     見たいのは「ホームの返り値（current / next）がそのまま載っていること」。
 ok('⑦押し出しがホームの返り値をそのまま写している',
-  /payload: JSON\.stringify\(\{ currentMonth: curKey, nextMonth: nextKey, current: cur, next: nxt \}\)/.test(PUSH));
+  /payload: JSON\.stringify\(\{ currentMonth: curKey, nextMonth: nextKey, current: cur, next: nxt,/.test(PUSH));
+ok('⑦★写しにしか無い値（振替権）も載せている',
+  /transferCredits: tcAll\[cid\]/.test(PUSH),
+  'これが無いと Worker 経由の画面だけ振替が0になる（経路で見え方が変わる）');
 
 console.log(`\n${fail ? '❌' : '✅'} 超過の表示 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

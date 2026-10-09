@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-09c 行の世代・主キーの集合の照合・shadowの心拍';
+var LB_EDGE_BUILD = '2026-10-09e 振替権を写しに入れる（読めなければ押し出さない）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -312,6 +312,64 @@ function _edgeMonthKey(d) {
   return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
 }
 
+//   振替権を**1回のシート読みで全員ぶん**作る（2026-10-09）。
+//
+//   ★なぜ写しに入れるのか
+//     transferCredits は顧客の画面に出る（ホームの「振替 N回」＋
+//     予約画面の「①通常／②振替」の分岐）。ところがGASは memberStatus の
+//     **home の外**に置き、Workerは **home の中**を読んでいた（compat.js:89）。
+//     ＝Worker経由では**常に { available: 0 }**。
+//     振替権を持つ会員が、振替で予約できない状態だった。
+//
+//   ★1回だけ読む。_lbTransferCreditsFor は会員ごとにシート全体を読むので、
+//     40名ぶん呼ぶと40回の全行読みになる（_edgeHomeRows は既に42秒かかっている）。
+//
+//   ★★読めなかったら押し出しを**止める**（2026-10-09・関門③の2周目）。
+//     最初は「失敗しても止めない（0に見えるだけ）」と書いたが、**それは退行だった。**
+//     振替権を写しに入れたあとは、読めないときに 0 を書くと
+//     **正しい写しを「振替0回」で上書きする**＝振替で予約できなくなる。
+//     「不明」を「0件」に変換して押し出してはいけない。
+//     押し出さなければ前の正しい写しが残る（keepStale なので消えない）。
+//     残数の写しは古くなるが、40分の安全弁で画面がGASへ落ちる＝遅いが正しい。
+//   返り値 { ok, byCid }
+function _edgeTransferCreditsAll() {
+  var out = {};
+  try {
+    var sh = _lbSheet(LB_TCREDIT_SHEET);
+    //   ★シートが無い／空は「振替権を持つ人がいない」＝正常。0でよい
+    if (!sh) return { ok: true, byCid: out, empty: 'no_sheet' };
+    if (sh.getLastRow() < 2) return { ok: true, byCid: out, empty: 'no_rows' };
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues();
+    var byCid = {};
+    for (var i = 0; i < v.length; i++) {
+      var cid = String(v[i][0] == null ? '' : v[i][0]).replace(/^\s+|\s+$/g, '');
+      if (!cid) continue;
+      var g = _lbParseResvDate(v[i][1]), e = _lbParseResvDate(v[i][2]);
+      var u = v[i][3] ? _lbParseResvDate(v[i][3]) : null;
+      (byCid[cid] = byCid[cid] || []).push({
+        grantedMs: g ? g.getTime() : 0, expiresMs: e ? e.getTime() : 0,
+        usedMs: u ? u.getTime() : 0, rowIndex: i + 2
+      });
+    }
+    var now = Date.now();
+    for (var c in byCid) {
+      if (!byCid.hasOwnProperty(c)) continue;
+      var st = _lbTransferCreditState(byCid[c], now);
+      out[c] = {
+        available: st.available, nextExpiryMs: st.nextExpiryMs || null,
+        //   ★ラベルは日本語で固定。写しは1つなので言語ごとに作れない。
+        //     英語の会員には日本語の日付が出る（振替が0に見えるより軽い）。
+        nextExpireLabel: st.nextExpiryMs ? _lbFmtDateShort(new Date(st.nextExpiryMs), null) : ''
+      };
+    }
+  } catch (e) {
+    //   ★0 を返さない。読めなかったことを呼ぶ側へ伝える
+    Logger.log('⚠️ 振替権が読めませんでした（残数の写しを押し出しません）: ' + (e && e.message));
+    return { ok: false, byCid: {}, error: String((e && e.message) || e) };
+  }
+  return { ok: true, byCid: out };
+}
+
 function _edgeHomeRows(customerIds, deadlineMs) {
   var rows = [];
   var now = new Date();
@@ -319,6 +377,14 @@ function _edgeHomeRows(customerIds, deadlineMs) {
   //   （9月の残数と10月の残数は別物）。今月分と翌月分の2つを持たせる。
   var nextMid = new Date(now.getFullYear(), now.getMonth() + 1, 15, 12, 0, 0);
   var curKey = _edgeMonthKey(now), nextKey = _edgeMonthKey(nextMid);
+  //   ★振替権は1回だけ読む（顧客の画面に出る値・compat が home から読む）
+  //   ★読めなければ**押し出さない**。0 で上書きすると振替で予約できなくなる
+  var _tc = _edgeTransferCreditsAll();
+  if (!_tc.ok) {
+    Logger.log('⚠️ 残数の写しを押し出しません（振替権が読めないため）: ' + (_tc.error || ''));
+    return [];   // 前の正しい写しを残す（keepStale なので消えない）
+  }
+  var tcAll = _tc.byCid;
 
   for (var i = 0; i < customerIds.length; i++) {
     // GASは1回の実行が6分で止められる。全員分を作りきれなくても、
@@ -331,7 +397,9 @@ function _edgeHomeRows(customerIds, deadlineMs) {
     try { nxt = _lbBuildHome(cid, name, null, nextMid.getTime()); } catch (e) { nxt = null; }
     rows.push({
       customer_id: cid,
-      payload: JSON.stringify({ currentMonth: curKey, nextMonth: nextKey, current: cur, next: nxt }),
+      payload: JSON.stringify({ currentMonth: curKey, nextMonth: nextKey, current: cur, next: nxt,
+                                //   ★振替権（顧客の画面に出る。写しに無いと常に0になる）
+                                transferCredits: tcAll[cid] || { available: 0, nextExpiryMs: null, nextExpireLabel: '' } }),
       computed_at: Date.now()
     });
   }

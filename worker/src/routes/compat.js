@@ -9,6 +9,10 @@
 // 「M月d日(曜)」の表示が1日ずれる。
 
 import { canSeeCustomer, customerScopeSql } from '../perms.js';
+//   ★比較（shadow）は本体のD1処理が全部終わってから起動する（関門③の指摘）。
+//     readHome の中で起動すると、handler の Promise.all がまだ終わっていないため
+//     比較のD1読み書きが本体と競合し、本体が落ちれば handler ごと 500 になる。
+import { runDeferred } from './boot.js';
 
 const JST = 9 * 3600 * 1000;
 const DOW = { ja: ['日', '月', '火', '水', '木', '金', '土'],
@@ -58,6 +62,8 @@ export async function rolesTooOld(env) {
 // getMemberStatus と同じ形
 // ---------------------------------------------------------------
 export async function compatMemberStatus({ env, who, ctx }) {
+  //   ★比較（shadow）は本体のD1処理が全部終わってから起動する（関門③）
+  const defer = [];
   if (who.role === 'trainer' || who.role === 'owner') {
     return { verified: true, role: 'trainer', trainerName: who.name,
              trainerId: who.trainerId, isOwner: who.role === 'owner' };
@@ -69,11 +75,15 @@ export async function compatMemberStatus({ env, who, ctx }) {
       `SELECT customer_id, name, contract_status, contract_type, default_trainer_id
          FROM customers WHERE customer_id = ?`
     ).bind(who.customerId).first(),
-    readHomeSafe(env, who.customerId, undefined, { shadow: true, ctx, entry: 'compat_member' }),
+    readHomeSafe(env, who.customerId, undefined, { shadow: true, ctx, entry: 'compat_member', defer }),
   ]);
-  if (!cust) return { verified: false };
-  if (!home) return { _fallback: true };          // 残数が無い＝画面はGASに聞き直す
+  //   ★早期 return でも比較を起動する（2026-10-09・関門③の2周目）。
+  //     !home は「写しが無い／壊れた／古すぎる」＝**D1なら答えられるか、
+  //     いちばん確かめたい場面**。ここで取りこぼすと観測できない。
+  if (!cust) { runDeferred(defer); return { verified: false }; }
+  if (!home) { runDeferred(defer); return { _fallback: true }; }   // 残数が無い＝画面はGASに聞き直す
 
+  runDeferred(defer);   // ★ここまでで本体のD1処理は終わっている
   return {
     verified: true,
     onboarding: false,
@@ -214,14 +224,16 @@ export async function compatTrainerReservations({ env, who, body }) {
 // getCustomerHome と同じ形
 // ---------------------------------------------------------------
 export async function compatCustomerHome({ env, body, who, ctx }) {
+  const defer = [];   // ★比較は本体のD1処理のあとで（関門③）
   const customerId = String(body.customerId || '');
   if (!customerId) return { _fallback: true };
   if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
   const [cust, home] = await Promise.all([
     env.DB.prepare('SELECT name FROM customers WHERE customer_id = ?').bind(customerId).first(),
-    readHomeSafe(env, customerId, undefined, { shadow: true, ctx, entry: 'compat_home' }),
+    readHomeSafe(env, customerId, undefined, { shadow: true, ctx, entry: 'compat_home', defer }),
   ]);
-  if (!cust || !home) return { _fallback: true };
+  if (!cust || !home) { runDeferred(defer); return { _fallback: true }; }
+  runDeferred(defer);
   return { name: cust.name, home };
 }
 
