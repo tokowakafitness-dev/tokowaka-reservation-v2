@@ -267,6 +267,15 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
      /\{"write":true,"alloc":true\} の\*\*両方\*\*が必須/.test(DOC)
      && /ALLOC_REQUIRED/.test(rd('worker/src/routes/quota.js')));
   ok('⑧-b★地図が正しい範囲を書いている', /\{"from":"2026-09","to":"2026-12"\}/.test(DOC));
+  //   ★作り直しの順序（2026-10-09 に踏んだ）
+  ok('⑧-b★地図が「入力を押す→作り直す→照合」の順序を書いている',
+     /① 入力を押す           \{"op":"pushAll"\}/.test(DOC)
+     && /①を飛ばすと `source_version` が 0 のままで/.test(DOC));
+  ok('⑧-b★その根拠（印は source と一致したときだけ進む）',
+     /WHEN customer_sync_version\.source_version = excluded\.built_version/.test(rd('worker/src/lib/sync-version.js')));
+  ok('⑧-b★飛ばしたときは「答えない側」に倒れる',
+     /VERSION_NOT_BUILT|VERSION_/.test(rd('worker/src/routes/quota-verify.js')),
+     '止まるのが正しい。「一致」と出るほうが危険');
 }
 
 // ---------- 9. 倒れる向き（地図の§0）----------

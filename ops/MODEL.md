@@ -315,6 +315,17 @@ used               トリガーが新しい行に積み直す
      ★15秒ごとに最大10分ポーリングする（foreground の sleep は禁止なので背景で）
 ```
 
+### ★作り直しの順序（飛ばすと「まだ作り直していない」で止まる）
+```
+① 入力を押す           {"op":"pushAll"}        ← source_version が進む
+② 作り直す             {"op":"quotaBuild","args":{"write":true,"alloc":true,"from":…,"to":…}}
+③ 照合                 {"op":"quotaBuild","args":{"verify":true}}
+```
+★①を飛ばすと `source_version` が 0 のままで、世代の印も 0 になる。
+　`markBuiltStatement` は「いまの source ＝ 自分が読んだ世代」のときだけ印を進めるため。
+　結果：照合が `VERSION_NOT_BUILT` で全員を飛ばす（＝**答えない側に倒れる。正しい動き**）。
+　2026-10-09、migration 0014 を入れた直後にこれを踏んだ。
+
 ### 書き込みを伴う依頼
 ```
 quotaBuild で書くなら {"write":true,"alloc":true} の**両方**が必須
