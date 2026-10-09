@@ -1840,7 +1840,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-09e 未達の用途／429対策／トリガー作成の失敗／元栓';
+var LB_HEALTH_BUILD = '2026-10-09f 作業依頼のロック失敗／未達の用途／トリガー／元栓';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2034,6 +2034,29 @@ function dailyHealthCheck(dryRun) {
     add('trigger_check_fail', '定期処理', 'high', 1,
         'トリガーの点検そのものが失敗しました: ' + (e && e.message));
   }
+
+  // ---- 作業依頼がロックで落ちていないか（2026-10-09）----
+  //   ★作業依頼は私（CEO）が調査・修復に使うもの。落ちると調べ直しになり、
+  //     そのあいだ本番の状態が分からない。
+  //   ★続いているなら「トリガーが重なりすぎ」という本当の原因があり、
+  //     二重書きの速い道も同じ理由で止まっている可能性がある。
+  try {
+    var _jm = [];
+    try { _jm = JSON.parse(_lbProp('LB_JOB_LOCK_MISS') || '[]'); } catch (e2) { _jm = []; }
+    if (Object.prototype.toString.call(_jm) === '[object Array]' && _jm.length) {
+      var _jn = 0, _jw = '';
+      for (var _ji = 0; _ji < _jm.length; _ji++) {
+        var _jat = Number(_jm[_ji] && _jm[_ji].at);
+        if (!isFinite(_jat) || (now.getTime() - _jat) > 3 * 86400000) continue;
+        _jn++; if (!_jw) _jw = Utilities.formatDate(new Date(_jat), tz, 'M/d HH:mm');
+      }
+      if (_jn >= 3) {
+        add('job_lock_miss', '定期処理', 'warn', _jn,
+            '作業依頼がロックで落ちた回が直近3日で ' + _jn + '回（直近 ' + _jw + '）。'
+            + 'トリガーが重なりすぎています。二重書きの速い道も同じ理由で止まっている恐れがあります。');
+      }
+    }
+  } catch (e) {}
 
   // ---- 押し出しの元栓が開いているか（2026-10-08）----
   //   ★EDGE_PUSH_ON が '1' でなければ、写しの押し出しも二重書きも**丸ごと動かない。**

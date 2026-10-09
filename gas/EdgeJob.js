@@ -123,6 +123,21 @@ function _ejRun(op, args) {
 }
 
 /** 1分ごとに呼ばれる。作業が無ければすぐ終わる（0.3〜0.5秒） */
+// ロックが取れずに作業依頼を落とした回数を記録する。
+//   ★ログだけでは気づけない。続くなら「18本のトリガーが重なりすぎ」という
+//     本当の原因があり、二重書きの速い道も同じ理由で止まっている可能性がある。
+function _ejNoteLockMiss(op) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var arr = [];
+    try { arr = JSON.parse(p.getProperty('LB_JOB_LOCK_MISS') || '[]'); } catch (e) { arr = []; }
+    if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
+    arr.unshift({ at: Date.now(), op: String(op || '') });
+    arr = arr.slice(0, 20);
+    p.setProperty('LB_JOB_LOCK_MISS', JSON.stringify(arr));
+  } catch (e) { Logger.log('[job] ロック失敗を記録できませんでした: ' + (e && e.message)); }
+}
+
 function edgeJobPoll() {
   if (!_ejOn()) return;                       // 開発中だけ動かす
 
@@ -150,11 +165,21 @@ function edgeJobPoll() {
   }
 
   // 写しを書き換える作業は、ほかの押し出しと重ならないようにする
+  //   ★待ち時間を30秒にした（2026-10-09）。
+  //     それまで5秒。**2026-10-09に同じ作業依頼が2回続けて落ちた。**
+  //     このプロジェクトにはトリガーが18本あり、押し出し・温め直し・
+  //     二重書きの心拍・カレンダー同期が頻繁に動く。5秒ではたまたま重なるだけで落ちる。
+  //     リマインドで同じ問題を踏んでいる（2026-10-07・0秒待ちで送信が丸ごと飛んだ）。
+  //     ★作業依頼は私（CEO）が調査・修復に使うもの。落ちると調べ直しになり、
+  //       そのあいだ本番の状態が分からない。待って取れるほうがよい。
+  //   ★取れなかったときは、その回数を記録する（続くなら本当の原因がある）。
   var lock = null;
   if (claimed.isWrite) {
     lock = LockService.getScriptLock();
-    if (!lock.tryLock(5000)) {
-      try { _ejPost({ action: 'report', requestId: claimed.requestId, ok: false, error: 'ほかの処理が動いていました' }); } catch (e2) {}
+    if (!lock.tryLock(30000)) {
+      _ejNoteLockMiss(claimed.op);
+      try { _ejPost({ action: 'report', requestId: claimed.requestId, ok: false,
+                      error: 'ほかの処理が動いていました（30秒待っても取れず）' }); } catch (e2) {}
       return;
     }
   }
