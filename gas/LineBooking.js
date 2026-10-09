@@ -1840,7 +1840,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-09f 作業依頼のロック失敗／未達の用途／トリガー／元栓';
+var LB_HEALTH_BUILD = '2026-10-09g shadow が動いているか／作業依頼のロック失敗／元栓';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2070,6 +2070,46 @@ function dailyHealthCheck(dryRun) {
           + '写しの更新と二重書きが**丸ごと止まっています。**'
           + 'D1は止まった時点の値で固まります。Script Properties で EDGE_PUSH_ON を 1 にしてください。');
     }
+  } catch (e) {}
+
+  // ---- shadow が on なのに一度も比べていないか（2026-10-09）----
+  //   ★「食い違い0件」は、次の**全部**で同じ0件になる。
+  //       人が来なかった／モードが off／入口の配線の渡し忘れ／
+  //       応答より前に return している／D1の読み取りが落ちた／表が無い
+  //     だから「比べ終わった回数」が0のまま続いていないかを見る。
+  //   ★今日（2026-10-09）on にした直後、まさにこれが区別できなかった。
+  //     一度も比べていなければ、shadow は**存在しないのと同じ**。
+  try {
+    var _shMode = '';
+    try {
+      var _shSt = _edgeQuotaStatus('?shadow=1');
+      _shMode = String((_shSt && _shSt.preflight && _shSt.preflight.mode) || '');
+      if (_shMode === 'shadow') {
+        var _shTot = (_shSt && _shSt.total) || {};
+        var _shDone = Number(_shTot.completed || 0);
+        var _shInc = Number(_shTot.incomplete || 0);
+        //   ★その日のうちに1回も比べていない＝配線か経路を疑う
+        if (!_shDone) {
+          add('shadow_idle', 'D1', 'warn', 1,
+              'shadow が on なのに、今日まだ一度も比べていません。'
+              + '誰も画面を開いていないのか、入口の配線が効いていないのか区別できません。'
+              + 'LINEで画面を1回開いて、それでも0なら配線を疑ってください。');
+        }
+        //   ★枠を取ったのに結末を残せなかった＝D1の障害か、処理が途中で終わっている
+        if (_shInc > 0) {
+          add('shadow_incomplete', 'D1', 'warn', _shInc,
+              'shadow で「結末を残せなかった」回が ' + _shInc + '回あります。'
+              + 'D1の障害か、処理が途中で終わっています。');
+        }
+        //   ★食い違いが出ていれば、鍵の種類を出す（中身は作業依頼で読む）
+        var _shFields = Number(_shTot.diffFields || 0);
+        if (_shFields > 0) {
+          add('shadow_diff', 'D1', 'warn', _shFields,
+              '写しとD1で食い違う鍵が ' + _shFields + '種類あります（比べ終わった ' + _shDone + '回）。'
+              + '読み取りをD1へ向ける前に原因を潰してください。');
+        }
+      }
+    } catch (e2) { /* 窓口が読めないだけ＝点検そのものは続ける */ }
   } catch (e) {}
 
   // ---- 支払い待ち（枠を超えて押さえた予約）が月末まで残っていないか（2026-10-08）----

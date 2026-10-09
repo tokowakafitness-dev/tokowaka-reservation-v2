@@ -632,6 +632,27 @@ ok('⑪-e★post の上限＝枠の上限', POST_SKIP_COUNT_MAX === MAXT,
   ok('⑪-e preclaim は引かない', /preclaim は枠を使っていないので引かない/.test(ST));
 }
 
+// ---------- 11-h. ★「動いているつもり」を日次点検で潰す ----------
+//   ★2026-10-09、on にした直後に「比べた回数0」が
+//     「誰も画面を開いていない」のか「配線が効いていない」のか**区別できなかった**。
+//     1日2回しか心拍を見られないなら、毎朝の点検に載せたほうが確実。
+{
+  const LB2 = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
+  ok('⑪-h★一度も比べていなければ知らせる',
+     /add\('shadow_idle'/.test(LB2) && /if \(!_shDone\) \{/.test(LB2),
+     '一度も比べていなければ、shadow は存在しないのと同じ');
+  ok('⑪-h★結末を残せなかった回も知らせる',
+     /add\('shadow_incomplete'/.test(LB2) && /_shInc > 0/.test(LB2));
+  ok('⑪-h 食い違いの鍵の種類も知らせる', /add\('shadow_diff'/.test(LB2));
+  ok('⑪-h★モードが shadow のときだけ見る',
+     /if \(_shMode === 'shadow'\) \{/.test(LB2),
+     'off のときに「動いていない」と知らせても意味がない');
+  ok('⑪-h★点検そのものを落とさない',
+     /catch \(e2\) \{ \/\* 窓口が読めないだけ＝点検そのものは続ける \*\/ \}/.test(LB2),
+     'shadow の窓口が読めなくても、他の検査は続ける');
+  ok('⑪-h 版の印を上げている', /LB_HEALTH_BUILD = '2026-10-09g/.test(LB2));
+}
+
 // ---------- 12. 顧客の画面を壊さない ----------
 ok('⑫例外を外に出さない', /} catch \(_\) \{\n    return false;   \/\/ 何があっても顧客の画面を壊さない/.test(SH));
 ok('⑫記録の失敗で顧客に影響しない', /runShadow\(env, opts\)\.catch\(/.test(SH));
