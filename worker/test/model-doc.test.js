@@ -270,7 +270,20 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
   //   ★作り直しの順序（2026-10-09 に踏んだ）
   ok('⑧-b★地図が「入力を押す→作り直す→照合」の順序を書いている',
      /① 入力を押す           \{"op":"pushAll"\}/.test(DOC)
-     && /①を飛ばすと `source_version` が 0 のままで/.test(DOC));
+     && /② 作り直す/.test(DOC) && /③ 照合/.test(DOC));
+  //   ★2026-10-09：地図は「pushAll ← source_version が進む」と書いていた。**事実と違った。**
+  //     差分同期なので、内容が変わっていない行は書かず、世代も進まない。
+  ok('⑧-b★地図が「進むとは限らない」と書いている',
+     /`source_version` が進むとは限らない/.test(DOC)
+     && /実際にD1へ書いた会員だけ source_version が進む/.test(DOC));
+  ok('⑧-b★その根拠（書かなかった行は数えない）',
+     /if \(!full && !replaceCustomer && same\(r, existing\[String\(key\)\]\)\) continue;   \/\/ 書かなかった行/.test(rd('worker/src/routes/ingest.js')));
+  ok('⑧-b★完全同期なら全行を書く（だから進む）',
+     /const full = body\.deleteStale === true;/.test(rd('worker/src/routes/ingest.js'))
+     && /削除まで確定するのは\*\*日次の完全同期\*\*/.test(DOC));
+  ok('⑧-b★後付けの手順（bootstrap）が書いてある',
+     /世代表を既存の入力へ後付けするとき/.test(DOC)
+     && /既存の 0\/0 の行も 1\/0 に直す/.test(DOC));
   ok('⑧-b★その根拠（印は source と一致したときだけ進む）',
      /WHEN customer_sync_version\.source_version = excluded\.built_version/.test(rd('worker/src/lib/sync-version.js')));
   ok('⑧-b★飛ばしたときは「答えない側」に倒れる',
