@@ -158,7 +158,16 @@ ok('⑥-b トリガーを数える', /ScriptApp\.getProjectTriggers\(\)/.test(LB
 ok('⑥-b ★無いものを high で出す',
   /add\('trigger_missing', '定期処理', 'high'/.test(LB)
   && /_missing\.length\) \{/.test(LB));
-ok('⑥-b 直し方を書いている', /setupTriggers を実行し直すと戻ります/.test(LB));
+//   ★★この検査が、危険な案内を固定していた（2026-10-09・Codex関門①）。
+//     `setupTriggers` は名前で絞らずに全部のトリガーを消し、3本しか戻さない。
+//     「実行し直すと戻ります」と案内していて、**検査がそれを守っていた。**
+//     検査は正しいものを守らなければ、間違いを固定する道具になる。
+ok('⑥-b★危険な案内をしていない',
+  !/setupTriggers を実行し直すと戻ります/.test(LB)
+  && /★setupTriggers は実行しないでください/.test(LB),
+  'あの関数を実行すると、押し出し・作業依頼・点検そのものが丸ごと止まる');
+ok('⑥-b 用途ごとの関数を名指しで案内している',
+  /setupEdgeTrigger/.test(LB) && /setupNudgeTrigger/.test(LB) && /setupRecurringTriggers/.test(LB));
 //   ★止まったら困るものを漏らさない。止まったときに何が起きるかも書く
 for (const h of ['dailyHealthCheck', 'lbNudgeDaily', 'sendLineReminders',
                  'pushToEdgeLight', 'pushToEdgeFullSync', 'dailySync',

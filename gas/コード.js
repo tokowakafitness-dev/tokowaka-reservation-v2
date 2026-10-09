@@ -879,13 +879,46 @@ function migrateParkfitReservations() {
 }
 
 // ── トリガーセットアップ ──
+//
+//   ★★この関数は**実行してはいけない**（2026-10-09・Codex関門①で発覚）。
+//     作られた当時はトリガーが3本しか無かった。いまは18本ある。
+//     `getProjectTriggers()` を**名前で絞らずに全部消し、3本しか戻さない。**
+//     実行すると次が丸ごと止まる：
+//       押し出し（写しの更新・二重書き）／作業依頼／カレンダー同期／
+//       予約のうながし／固定枠の自動予約／シフト連絡／日次点検／完全同期
+//     ＝顧客の残数が固まり、リマインドが届かず、予約が自動で作られない。
+//
+//   ★しかも日次点検が「setupTriggers を実行し直すと戻ります」と案内していた
+//     （2026-10-09 に修正）。**案内どおりに実行すると大事故になる。**
+//
+//   残す理由：消すと「昔の記録に出てくる関数が無い」ことになり、
+//   調べる人が混乱する。**実行を拒否する形で残す。**
 function setupTriggers() {
-  var triggers = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < triggers.length; i++) ScriptApp.deleteTrigger(triggers[i]);
+  var msg = '🚨 この関数は実行できません。'
+    + '名前で絞らずに全部のトリガーを消し、3本しか戻さないためです'
+    + '（いま18本あります）。'
+    + '必要な定期処理を入れ直すには、用途ごとの関数を使ってください：'
+    + 'setupEdgeTrigger（押し出し）／setupEdgeJobTrigger（作業依頼）／'
+    + 'setupCalSyncTrigger（カレンダー同期）／setupNudgeTrigger（うながし）／'
+    + 'setupRecurringTriggers（固定枠・シフト）／setupLineTriggers（その他）。';
+  Logger.log(msg);
+  throw new Error(msg);
+}
+
+//   昔の3本だけを入れ直したいとき用（★全部消さない）。
+//   名前で絞って、その3つだけを作り直す。
+function setupBasicTriggersOnly() {
+  var names = { warmupCache: 1, sendReminderMails: 1, sendLineReminders: 1 };
+  var all = ScriptApp.getProjectTriggers(), removed = 0;
+  for (var i = 0; i < all.length; i++) {
+    if (names[all[i].getHandlerFunction()]) { ScriptApp.deleteTrigger(all[i]); removed++; }
+  }
   ScriptApp.newTrigger('warmupCache').timeBased().everyMinutes(10).create();
   ScriptApp.newTrigger('sendReminderMails').timeBased().everyDays(1).atHour(9).inTimezone(SETTINGS.TIMEZONE).create();
-  ScriptApp.newTrigger('sendLineReminders').timeBased().everyDays(1).atHour(12).inTimezone(SETTINGS.TIMEZONE).create(); // LINE予約の前日リマインダー
-  Logger.log('トリガー設定完了');
+  ScriptApp.newTrigger('sendLineReminders').timeBased().everyDays(1).atHour(12).inTimezone(SETTINGS.TIMEZONE).create();
+  var line = '基本の3本を入れ直しました（消した ' + removed + ' 本・ほかのトリガーには触っていません）';
+  Logger.log(line);
+  return line;
 }
 
 function testLineNotice() {

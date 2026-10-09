@@ -1853,7 +1853,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-09g shadow が動いているか／作業依頼のロック失敗／元栓';
+var LB_HEALTH_BUILD = '2026-10-10a トリガーの入れ直しの案内を直した（setupTriggers は危険）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2006,9 +2006,19 @@ function dailyHealthCheck(dryRun) {
       if (!_have[_need[_ni][0]]) _missing.push(_need[_ni][0] + '（' + _need[_ni][1] + '）');
     }
     if (_missing.length) {
+      //   ★★「setupTriggers を実行し直す」と案内してはいけない（2026-10-09・Codex関門①）。
+      //     あの関数は**名前で絞らずに全部のトリガーを消し、3本しか戻さない**。
+      //     案内どおりに実行すると、押し出し・作業依頼・カレンダー同期・
+      //     うながし・固定枠の自動予約・この点検そのものが丸ごと止まる。
+      //     ＝顧客の残数が固まり、リマインドが届かず、予約が自動で作られない。
+      //   ★用途ごとの関数を名指しで案内する。
       add('trigger_missing', '定期処理', 'high', _missing.length,
           '🚨 定期処理が登録されていません: ' + _missing.join(' ／ ')
-          + '　setupTriggers を実行し直すと戻ります。');
+          + '　★setupTriggers は実行しないでください（全部消して3本しか戻しません）。'
+          + '　用途ごとの関数で入れ直します：'
+          + 'pushToEdge系→setupEdgeTrigger ／ edgeJobPoll→setupEdgeJobTrigger ／ '
+          + 'カレンダー同期→setupCalSyncTrigger ／ lbNudgeDaily→setupNudgeTrigger ／ '
+          + '固定枠・シフト→setupRecurringTriggers ／ その他→setupLineTriggers');
     }
     //   ★実際に作れなかった記録があれば出す（2026-10-09）。
     //     「近い」ではなく「もう当たっている」ので、重大度を上げる。
