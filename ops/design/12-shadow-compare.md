@@ -1,8 +1,9 @@
 # 段階3-b 手順3：shadow（両方を読んで食い違いを数える）
 
 > 2026-10-09・CEO玄／前提：`10-stage-3b-read-from-d1.md`・`11-sync-version.md`
-> **第3版。** 第1版・第2版はどちらも関門①で差し戻された（指摘 8件 → 6件・却下0）。
-> 差し戻しの内容は第11節に残す。**同じ設計を3回書き直している。**
+> **第5版。** 関門①で4回差し戻された（指摘 8 → 6 → 2 → 2件・却下0・累計18件）。
+> 差し戻しの内容は第11節に残す。**同じ設計を5回書き直している。**
+> それでも実装より安い。書き直しは文章の修正で、実装のやり直しは本番の作り直しになる。
 
 ---
 
@@ -102,7 +103,7 @@ targetMs が無い（当月）     → nowMs をそのまま使う
 |---|---|---|
 | 写しの月 ≠ 見ている時刻の月 | `copy_month_mismatch` | 月の境目。写しが前月のまま |
 | 写しが古い（`ageMs` > 10分） | `copy_stale_for_compare` | 写しは計算時刻の状態。D1はいまの状態。**違って当然**であり、それは「写しが古い」という別の話 |
-| D1の当月・翌月の外 | `out_of_range` | D1は2か月しか持たない |
+| D1の当月・翌月の外 | `out_of_range` | D1は2か月しか持たない（★preclaim。枠を取る前に分かる） |
 
 ★これらを「値の食い違い」に混ぜると、原因が追えなくなる。**別に数える。**
 ★そして**比較枠を取る前に弾く**（第5節）。枠を消費すると、同じ時間帯に
@@ -148,18 +149,45 @@ remain_shadow_slot
 
 ### 一意性と1日の上限を**1文で**守る
 ```sql
-INSERT OR IGNORE INTO remain_shadow_slot (day, customer_id, entry, sample_key, claimed_at)
+-- 時間帯の枠（total < 5 だけを見る。各時間帯は主キーで1件に限られる）
+INSERT INTO remain_shadow_slot (day, customer_id, entry, sample_key, claimed_at)
 SELECT ?, ?, ?, ?, ?
  WHERE (SELECT COUNT(*) FROM remain_shadow_slot
-         WHERE day = ? AND customer_id = ? AND entry = ?) < ?
+         WHERE day = ? AND customer_id = ? AND entry = ?) < 5
+ON CONFLICT(day, customer_id, entry, sample_key) DO NOTHING
+```
+```sql
+-- 世代の枠（★total < 5 かつ 世代の枠が 2 未満）
+INSERT INTO remain_shadow_slot (day, customer_id, entry, sample_key, claimed_at)
+SELECT ?, ?, ?, ?, ?
+ WHERE (SELECT COUNT(*) FROM remain_shadow_slot
+         WHERE day = ? AND customer_id = ? AND entry = ?) < 5
+   AND (SELECT COUNT(*) FROM remain_shadow_slot
+         WHERE day = ? AND customer_id = ? AND entry = ?
+           AND sample_key LIKE 'ver:%') < 2
+ON CONFLICT(day, customer_id, entry, sample_key) DO NOTHING
 ```
 ```
-OR IGNORE    同じ sample_key はもう取られている（主キーで弾かれる）
-WHERE        その日・その会員・その入口で、もう上限まで取っている
+DO NOTHING   同じ sample_key はもう取られている（★主キーの衝突だけを無視する）
+WHERE        上限に達している
 書き換わった行数が 1 なら枠を取れた／0 なら比べずに終わる
 ```
+★`OR IGNORE` にしない。NOT NULL や CHECK の違反まで黙って無視し、
+　「上限か重複」と読み違える。**主キーの衝突だけを無視する。**
 ★2文に分けると（枠の行を入れる → 総数を数えて更新）、その間で競合して上限を超える。
 　**副問い合わせで数えて1文にする。**
+
+### ★世代の枠に上限2を入れないと、時間帯の枠が食い潰される
+総数5だけを見ると、午前に世代が5回変われば
+`ver:1:1 … ver:5:5` で5枠を使い切り、**午後と夜の時間帯が1回も観測されない。**
+
+### 枠を選ぶ順序（固定する）
+```
+1. いまの時間帯の 'time:<帯>' を試す      ← 3つの時間帯の観測を優先する
+2. 取れなければ 'ver:<source>:<built>'    ← 同じ時間帯の2回目以降を世代の観測に使う
+3. どちらも 0 なら比べない
+```
+これで、早い時間に使えるのは「その時間帯1＋世代2＝3」まで。**残り2時間帯ぶんが残る。**
 
 ### 上限と単位（★第4版で確定）
 ```
@@ -198,7 +226,7 @@ day            'YYYY-MM-DD'（JST）
 customer_id
 entry          'boot' / 'compat_member' / 'compat_home'   ← ★入口だけ（枠の鍵は入れない）
 field          食い違った鍵の名前。または次の印
-                 '_attempted'  比較枠を確保できた回数
+                 （★'_attempted' は**書かない**。下の★を参照）
                  '_completed'  比べ終わった回数
                  '_failed'     途中で落ちた回数
                  '_skipped:<status>'  比べなかった理由ごとの回数（★上限3まで数える）
@@ -223,11 +251,43 @@ INSERT OR IGNORE で入れる ＝ 同じ組は D1 が原子的に弾く（前回
 `_completed` だけ増えて食い違いの行が書けなかった状態は、
 **「一致した」ように見える**（いちばん危険な壊れ方）。1文ずつ書かない。
 
-### 書き込み量（★第4版で数え直した）
+### ★`_attempted` は書かない。枠の表から数える（第5版）
+枠を取ったあと、結果を書く前に処理が消えると（isolate の終了・D1の障害）、
 ```
-1回の比較で最大   枠1 ＋ _attempted 1 ＋ _completed 1 ＋ 集計24 ＋ 標本24 ＝ 約51
-1日の上限         40名 × 3入口 × 5回 ＝ 600比較 → 最悪 約30,600 行/日
-ふだん            食い違いが5鍵なら 600 × 12 ＝ 約7,200 行/日
+remain_shadow_slot   1行増える
+_attempted           増えない    ← 別の batch だから
+_completed           増えない
+_failed              増えない
+```
+となり、`incomplete = attempted − …` が **0 − 0 − 0 = 0**。
+**いちばん検知したい「枠だけ取って消えた処理」が静かに消える。**
+
+```
+attempted         ＝ remain_shadow_slot の (day, customer_id, entry) ごとの COUNT(*)
+last_attempted_at ＝ MAX(claimed_at)
+incomplete        ＝ attempted − completed − failed − postclaim_skipped
+```
+枠のINSERTが成功した瞬間が attempted。**枠と結果の間で消えても必ず差が残る。**
+
+### ★弾いた理由は2つに分ける
+```
+preclaim_skipped   枠を取る前に弾いた（枠を消費していない）
+                     copy_month_mismatch / copy_stale_for_compare / copy_too_old
+                     / out_of_range
+postclaim_skipped  枠を取ったあとに分かった
+                     version_changed_during_shadow / no_rows / base_freq_missing
+                     / coverage_missing
+                   ★out_of_range は preclaim に入れる（枠を取る前に判定できる）
+```
+`preclaim_skipped` は枠の数に入っていないので、**incomplete から引いてはいけない。**
+鮮度の分布として別に見せる。
+
+### 書き込み量（★第5版で数え直した）
+```
+1回の比較で最大   枠1 ＋ _completed 1 ＋ 集計24 ＋ 標本24 ＝ 50
+1日の上限         40名 × 3入口 × 5回 ＝ 600比較 → 最悪 約30,000 行/日
+ふだん            食い違いが5鍵なら 枠1＋completed1＋集計5＋標本5 ＝ 12
+                  → 600 × 12 ＝ 約7,200 行/日
 ```
 無料枠（1日10万行）の内側。**式はこれ**（ユニーク行数で数えてはいけない）。
 
@@ -281,9 +341,10 @@ LB_D1_REMAIN_MODE = "off"      既定。比べない
 作業依頼の結果に、**入口ごとに**次を出す。
 ```
 mode / 版の印 / entry
-last_attempted_at / last_completed_at / last_failed_at
-attempted / completed / failed / skipped（理由ごと）
-★incomplete ＝ attempted − completed − failed − skipped
+last_attempted_at（＝枠の MAX(claimed_at)）/ last_completed_at / last_failed_at
+attempted（★枠の表の COUNT）/ completed / failed
+preclaim_skipped（理由ごと）/ postclaim_skipped（理由ごと）
+★incomplete ＝ attempted − completed − failed − postclaim_skipped
 ```
 ★`incomplete` を必ず出す。これは**結末を記録できなかった回数**。
 ```
@@ -298,7 +359,7 @@ incomplete    isolate が終わった／D1が落ちた／結果の batch が書�
 ### 本番で shadow を入れる前の preflight
 ```
 ① migration 0014（世代の表）が本番D1に入っているか
-② remain_shadow / remain_shadow_sample が入っているか
+② remain_shadow_slot / remain_shadow / remain_shadow_sample の**3つ**が入っているか
 ③ 世代が fresh の会員が1名以上いるか（0名なら全部 'not_built' になる）
 ```
 作業依頼の `remaining` op に `shadow: 'preflight'` を足す（新しい op は作らない）。
@@ -406,5 +467,27 @@ batch が落ちたら _failed を別に best-effort で書き、必ず console.e
 readHomeDiag の全部の status で、いまの readHome の戻り値が**1文字も変わらない**
 ```
 
-**shadow を掃除より先に入れる判断は、3つの版すべてで支持された。**
+### 第4版 → 第5版（指摘2件）
+```
+① ★_attempted を別に書くと、枠だけ取って消えた処理が検知できない
+   （枠と結果が別の batch なので、間で消えると incomplete が 0 − 0 − 0 = 0 になる）
+   → _attempted を書かず、枠の表の COUNT から数える。
+     弾いた理由も preclaim（枠を使っていない）と postclaim に分けた
+② 総数5だけでは「時間帯3＋世代2」を保証できない
+   （午前に世代が5回変われば午後と夜が1回も観測されない）
+   → 世代の枠にSQLで上限2を入れ、選ぶ順序を「時間帯→世代」に固定した
+```
+あわせて：`OR IGNORE` を `ON CONFLICT(…) DO NOTHING` に（NOT NULL や CHECK の違反を
+黙って無視しない）。preflight の対象を3表に。書き込み量を 50／12 に直した。
+
+### 確かめ済み（Codex が手元のSQLiteで実行）
+```
+初回のINSERT              changes=1
+同じ主キーをもう一度      changes=0（行数は増えない）
+上限まで別の鍵            changes=1
+上限に達したあと          changes=0
+条件つきUPSERTで条件が偽  行を変えない＝書き込み行数を消費しない
+```
+
+**shadow を掃除より先に入れる判断は、5つの版すべてで支持された。**
 （観測だけで安全・実データで規模が分かる・掃除後に同じ計測で消えたことを確認できる）
