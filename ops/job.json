@@ -1,1 +1,1 @@
-{"op":"remaining","requestId":"job-20261009104214-3e2f0a93","args":{"name":"森脇"}}
+{"op":"quotaBuild","requestId":"job-20261009110715-ec9ae2d1","args":{"write":true,"alloc":true,"from":"2026-09","to":"2026-12","limit":5,"maxPages":13}}
