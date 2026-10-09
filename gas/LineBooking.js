@@ -1840,7 +1840,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-09d 未達の用途／トリガー作成の失敗／トリガーの揃い／元栓';
+var LB_HEALTH_BUILD = '2026-10-09e 未達の用途／429対策／トリガー作成の失敗／元栓';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -3977,9 +3977,24 @@ function _lbCountReservations(customerId, mode, contract) {
 //     戻り値 true=送信成功／false=未送信。予約処理は従来どおり通知失敗で覆さない（非致命）。
 //   purpose: 用途タグ（reminder_customer / booking_trainer など）。プランの通数を何が食っているかを
 //     用途別に数え、削る対象を数字で決められるようにする。省略時は 'other'。
+//   ★連続送信のあいだに最小の間隔を空ける（2026-10-09）。
+//     429（短時間に送りすぎ）は**そもそも出さないほうがよい。**
+//     再送で粘れるようにもしたが、再送は待ち時間が長く、落ちた人だけが遅れる。
+//     送る側で間隔を空ければ、429自体が減る。
+//     ★1件目は待たない（単発の予約通知を遅くしない）。2件目以降だけ空ける。
+//     ★260ms＝1秒あたり約4通。前日リマインド30通で約8秒。6分の制限に対して十分小さい。
+var _LB_PUSH_LAST_MS = 0;
+var LB_PUSH_MIN_GAP_MS = 260;
+
 function _lbPush(to, text, purpose) {
   var token = _lbProp('LINE_MESSAGING_TOKEN');
   if (!token || !to) { Logger.log('_lbPush skip: token/to無し'); return false; }   // 未設定＝意図的（staging等）なので記録しない
+  //   前回の送信からの間隔が足りなければ、足りないぶんだけ待つ
+  if (_LB_PUSH_LAST_MS) {
+    var _gap = Date.now() - _LB_PUSH_LAST_MS;
+    if (_gap >= 0 && _gap < LB_PUSH_MIN_GAP_MS) Utilities.sleep(LB_PUSH_MIN_GAP_MS - _gap);
+  }
+  _LB_PUSH_LAST_MS = Date.now();
   try {
     var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
       method: 'post',
@@ -3994,18 +4009,32 @@ function _lbPush(to, text, purpose) {
     //   送信した通数はLINEのquota APIが正として持ち、用途別の内訳は月次で既存データから再構成する。
     if (code === 200) return true;
     // 429＝短時間に送りすぎ（月間上限ではない。2026-09-18に実測：5,000通中249通で発生）。
-    //   前日リマインドは対象者へ連続送信するためここで弾かれる。少し待って1回だけ送り直す。
+    //   前日リマインドは対象者へ連続送信するためここで弾かれる。
+    //
+    //   ★待ち時間を段階的に伸ばす（2026-10-09）。
+    //     それまで「1.2秒待って1回だけ」だったが、**2026-10-08に4件落ちた。**
+    //     月の枠は5,000通中162通＝97%余っていたので、原因は集中送信。
+    //     1回では足りないので3回まで、1.2秒 → 3秒 → 6秒 と伸ばす。
+    //     ★合計で最大10秒。前日リマインドは数十人へ送るので、
+    //       全員が待つと6分の制限に当たりうる。だから**落ちた人だけ**待つ形を保つ。
+    //     ★429は「送れていない」。顧客に届かないので、諦める前に粘る価値がある。
     if (code === 429) {
-      Utilities.sleep(1200);
-      try {
-        var res2 = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
-          method: 'post', contentType: 'application/json',
-          headers: { Authorization: 'Bearer ' + token },
-          payload: JSON.stringify({ to: to, messages: [{ type: 'text', text: text }] }),
-          muteHttpExceptions: true
-        });
-        if (Number(res2.getResponseCode()) === 200) { Logger.log('_lbPush 429→再送で成功'); return true; }
-      } catch (eR) { Logger.log('_lbPush 再送エラー: ' + eR.message); }
+      var waits = [1200, 3000, 6000];
+      for (var wi = 0; wi < waits.length; wi++) {
+        Utilities.sleep(waits[wi]);
+        try {
+          var res2 = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+            method: 'post', contentType: 'application/json',
+            headers: { Authorization: 'Bearer ' + token },
+            payload: JSON.stringify({ to: to, messages: [{ type: 'text', text: text }] }),
+            muteHttpExceptions: true
+          });
+          var c2 = Number(res2.getResponseCode());
+          if (c2 === 200) { Logger.log('_lbPush 429→再送で成功（' + (wi + 1) + '回目・' + waits[wi] + 'ms待ち）'); return true; }
+          if (c2 !== 429) break;   // 429以外（401/403等）は待っても直らない
+        } catch (eR) { Logger.log('_lbPush 再送エラー(' + (wi + 1) + '回目): ' + eR.message); }
+      }
+      Logger.log('_lbPush 429→3回送り直しても届きませんでした（用途: ' + String(purpose || '?') + '）');
     }
     var body = ''; try { body = String(res.getContentText()).slice(0, 200); } catch (eB) {}
     Logger.log('_lbPush 失敗 HTTP' + code + ': ' + body);
