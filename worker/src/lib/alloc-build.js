@@ -31,6 +31,18 @@ function monthKeyJst(ms) {
  * @returns {{rows: Array, skippedUnallocated: number, issues: Array}}
  *   rows … [{ reservationId, customerId, source, monthKey, packId, units, resvMonth }]
  */
+//   ★「支払い待ち」として数える理由（GAS の LB_OVERAGE_REASONS と同じ）。
+//     入力の誤り（契約の不備など）は数えない。数えると、支払えば解決すると
+//     誤って案内することになる。2つの場所に同じ一覧があるので、
+//     片方だけ変えないよう検査で固定する（worker/test/overage-reasons.test.js）。
+const OVERAGE_REASONS = {
+  NO_ENTITLEMENT: 1,          // 使える権利がそもそも無い
+  PACK_EXHAUSTED: 1,          // チケットを使い切った
+  PACK_EXPIRED: 1,            // チケットの期限が切れていた
+  PACK_NOT_YET_AVAILABLE: 1,  // チケットがまだ有効でない（開始日より前の予約）
+  PACK_KIND_UNAVAILABLE: 1,   // 種別が合わない（ペア券しか無いのに1名で取った等）
+};
+
 export function buildAllocationsForCustomer(customerId, rows, sessions, opening, opts) {
   const { fromMonth, toMonth, nowKey, targetDateMs, carryRate } = opts;
   //   seenIds … 今回「見た」予約のID。行を作らなかったもの（超過・問題あり）も含める。
@@ -46,6 +58,8 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
   //   maxResvMonth … その会員の予約がある最も先の月。削除範囲の上端をここまで広げる。
   //     「当月+2」と決め打つと、それより先の予約の引当が取り残される。
   const out = { rows: [], computed: false, skippedUnallocated: 0, issues: [],
+                //   月ごとの支払い待ち件数（枠の行に書く・設計10）
+                overageByMonth: {},
                 recordsFrom: (opening && opening.recordsFrom) ? String(opening.recordsFrom) : null,
                 maxResvMonth: null };
 
@@ -74,7 +88,19 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
     if (!mk || mk < String(fromMonth) || mk > String(toMonth)) continue;   // 対象の範囲だけ
 
     // 割り当たらなかった＝枠を使っていない。行を作らない（超過として見えるようにする）。
-    if (ps.alloc === 'unallocated') { out.skippedUnallocated++; continue; }
+    if (ps.alloc === 'unallocated') {
+      out.skippedUnallocated++;
+      //   ★月ごとに数える（2026-10-09・段階3-b のため）。
+      //     未割当の予約は**引当の行が作られない**ので、D1の3表に現れない。
+      //     顧客の画面に出す「支払い待ち」を作るには、枠の行に持たせるしかない。
+      //   ★数え方を GAS の _lbOverageOf と同じ規則にする（LB_OVERAGE_REASONS）。
+      //     **入力の誤りは数えない。** 数えると、契約の不備を「支払い待ち」として
+      //     顧客に見せてしまう（支払えば解決する、という誤った案内になる）。
+      if (OVERAGE_REASONS[String(ps.reason || '')]) {
+        out.overageByMonth[mk] = (out.overageByMonth[mk] || 0) + 1;
+      }
+      continue;
+    }
 
     // 振替は枠もチケットも使わない。引当の行としては残すが、親は指さない。
     if (ps.alloc === 'transfer') {

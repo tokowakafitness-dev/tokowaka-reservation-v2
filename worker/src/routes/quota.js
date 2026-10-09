@@ -167,6 +167,15 @@ export async function buildQuota(request, env) {
       summary.overflow += al.skippedUnallocated;
       for (const is of al.issues) summary.issues.push({ ...is, customerId: mask(is.customerId), at: 'alloc' });
       allocIssues = al.issues;
+      //   ★引当の結果（月ごとの支払い待ち件数）を枠の行へ移す（2026-10-09・設計10）。
+      //     未割当の予約は引当の行が作られないので、D1の3表に現れない。
+      //     顧客の画面に出す「支払い待ち」は、枠の行に持たせるしかない。
+      //   ★順序が要点：枠の文を組み立てる**前**に入れる。
+      //     あとから UPDATE にすると、引当を作らなかった会員（問題があって止めた人）の
+      //     枠だけが更新される経路ができる。
+      for (const m of built.monthly) {
+        m.overage = Number((al.overageByMonth || {})[m.monthKey] || 0);
+      }
       // ★「消してから入れる」。流し直したとき、消化先が変わっていれば古い引当を落とす。
       //   INSERT OR IGNORE だけだと壊れはしないが正しくもならない（枠は新しく used は古い）。
       allocStmts = allocationInsertStatements(al, now, { customerId: cid, fromMonth: from, toMonth: to });

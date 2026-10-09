@@ -105,8 +105,11 @@ console.log('=== 4. ★used を書かない（枠を動かすのはトリガー�
   ok('④★チケット：更新で used に触れない', !/DO UPDATE SET[\s\S]*\bused\s*=/.test(packSql),
     'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
   //   列が増えても壊れないように、「used の位置に 0 が直書きされている」ことだけ見る
-  ok('④新しく作るときだけ used=0', /\(customer_id, month_key, quota, coverage, used, updated_at\)/.test(monthlySql)
-    && /VALUES \(\?, \?, \?, \?, 0, \?\)/.test(monthlySql), monthlySql);
+  //   列が増えても壊れないように、「used の位置に 0 が直書き」を列の並びとセットで見る
+  //   （2026-10-09 に base_freq と overage を足した）
+  ok('④新しく作るときだけ used=0',
+    /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at\)/.test(monthlySql)
+    && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?\)/.test(monthlySql), monthlySql);
   ok('④枠の大きさは更新する', /quota = excluded\.quota/.test(monthlySql));
   ok('④チケットの枚数も更新する', /total = excluded\.total/.test(packSql));
 }

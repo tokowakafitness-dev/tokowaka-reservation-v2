@@ -126,7 +126,11 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
       out.issues.push({ customerId, monthKey: mk, code: 'BAD_QUOTA', detail: String(res.avail) });
       continue;
     }
-    out.monthly.push({ customerId, monthKey: mk, quota, coverage });
+    //   ★その月の頻度も持たせる（2026-10-09・段階3-b のため）。
+    //     quota は「頻度＋繰越」。顧客の画面は繰越を別に出すので、
+    //     **頻度が無いと繰越が作れない**（quota 全部を繰越として見せてしまう）。
+    //     res.freq は「枠を決めた行の頻度」（2026-10-08 に揃えた）。
+    out.monthly.push({ customerId, monthKey: mk, quota, coverage, baseFreq: Number(res.freq || 0) });
   }
 
   // ---- チケット（契約行から直接作る。買った単位がそのまま1行）----
@@ -208,12 +212,17 @@ export function quotaUpsertStatements(built, nowMs) {
   const stmts = [];
   for (const m of built.monthly) {
     stmts.push({
-      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, coverage, used, updated_at)
-            VALUES (?, ?, ?, ?, 0, ?)
+      //   ★base_freq と overage も書く（2026-10-09）。
+      //     どちらも used には触れない（used を動かすのはトリガーだけ＝不変条件）。
+      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
             ON CONFLICT(customer_id, month_key) DO UPDATE SET
               quota = excluded.quota, coverage = excluded.coverage,
+              base_freq = excluded.base_freq, overage = excluded.overage,
               updated_at = excluded.updated_at`,
-      args: [m.customerId, m.monthKey, m.quota, m.coverage, nowMs],
+      args: [m.customerId, m.monthKey, m.quota, m.coverage,
+             (m.baseFreq == null ? null : Number(m.baseFreq)),
+             Number(m.overage || 0), nowMs],
     });
   }
   for (const p of built.packs) {

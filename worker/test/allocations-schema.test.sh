@@ -49,6 +49,16 @@ out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0011_pack_opening_used.sql" 2>&1
 ok "⓪0011 を無加工で当てられる" "${out:-OK}" "OK"
 out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0012_quota_coverage.sql" 2>&1)"
 ok "⓪0012 を無加工で当てられる" "${out:-OK}" "OK"
+out="$(sqlite3 "$DB" < "$ROOT/worker/migrations/0013_quota_base_freq_overage.sql" 2>&1)"
+ok "⓪0013 を無加工で当てられる" "${out:-OK}" "OK"
+
+#   ★base_freq は NULL 許容（まだ作り直していない行を見分けるため・0013 の冒頭）。
+#     既定を0にすると、作り直す前の行は carryover = quota − 0 = quota になり、
+#     **繰越が過大に見える。**
+ok "⓪base_freq に既定値は無い（NULL=未再構築）" \
+  "$(q "SELECT COALESCE(dflt_value,'なし') FROM pragma_table_info('monthly_quota') WHERE name='base_freq';")" "なし"
+ok "⓪overage の既定は0（0が自然な初期値）" \
+  "$(q "SELECT dflt_value FROM pragma_table_info('monthly_quota') WHERE name='overage';")" "0"
 
 #   ★coverage は「契約がこの月をどう覆っているか」の3状態。
 #     既定値を入れてはいけない（0012 の冒頭に理由）。この列を足す前の行には

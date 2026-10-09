@@ -59,8 +59,8 @@ ok('⑤★更新で used を書き換えない',
   'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
 //   列が増えても壊れないように、列の並びと「used の位置に 0 が直書き」をセットで見る
 ok('⑤新しく作るときだけ used=0',
-  /\(customer_id, month_key, quota, coverage, used, updated_at\)/.test(BUILD)
-  && /VALUES \(\?, \?, \?, \?, 0, \?\)/.test(BUILD));
+  /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at\)/.test(BUILD)
+  && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?\)/.test(BUILD));
 ok('⑤枠を直接UPDATEする文が無い',
   !/UPDATE monthly_quota|UPDATE ticket_packs/.test(BUILD) && !/UPDATE monthly_quota|UPDATE ticket_packs/.test(ROUTE),
   'アプリ側のSQLに枠のUPDATEが現れたら、それは設計からの逸脱');
@@ -120,8 +120,22 @@ ok('⑨★計算できなかった会員には何もしない',
 ok('⑨★予約の月を別に持つ',
   /resvMonth: mk/.test(ALLOC) && /resv_month/.test(ALLOC),
   'month_key は月額専用。チケットや振替がどの月の予約かを持たないと、期間で絞れない');
-ok('⑨あふれた予約は行にしない', /if \(ps\.alloc === 'unallocated'\) \{ out\.skippedUnallocated\+\+; continue; \}/.test(ALLOC),
+//   ★2026-10-09：同じ分岐で月ごとの件数も数えるようにした（枠の行に書くため）。
+//     「行を作らない」ことと「数える」ことを両方見る。
+//   分岐の中身だけを切り出して見る（外側まで含めると、後ろの正常な push に反応する）
+const unallocBlock = (() => {
+  const i = ALLOC.indexOf("if (ps.alloc === 'unallocated') {");
+  if (i < 0) return '';
+  const rest = ALLOC.slice(i);
+  const j = rest.indexOf('\n    }');
+  return j < 0 ? rest : rest.slice(0, j);
+})();
+ok('⑨あふれた予約は行にしない',
+  !!unallocBlock && /continue;/.test(unallocBlock) && !/out\.rows\.push/.test(unallocBlock),
   '超過は「防ぐのではなく見せる」（決定0068）。行を作ると超過が見えなくなる');
+ok('⑨★あふれた件数を月ごとにも数える',
+  /out\.overageByMonth\[mk\] = \(out\.overageByMonth\[mk\] \|\| 0\) \+ 1;/.test(ALLOC),
+  '顧客の画面に出す「支払い待ち」は、引当の行が無いので枠の行に持たせるしかない');
 ok('⑨あふれた件数を返す', /summary\.overflow \+= al\.skippedUnallocated;/.test(ROUTE));
 ok('⑨計算が要確認なら引当を作らない', /code: 'REMAINING_NOT_OK'/.test(ALLOC));
 ok('⑨★割り当て方を決め直していない',
