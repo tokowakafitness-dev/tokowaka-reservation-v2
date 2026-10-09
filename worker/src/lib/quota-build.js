@@ -214,38 +214,62 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
  *     枠の大きさ（quota / total）だけを更新する。
  *     使った数はトリガーだけが動かす（設計の不変条件）。
  */
-export function quotaUpsertStatements(built, nowMs) {
+export function quotaUpsertStatements(built, nowMs, builtVersion) {
   const stmts = [];
+  const ver = (builtVersion == null) ? null : Number(builtVersion);
   for (const m of built.monthly) {
     stmts.push({
       //   ★base_freq と overage も書く（2026-10-09）。
       //     どちらも used には触れない（used を動かすのはトリガーだけ＝不変条件）。
-      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+      //   ★built_version（この行を作った世代）も書く（2026-10-09・設計13）。
+      //     読む側は「いまの世代の行」だけを読む。計算から消えた行は世代が付かず、
+      //     読まれない。消さないので used とトリガーと外部キーに触らない。
+      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
             ON CONFLICT(customer_id, month_key) DO UPDATE SET
               quota = excluded.quota, coverage = excluded.coverage,
               base_freq = excluded.base_freq, overage = excluded.overage,
-              updated_at = excluded.updated_at`,
+              updated_at = excluded.updated_at, built_version = excluded.built_version`,
       args: [m.customerId, m.monthKey, m.quota, m.coverage,
              (m.baseFreq == null ? null : Number(m.baseFreq)),
-             Number(m.overage || 0), nowMs],
+             Number(m.overage || 0), nowMs, ver],
     });
   }
   for (const p of built.packs) {
     stmts.push({
       //   opening_used は「移行前に既に使っていた枚数」。棚卸しが直れば更新される。
       //   used（引当で増える数）には触れない＝設計の不変条件を守る。
-      sql: `INSERT INTO ticket_packs (pack_id, customer_id, kind, total, used, opening_used, valid_from, valid_to, updated_at)
-            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+      sql: `INSERT INTO ticket_packs (pack_id, customer_id, kind, total, used, opening_used, valid_from, valid_to, updated_at, built_version)
+            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
             ON CONFLICT(pack_id) DO UPDATE SET
               customer_id = excluded.customer_id, kind = excluded.kind, total = excluded.total,
               opening_used = excluded.opening_used,
               valid_from = excluded.valid_from, valid_to = excluded.valid_to,
-              updated_at = excluded.updated_at`,
-      args: [p.packId, p.customerId, p.kind, p.total, p.openingUsed, p.validFrom, p.validTo, nowMs],
+              updated_at = excluded.updated_at, built_version = excluded.built_version`,
+      args: [p.packId, p.customerId, p.kind, p.total, p.openingUsed, p.validFrom, p.validTo, nowMs, ver],
     });
   }
   return stmts;
 }
 
 export { nextMonthKey, inRange };
+
+/**
+ * その会員の「いまの世代の印」を外す文（★batch の冒頭に置く）。
+ *
+ *   ★なぜ要るのか（2026-10-09・関門①の3周目）
+ *     built_version には source_version をそのまま使う。
+ *     **入力が変わらないまま作り直すと、同じ世代番号を使い回す。**
+ *       世代10で 9〜12月を作る → 入力は変わらない →
+ *       世代10のまま 10月〜翌1月を作る → **9月の行は世代10のまま残る**
+ *       ＝いまの計算は4行なのに、世代10の行は5行。件数の検査が**永久に通らない**。
+ *
+ *   ★行を消していない。used に触れない。外部キーにも影響しない。
+ *     同じ batch なので、途中で失敗すれば印を外したことも無かったことになる。
+ */
+export function clearGenerationStatements(customerId) {
+  return [
+    { sql: 'UPDATE monthly_quota SET built_version = NULL WHERE customer_id = ?', args: [String(customerId)] },
+    { sql: 'UPDATE ticket_packs  SET built_version = NULL WHERE customer_id = ?', args: [String(customerId)] },
+  ];
+}

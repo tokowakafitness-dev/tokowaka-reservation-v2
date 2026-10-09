@@ -42,7 +42,7 @@ ok('②★dry が既定', /const dry = url\.searchParams\.get\('dry'\) !== '0';/
 //   ★間の文字数で縛っている。3-bで世代の文を積む処理が間に入り、200では届かなくなった。
 //     広げるのは妥協に見えるが、この検査が見たいのは「batch が if (!dry) の中にあること」で、
 //     距離そのものではない。dry の外に出たら（＝条件が消えたら）通らない。
-ok('②書くのは dry でないときだけ', /if \(!dry\) \{[\s\S]{0,900}?env\.DB\.batch/.test(ROUTE));
+ok('②書くのは dry でないときだけ', /if \(!dry\) \{[\s\S]{0,1600}?env\.DB\.batch/.test(ROUTE));
 
 // ---------- 3. 顧客の情報を出さない ----------
 ok('③顧客IDは下4桁だけ', /function mask\(id\)/.test(ROUTE) && /'\*' \+ s\.slice\(-4\)/.test(ROUTE));
@@ -62,11 +62,25 @@ ok('⑤★更新で used を書き換えない',
   'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
 //   列が増えても壊れないように、列の並びと「used の位置に 0 が直書き」をセットで見る
 ok('⑤新しく作るときだけ used=0',
-  /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at\)/.test(BUILD)
-  && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?\)/.test(BUILD));
-ok('⑤枠を直接UPDATEする文が無い',
-  !/UPDATE monthly_quota|UPDATE ticket_packs/.test(BUILD) && !/UPDATE monthly_quota|UPDATE ticket_packs/.test(ROUTE),
-  'アプリ側のSQLに枠のUPDATEが現れたら、それは設計からの逸脱');
+  /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version\)/.test(BUILD)
+  && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?, \?\)/.test(BUILD));
+
+//   ★不変条件：**枠の used をアプリ側のSQLが書き換えてはいけない**（0009）。
+//     2026-10-09 に「世代の印を外す」UPDATE を足したので、
+//     『UPDATE monthly_quota という文字列が無いこと』では縛れなくなった。
+//     **緩めたのではなく、意図のとおりに精密にする。**
+//       守りたいのは「used を動かすのはトリガーだけ」。
+//       built_version は used に触らない（行の見え方を決めるだけ）。
+//     ★許す形を1つに固定する。ほかの列を書く UPDATE が入れば落ちる。
+{
+  const appUpdates = ((BUILD + '\n' + ROUTE).match(/UPDATE (?:monthly_quota|ticket_packs)[\s\S]{0,120}/g) || []);
+  ok('⑤★枠の used をアプリ側のSQLが書き換えない',
+     appUpdates.every((u) => !/\bused\b/.test(u)),
+     `見つかった文: ${JSON.stringify(appUpdates)}`);
+  ok('⑤★許されている UPDATE は「世代の印を外す」だけ',
+     appUpdates.length > 0 && appUpdates.every((u) => /^UPDATE (?:monthly_quota|ticket_packs)\s+SET built_version = NULL WHERE customer_id = \?/.test(u)),
+     `見つかった文: ${JSON.stringify(appUpdates)}`);
+}
 
 // ---------- 6. 計算入力が古ければ枠を作らない ----------
 ok('⑥入力が揃わない会員は飛ばす', /if \(!input\.ok\) \{[\s\S]{0,300}?summary\.skipped\.push/.test(ROUTE),
@@ -99,8 +113,16 @@ ok('⑧1人を指定したときは区切らない', /} else \{\s*\n\s*summary\.
 //     逆に引当を二度入れると used が二重に増える＝残数が実際より減る。
 ok('⑨引当は明示したときだけ作る', /const withAlloc = url\.searchParams\.get\('alloc'\) === '1';/.test(ROUTE),
   '枠だけ作り直したい場面があるので、別の指定にしておく');
-ok('⑨★枠と引当を同じ書き込みで入れる', /quotaUpsertStatements\(built, now\)\.concat\(allocStmts\)/.test(ROUTE),
+ok('⑨★枠と引当を同じ書き込みで入れる',
+  /\.concat\(quotaUpsertStatements\(built, now, ver0\.sourceVersion\)\)\n\s*\.concat\(allocStmts\)/.test(ROUTE),
   '枠が先・引当が後。引当のINSERTは枠の行を親として見る');
+//   ★世代の印を外すのは**いちばん先**（設計13）
+ok('⑨★世代の印を外す文が先頭に来る',
+  /const stmts = clearGenerationStatements\(cid\)\n\s*\.concat\(quotaUpsertStatements/.test(ROUTE),
+  '同じ世代で作り直すと行が溜まり、件数の検査が永久に通らない');
+ok('⑨★書くなら引当も作る（枠だけの書き込みを弾く）',
+  /if \(!dry && !withAlloc\) \{/.test(ROUTE) && /ALLOC_REQUIRED/.test(ROUTE),
+  '枠だけ作り直すと used が古いまま。その状態に「いまの世代」の印を付けてはいけない');
 ok('⑨入れ直しは OR IGNORE にしない', /INSERT INTO reservation_allocations/.test(ALLOC) && !/INSERT OR IGNORE INTO reservation_allocations/.test(ALLOC),
   '全部消したあとなので衝突しない。OR IGNORE だと消し損ねたとき黙って古い行が残る');
 ok('⑨★流し直すと正しくなる（対象期間を全部消して入れ直す）',

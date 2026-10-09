@@ -84,11 +84,24 @@ export function bumpAllSourceStatement(nowMs) {
  *
  *   ★MAX は同じ世代から同時に作り直した2本のためだけに残す（巻き戻し防止）。
  */
-export function markBuiltStatement(customerId, version, nowMs) {
+export function markBuiltStatement(customerId, version, nowMs, rows) {
+  //   ★書いた行数も一緒に入れる（2026-10-09・設計13）。
+  //     枠とパックを**別々に**数える。1つの合計にすると
+  //     「枠が1行足りず、パックが1行多い」が打ち消し合って通る。
+  //   ★読む側は、読めた行数がこれと一致しないときだけ「答えない」。
+  //     そうしないと、行に世代を書き忘れたとき
+  //     **月額会員の画面から残数が消える**（0行でも「契約なし」として答えてしまう）。
+  const qr = (rows && rows.quotaRows != null) ? Number(rows.quotaRows) : null;
+  const pr = (rows && rows.packRows != null) ? Number(rows.packRows) : null;
+  //   ★どの範囲で作ったかも保存する。照合が主キーの集合を突き合わせるのに要る
+  //     （範囲は会員ごと・実行ごとに違うので、あとから推測できない）。
+  const fm = (rows && rows.fromMonth) ? String(rows.fromMonth) : null;
+  const tm = (rows && rows.toMonth) ? String(rows.toMonth) : null;
   return {
     sql: `INSERT INTO customer_sync_version
-            (customer_id, source_version, built_version, built_at, updated_at)
-          VALUES (?, ?, ?, ?, ?)
+            (customer_id, source_version, built_version, built_at, updated_at,
+             built_quota_rows, built_pack_rows, built_from_month, built_to_month)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(customer_id) DO UPDATE SET
             built_version = CASE
               WHEN customer_sync_version.source_version = excluded.built_version
@@ -99,23 +112,44 @@ export function markBuiltStatement(customerId, version, nowMs) {
               WHEN customer_sync_version.source_version = excluded.built_version
                    AND excluded.built_version > customer_sync_version.built_version
                 THEN excluded.built_at ELSE customer_sync_version.built_at END,
+            --   ★競合で世代を 0 に倒すときは、件数も NULL に落とす。
+            --     でないと「世代0・件数あり」というちぐはぐな行が残る。
+            built_quota_rows = CASE
+              WHEN customer_sync_version.source_version = excluded.built_version
+                THEN excluded.built_quota_rows ELSE NULL END,
+            built_pack_rows = CASE
+              WHEN customer_sync_version.source_version = excluded.built_version
+                THEN excluded.built_pack_rows ELSE NULL END,
+            built_from_month = CASE
+              WHEN customer_sync_version.source_version = excluded.built_version
+                THEN excluded.built_from_month ELSE NULL END,
+            built_to_month = CASE
+              WHEN customer_sync_version.source_version = excluded.built_version
+                THEN excluded.built_to_month ELSE NULL END,
             updated_at = excluded.updated_at`,
-    args: [String(customerId), Number(version), Number(version), Number(nowMs), Number(nowMs)],
+    args: [String(customerId), Number(version), Number(version), Number(nowMs), Number(nowMs),
+           qr, pr, fm, tm],
   };
 }
 
 /** いまの世代を読む（行が無ければ 0/0） */
 export async function readSyncVersion(env, customerId) {
   const r = await env.DB.prepare(
-    `SELECT source_version, built_version, source_at, built_at
+    `SELECT source_version, built_version, source_at, built_at,
+            built_quota_rows, built_pack_rows, built_from_month, built_to_month
        FROM customer_sync_version WHERE customer_id = ?`
   ).bind(String(customerId)).first();
-  if (!r) return { sourceVersion: 0, builtVersion: 0, sourceAt: null, builtAt: null, exists: false };
+  if (!r) return { sourceVersion: 0, builtVersion: 0, sourceAt: null, builtAt: null,
+                   quotaRows: null, packRows: null, fromMonth: null, toMonth: null, exists: false };
   return {
     sourceVersion: Number(r.source_version || 0),
     builtVersion: Number(r.built_version || 0),
     sourceAt: r.source_at == null ? null : Number(r.source_at),
     builtAt: r.built_at == null ? null : Number(r.built_at),
+    quotaRows: r.built_quota_rows == null ? null : Number(r.built_quota_rows),
+    packRows: r.built_pack_rows == null ? null : Number(r.built_pack_rows),
+    fromMonth: r.built_from_month == null ? null : String(r.built_from_month),
+    toMonth: r.built_to_month == null ? null : String(r.built_to_month),
     exists: true,
   };
 }

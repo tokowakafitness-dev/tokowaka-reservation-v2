@@ -245,15 +245,20 @@ const D = '2026-10-09';
 
   //   世代の表と枠の表を作る（0014 と 0009 の一部を模す）
   sql(readFileSync(join(ROOT, 'worker/migrations/0014_customer_sync_version.sql'), 'utf8'));
+  //   0016 の customer_sync_version への ALTER も当てる（migration から読む）
+  sql(readFileSync(join(ROOT, 'worker/migrations/0016_row_generation.sql'), 'utf8')
+    .split('\n').filter((l) => /^ALTER TABLE customer_sync_version/.test(l)).join('\n'));
+  //   ★0016 で足した built_version も持たせる（読む側が世代で絞るため）
   sql(`CREATE TABLE IF NOT EXISTS monthly_quota (customer_id TEXT, month_key TEXT, quota INT, used INT,
-        coverage TEXT, base_freq INT, overage INT DEFAULT 0, PRIMARY KEY(customer_id, month_key));`);
+        coverage TEXT, base_freq INT, overage INT DEFAULT 0, built_version INT,
+        PRIMARY KEY(customer_id, month_key));`);
   sql(`CREATE TABLE IF NOT EXISTS ticket_packs (pack_id TEXT PRIMARY KEY, customer_id TEXT, kind TEXT,
-        total INT, used INT, opening_used INT, valid_from INT, valid_to INT);`);
+        total INT, used INT, opening_used INT, valid_from INT, valid_to INT, built_version INT);`);
   sql(`CREATE TABLE IF NOT EXISTS reservations (reservation_id TEXT PRIMARY KEY, customer_id TEXT,
         start_at INT, status TEXT, book_type TEXT);`);
-  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at)
-        VALUES ('${cid}', 3, 3, 1, 1);`);
-  sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 9, 3, 'limited', 8, 0);`);
+  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
+        built_quota_rows, built_pack_rows) VALUES ('${cid}', 3, 3, 1, 1, 1, 0);`);
+  sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 9, 3, 'limited', 8, 0, 3);`);
 
   //   写し（D1と同じ値になるように作る）
   const copyValue = {
@@ -332,9 +337,9 @@ const D = '2026-10-09';
 {
   const E4 = sqliteEnv();
   const cid = 'CBROKEN', now = jst(2026, 10, 9, 10), day = dayKeyJst(now);
-  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at)
-        VALUES ('${cid}', 1, 1, 1, 1);`);
-  sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 5, 0, 'limited', 5, 0);`);
+  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
+        built_quota_rows, built_pack_rows) VALUES ('${cid}', 1, 1, 1, 1, 1, 0);`);
+  sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 5, 0, 'limited', 5, 0, 1);`);
   const r = await runShadow(E4, {
     customerId: cid, entry: 'boot', nowMs: now,
     copyDiag: { value: null, status: 'bad_shape', month: '2026-10', computedAt: now, ageMs: 100 },
@@ -503,9 +508,9 @@ const D = '2026-10-09';
   const cid = 'CVERMOVE', now = jst(2026, 10, 9, 10), day2 = dayKeyJst(now);
   let n = 0;
   const E6 = sqliteEnv();
-  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at)
-        VALUES ('${cid}', 3, 3, 1, 1);`);
-  sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 5, 0, 'limited', 5, 0);`);
+  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
+        built_quota_rows, built_pack_rows) VALUES ('${cid}', 3, 3, 1, 1, 1, 0);`);
+  sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 5, 0, 'limited', 5, 0, 3);`);
   const base2 = E6.DB.prepare.bind(E6.DB);
   E6.DB.prepare = (s0) => {
     const st = base2(s0);
@@ -538,8 +543,8 @@ const D = '2026-10-09';
   const cid = 'CVERBEHIND', now = jst(2026, 10, 9, 10);
   let n2 = 0;
   const E7 = sqliteEnv();
-  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at)
-        VALUES ('${cid}', 3, 3, 1, 1);`);
+  sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
+        built_quota_rows, built_pack_rows) VALUES ('${cid}', 3, 3, 1, 1, 0, 0);`);
   const base3 = E7.DB.prepare.bind(E7.DB);
   E7.DB.prepare = (s0) => {
     const st = base3(s0);

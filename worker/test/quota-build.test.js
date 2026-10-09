@@ -107,9 +107,13 @@ console.log('=== 4. ★used を書かない（枠を動かすのはトリガー�
   //   列が増えても壊れないように、「used の位置に 0 が直書きされている」ことだけ見る
   //   列が増えても壊れないように、「used の位置に 0 が直書き」を列の並びとセットで見る
   //   （2026-10-09 に base_freq と overage を足した）
+  //   （2026-10-09 に built_version も足した）
   ok('④新しく作るときだけ used=0',
-    /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at\)/.test(monthlySql)
-    && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?\)/.test(monthlySql), monthlySql);
+    /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version\)/.test(monthlySql)
+    && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?, \?\)/.test(monthlySql), monthlySql);
+  //   ★行にも「作った世代」を書く（設計13）。読む側はいまの世代の行だけを読む。
+  ok('④★世代の印を書く（枠）', /built_version = excluded\.built_version/.test(monthlySql));
+  ok('④★世代の印を書く（チケット）', /built_version = excluded\.built_version/.test(packSql));
   ok('④枠の大きさは更新する', /quota = excluded\.quota/.test(monthlySql));
   ok('④チケットの枚数も更新する', /total = excluded\.total/.test(packSql));
 }

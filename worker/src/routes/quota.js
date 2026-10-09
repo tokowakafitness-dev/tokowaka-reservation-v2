@@ -15,7 +15,7 @@
 //     ここで作るのは「本番の実データで、枠が正しく作れるか」を確かめるための土台。
 
 import { loadCalcInput } from '../calc.js';
-import { buildQuotaForCustomer, quotaUpsertStatements } from '../lib/quota-build.js';
+import { buildQuotaForCustomer, quotaUpsertStatements, clearGenerationStatements } from '../lib/quota-build.js';
 import { buildAllocationsForCustomer, allocationInsertStatements } from '../lib/alloc-build.js';
 import { readSyncVersion, markBuiltStatement } from '../lib/sync-version.js';
 
@@ -69,6 +69,14 @@ export async function buildQuota(request, env) {
   // 引当も作るか。枠だけ作っても used は0のままなので、移行では両方要る。
   //   ただし「枠だけ作り直したい」場面もあるので、別の指定にしておく。
   const withAlloc = url.searchParams.get('alloc') === '1';
+  //   ★書くなら引当も作る（2026-10-09・設計13・関門①の3周目）。
+  //     枠だけ作り直すと used が古いまま。その状態に「いまの世代」の印を付けると、
+  //     読む側が古い used で残数を出す＝顧客に誤った残数が出る。
+  //     「枠だけ見たい」は dry-run で足りる。
+  if (!dry && !withAlloc) {
+    return json({ ok: false, code: 'ALLOC_REQUIRED',
+                  detail: '書き込むときは alloc=1 も必要です（枠だけ作り直すと used が古いままになります）' }, 400);
+  }
 
   if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
     return json({ ok: false, reason: 'BAD_RANGE', from, to }, 400);
@@ -202,14 +210,30 @@ export async function buildQuota(request, env) {
     }
 
     if (!dry) {
-      const stmts = quotaUpsertStatements(built, now).concat(allocStmts);
+      //   ★この会員の「いまの世代の印」を先に外す（設計13）。
+      //     built_version には source_version をそのまま使うので、入力が変わらないまま
+      //     作り直すと同じ番号を使い回す。すると前回の範囲の行が「いまの世代」のまま
+      //     残り、件数の検査が永久に通らない。
+      //     行は消さない・used に触れない・外部キーにも影響しない。
+      //     同じ batch なので、途中で失敗すれば印を外したことも無かったことになる。
+      const stmts = clearGenerationStatements(cid)
+        .concat(quotaUpsertStatements(built, now, ver0.sourceVersion))
+        .concat(allocStmts);
       // ★作り直したことを世代に書く（2026-10-09・段階3-b 手順1）。
       //   枠と引当を**同じ呼び出しで**作ったときだけ書く。
       //   枠だけ作り直した状態（withAlloc=0）は used が古いので、
       //   これを「新しい」と記録するとD1から誤った残数を答える。
       //   ★行の書き込みと同じ batch に入れる。片方だけ通ることを無くす。
       if (withAlloc) {
-        const mk = markBuiltStatement(cid, ver0.sourceVersion, now);
+        //   ★書いた行数も一緒に記録する（枠とパックを別々に）。
+        //     読む側は、読めた行数がこれと一致しないときだけ答えない。
+        //     行に世代を書き忘れたとき「契約なし」と答えてしまう穴を塞ぐ。
+        const mk = markBuiltStatement(cid, ver0.sourceVersion, now, {
+          quotaRows: built.monthly.length, packRows: built.packs.length,
+          //   ★どの範囲で作ったかも残す。照合が主キーの集合を突き合わせるのに要る
+          //     （範囲は会員ごと・実行ごとに違うので、あとから推測できない）。
+          fromMonth: from, toMonth: to,
+        });
         stmts.push({ sql: mk.sql, args: mk.args });
       }
       if (stmts.length) {
@@ -338,6 +362,52 @@ export async function quotaStatus(request, env) {
     syncVersion = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
   }
 
+  //   ★世代の印の入り具合（2026-10-09・設計13）。
+  //     古い行は**消さずに残す**方針なので、「印の無い行が0件」は合格条件にならない。
+  //     増え方を見るために数えるだけ。
+  //       current  いまの世代の行（顧客に出るのはこれだけ）
+  //                ★「世代が追いついている会員」の行だけを数える。
+  //                  source > built の会員は、世代が一致していても読み取りの対象外
+  //                  （isFresh が false）。数に入れると「顧客に出る」と読み違える
+  //       stale    別の世代の行（計算から消えた行＝読まれない）
+  //       noMark   印が無い行（この列を足す前の行・または書き忘れ）
+  let generation = { table: 'missing' };
+  try {
+    const [gq, gp, gr] = await Promise.all([
+      env.DB.prepare(
+        `SELECT COUNT(*) AS n,
+                SUM(CASE WHEN built_version IS NULL THEN 1 ELSE 0 END) AS noMark
+           FROM monthly_quota`
+      ).first(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS n,
+                SUM(CASE WHEN built_version IS NULL THEN 1 ELSE 0 END) AS noMark
+           FROM ticket_packs`
+      ).first(),
+      //   いまの世代と一致する行の数（会員ごとの built_version と突き合わせる）
+      env.DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM monthly_quota q JOIN customer_sync_version v
+              ON v.customer_id = q.customer_id AND q.built_version = v.built_version
+            WHERE v.built_version > 0 AND v.source_version = v.built_version) AS curQuota,
+           (SELECT COUNT(*) FROM ticket_packs p JOIN customer_sync_version v
+              ON v.customer_id = p.customer_id AND p.built_version = v.built_version
+            WHERE v.built_version > 0 AND v.source_version = v.built_version) AS curPacks`
+      ).first(),
+    ]);
+    generation = {
+      table: 'ok',
+      quota: { rows: Number(gq?.n || 0), noMark: Number(gq?.noMark || 0),
+               current: Number(gr?.curQuota || 0) },
+      packs: { rows: Number(gp?.n || 0), noMark: Number(gp?.noMark || 0),
+               current: Number(gr?.curPacks || 0) },
+    };
+    generation.quota.stale = generation.quota.rows - generation.quota.current - generation.quota.noMark;
+    generation.packs.stale = generation.packs.rows - generation.packs.current - generation.packs.noMark;
+  } catch (e) {
+    generation = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
+  }
+
   // ★旧「上限なし」の行がどれかを返す（2026-10-08）。新しくは作られない。
   //   件数だけ分かっても直せない。どの会員のどの月かが分からないと、
   //   台帳のどの行を直すのかオーナーに伝えられない。
@@ -366,6 +436,7 @@ export async function quotaStatus(request, env) {
     coverageDetail: detail,   // { unlimited: ['顧客ID 月', …], notSet: [...] }（氏名は出さない）
     stage3b,   // 3-bで足した2列の入り具合（base_freq の抜け・支払い待ちの件数）
     syncVersion,   // 会員ごとの世代（fresh/stale/ahead・3-bの鮮度の判定に使う）
+    generation,    // 行ごとの世代（いまの世代／古い行／印の無い行・設計13）
   });
 }
 

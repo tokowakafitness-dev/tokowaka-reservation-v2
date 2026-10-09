@@ -32,6 +32,10 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 const DIR = mkdtempSync(join(tmpdir(), 'csv-'));
 const DB = join(DIR, 't.db');
 const MIG = readFileSync(join(ROOT, 'worker/migrations/0014_customer_sync_version.sql'), 'utf8');
+//   0016 で足した2列（書いた行数）も当てる。**migration のファイルから読む**
+//   （テストの中に列を書き写すと、本物とずれても気づけない）。
+const MIG16 = readFileSync(join(ROOT, 'worker/migrations/0016_row_generation.sql'), 'utf8')
+  .split('\n').filter((l) => /^ALTER TABLE customer_sync_version/.test(l)).join('\n');
 
 function sql(text) {
   return execFileSync('sqlite3', [DB], { input: text, encoding: 'utf8' });
@@ -50,9 +54,14 @@ function row(cid) {
   const [s, b] = out.split('|').map(Number);
   return { sourceVersion: s, builtVersion: b, exists: true };
 }
-function reset() { sql('DROP TABLE IF EXISTS customer_sync_version;'); sql(MIG); }
+function reset() {
+  sql('DROP TABLE IF EXISTS customer_sync_version;');
+  sql(MIG);
+  sql(MIG16);
+}
 
 reset();
+ok('0016 の列を当てられた（migration から読んでいる）', MIG16.split('\n').length === 4, MIG16);
 ok('表が作れる', sql("SELECT name FROM sqlite_master WHERE name='customer_sync_version';").trim() === 'customer_sync_version');
 
 // ---------- 1. 入力が書かれるたびに進む ----------
@@ -270,8 +279,28 @@ ok('⑥-b★古い作り直しで built_at が動かない',
   ok('⑨★世代は入力を読む前に取る',
      Q.indexOf('readSyncVersion(env, cid)') < Q.indexOf('loadCalcInput(env, cid)'),
      'あとに取ると、途中で来た変更を取り込んだことにしてしまう');
-  ok('⑨★引当も作ったときだけ世代を書く', /if \(withAlloc\) \{\n\s*const mk = markBuiltStatement/.test(Q),
+  ok('⑨★引当も作ったときだけ世代を書く',
+     /if \(withAlloc\) \{[\s\S]{0,400}?const mk = markBuiltStatement/.test(Q),
      '枠だけ作り直すと used が古い。それを「新しい」と記録すると誤った残数を答える');
+  //   ★それだけでは足りない（2026-10-09・設計13）。行にも世代の印を付けるので、
+  //     alloc=0 での**書き込みそのものを禁じる**。
+  ok('⑨★書くなら引当も作る（枠だけの書き込みを弾く）',
+     /if \(!dry && !withAlloc\) \{/.test(Q) && /ALLOC_REQUIRED/.test(Q));
+  ok('⑨★書いた行数も記録する（枠とパックを別々に）',
+     /quotaRows: built\.monthly\.length, packRows: built\.packs\.length/.test(Q),
+     '行に世代を書き忘れたとき「契約なし」と答えてしまう穴を塞ぐ');
+  //   ★どの範囲で作ったかも残す（2026-10-09・関門②の2周目）。
+  //     照合が主キーの集合を突き合わせるのに要る。範囲は会員ごと・実行ごとに違うので、
+  //     保存しないと照合側が推測するしかなく、正しい行を「欠けている」と誤判定する。
+  ok('⑨★作った範囲も残す', /fromMonth: from, toMonth: to,/.test(Q));
+  {
+    const SV = readFileSync(join(ROOT, 'worker/src/lib/sync-version.js'), 'utf8');
+    ok('⑨範囲を書く文がある', /built_from_month, built_to_month/.test(SV));
+    ok('⑨★競合で倒すときは範囲も NULL に',
+       /built_from_month = CASE[\s\S]{0,160}ELSE NULL END/.test(SV)
+       && /built_to_month = CASE[\s\S]{0,160}ELSE NULL END/.test(SV));
+    ok('⑨読むときも範囲を返す', /fromMonth: r\.built_from_month == null \? null : String\(r\.built_from_month\)/.test(SV));
+  }
   ok('⑨枠と同じ batch に入れる', /stmts\.push\(\{ sql: mk\.sql, args: mk\.args \}\)/.test(Q));
   ok('⑨書けてから数える', /summary\.wrote \+= stmts\.length;\n[\s\S]{0,260}if \(withAlloc\) summary\.marked/.test(Q));
   ok('⑨確かめ用に遅れを出す', /source_version > built_version/.test(Q) && /syncVersion,/.test(Q));

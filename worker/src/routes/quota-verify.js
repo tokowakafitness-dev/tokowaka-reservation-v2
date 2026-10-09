@@ -12,6 +12,8 @@
 //   読み取りだけ。何も書き換えない。
 
 import { loadCalcInput } from '../calc.js';
+import { readSyncVersion, isFresh } from '../lib/sync-version.js';
+import { buildQuotaForCustomer } from '../lib/quota-build.js';
 import { _lbComputeRemaining } from '../allocate.js';
 
 function nowMonthKeyJst(ms) {
@@ -60,6 +62,10 @@ export async function verifyQuota(request, env) {
   const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 5) || 5, 8));
   const after = (url.searchParams.get('after') || '').trim();
   const carryRate = Number(url.searchParams.get('rate') || '') || 1 / 3;
+  //   ★主キーの集合の照合は、**作り直しが実際に使った範囲**で行う（2026-10-09・関門②）。
+  //     範囲はURLで渡さない。会員ごと・実行ごとに違うので、渡すと推測になり、
+  //     正しいD1の行を「欠けている／余っている」と誤って判定する。
+  //     作り直しが customer_sync_version に保存した範囲を使う。
 
   if (!/^\d{4}-\d{2}$/.test(month)) return json({ ok: false, reason: 'BAD_MONTH', month }, 400);
   // ★今月しか比べられない（2026-10-07・Codex関門②）。
@@ -88,12 +94,30 @@ export async function verifyQuota(request, env) {
     overUsedPacks: 0,   // 買った枚数を超えて使っているチケット（0に丸めず数える）
     overUsedMonths: 0,  // 枠を超えて使っている月（表示では消えるので行そのものを見る）
     coverageMissing: 0, // coverage がまだ入っていない行（作り直していない＝比べられない）
+    keyMismatch: 0,      // ★主キーの集合が計算と合わない会員（切り替えの合格条件）
+    keyMismatchDetail: [],
+    keyChecked: 0,       // ★集合の照合が走った会員の数（一致・不一致にかかわらず数える。
+                         //   0なら「検査が走っていない」＝合格にしてはいけない）
+    keyRangeMissing: 0,  // 作り直しの範囲が保存されていない会員（＝照合できない）
     staleCoverage: null,        // 表全体で coverage が NULL の行（最後のページで数える）
     quotaInvariantBroken: null, // 表全体で used > quota の行（最後のページで数える）
     next: null, done: false, pageVerdict: '',
   };
 
   for (const cid of ids) {
+    //   ★世代を先に読む（2026-10-09・設計13）。
+    //     読み取りをD1へ向けたあとは「いまの世代の行」だけが顧客に出る。
+    //     照合も同じ条件で見なければ、消えた契約の古い行で食い違いが出続ける。
+    //   ★追いついていない会員は「不一致」ではなく「飛ばした」。
+    //     作り直しの途中の状態を不一致として数えると、本物の食い違いが埋もれる。
+    const ver0 = await readSyncVersion(env, cid);
+    if (!isFresh(ver0)) {
+      out.skipped++;
+      out.skippedWhy['VERSION_' + (ver0.exists ? (ver0.builtVersion > 0 ? 'BEHIND' : 'NOT_BUILT') : 'NO_ROW')]
+        = (out.skippedWhy['VERSION_' + (ver0.exists ? (ver0.builtVersion > 0 ? 'BEHIND' : 'NOT_BUILT') : 'NO_ROW')] || 0) + 1;
+      continue;
+    }
+
     const input = await loadCalcInput(env, cid);
     if (!input.ok) { out.skipped++; out.skippedWhy[input.reason] = (out.skippedWhy[input.reason] || 0) + 1; continue; }
 
@@ -104,12 +128,15 @@ export async function verifyQuota(request, env) {
 
     // ---- ② D1の行から読んだ答え ----
     const [mq, tp] = await Promise.all([
-      env.DB.prepare('SELECT quota, coverage, used FROM monthly_quota WHERE customer_id = ? AND month_key = ?')
-        .bind(cid, month).first(),
+      //   ★いまの世代の行だけを見る（顧客に出るのと同じ条件）
+      env.DB.prepare(
+        `SELECT quota, coverage, used FROM monthly_quota
+          WHERE customer_id = ? AND month_key = ? AND built_version = ?`
+      ).bind(cid, month, ver0.builtVersion).first(),
       env.DB.prepare(
         `SELECT total, used, opening_used FROM ticket_packs
-          WHERE customer_id = ? AND valid_from <= ? AND valid_to >= ?`
-      ).bind(cid, now, now).all(),
+          WHERE customer_id = ? AND valid_from <= ? AND valid_to >= ? AND built_version = ?`
+      ).bind(cid, now, now, ver0.builtVersion).all(),
     ]);
 
     //   月額：枠が無い月は「月額の契約が無い」とみなす（計算側の null に合わせる）
@@ -138,6 +165,70 @@ export async function verifyQuota(request, env) {
       out.skipped++;
       out.skippedWhy.COVERAGE_NOT_SET = (out.skippedWhy.COVERAGE_NOT_SET || 0) + 1;
       continue;   // 比べられない。作り直してから出直す
+    }
+
+    //   ★主キーの集合を照合する（2026-10-09・設計13・関門②の指摘）。
+    //
+    //     顧客の読み取り経路で見るのは**件数**だけ。それでは
+    //       ・当月以外の月額行が欠けている／余っている
+    //       ・期限切れ・開始前のパックの主キーが違う
+    //       ・同じ枚数の別パックに入れ替わっている
+    //     が通ってしまう（当月の残数はたまたま一致する）。
+    //     **切り替えの合格条件はこちら。** 作り直しと同じ範囲で集合を突き合わせる。
+    //
+    //   ★範囲（from/to）を渡されたときだけ見る。渡されなければ飛ばす
+    //     （違う範囲で比べると、作られていない月を「欠けている」と誤って出す）。
+    //   ★範囲が保存されていなければ、**合格にしない**（飛ばして数える）。
+    //     「検査が走らなかった」を「一致した」と読ませてはいけない。
+    if (!/^\d{4}-\d{2}$/.test(String(ver0.fromMonth || '')) || !/^\d{4}-\d{2}$/.test(String(ver0.toMonth || ''))) {
+      out.keyRangeMissing = (out.keyRangeMissing || 0) + 1;
+      out.pageOk = false;
+    } else {
+      const b2 = buildQuotaForCustomer(cid, input.rows, input.sessions, input.opening, {
+        fromMonth: ver0.fromMonth, toMonth: ver0.toMonth, nowKey: nowMonthKeyJst(now), carryRate,
+      });
+      //   ★計算に問題があるときは比べない（2026-10-09・関門②の2周目）。
+      //     buildQuotaForCustomer は問題のある月・パックを**除いた途中までの集合**を返す。
+      //     それを「作るべき集合」として比べると、意味の違うものを突き合わせることになる。
+      //     作り直し側は問題が1件でもあれば何も書かないので、D1は空＝全部 missing に見える。
+      if (b2.issues.length) {
+        out.skipped++;
+        out.skippedWhy.KEY_EXPECTATION_NOT_OK = (out.skippedWhy.KEY_EXPECTATION_NOT_OK || 0) + 1;
+        out.pageOk = false;   // ★合格にはしない
+        continue;
+      }
+      const [dq, dp] = await Promise.all([
+        env.DB.prepare(
+          `SELECT month_key FROM monthly_quota WHERE customer_id = ? AND built_version = ?`
+        ).bind(cid, ver0.builtVersion).all(),
+        env.DB.prepare(
+          `SELECT pack_id FROM ticket_packs WHERE customer_id = ? AND built_version = ?`
+        ).bind(cid, ver0.builtVersion).all(),
+      ]);
+      const diffKeys = (want, got) => {
+        const W = new Set(want), G = new Set(got);
+        return { missing: want.filter((x) => !G.has(x)), extra: got.filter((x) => !W.has(x)) };
+      };
+      //   ★D1の主キーを読み終えた時点で「走った」と数える（2026-10-09・関門②の3周目）。
+      //     一致したときだけ数えていたので、**全員が不一致なら keyChecked が0**になり、
+      //     「合わない」と「1人も走っていない」が同時に出て読めなかった。
+      out.keyChecked = (out.keyChecked || 0) + 1;
+
+      const mk = diffKeys(b2.monthly.map((m) => String(m.monthKey)),
+                          (dq.results || []).map((x) => String(x.month_key)));
+      const pk = diffKeys(b2.packs.map((p) => String(p.packId)),
+                          (dp.results || []).map((x) => String(x.pack_id)));
+      if (mk.missing.length || mk.extra.length || pk.missing.length || pk.extra.length) {
+        //   ★「飛ばした」ではなく**不一致**にする。合わないまま切り替えてはいけない。
+        out.keyMismatch = (out.keyMismatch || 0) + 1;
+        out.pageOk = false;
+        (out.keyMismatchDetail = out.keyMismatchDetail || []).push({
+          customerId: mask(cid),
+          range: `${ver0.fromMonth}..${ver0.toMonth}`,
+          monthsMissing: mk.missing.slice(0, 5), monthsExtra: mk.extra.slice(0, 5),
+          packsMissing: pk.missing.length, packsExtra: pk.extra.length,
+        });
+      }
     }
 
     //   ★月額の使いすぎ（used > quota）も数える（2026-10-07・Codex関門②の4回目）。

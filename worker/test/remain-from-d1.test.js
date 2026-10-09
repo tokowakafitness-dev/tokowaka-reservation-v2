@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   buildRemainFromRows, monthlyRemainOf, ticketsAt,
-  fmtDateOnlyJst, monthKeyJst, monthRangeJst, readRemainFromD1,
+  fmtDateOnlyJst, monthKeyJst, monthRangeJst, readRemainFromD1, readRemainDiag,
 } from '../src/lib/remain-from-d1.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -313,16 +313,16 @@ function fakeEnv(spec) {
 const now = jst(2026, 10, 9);
 const qRow = { month_key: '2026-10', quota: 9, used: 3, coverage: 'limited', base_freq: 8, overage: 0 };
 {
-  const env = fakeEnv({ version: { source_version: 5, built_version: 5 }, quota: [qRow], count: 3 });
+  const env = fakeEnv({ version: { source_version: 5, built_version: 5, built_quota_rows: 1, built_pack_rows: 0 }, quota: [qRow], count: 3 });
   const r = await readRemainFromD1(env, 'C1', now, { nowMs: now });
   ok('⑫追いついていれば答える', r && r.monthlyRemaining === 6, JSON.stringify(r && r.monthlyRemaining));
 }
 {
-  const env = fakeEnv({ version: { source_version: 6, built_version: 5 }, quota: [qRow], count: 3 });
+  const env = fakeEnv({ version: { source_version: 6, built_version: 5, built_quota_rows: 1, built_pack_rows: 0 }, quota: [qRow], count: 3 });
   ok('⑫★追いついていなければ答えない', (await readRemainFromD1(env, 'C1', now, { nowMs: now })) === null);
 }
 {
-  const env = fakeEnv({ version: { source_version: 0, built_version: 0 }, quota: [qRow], count: 3 });
+  const env = fakeEnv({ version: { source_version: 0, built_version: 0, built_quota_rows: 1, built_pack_rows: 0 }, quota: [qRow], count: 3 });
   ok('⑫★一度も作り直していなければ答えない',
      (await readRemainFromD1(env, 'C1', now, { nowMs: now })) === null);
 }
@@ -337,12 +337,12 @@ const qRow = { month_key: '2026-10', quota: 9, used: 3, coverage: 'limited', bas
      '読めなかったことを「問題なし」と扱ってはいけない');
 }
 {
-  const env = fakeEnv({ version: { source_version: 5, built_version: 5 }, quota: [qRow], count: 3 });
+  const env = fakeEnv({ version: { source_version: 5, built_version: 5, built_quota_rows: 1, built_pack_rows: 0 }, quota: [qRow], count: 3 });
   ok('⑫★当月と翌月以外は答えない',
      (await readRemainFromD1(env, 'C1', jst(2026, 12, 15), { nowMs: now })) === null,
      '持っていない月に答えると、間違った残数を返す');
   ok('⑫翌月は答える対象', (await readRemainFromD1(
-       fakeEnv({ version: { source_version: 5, built_version: 5 },
+       fakeEnv({ version: { source_version: 5, built_version: 5, built_quota_rows: 1, built_pack_rows: 0 },
                  quota: [{ ...qRow, month_key: '2026-11', used: 0 }], count: 3 }),
        'C1', jst(2026, 11, 15), { nowMs: now })) !== null);
 }
@@ -360,14 +360,58 @@ ok('⑫会員が分からなければ答えない', (await readRemainFromD1(fake
     if (/customer_sync_version/.test(sql)) {
       const orig = st.first;
       st.first = async () => (++n === 1
-        ? { source_version: 5, built_version: 5 }     // 1回目：追いついている
-        : { source_version: 6, built_version: 5 });   // 2回目：読んでいる間に入力が来た
+        ? { source_version: 5, built_version: 5, built_quota_rows: 1, built_pack_rows: 0 }   // 1回目：追いついている
+        : { source_version: 6, built_version: 5, built_quota_rows: 1, built_pack_rows: 0 }); // 2回目：読んでいる間に入力が来た
     }
     return st;
   };
   ok('⑫-b★読み終わったあとにもう一度世代を見る',
      (await readRemainFromD1(env, 'C1', now, { nowMs: now })) === null && n === 2,
      `世代を読んだ回数=${n}。1回なら窓が開いたまま`);
+}
+
+// ---------- 12-c. ★世代の印を書き忘れた行を「契約なし」と答えない ----------
+//   ★2026-10-09・設計13 関門①の指摘
+//     「世代の印が無い行は読まれない＝写しへ落ちる」は**成立しない**。
+//     下の組み立ては、枠0行でも「契約が無い会員」として正常に答えてしまう。
+//     ＝印を書き忘れると**月額会員の画面から残数が消える**。間違った側に倒れる。
+{
+  //   作り直しは枠1行を書いたと記録しているが、実際には読めない（印の書き忘れ）
+  const env = fakeEnv({ version: { source_version: 5, built_version: 5,
+                                   built_quota_rows: 1, built_pack_rows: 0 },
+                        quota: [], count: 3 });
+  const r = await readRemainDiag(env, 'C1', now, { nowMs: now });
+  ok('⑫-c★行数が合わなければ答えない', r.value === null && r.status === 'row_count_mismatch',
+     JSON.stringify(r));
+  ok('⑫-c 何行足りないかを残す', /枠 0\/1/.test(r.reason || ''), r.reason);
+}
+{
+  //   チケットだけ多い（枠は合っている）＝打ち消し合わないことを確かめる
+  const env = fakeEnv({ version: { source_version: 5, built_version: 5,
+                                   built_quota_rows: 1, built_pack_rows: 0 },
+                        quota: [qRow],
+                        packs: [{ pack_id: 'p', kind: 'normal', total: 1, used: 0, opening_used: 0,
+                                  valid_from: 0, valid_to: now + 86400000 }], count: 3 });
+  const r = await readRemainDiag(env, 'C1', now, { nowMs: now });
+  ok('⑫-c★枠が合っていてもチケットが合わなければ答えない',
+     r.status === 'row_count_mismatch', JSON.stringify(r));
+}
+{
+  //   記録が無い（まだ作り直していない）
+  const env = fakeEnv({ version: { source_version: 5, built_version: 5 }, quota: [qRow], count: 3 });
+  const r = await readRemainDiag(env, 'C1', now, { nowMs: now });
+  ok('⑫-c★行数の記録が無ければ答えない', r.status === 'row_count_missing', JSON.stringify(r));
+}
+{
+  //   ★いまの世代で絞って読んでいることを文で確かめる
+  const SRC2 = readFileSync(join(ROOT, 'worker/src/lib/remain-from-d1.js'), 'utf8');
+  ok('⑫-c★枠は世代で絞る',
+     /FROM monthly_quota WHERE customer_id = \? AND built_version = \?/.test(SRC2));
+  ok('⑫-c★チケットも世代で絞る',
+     /FROM ticket_packs WHERE customer_id = \? AND built_version = \?/.test(SRC2));
+  ok('⑫-c★月額は全部の月を読む（2か月に絞らない）',
+     !/FROM monthly_quota WHERE customer_id = \? AND month_key IN/.test(SRC2),
+     '書く側は全月を作るので、2か月だけ読むと件数の照合が成り立たない');
 }
 
 // ---------- 13. まだ顧客に出していないこと ----------

@@ -269,15 +269,23 @@ export async function readRemainDiag(env, customerId, targetMs, opts) {
   const cur = monthRangeJst(nowMs);
   let rows, packs, cnt;
   try {
+    //   ★いまの世代の行だけを読む（2026-10-09・設計13）。
+    //     枠とチケットは UPSERT だけで書いており、計算から消えた行が残る。
+    //     消すのは危険（used のトリガー・外部キー・引当の削除範囲）なので、
+    //     **消さずに読まない。**
+    //   ★月額は**全部の月**を読む（当月と翌月だけではない）。
+    //     書く側は fromMonth..toMonth の全月を作るので、
+    //     2か月だけ読むと下の件数の照合が成り立たない。
+    //     表示に使うのは当月と翌月の行だけ。数か月×40名なので全部読んでも軽い。
     [rows, packs, cnt] = await Promise.all([
       env.DB.prepare(
         `SELECT month_key, quota, used, coverage, base_freq, overage
-           FROM monthly_quota WHERE customer_id = ? AND month_key IN (?, ?)`
-      ).bind(customerId, curKey, nextKey).all(),
+           FROM monthly_quota WHERE customer_id = ? AND built_version = ?`
+      ).bind(customerId, ver.version.builtVersion).all(),
       env.DB.prepare(
         `SELECT pack_id, kind, total, used, opening_used, valid_from, valid_to
-           FROM ticket_packs WHERE customer_id = ?`
-      ).bind(customerId).all(),
+           FROM ticket_packs WHERE customer_id = ? AND built_version = ?`
+      ).bind(customerId, ver.version.builtVersion).all(),
       env.DB.prepare(THIS_MONTH_COUNT_SQL).bind(customerId, cur.from, cur.to).first(),
     ]);
   } catch (_) {
@@ -293,6 +301,25 @@ export async function readRemainDiag(env, customerId, targetMs, opts) {
   if (!ver2.ok || ver2.version.sourceVersion !== ver.version.sourceVersion
                || ver2.version.builtVersion !== ver.version.builtVersion) {
     return { value: null, status: 'version_changed', month: wantKey, version: ver.version };
+  }
+
+  //   ★読めた行数が「作り直したときに書いた行数」と一致しなければ答えない（設計13 第4-2節）。
+  //
+  //     なぜ要るか：「世代の印を書き忘れた行は読まれない＝写しへ落ちる」は**成立しない**。
+  //     下の組み立ては、枠0行・パック0行でも「契約が無い会員」として正常に答える。
+  //     ＝印を書き忘れると**月額会員の画面から残数が消える**。間違った側に倒れる。
+  //     行数を突き合わせれば、書き忘れも取り落ちも同じ1つの検査で捕まり、
+  //     一致しないときは写しへ落ちる＝本当に安全側へ倒れる。
+  //
+  //   ★枠とパックを**別々に**数える。1つの合計では
+  //     「枠が1行足りず、パックが1行多い」が打ち消し合って通る。
+  const qn = (rows.results || []).length, pn = (packs.results || []).length;
+  if (ver.version.quotaRows == null || ver.version.packRows == null) {
+    return { value: null, status: 'row_count_missing', month: wantKey, version: ver.version };
+  }
+  if (qn !== ver.version.quotaRows || pn !== ver.version.packRows) {
+    return { value: null, status: 'row_count_mismatch', month: wantKey, version: ver.version,
+             reason: `枠 ${qn}/${ver.version.quotaRows} ・ チケット ${pn}/${ver.version.packRows}` };
   }
 
   const byMonth = {};
@@ -312,14 +339,19 @@ export async function readRemainDiag(env, customerId, targetMs, opts) {
 
 //   世代の判定だけを切り出す（sync-version.js を直接使うと輪になるため、ここで薄く読む）
 async function readSyncVersionForRemain(env, customerId) {
-  const none = { sourceVersion: 0, builtVersion: 0 };
+  const none = { sourceVersion: 0, builtVersion: 0, quotaRows: null, packRows: null };
   try {
     const r = await env.DB.prepare(
-      `SELECT source_version, built_version FROM customer_sync_version WHERE customer_id = ?`
+      `SELECT source_version, built_version, built_quota_rows, built_pack_rows
+         FROM customer_sync_version WHERE customer_id = ?`
     ).bind(String(customerId)).first();
     if (!r) return { ok: false, status: 'no_version_row', version: none };
     const s = Number(r.source_version || 0), b = Number(r.built_version || 0);
-    const version = { sourceVersion: s, builtVersion: b };
+    const version = {
+      sourceVersion: s, builtVersion: b,
+      quotaRows: r.built_quota_rows == null ? null : Number(r.built_quota_rows),
+      packRows: r.built_pack_rows == null ? null : Number(r.built_pack_rows),
+    };
     if (!(b > 0)) return { ok: false, status: 'not_built', version };
     if (s !== b) return { ok: false, status: 'behind', version };
     return { ok: true, status: 'ok', version };

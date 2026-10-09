@@ -28,9 +28,84 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 // ---------- 1. 比べているものが正しい ----------
 ok('①計算の答えを出している', /_lbComputeRemaining\(cid, input\.rows, input\.sessions/.test(V));
 ok('①★D1の行から読んでいる（計算し直していない）',
-  /SELECT quota, coverage, used FROM monthly_quota WHERE customer_id = \? AND month_key = \?/.test(V)
+  /SELECT quota, coverage, used FROM monthly_quota\n\s*WHERE customer_id = \? AND month_key = \? AND built_version = \?/.test(V)
   && /SELECT total, used, opening_used FROM ticket_packs/.test(V),
   'ここで計算し直すと、同じコードの比較になり意味が無い');
+//   ★顧客に出るのと**同じ条件**で見る（2026-10-09・設計13）。
+//     読み取りをD1へ向けたあとは「いまの世代の行」だけが顧客に出る。
+//     照合が全世代を見ていると、消えた契約の古い行で食い違いが出続け、
+//     本物の食い違いが埋もれる。
+ok('①★チケットも世代で絞る',
+  /AND valid_from <= \? AND valid_to >= \? AND built_version = \?/.test(V));
+ok('①★追いついていない会員は「不一致」ではなく「飛ばした」',
+  /if \(!isFresh\(ver0\)\) \{/.test(V) && /VERSION_/.test(V),
+  '作り直しの途中を不一致として数えると、本物の食い違いが埋もれる');
+ok('①世代は入力を読む前に取る',
+  V.indexOf('readSyncVersion(env, cid)') < V.indexOf('loadCalcInput(env, cid)'));
+
+// ---------- 1-b. ★主キーの集合を照合する（切り替えの合格条件）----------
+//   顧客の読み取り経路で見るのは**件数**だけ。それでは次が通ってしまう。
+//     当月以外の月額行が欠けている／余っている
+//     期限切れ・開始前のパックの主キーが違う
+//     同じ枚数の別パックに入れ替わっている
+//   （当月の残数はたまたま一致するので、残数の比較では見えない）
+ok('①-b★計算が作るべき主キーを組み立てている', /buildQuotaForCustomer\(cid, input\.rows/.test(V));
+ok('①-b★D1の同じ世代の主キーを読む',
+  /SELECT month_key FROM monthly_quota WHERE customer_id = \? AND built_version = \?/.test(V)
+  && /SELECT pack_id FROM ticket_packs WHERE customer_id = \? AND built_version = \?/.test(V));
+ok('①-b★足りないものと余っているものを両方見る',
+  /missing: want\.filter/.test(V) && /extra: got\.filter/.test(V),
+  '欠けだけを見ると、別のパックに入れ替わった状態が通る');
+ok('①-b★合わなければ「飛ばした」ではなく**不一致**にする',
+  /out\.keyMismatch = \(out\.keyMismatch \|\| 0\) \+ 1;/.test(V) && /out\.pageOk = false;[\s\S]{0,200}keyMismatchDetail/.test(V),
+  '合わないまま切り替えてはいけない');
+//   ★範囲はURLで渡さない（2026-10-09・関門②の2周目）。
+//     範囲は会員ごと・実行ごとに違う（全員ぶんは当月〜翌月、二重書きは recordsFrom〜当月+2）。
+//     URLで渡すと推測になり、正しいD1の行を「欠けている／余っている」と誤って判定する。
+ok('①-b★作り直しが保存した範囲を使う',
+  /fromMonth: ver0\.fromMonth, toMonth: ver0\.toMonth/.test(V)
+  && !/keysFrom/.test(V) && !/searchParams\.get\('from'\)/.test(V));
+ok('①-b★範囲が保存されていなければ合格にしない',
+  /out\.keyRangeMissing = \(out\.keyRangeMissing \|\| 0\) \+ 1;\n\s*out\.pageOk = false;/.test(V),
+  '「検査が走らなかった」を「一致した」と読ませてはいけない');
+ok('①-b★照合が走った数を出す', /out\.keyChecked = \(out\.keyChecked \|\| 0\) \+ 1;/.test(V),
+  '0件なら合格にしてはいけない');
+//   ★一致したときだけ数えると、全員が不一致のとき keyChecked が0になり、
+//     「合わない」と「1人も走っていない」が同時に出て読めない（関門②の3周目）。
+ok('①-b★一致・不一致にかかわらず数える',
+  V.indexOf('out.keyChecked = (out.keyChecked || 0) + 1;') < V.indexOf('const mk = diffKeys('),
+  'D1の主キーを読み終えた時点で数える');
+ok('①-b★数えるのは1箇所だけ',
+  (V.match(/out\.keyChecked = \(out\.keyChecked \|\| 0\) \+ 1;/g) || []).length === 1);
+ok('①-b★計算に問題があるときは比べない',
+  /if \(b2\.issues\.length\) \{/.test(V) && /KEY_EXPECTATION_NOT_OK/.test(V),
+  '問題のある月を除いた途中までの集合を「作るべき集合」として比べてはいけない');
+ok('①-b そのときも合格にしない',
+  /KEY_EXPECTATION_NOT_OK[\s\S]{0,120}out\.pageOk = false;/.test(V));
+ok('①-b 氏名を出さない', /customerId: mask\(cid\)/.test(V));
+
+// ---------- 1-b2. ★GAS側が照合の結果を合否に入れているか ----------
+//   ★Workerが keyMismatch を返しても、GASが見ていなければ「✅ 全員で一致しました」と出る。
+//     2026-10-09・関門②の指摘：まさにその状態だった。
+{
+  const GAS = readFileSync(join(ROOT, 'gas/PushToEdge.js'), 'utf8');
+  ok('①-b2 ページをまたいで数える',
+     /total\.keyMismatch \+= Number\(r\.keyMismatch \|\| 0\);/.test(GAS)
+     && /total\.keyChecked \+= Number\(r\.keyChecked \|\| 0\);/.test(GAS));
+  ok('①-b2★合否の条件に入れる', /&& v\.keyMismatch === 0 && v\.keyRangeMissing === 0 && v\.keyChecked > 0/.test(GAS));
+  ok('①-b2★「1人も走っていない」を一致と読ませない',
+     /v\.keyChecked > 0/.test(GAS) && /照合が1人も走っていない/.test(GAS));
+  ok('①-b2 合わない会員を表示する', /主キーの集合が合わない会員/.test(GAS));
+  ok('①-b2 詳細は増えすぎないように止める', /total\.keyDetail\.length < 20/.test(GAS));
+}
+
+// ---------- 1-c. ★いまの世代の数え方（quotaStatus）----------
+{
+  const Q2 = readFileSync(join(ROOT, 'worker/src/routes/quota.js'), 'utf8');
+  ok('①-c★追いついている会員の行だけを「いまの世代」と数える',
+     (Q2.match(/v\.built_version > 0 AND v\.source_version = v\.built_version/g) || []).length === 2,
+     'source > built の会員は、世代が一致していても読み取りの対象外（isFresh が false）');
+}
 ok('①月額は 枠−使った数', /Number\(mq\.quota\) - Number\(mq\.used\)/.test(V));
 //   ★契約が対象月を覆っていない月は、繰越が残っていても 0 を見せる。
 //     計算側（Allocate.js の monthlyRem）がそうしているため、同じ規則にする。

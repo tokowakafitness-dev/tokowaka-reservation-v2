@@ -2010,7 +2010,12 @@ function _edgeQuotaVerify(opts) {
   var after = String(o.after || '');
   var total = { pages: 0, checked: 0, agree: 0, differ: 0, skipped: 0, diffs: [],
                 skippedWhy: {}, orphans: null, overUsedPacks: 0, overUsedMonths: 0, coverageMissing: 0,
-                staleCoverage: null, quotaInvariantBroken: null, lastAfter: after, done: false };
+                staleCoverage: null, quotaInvariantBroken: null, lastAfter: after, done: false,
+                //   ★主キーの集合の照合（2026-10-09・設計13）。
+                //     残数が一致しても、別の月・別のパックに入れ替わっていれば一致しない。
+                //     **切り替えの合格条件はこちら。** 走った数（keyChecked）も見る
+                //     ＝「0件だから一致」と読ませないため。
+                keyMismatch: 0, keyChecked: 0, keyRangeMissing: 0, keyDetail: [] };
 
   for (var p = 0; p < maxPages; p++) {
     var q = '?limit=' + limit + '&after=' + encodeURIComponent(after) + (month ? '&month=' + encodeURIComponent(month) : '');
@@ -2027,6 +2032,13 @@ function _edgeQuotaVerify(opts) {
     total.overUsedPacks += Number(r.overUsedPacks || 0);
     total.overUsedMonths += Number(r.overUsedMonths || 0);
     total.coverageMissing += Number(r.coverageMissing || 0);
+    total.keyMismatch += Number(r.keyMismatch || 0);
+    total.keyChecked += Number(r.keyChecked || 0);
+    total.keyRangeMissing += Number(r.keyRangeMissing || 0);
+    //   詳細は増えすぎないように20件で止める。数（keyMismatch）は止めない。
+    for (var k2 = 0; k2 < (r.keyMismatchDetail || []).length; k2++) {
+      if (total.keyDetail.length < 20) total.keyDetail.push(r.keyMismatchDetail[k2]);
+    }
     //   表全体の検査は最後のページでだけ返る。返ってきた値をそのまま採る（足さない）。
     if (r.staleCoverage != null) total.staleCoverage = Number(r.staleCoverage);
     if (r.quotaInvariantBroken != null) total.quotaInvariantBroken = Number(r.quotaInvariantBroken);
@@ -2078,9 +2090,13 @@ function quotaBuildText(args) {
     }
     // ★「全員一致」と言えるのは、全ページを集計して次が**すべて**満たされたとき。
     //   ページごとの判定（pageOk）を見て決めない。前のページの食い違いを見落とす。
+    //   ★主キーの集合も条件に入れる（2026-10-09・設計13・関門②）。
+    //     残数が一致しても、別の月・別のパックに入れ替わっていれば一致しない。
+    //   ★keyChecked > 0 も条件。**照合が1人も走っていない状態を「一致」と読ませない。**
     var allGood = v.done && v.checked > 0 && v.differ === 0 && v.skipped === 0
                   && v.overUsedPacks === 0 && v.overUsedMonths === 0 && v.coverageMissing === 0
                   && v.staleCoverage === 0 && v.quotaInvariantBroken === 0
+                  && v.keyMismatch === 0 && v.keyRangeMissing === 0 && v.keyChecked > 0
                   && v.orphans && !v.orphans.quotaRows && !v.orphans.packRows && !v.orphans.allocRows;
 
     if (v.orphans) {
@@ -2092,6 +2108,20 @@ function quotaBuildText(args) {
     var swk = [];
     for (var w2 in v.skippedWhy) if (v.skippedWhy.hasOwnProperty(w2)) swk.push(w2 + ' ' + v.skippedWhy[w2] + '名');
     if (swk.length) vo.push('比べられなかった理由: ' + swk.join(' / '));
+
+    vo.push('主キーの集合の照合: 走った ' + v.keyChecked + '名 / 合わない ' + v.keyMismatch
+            + '名 / 範囲が無くて照合できない ' + v.keyRangeMissing + '名');
+    if (v.keyDetail.length) {
+      vo.push('');
+      vo.push('── 主キーの集合が合わない会員（別の月・別のパックに入れ替わっている）');
+      for (var k3 = 0; k3 < v.keyDetail.length; k3++) {
+        var kd = v.keyDetail[k3];
+        vo.push('   ・' + kd.customerId + '  範囲=' + kd.range
+                + '  月:欠け[' + (kd.monthsMissing || []).join(',') + '] 余り[' + (kd.monthsExtra || []).join(',') + ']'
+                + '  チケット:欠け' + kd.packsMissing + ' 余り' + kd.packsExtra);
+      }
+      if (v.keyMismatch > v.keyDetail.length) vo.push('   …ほか ' + (v.keyMismatch - v.keyDetail.length) + '名');
+    }
 
     if (v.diffs.length) {
       vo.push('');
@@ -2118,6 +2148,9 @@ function quotaBuildText(args) {
       if (v.overUsedPacks) vo.push('　 ・買った枚数を超えて使っているチケットがある（' + v.overUsedPacks + '名）');
       if (v.overUsedMonths) vo.push('　 ・枠を超えて使っている月がある（' + v.overUsedMonths + '名）');
       if (v.coverageMissing) vo.push('　 ・契約の覆い方が入っていない行がある（' + v.coverageMissing + '件・作り直しが必要）');
+      if (v.keyMismatch) vo.push('　 ・主キーの集合が合わない（' + v.keyMismatch + '名・別の月／別のパックに入れ替わっている）');
+      if (v.keyRangeMissing) vo.push('　 ・作り直しの範囲が保存されていないので照合できない（' + v.keyRangeMissing + '名・作り直しが必要）');
+      if (!v.keyChecked) vo.push('　 ・★主キーの集合の照合が1人も走っていない（これを「一致」と読んではいけない）');
       if (v.staleCoverage !== 0) vo.push('　 ・表全体の覆い方の検査が済んでいない（staleCoverage=' + v.staleCoverage + '）');
       if (v.quotaInvariantBroken !== 0) vo.push('　 ・表全体の不変条件の検査が済んでいない（quotaInvariantBroken=' + v.quotaInvariantBroken + '）');
       if (v.orphans && (v.orphans.quotaRows || v.orphans.packRows || v.orphans.allocRows)) {
