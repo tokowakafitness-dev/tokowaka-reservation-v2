@@ -662,8 +662,21 @@ function _lbBuildHome(customerId, customerName, lang, targetDateMs) {
       var rr = rows[i], cc = rr.cols, rw = rr.row;
       var mth = String(cc.method >= 0 ? rw[cc.method] : ''), tp = String(cc.type >= 0 ? rw[cc.type] : '');
       var isT = mth ? (mth.indexOf('チケット') >= 0) : (tp.indexOf('チケット') >= 0);
-      if (isT && rr.end && (ticketExpireMs === null || rr.end.getTime() > ticketExpireMs)) {
-        ticketExpireMs = rr.end.getTime(); ticketExpire = _lbFmtDateOnly(cc.end >= 0 ? rw[cc.end] : '', lang);
+      //   ★期限は「終了日のJST終端（23:59:59.999）まで有効」に正規化する（2026-10-09）。
+      //     計算側（Allocate.js の expEnd）と割当器はそうしているのに、
+      //     **ここだけ契約行のセルの生の値（0:00）を返していた。**
+      //     shadow（写しとD1を比べる仕組み）を入れた初回の比較で見つかった
+      //     （写し=2027-01-12 00:00:00.000 ／ D1=2027-01-12 23:59:59.999）。
+      //   ★いまこの鍵（ticketExpireMs / expireMs）を読んでいる画面は無いので
+      //     顧客への影響は無い。**規則を1つに揃えるために直す。**
+      //     放っておくと shadow の食い違いとして出続け、本物の差が埋もれる。
+      if (isT && rr.end) {
+        var _endJst = rr.end.getTime() + 9 * 3600000;
+        var _endOfDay = (Math.floor(_endJst / 86400000) * 86400000 - 9 * 3600000) + 86399999;
+        if (ticketExpireMs === null || _endOfDay > ticketExpireMs) {
+          ticketExpireMs = _endOfDay;
+          ticketExpire = _lbFmtDateOnly(cc.end >= 0 ? rw[cc.end] : '', lang);
+        }
       }
     }
   }
