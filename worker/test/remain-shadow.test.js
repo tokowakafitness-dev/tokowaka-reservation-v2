@@ -654,6 +654,31 @@ ok('⑪-e★post の上限＝枠の上限', POST_SKIP_COUNT_MAX === MAXT,
      '日付が変わるたびに書き換えないよう、日付の形で見る');
 }
 
+// ---------- 11-i. ★合格の判定（回数だけでは足りない）----------
+//   ★2026-10-10、オーナーの「1がうまくいったかどうかはどう分かるか」に答えようとして、
+//     **合格の判定に必要な数字が1つ足りない**ことに気づいた。
+//     200回比べても、全部が同じ3名なら残り37名は一度も比べていない。
+//     食い違いは**特定の会員・特定の契約の形**で起きる（期限の差も1名だった）。
+{
+  const ST = readFileSync(join(ROOT, 'worker/src/lib/shadow-status.js'), 'utf8');
+  const AU = readFileSync(join(ROOT, 'gas/EdgeAudit.js'), 'utf8');
+  ok('⑪-i★比べ終わった会員の数を数える',
+     /field = '_completed'\) AS comparedMembers/.test(ST),
+     '回数だけでは「全員で一致」と言えない');
+  ok('⑪-i★対象の会員数も数える（分母）',
+     /FROM calc_contract_rows\) AS targetMembers/.test(ST));
+  ok('⑪-i 入口ごとの会員数も出す', /COUNT\(DISTINCT customer_id\) AS members/.test(ST));
+  ok('⑪-i★合格の形をその場で判定して出す',
+     /合格の判定/.test(AU) && /1人だけ D1 から読ませる段へ進めます/.test(AU),
+     '基準を覚えておかなくてよいように、足りないものを名指しで出す');
+  ok('⑪-i★足りないものを名指しする',
+     /比べ終わった回数が/.test(AU) && /比べ終わった会員が/.test(AU)
+     && /食い違いが/.test(AU) && /結末を残せなかった回が/.test(AU)
+     && /入口で一度も比べ終わっていない/.test(AU));
+  ok('⑪-i 合格の条件に食い違い0が入っている',
+     /!\(tot\.diffFields \|\| 0\) && !\(tot\.incomplete \|\| 0\)/.test(AU));
+}
+
 // ---------- 12. 顧客の画面を壊さない ----------
 ok('⑫例外を外に出さない', /} catch \(_\) \{\n    return false;   \/\/ 何があっても顧客の画面を壊さない/.test(SH));
 ok('⑫記録の失敗で顧客に影響しない', /runShadow\(env, opts\)\.catch\(/.test(SH));

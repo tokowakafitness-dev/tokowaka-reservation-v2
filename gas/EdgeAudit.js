@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-09b shadow の心拍（shadowStatusText）／締めの状態／日次点検';
+var LB_AUDIT_BUILD = '2026-10-10a shadow の合格判定（比べた会員の数を見る）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2487,6 +2487,33 @@ function shadowStatusText(args) {
   out.push('  ★結末を残せなかった       : ' + (tot.incomplete || 0)
            + ((tot.incomplete || 0) > 0 ? '  ← D1の障害か、処理が途中で終わっている' : ''));
   out.push('  食い違った鍵の種類        : ' + (tot.diffFields || 0));
+  //   ★回数だけでは合格を判定できない（2026-10-10）。
+  //     200回比べても全部が同じ3名なら、残り37名は一度も比べていない。
+  //     食い違いは**特定の会員・特定の契約の形**で起きる（期限の差も1名だった）。
+  var _cm = Number(tot.comparedMembers || 0), _tm = Number(tot.targetMembers || 0);
+  out.push('  ★比べ終わった会員        : ' + _cm + '名'
+           + (_tm ? ' / 対象 ' + _tm + '名' : '')
+           + (_tm && _cm >= Math.ceil(_tm * 0.875) ? '（✅ 十分）'
+              : _tm ? '（まだ ' + (_tm - _cm) + '名が一度も比べられていません）' : ''));
+
+  //   ★合格の形をその場で判定して出す（基準を覚えておかなくてよいように）
+  var _ok = (tot.completed || 0) >= 100 && _tm > 0 && _cm >= Math.ceil(_tm * 0.875)
+            && !(tot.diffFields || 0) && !(tot.incomplete || 0);
+  out.push('');
+  out.push('--- 合格の判定 ---');
+  out.push('  ' + (_ok ? '✅ 合格の形です（1人だけ D1 から読ませる段へ進めます）'
+                      : '⬜ まだ合格ではありません。足りないもの：'));
+  if (!_ok) {
+    if ((tot.completed || 0) < 100) out.push('   ・比べ終わった回数が ' + (tot.completed || 0) + '（100回以上ほしい）');
+    if (!_tm) out.push('   ・対象の会員数が読めていません');
+    else if (_cm < Math.ceil(_tm * 0.875)) out.push('   ・比べ終わった会員が ' + _cm + '/' + _tm + '名（' + Math.ceil(_tm * 0.875) + '名以上ほしい）');
+    if (tot.diffFields) out.push('   ・★食い違いが ' + tot.diffFields + '種類（原因を潰してから数え直す）');
+    if (tot.incomplete) out.push('   ・★結末を残せなかった回が ' + tot.incomplete + '（D1の障害か途中終了）');
+    var _z = [];
+    var _en0 = r.entries || {};
+    for (var _k0 in _en0) if (_en0.hasOwnProperty(_k0) && !(_en0[_k0].completed || 0)) _z.push(_k0);
+    if (_z.length) out.push('   ・入口で一度も比べ終わっていない: ' + _z.join(' / ') + '（配線を疑う）');
+  }
 
   var df = r.diffFields || {};
   var keys = Object.keys(df);

@@ -53,10 +53,16 @@ export async function buildShadowStatus(env, opts) {
   //   ★attempted は**枠の表の COUNT**（集計表に _attempted を書かない）。
   //     枠を取ってから結果を書く前に処理が消えると、集計表には何も残らない。
   //     枠の表から数えれば、枠を取った瞬間が必ず残る＝incomplete に現れる。
-  const [slots, aggs] = await Promise.all([
+  //   ★「何人を比べたか」も数える（2026-10-10）。
+  //     回数だけでは合格を判定できない。200回比べても、全部が同じ3名なら
+  //     残り37名は一度も比べていない＝「全員で一致」とは言えない。
+  //     食い違いは**特定の会員・特定の契約の形**で起きる
+  //     （期限の差も1名だった）。だから**比べられた会員の数**が条件に要る。
+  const [slots, aggs, members] = await Promise.all([
     env.DB.prepare(
       `SELECT entry, COUNT(*) AS n, MAX(claimed_at) AS last_at,
-              SUM(CASE WHEN sample_key LIKE 'ver:%' THEN 1 ELSE 0 END) AS verSlots
+              SUM(CASE WHEN sample_key LIKE 'ver:%' THEN 1 ELSE 0 END) AS verSlots,
+              COUNT(DISTINCT customer_id) AS members
          FROM remain_shadow_slot WHERE day = ? GROUP BY entry`
     ).bind(day).all(),
     env.DB.prepare(
@@ -64,6 +70,15 @@ export async function buildShadowStatus(env, opts) {
               MAX(last_at) AS last_at, MAX(last_value) AS sample
          FROM remain_shadow WHERE day = ? GROUP BY entry, field`
     ).bind(day).all(),
+    //   ★比べ終わった会員の数（入口をまたいだ実数）と、契約がある会員の数
+    env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(DISTINCT customer_id) FROM remain_shadow
+           WHERE day = ? AND field = '_completed') AS comparedMembers,
+         (SELECT COUNT(DISTINCT customer_id) FROM remain_shadow_slot
+           WHERE day = ?) AS slotMembers,
+         (SELECT COUNT(DISTINCT customer_id) FROM calc_contract_rows) AS targetMembers`
+    ).bind(day, day).first(),
   ]);
 
   const byEntry = {};
@@ -79,6 +94,7 @@ export async function buildShadowStatus(env, opts) {
     x.attempted = Number(r.n || 0);
     x.lastAttemptedAt = r.last_at == null ? null : Number(r.last_at);
     x.verSlots = Number(r.verSlots || 0);
+    x.members = Number(r.members || 0);   // この入口で枠を取れた会員の数
   }
   for (const r of (aggs.results || [])) {
     const x = ent(String(r.entry));
@@ -115,9 +131,16 @@ export async function buildShadowStatus(env, opts) {
     }
   }
 
+  //   ★合格の判定に要る3つ（回数・人数・対象の人数）
+  const comparedMembers = Number((members && members.comparedMembers) || 0);
+  const targetMembers = Number((members && members.targetMembers) || 0);
+
   return {
     ok: true, day, preflight,
-    total: { attempted, completed, failed, incomplete, diffFields: Object.keys(diffKinds).length },
+    total: { attempted, completed, failed, incomplete, diffFields: Object.keys(diffKinds).length,
+             //   ★比べ終わった会員の数 ／ 枠を取れた会員の数 ／ 契約がある会員の数
+             comparedMembers, slotMembers: Number((members && members.slotMembers) || 0),
+             targetMembers },
     diffFields: diffKinds,
     entries: byEntry,
   };
