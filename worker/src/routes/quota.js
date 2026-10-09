@@ -257,6 +257,18 @@ export async function buildQuota(request, env) {
 export async function quotaStatus(request, env) {
   const deny = requireSecret(request, env);
   if (deny) return deny;
+
+  //   ★shadow の心拍はここに相乗りさせる（新しいルートを足さない）。
+  //     GAS側の許可一覧は私が編集できないので、既存の窓口へ寄せる方針に合わせる。
+  const u = new URL(request.url);
+  const sh = u.searchParams.get('shadow');
+  if (sh) {
+    const { buildShadowStatus } = await import('../lib/shadow-status.js');
+    return json(await buildShadowStatus(env, {
+      day: u.searchParams.get('day') || undefined,
+      preflightOnly: sh === 'preflight',
+    }));
+  }
   const [m, p, cov] = await Promise.all([
     env.DB.prepare('SELECT COUNT(*) AS n, SUM(used) AS used FROM monthly_quota').first(),
     env.DB.prepare('SELECT COUNT(*) AS n, SUM(used) AS used FROM ticket_packs').first(),

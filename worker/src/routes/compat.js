@@ -57,7 +57,7 @@ export async function rolesTooOld(env) {
 // ---------------------------------------------------------------
 // getMemberStatus と同じ形
 // ---------------------------------------------------------------
-export async function compatMemberStatus({ env, who }) {
+export async function compatMemberStatus({ env, who, ctx }) {
   if (who.role === 'trainer' || who.role === 'owner') {
     return { verified: true, role: 'trainer', trainerName: who.name,
              trainerId: who.trainerId, isOwner: who.role === 'owner' };
@@ -69,7 +69,7 @@ export async function compatMemberStatus({ env, who }) {
       `SELECT customer_id, name, contract_status, contract_type, default_trainer_id
          FROM customers WHERE customer_id = ?`
     ).bind(who.customerId).first(),
-    readHomeSafe(env, who.customerId),
+    readHomeSafe(env, who.customerId, undefined, { shadow: true, ctx, entry: 'compat_member' }),
   ]);
   if (!cust) return { verified: false };
   if (!home) return { _fallback: true };          // 残数が無い＝画面はGASに聞き直す
@@ -92,9 +92,12 @@ export async function compatMemberStatus({ env, who }) {
 }
 
 // 写しが古すぎるときは null を返す＝画面はGASに聞き直す。
-async function readHomeSafe(env, customerId, targetMs) {
+//   第4引数 opts は readHome へそのまま渡す（shadow の入口の意思・設計12 第3節）。
+//   ★渡さない呼び出しは比べない。bookingOptions は候補を選び直すたびに呼ばれるため
+//     ここで4クエリ増やすと確定の経路が遅くなる。
+async function readHomeSafe(env, customerId, targetMs, opts) {
   const { readHome, HOME_TTL_HARD_MS } = await import('./boot.js');
-  const home = await readHome(env, customerId, targetMs);
+  const home = await readHome(env, customerId, targetMs, opts);
   if (!home) return null;
   if (home.ageMs != null && home.ageMs > HOME_TTL_HARD_MS) return null;
   return home;
@@ -210,13 +213,13 @@ export async function compatTrainerReservations({ env, who, body }) {
 // ---------------------------------------------------------------
 // getCustomerHome と同じ形
 // ---------------------------------------------------------------
-export async function compatCustomerHome({ env, body, who }) {
+export async function compatCustomerHome({ env, body, who, ctx }) {
   const customerId = String(body.customerId || '');
   if (!customerId) return { _fallback: true };
   if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
   const [cust, home] = await Promise.all([
     env.DB.prepare('SELECT name FROM customers WHERE customer_id = ?').bind(customerId).first(),
-    readHomeSafe(env, customerId),
+    readHomeSafe(env, customerId, undefined, { shadow: true, ctx, entry: 'compat_home' }),
   ]);
   if (!cust || !home) return { _fallback: true };
   return { name: cust.name, home };

@@ -1979,11 +1979,14 @@ function _edgeQuotaBuild(opts) {
 // いまD1に入っている枠を数える（書き込みの結果を、報告ではなく実物で確かめる）。
 //   ★「何件作れるか」と「何件入っているか」は別のこと。
 //     作る側の報告だけを見ると、書けていなくても気づけない。
-function _edgeQuotaStatus() {
+function _edgeQuotaStatus(query) {
   var url = _edgeProp('EDGE_URL');
   var secret = _edgeProp('EDGE_SECRET');
   if (!url || !secret) throw new Error('EDGE_URL / EDGE_SECRET が未設定です');
-  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/quota/status', {
+  //   query（例 '?shadow=1'）を付けられるようにした（2026-10-09・shadow の心拍）。
+  //   ★新しいルートを足さず、既存の窓口に寄せる方針に合わせる。
+  var q = query ? String(query) : '';
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/quota/status' + q, {
     method: 'get', headers: { 'X-Ingest-Secret': secret }, muteHttpExceptions: true
   });
   var code = res.getResponseCode();

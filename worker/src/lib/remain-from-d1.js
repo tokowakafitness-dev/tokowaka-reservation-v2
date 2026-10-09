@@ -95,22 +95,36 @@ export function ticketsAt(packs, atMs) {
  *   返り値 null ＝**答えてはいけない**（写しへ落とす）。
  */
 export function buildRemainFromRows(input) {
+  return buildRemainDiag(input).value;
+}
+
+/**
+ * 上と同じものを作るが、**作れなかった理由**も返す（shadow が見る）。
+ *   { value, status }
+ *     'ok'                 作れた（契約が無い会員の { type: null } も ok）
+ *     'coverage_missing'   枠の行に coverage が入っていない＝まだ作り直していない
+ *     'base_freq_missing'  枠の行に base_freq が入っていない＝同じ
+ *
+ *   ★顧客向けの関数（上）は理由を捨てて null を返す。振る舞いは変えない。
+ */
+export function buildRemainDiag(input) {
   const nowMs = Number(input.nowMs);
   const targetMs = Number(input.targetMs != null ? input.targetMs : nowMs);
   const packs = input.packs || [];
   const lang = input.lang;
 
   const tm = monthlyRemainOf(input.targetMonthRow);
-  if (!tm.ok) return null;                 // coverage が入っていない＝作り直していない
+  if (!tm.ok) return { value: null, status: 'coverage_missing' };
   const cm = monthlyRemainOf(input.curMonthRow);
-  if (!cm.ok) return null;
+  if (!cm.ok) return { value: null, status: 'coverage_missing' };
 
   //   ★契約の有無は「行があるか」で決める。
   //     月額：対象月または当月に枠の行がある（覆っていない月も uncovered の行が作られる）
   //     チケット：パックの行がある（期限切れでも「チケット契約がある」側）
   const hasMonthly = tm.hasRow || cm.hasRow;
   const hasTicket = packs.length > 0;
-  if (!hasMonthly && !hasTicket) return { type: null };   // 契約が無い（写しと同じ形）
+  //   契約が無い（写しと同じ形）。これは「作れなかった」ではない
+  if (!hasMonthly && !hasTicket) return { value: { type: null }, status: 'ok' };
 
   const tk = ticketsAt(packs, targetMs);
 
@@ -122,7 +136,7 @@ export function buildRemainFromRows(input) {
   let quota = 0, carryover = 0;
   if (tm.hasRow) {
     const bf = input.targetMonthRow.base_freq;
-    if (bf == null) return null;           // まだ作り直していない＝答えない
+    if (bf == null) return { value: null, status: 'base_freq_missing' };
     quota = Number(bf);
     carryover = Number(input.targetMonthRow.quota) - quota;
   }
@@ -164,7 +178,7 @@ export function buildRemainFromRows(input) {
     }
   }
 
-  return {
+  return { status: 'ok', value: {
     type, active: true, nextMonth,
     quota, carryover, thisMonth: Number(input.thisMonthCount || 0), monthlyRemaining,
     ticketTotal, ticketRemaining: tk.rem, ticketExpire, ticketExpireMs: expireMs,
@@ -182,7 +196,7 @@ export function buildRemainFromRows(input) {
     //     写しには無い鍵なので、比べるときは除く。
     _src: 'd1',
     _packOverUse: tk.overUse,
-  };
+  } };
 }
 
 //   当月の予約件数の数え方（GAS _lbCountReservations の 'month' と同じ意味）
@@ -217,21 +231,40 @@ export function monthRangeJst(ms) {
  *   ★targetMs を渡すと、その月の残数。写しと同じく、持っていない月は null。
  */
 export async function readRemainFromD1(env, customerId, targetMs, opts) {
-  if (!customerId) return null;
+  const d = await readRemainDiag(env, customerId, targetMs, opts);
+  return d.value;
+}
+
+/**
+ * 上と同じものを読むが、**答えられなかった理由**も返す（shadow が見る）。
+ *   { value, status, month, version }
+ *     status  'ok' / 'no_customer' / 'out_of_range' / 'no_version_row' / 'not_built'
+ *             / 'behind' / 'read_failed' / 'version_changed'
+ *             / 'coverage_missing' / 'base_freq_missing'
+ *
+ *   ★顧客向けの readRemainFromD1 は理由を捨てて null を返す。振る舞いは変えない。
+ *   ★targetMs は**そのまま使う**（月の選択とチケットの有効性の両方）。
+ *     月の中旬などに置き換えてはいけない。置き換えると
+ *     「10/31の写しに10/15を渡す」ことになり、10/20に買ったパックが無効になる
+ *     ＝月は同じでも残数が別物になる（設計12 第4節・関門①の指摘）。
+ */
+export async function readRemainDiag(env, customerId, targetMs, opts) {
+  if (!customerId) return { value: null, status: 'no_customer' };
   const o = opts || {};
   const nowMs = Number(o.nowMs || Date.now());
   const target = Number(targetMs || nowMs);
 
   //   ★当月と翌月しか答えない（写しが持っているのと同じ2か月）。
-  //     それ以外の月を聞かれたら答えない＝GASに聞き直してもらう。
   const curKey = monthKeyJst(nowMs);
   const nextKey = monthKeyJst(monthRangeJst(nowMs).to + 86400000);
   const wantKey = monthKeyJst(target);
-  if (wantKey !== curKey && wantKey !== nextKey) return null;
+  if (wantKey !== curKey && wantKey !== nextKey) {
+    return { value: null, status: 'out_of_range', month: wantKey };
+  }
 
   //   鮮度の判定（手順1で入れた世代）
   const ver = await readSyncVersionForRemain(env, customerId);
-  if (!ver) return null;
+  if (!ver.ok) return { value: null, status: ver.status, month: wantKey, version: ver.version };
 
   const cur = monthRangeJst(nowMs);
   let rows, packs, cnt;
@@ -250,22 +283,22 @@ export async function readRemainFromD1(env, customerId, targetMs, opts) {
   } catch (_) {
     //   ★読めなかったら答えない（列が無い・表が無い等）。
     //     呼ぶ側に例外を投げると、写しへ落とす道が通らず画面が止まる。
-    return null;
+    return { value: null, status: 'read_failed', month: wantKey, version: ver.version };
   }
 
-  //   ★読み終わったあと、もう一度世代を見る（2026-10-09・Codex関門②）。
+  //   ★読み終わったあと、もう一度世代を見る。
   //     鮮度を確かめてから行を読むまでの間に押し出しが来ると、
   //     「新しいと確かめた世代」と「実際に読んだ行」がずれる。
-  //     完全な一瞬の写しではないが、読んでいる最中に入力が来た場合は落とせる。
   const ver2 = await readSyncVersionForRemain(env, customerId);
-  if (!ver2 || ver2.sourceVersion !== ver.sourceVersion || ver2.builtVersion !== ver.builtVersion) {
-    return null;
+  if (!ver2.ok || ver2.version.sourceVersion !== ver.version.sourceVersion
+               || ver2.version.builtVersion !== ver.version.builtVersion) {
+    return { value: null, status: 'version_changed', month: wantKey, version: ver.version };
   }
 
   const byMonth = {};
   for (const r of (rows.results || [])) byMonth[String(r.month_key)] = r;
 
-  return buildRemainFromRows({
+  const built = buildRemainDiag({
     nowMs, targetMs: target,
     targetMonthRow: byMonth[wantKey] || null,
     curMonthRow: byMonth[curKey] || null,
@@ -274,20 +307,24 @@ export async function readRemainFromD1(env, customerId, targetMs, opts) {
     thisMonthCount: Number((cnt && cnt.n) || 0),
     lang: o.lang,
   });
+  return { value: built.value, status: built.status, month: wantKey, version: ver.version };
 }
 
 //   世代の判定だけを切り出す（sync-version.js を直接使うと輪になるため、ここで薄く読む）
 async function readSyncVersionForRemain(env, customerId) {
+  const none = { sourceVersion: 0, builtVersion: 0 };
   try {
     const r = await env.DB.prepare(
       `SELECT source_version, built_version FROM customer_sync_version WHERE customer_id = ?`
     ).bind(String(customerId)).first();
-    if (!r) return null;                                  // 行が無い＝一度も作り直していない
+    if (!r) return { ok: false, status: 'no_version_row', version: none };
     const s = Number(r.source_version || 0), b = Number(r.built_version || 0);
-    if (!(b > 0)) return null;                            // まだ作り直していない
-    if (s !== b) return null;                             // 追いついていない
-    return { sourceVersion: s, builtVersion: b };
+    const version = { sourceVersion: s, builtVersion: b };
+    if (!(b > 0)) return { ok: false, status: 'not_built', version };
+    if (s !== b) return { ok: false, status: 'behind', version };
+    return { ok: true, status: 'ok', version };
   } catch (_) {
-    return null;   // ★表が無い／読めない＝答えない（写しへ落とす）
+    //   ★表が無い／読めない＝答えない（写しへ落とす）
+    return { ok: false, status: 'read_failed', version: none };
   }
 }

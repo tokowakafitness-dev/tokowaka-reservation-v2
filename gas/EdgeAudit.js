@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-09a 締めの状態／検証用の会員／日次点検をいま回す（healthCheckText）';
+var LB_AUDIT_BUILD = '2026-10-09b shadow の心拍（shadowStatusText）／締めの状態／日次点検';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2447,6 +2447,98 @@ function consecutiveSessions() { _lbAuditLogChunks(consecutiveSessionsText({ con
 //   ★「超過のまま月を跨ぐと会計上どうなるか」を事実で答えるために作った（2026-10-08）。
 //     締めを実際に回しているかどうかで、答えが変わる。
 //   ★会計そのものは狂わない（下に書いた）。狂うのではなく「締めが実行できない」。
+// shadow（写しとD1を比べて食い違いを数える）の心拍を読む（2026-10-09・設計12）
+//   ★「食い違い0件」は、人が来なかった・モードがoff・渡し忘れ・D1が落ちた
+//     のどれでも同じ0件になる。だから**比べた回数**と**結末を記録できなかった回数**を出す。
+function shadowStatusText(args) {
+  var out = [];
+  out.push('===== shadow（写しとD1の食い違い）=====');
+  out.push('版: ' + LB_AUDIT_BUILD);
+  var pre = !!(args && args.shadow === 'preflight');
+  var q = '?shadow=' + (pre ? 'preflight' : '1');
+  if (args && args.day) q += '&day=' + encodeURIComponent(String(args.day));
+  var r = null;
+  try { r = _edgeQuotaStatus(q); }
+  catch (e) { out.push('読めません: ' + e.message); var t0 = out.join('\n'); Logger.log(t0); return t0; }
+
+  var pf = r.preflight || {};
+  out.push('日付: ' + (r.day || '-') + ' / モード: ' + (pf.mode || '-'));
+  out.push('');
+  out.push('--- 入れる前の確認（preflight）---');
+  var tb = pf.tables || {};
+  var names = ['customer_sync_version', 'remain_shadow_slot', 'remain_shadow', 'remain_shadow_sample'];
+  for (var i = 0; i < names.length; i++) {
+    out.push('  ' + (tb[names[i]] ? '✅' : '❌') + ' ' + names[i]);
+  }
+  if (pf.freshCustomers != null) {
+    out.push('  ' + (pf.freshCustomers > 0 ? '✅' : '❌') + ' 世代が追いついている会員: ' + pf.freshCustomers + '名'
+             + (pf.freshCustomers > 0 ? '' : '（0名なら全部 not_built になる。先に作り直しが要る）'));
+  }
+  out.push('  → ' + (pf.ready ? '✅ 比べられる状態' : '⬜ まだ比べられない'));
+  if (pre) { var t1 = out.join('\n'); Logger.log(t1); return t1; }
+
+  var tot = r.total || {};
+  out.push('');
+  out.push('--- 全体 ---');
+  out.push('  比べようとした(枠を取れた): ' + (tot.attempted || 0));
+  out.push('  比べ終わった              : ' + (tot.completed || 0));
+  out.push('  途中で落ちた              : ' + (tot.failed || 0));
+  //   ★これが0でなければ、枠を取ったあと結末を何も残せずに消えた処理がある
+  out.push('  ★結末を残せなかった       : ' + (tot.incomplete || 0)
+           + ((tot.incomplete || 0) > 0 ? '  ← D1の障害か、処理が途中で終わっている' : ''));
+  out.push('  食い違った鍵の種類        : ' + (tot.diffFields || 0));
+
+  var df = r.diffFields || {};
+  var keys = Object.keys(df);
+  if (keys.length) {
+    out.push('');
+    out.push('--- 食い違った鍵 ---');
+    keys.sort(function (a2, b2) { return (df[b2].n || 0) - (df[a2].n || 0); });
+    for (var k = 0; k < keys.length; k++) {
+      var d = df[keys[k]];
+      out.push('  ' + keys[k] + ' … ' + (d.n || 0) + '回 / ' + (d.members || 0) + '名');
+      if (d.sample) out.push('      例: ' + String(d.sample));
+    }
+  } else if ((tot.completed || 0) > 0) {
+    out.push('');
+    out.push('  食い違いなし（比べ終わった ' + (tot.completed || 0) + '回で0件）');
+  }
+
+  var en = r.entries || {};
+  out.push('');
+  out.push('--- 入口ごと ---');
+  var es = Object.keys(en);
+  for (var e = 0; e < es.length; e++) {
+    var x = en[es[e]];
+    out.push('  [' + es[e] + '] 枠=' + (x.attempted || 0) + '（世代枠 ' + (x.verSlots || 0) + '）'
+             + ' 終=' + (x.completed || 0) + ' 落=' + (x.failed || 0)
+             + ' 残せず=' + (x.incomplete || 0));
+    var ps = x.preSkipped || {}, pk = Object.keys(ps);
+    if (pk.length) {
+      var l1 = [];
+      for (var i2 = 0; i2 < pk.length; i2++) l1.push(pk[i2] + ':' + ps[pk[i2]]);
+      out.push('      枠の前に弾いた: ' + l1.join(' / '));
+    }
+    var qs = x.postSkipped || {}, qk = Object.keys(qs);
+    if (qk.length) {
+      var l2 = [];
+      for (var i3 = 0; i3 < qk.length; i3++) l2.push(qk[i3] + ':' + qs[qk[i3]]);
+      out.push('      枠の後に弾いた: ' + l2.join(' / '));
+    }
+    var ab = x.ageBands || {}, ak = Object.keys(ab);
+    if (ak.length) {
+      var l3 = [];
+      ak.sort();
+      for (var i4 = 0; i4 < ak.length; i4++) l3.push(ak[i4] + ':' + ab[ak[i4]]);
+      out.push('      写しの鮮度: ' + l3.join(' / '));
+    }
+  }
+
+  var t = out.join('\n');
+  Logger.log(t);
+  return t;
+}
+
 function closingStatusText() {
   var out = [];
   out.push('===== 締めの状態（読み取りだけ）=====');

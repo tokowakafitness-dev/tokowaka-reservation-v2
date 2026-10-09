@@ -94,6 +94,9 @@ function _ejRun(op, args) {
       //   いままで点検の結果は「悪化したときのオーナーのメール」でしか見えなかった。
       //   いまの状態を知りたいときに読めないのは不便で、確認も遅れる。
       if (args && args.health) return _ejScrub(healthCheckText());
+      // shadow（写しとD1の食い違い）の心拍。args.shadow='preflight' なら入れる前の確認だけ。
+      //   ★「0件」が「一致」なのか「比べていない」のかを区別するために作った（設計12）。
+      if (args && args.shadow) return _ejScrub(shadowStatusText(args));
       // トレーナーの連続セッションの実測（読み取りだけ・制限は入れない）。args.days/args.gap で条件を変える
       if (args && args.consec) return _ejScrub(consecutiveSessionsText(args));
       // LINEの用途別の送信通数（args.usage='2026-09'）。当月は予約が入りきっていないので

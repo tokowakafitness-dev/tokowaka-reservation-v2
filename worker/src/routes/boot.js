@@ -61,13 +61,50 @@ function _homeShapeOk(h) {
   return true;
 }
 
-export async function readHome(env, customerId, targetMs) {
-  if (!customerId) return null;
+/**
+ * 残数の写しを読む。**いまの振る舞いは一切変えない。**
+ *   第4引数 opts に { shadow: true, ctx, entry } を渡した入口だけ、
+ *   応答のあとに「D1から作った値」と比べる（段階3-b 手順3・設計12）。
+ *   顧客に返すのは**いつでも写し**。
+ */
+export async function readHome(env, customerId, targetMs, opts) {
+  const d = await readHomeDiag(env, customerId, targetMs);
+  if (opts && opts.shadow === true) {
+    //   ★例外を外に出さない。顧客の画面を壊してはいけない。
+    try {
+      const { scheduleShadow } = await import('../lib/remain-shadow.js');
+      scheduleShadow(env, {
+        //   ★入口の意思をそのまま渡す（2026-10-09・関門②の指摘）。
+        //     ここで落とすと scheduleShadow が必ず false を返し、
+        //     モードを 'shadow' にしても**一度も比べない**。
+        shadow: opts.shadow,
+        customerId, targetMs, entry: opts.entry, ctx: opts.ctx,
+        copyDiag: d, lang: opts.lang,
+      });
+    } catch (_) {}
+  }
+  return d.value;
+}
+
+/**
+ * 上と同じものを読むが、**写しが使えなかった理由**も返す（shadow が見る）。
+ *   { value, status, month, computedAt, ageMs }
+ *     'ok' / 'no_customer' / 'no_row' / 'bad_json' / 'month_missing'
+ *     / 'bad_shape' / 'no_computed_at'
+ *
+ *   ★なぜ理由が要るか（2026-10-09・関門①の指摘）
+ *     写しが使えない経路では、shadow が**一度も起動しない**（早期 return するため）。
+ *     ところが「写しが壊れているのにD1なら答えられる」は、
+ *     手順4（顧客に出す）でいちばん確かめたい場面である。
+ */
+export async function readHomeDiag(env, customerId, targetMs) {
+  const none = (status) => ({ value: null, status, month: null, computedAt: null, ageMs: null });
+  if (!customerId) return none('no_customer');
   const row = await env.DB.prepare('SELECT payload, computed_at FROM member_home WHERE customer_id = ?')
     .bind(customerId).first();
-  if (!row) return null;
+  if (!row) return none('no_row');
   let p;
-  try { p = JSON.parse(row.payload); } catch (_) { return null; }
+  try { p = JSON.parse(row.payload); } catch (_) { return none('bad_json'); }
 
   let home = p.current;
   let month = p.currentMonth;
@@ -75,16 +112,20 @@ export async function readHome(env, customerId, targetMs) {
     const want = monthKeyJst(targetMs);
     if (want === p.currentMonth) { home = p.current; month = p.currentMonth; }
     else if (want === p.nextMonth && p.next) { home = p.next; month = p.nextMonth; }
-    else return null;                      // 持っていない月＝答えない（間違った残数を返さない）
+    else return none('month_missing');     // 持っていない月＝答えない（間違った残数を返さない）
   }
-  if (!home) return null;
+  if (!home) return none('month_missing');
   // ★JSONとして読めることと、残数として使えることは別（2026-10-03・Codex指摘）。
   //   `{"current":{}}` でも JSON.parse は通り、p.current は truthy なので素通りしていた。
   //   その先で pairRemaining || 0 ・ normalTicketRemaining || 0 と既定値に落ちるため、
   //   **壊れた写しが「残り0回」として顧客に出る。** 写しが新しければ安全弁も働かない。
   //   GASが押し出す残数には必ず type が入る（契約が無い会員は type:null）。
   //   キーごと無いのは「形が壊れている」なので、読めなかったものとして扱う。
-  if (!_homeShapeOk(home)) return null;
+  if (!_homeShapeOk(home)) {
+    const ca = Number(row.computed_at || 0);
+    return { value: null, status: 'bad_shape', month,
+             computedAt: ca || null, ageMs: ca ? (Date.now() - ca) : null };
+  }
 
   // ★鮮度は「その行がいつ計算されたか」だけで見る。
   //   全体の同期時刻と大きい方を取ってはいけない。押し出しは6分で打ち切られ、
@@ -94,18 +135,24 @@ export async function readHome(env, customerId, targetMs) {
   //   代わりに、押し出しのたびに全員ぶんの computed_at を書き直している
   //   （39行なのでD1の書き込み枠には影響しない）。
   const computedAt = Number(row.computed_at || 0);
-  if (!computedAt) return null;                 // 計算時刻の無い行は信用しない
+  if (!computedAt) return { value: null, status: 'no_computed_at', month, computedAt: null, ageMs: null };
   const age = Date.now() - computedAt;
-  return { ...home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age };
+  return {
+    value: { ...home, month, computedAt, stale: age > HOME_TTL_WARN_MS, ageMs: age },
+    status: 'ok', month, computedAt, ageMs: age,
+  };
 }
 
-export async function routeBoot({ env, who }) {
+export async function routeBoot({ env, who, ctx }) {
   const now = Date.now();
   const trainers = await readTrainers(env);
 
   if (who.role === 'customer') {
     const [home, resv] = await Promise.all([
-      readHome(env, who.customerId),
+      //   ★この入口だけ shadow を有効にする（設計12 第3節の表）。
+      //     ctx は index.js が全部の handler に渡しているので、
+      //     「ctx があるから比べる」にはしない。**入口の意思を明示する。**
+      readHome(env, who.customerId, undefined, { shadow: true, ctx, entry: 'boot' }),
       env.DB.prepare(
         `SELECT reservation_id, trainer_id, start_at, end_at, kind, attendee_count, status
            FROM reservations
