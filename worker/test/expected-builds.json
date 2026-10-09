@@ -1,0 +1,7 @@
+{
+  "LB_EDGE_BUILD": "2026-10-09e 振替権を写しに入れる（読めなければ押し出さない）",
+  "LB_AUDIT_BUILD": "2026-10-09b shadow の心拍（shadowStatusText）／締めの状態／日次点検",
+  "LB_HEALTH_BUILD": "2026-10-10a トリガーの入れ直しの案内を直した（setupTriggers は危険）",
+  "LB_NUDGE_BUILD": "2026-10-10a トリガーの入れ直しの案内を直した（setupTriggers は危険）",
+  "LB_JOB_BUILD": "2026-10-09a ロック30秒・落ちた回を記録・shadowの心拍"
+}
