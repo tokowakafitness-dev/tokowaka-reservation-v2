@@ -11,6 +11,11 @@
 //   最後の塊で final=true を受け取ったら、synced_at が古い行を消す。
 //   → 途中で通信が切れても、消える前に止まる。中途半端に消えた状態を作らない。
 
+import {
+  affectsQuotaInput, affectsQuotaInputGlobally,
+  bumpSourceStatement, bumpAllSourceStatement,
+} from '../lib/sync-version.js';
+
 const TABLES = {
   trainers: {
     table: 'trainers',
@@ -262,6 +267,47 @@ async function ingest(request, env) {
     stmts.push(env.DB.prepare(sql).bind(...vals));
   }
 
+  //   ここまでが行の書き込み。世代の文・削除の文はこの後ろに積むので、
+  //   「何行書いたか」はここで数えておく（後ろの文を数に入れない）。
+  const rowStmtCount = stmts.length;
+
+  // ★会員ごとの世代を進める（2026-10-09・段階3-b 手順1／設計10）
+  //
+  //   「このD1の行は、いまの入力から作り直したものか」を判定できるようにする。
+  //   時刻では判定できない（migrations/0014 のコメント）。
+  //
+  //   ★同じ batch に入れる。別にすると「行は書けたが世代は増えていない」状態が残り、
+  //     古い行を「新しい」と判定して顧客に見せる経路ができる。
+  //   ★実際に書いた行だけを数える。変わっていない行まで数えると
+  //     source > built が常態化し、いつまでもD1から答えられなくなる。
+  const nowMs = Date.now();
+  let bumped = 0;
+  let bumpedStale = 0;   // 完全同期で消される行の会員ぶん
+  if (affectsQuotaInput(kind)) {
+    const touched = {};
+    for (const r of rows) {
+      const key = r[conf.key];
+      if (key == null || key === '') continue;
+      if (!full && !replaceCustomer && same(r, existing[String(key)])) continue;   // 書かなかった行
+      const cid = String(r.customer_id || '').trim();
+      if (cid) touched[cid] = 1;
+    }
+    //   ★scope:'customer' は、行が0件でも必ず進める。
+    //     「その会員の予約が全部取り消された」は正常な状態で、
+    //     行が送られてこないこと自体が入力の変化である。
+    if (replaceCustomer && onlyCustomer) touched[onlyCustomer] = 1;
+    for (const cid of Object.keys(touched)) {
+      const st = bumpSourceStatement(cid, nowMs);
+      stmts.push(env.DB.prepare(st.sql).bind(...st.args));
+      bumped++;
+    }
+  } else if (affectsQuotaInputGlobally(kind) && stmts.length) {
+    //   会員で分かれていない入力（契約表の列の並び）。変わると全員の計算が変わる。
+    const st = bumpAllSourceStatement(nowMs);
+    stmts.push(env.DB.prepare(st.sql).bind(...st.args));
+    bumped = -1;   // 全員（件数は数えない）
+  }
+
   let removed = 0;
 
   // ★scope:'customer'：その会員ぶんを世代で入れ替える（2026-10-08・段階3-a）
@@ -293,9 +339,11 @@ async function ingest(request, env) {
     //   ★書き込みと削除を**同じ batch に入れる**。
     //     分けると、書けたのに消せなかった／消せたのに書けなかった状態が残る。
     const res = await env.DB.batch(stmts);
-    written = stmts.length;
+    //   ★stmts.length で数えない（2026-10-09）。世代の文と削除の文が混ざっている。
+    //     混ぜて数えると、押し出しの報告（written）が行数とずれる。
+    written = rowStmtCount;
     if (replaceCustomer) {
-      written -= 1;   // 最後の1文は削除
+      //   削除は**いちばん最後**に積んである。世代の文はその前。
       const last = res && res[res.length - 1];
       removed = (last && last.meta && last.meta.changes) || 0;
     }
@@ -312,7 +360,7 @@ async function ingest(request, env) {
     //   元データが読めなかった疑いがあるから削除を止めたのに、
     //   全体を「いま同期した」ことにすると、古い行がそのまま新しい顔で使われる。
     //   止めた理由と矛盾する。読めていないなら、読めていないままにする。
-    return jsonRes({ success: true, written, removed: 0, skippedDelete: 'EMPTY_SOURCE' });
+    return jsonRes({ success: true, written, removed: 0, bumped, skippedDelete: 'EMPTY_SOURCE' });
   }
   // keepStale の表は、今回含まれなかった行を消さない。
   //   残数や枠は「会員の一部だけを更新する」使い方をするため、
@@ -338,16 +386,62 @@ async function ingest(request, env) {
   if (sweptAll && full && !conf.keepStale) {
     // この押し出しに含まれなかった＝Google側から消えた行を落とす。
     // final を受け取ったときだけ実行するので、途中で切れても消えない。
-    const del = await env.DB.prepare(
+    const delStmt = env.DB.prepare(
       `DELETE FROM ${conf.table} WHERE synced_at IS NULL OR synced_at < ?`
-    ).bind(batchId).run();
-    removed = (del.meta && del.meta.changes) || 0;
+    ).bind(batchId);
+
+    // ★消される行の会員も世代を進める（2026-10-09・Codex関門②の指摘）。
+    //
+    //   完全同期（deleteStale）は「送られてこなかった行＝消えた行」を落とす。
+    //   その会員は今回の rows に出てこないので、上の touched には入っていない。
+    //   ＝**入力は変わったのに世代が進まない。**
+    //   たとえばある会員の予約が全部無くなった状態で完全同期が走ると、
+    //   行は消えるのに source===built のままで、古い枠を「新しい」と答えてしまう。
+    //
+    //   ★完全同期はまさに取りこぼしを直す経路。ここで進まないのは危ない。
+    //   ★消す文と同じ batch に入れる（片方だけ通ることを無くす）。
+    let staleIds = [];
+    if (affectsQuotaInput(kind)) {
+      try {
+        const r = await env.DB.prepare(
+          `SELECT DISTINCT customer_id FROM ${conf.table}
+            WHERE (synced_at IS NULL OR synced_at < ?) AND customer_id IS NOT NULL`
+        ).bind(batchId).all();
+        staleIds = (r.results || []).map((x) => String(x.customer_id || '').trim()).filter(Boolean);
+      } catch (e) {
+        // ★読めなかったら**消さない**（2026-10-09・Codex関門②の2周目）。
+        //   「消せなかった」は古い入力が残る側＝写しへ落ちるだけ。
+        //   「世代を進めずに消した」は古い枠を新しいと答える側＝顧客に誤った残数を出す。
+        //   どちらかを選ぶなら前者。
+        //   ★同期時刻も押さない。押すと古い行が「たったいま同期した」顔になる
+        //     （EMPTY_SOURCE で止めるときと同じ理由）。
+        return jsonRes({
+          success: true, written, skipped, removed: 0, bumped, bumpedStale: 0,
+          skippedDelete: 'STALE_IDS_READ_FAILED',
+          detail: String((e && e.message) || e).slice(0, 200),
+        });
+      }
+    }
+
+    if (staleIds.length) {
+      const sts = staleIds.map((cid) => {
+        const st = bumpSourceStatement(cid, nowMs);
+        return env.DB.prepare(st.sql).bind(...st.args);
+      });
+      const res = await env.DB.batch(sts.concat([delStmt]));
+      const last = res && res[res.length - 1];
+      removed = (last && last.meta && last.meta.changes) || 0;
+      bumpedStale = staleIds.length;
+    } else {
+      const del = await delStmt.run();
+      removed = (del.meta && del.meta.changes) || 0;
+    }
     await stampSync(env, kind, batchId, null);
   } else if (sweptAll) {
     await stampSync(env, kind, batchId, null);
   }
 
-  return jsonRes({ success: true, written, skipped, removed, mode: full ? 'full' : 'diff' });
+  return jsonRes({ success: true, written, skipped, removed, bumped, bumpedStale, mode: full ? 'full' : 'diff' });
 }
 
 async function stampSync(env, key, batchId, rows) {

@@ -17,6 +17,7 @@
 import { loadCalcInput } from '../calc.js';
 import { buildQuotaForCustomer, quotaUpsertStatements } from '../lib/quota-build.js';
 import { buildAllocationsForCustomer, allocationInsertStatements } from '../lib/alloc-build.js';
+import { readSyncVersion, markBuiltStatement } from '../lib/sync-version.js';
 
 /** 'YYYY-MM' を1つ進める */
 function nextMonthKey(monthKey) {
@@ -111,11 +112,17 @@ export async function buildQuota(request, env) {
     next: null, done: false,
     retryFrom: after,   // このページが失敗したら、ここからやり直す
     monthlyRows: 0, packRows: 0, allocRows: 0, overflow: 0, wrote: 0, blocked: 0, withAlloc,
+    marked: 0,         // 世代を書こうとした会員の数（実際に印が残ったかは syncVersion で見る）
     skipped: [],       // 計算入力が揃っていない会員（理由つき）
     issues: [],        // 枠を作れなかった月・パック（理由つき）
   };
 
   for (const cid of ids) {
+    // ★世代は**入力を読む前**に取る（2026-10-09・段階3-b 手順1）。
+    //   読んだあと・書くまでの間に押し出しが来たら、source_version が進んで
+    //   built_version が追いつかない＝「作り直しが古い」と正しく判定される。
+    //   逆に読んだあとに取ると、途中で来た変更を取り込んだことにしてしまう。
+    const ver0 = await readSyncVersion(env, cid);
     const input = await loadCalcInput(env, cid);
     if (!input.ok) {
       // ★計算入力が揃っていなければ枠を作らない。
@@ -196,10 +203,27 @@ export async function buildQuota(request, env) {
 
     if (!dry) {
       const stmts = quotaUpsertStatements(built, now).concat(allocStmts);
+      // ★作り直したことを世代に書く（2026-10-09・段階3-b 手順1）。
+      //   枠と引当を**同じ呼び出しで**作ったときだけ書く。
+      //   枠だけ作り直した状態（withAlloc=0）は used が古いので、
+      //   これを「新しい」と記録するとD1から誤った残数を答える。
+      //   ★行の書き込みと同じ batch に入れる。片方だけ通ることを無くす。
+      if (withAlloc) {
+        const mk = markBuiltStatement(cid, ver0.sourceVersion, now);
+        stmts.push({ sql: mk.sql, args: mk.args });
+      }
       if (stmts.length) {
         try {
           await env.DB.batch(stmts.map((s) => env.DB.prepare(s.sql).bind(...s.args)));
           summary.wrote += stmts.length;
+          //   ★書けてから数える。失敗したら何も書かれていない（batchは原子的）ので、
+          //     先に数えると「作り直した会員の数」が実際より多く見える。
+          if (withAlloc) summary.marked = (summary.marked || 0) + 1;
+
+          //   ★「作り直しが取り込んだ世代」が実際に印として残ったかは、ここでは分からない。
+          //     markBuiltStatement が batch の中で判定して 0 に落とすこともある
+          //     （自分が書いている間に入力が来た／古い方だった場合）。
+          //     残った結果は quotaStatus の syncVersion（fresh/stale）で見る。
         } catch (e) {
           // ★どの会員で、何が起きたかを返す（2026-10-07）。
           //   ここで黙って500を返すと、呼ぶ側には「error code 1101」しか届かず、
@@ -265,6 +289,43 @@ export async function quotaStatus(request, env) {
     overageMonths: Number(b3?.ovRows || 0),     // それが出ている月の数
   };
 
+  //   ★会員ごとの世代の入り具合（2026-10-09・段階3-b 手順1）。
+  //     3-b で顧客に答えてよいかの判定に使う。表がまだ無い（migration 未適用）
+  //     場合もあるので、読めなければ「無い」と返す（落とさない）。
+  //       total   行がある会員の数
+  //       fresh   source === built（D1から答えてよい）
+  //       stale   source > built（作り直しが追いついていない＝写しへ落とす）
+  //       ahead   built > source（★あってはならない。巻き戻しかバグの印）
+  //       noBuilt built が 0（まだ一度も作り直していない）
+  let syncVersion = { table: 'missing' };
+  try {
+    const sv = await env.DB.prepare(
+      `SELECT COUNT(*) AS n,
+              SUM(CASE WHEN source_version = built_version AND built_version > 0 THEN 1 ELSE 0 END) AS fresh,
+              SUM(CASE WHEN source_version > built_version THEN 1 ELSE 0 END) AS stale,
+              SUM(CASE WHEN built_version > source_version THEN 1 ELSE 0 END) AS ahead,
+              SUM(CASE WHEN built_version = 0 THEN 1 ELSE 0 END) AS noBuilt
+         FROM customer_sync_version`
+    ).first();
+    syncVersion = {
+      table: 'ok',
+      total: Number(sv?.n || 0),
+      fresh: Number(sv?.fresh || 0),
+      stale: Number(sv?.stale || 0),
+      ahead: Number(sv?.ahead || 0),
+      noBuilt: Number(sv?.noBuilt || 0),
+    };
+    if (syncVersion.stale) {
+      const r = await env.DB.prepare(
+        `SELECT customer_id, source_version, built_version FROM customer_sync_version
+          WHERE source_version > built_version ORDER BY customer_id LIMIT 20`
+      ).all();
+      syncVersion.staleIds = (r.results || []).map((x) => `${x.customer_id} ${x.source_version}>${x.built_version}`);
+    }
+  } catch (e) {
+    syncVersion = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
+  }
+
   // ★旧「上限なし」の行がどれかを返す（2026-10-08）。新しくは作られない。
   //   件数だけ分かっても直せない。どの会員のどの月かが分からないと、
   //   台帳のどの行を直すのかオーナーに伝えられない。
@@ -292,6 +353,7 @@ export async function quotaStatus(request, env) {
     coverage,   // { limited: n, uncovered: n, unlimited: n, '(未設定)': n }
     coverageDetail: detail,   // { unlimited: ['顧客ID 月', …], notSet: [...] }（氏名は出さない）
     stage3b,   // 3-bで足した2列の入り具合（base_freq の抜け・支払い待ちの件数）
+    syncVersion,   // 会員ごとの世代（fresh/stale/ahead・3-bの鮮度の判定に使う）
   });
 }
 

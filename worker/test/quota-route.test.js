@@ -39,7 +39,10 @@ ok('①ingest と同じヘッダ名を使う', /request\.headers\.get\('X-Ingest
 // ---------- 2. 既定は「書かない」 ----------
 ok('②★dry が既定', /const dry = url\.searchParams\.get\('dry'\) !== '0';/.test(ROUTE),
   'うっかり叩いただけで枠が書き換わると、全員の残数が動く');
-ok('②書くのは dry でないときだけ', /if \(!dry\) \{[\s\S]{0,200}?env\.DB\.batch/.test(ROUTE));
+//   ★間の文字数で縛っている。3-bで世代の文を積む処理が間に入り、200では届かなくなった。
+//     広げるのは妥協に見えるが、この検査が見たいのは「batch が if (!dry) の中にあること」で、
+//     距離そのものではない。dry の外に出たら（＝条件が消えたら）通らない。
+ok('②書くのは dry でないときだけ', /if \(!dry\) \{[\s\S]{0,900}?env\.DB\.batch/.test(ROUTE));
 
 // ---------- 3. 顧客の情報を出さない ----------
 ok('③顧客IDは下4桁だけ', /function mask\(id\)/.test(ROUTE) && /'\*' \+ s\.slice\(-4\)/.test(ROUTE));
