@@ -1785,7 +1785,7 @@ function _lbScheduleSyncAfterRegister() {
     _lbCleanSyncTriggers();   // 同時刻に複数人が登録しても1本にまとめる（同期は全件走査なので1回で足りる）
     ScriptApp.newTrigger('_lbSyncAfterRegister').timeBased().after(1000).create();
     return true;
-  } catch (e) { Logger.log('登録後同期の予約に失敗（定期同期で取り込まれます）: ' + e.message); return false; }
+  } catch (e) { Logger.log('登録後同期の予約に失敗（定期同期で取り込まれます）: ' + e.message); _lbNoteTriggerFail('syncAfterRegister', e); return false; }
 }
 
 // 契約の読み込みを「1秒後の一回限りトリガー」に逃がす。画面を待たせずに裏で温める。
@@ -1808,7 +1808,7 @@ function _lbScheduleContractWarm() {
     _lbCleanWarmTriggers();   // 重複を作らない
     ScriptApp.newTrigger('_lbWarmContract').timeBased().after(1000).create();
     return true;
-  } catch (e) { Logger.log('温め直しの予約に失敗（次のアクセスで読み込まれます）: ' + e.message); return false; }
+  } catch (e) { Logger.log('温め直しの予約に失敗（次のアクセスで読み込まれます）: ' + e.message); _lbNoteTriggerFail('contractWarm', e); return false; }
 }
 
 // GASエディタから実行するとき用（読み直しまで行う。数十秒かかる）
@@ -1840,7 +1840,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-09b トリガーの揃い／押し出しの元栓／支払い待ち／翌月解放';
+var LB_HEALTH_BUILD = '2026-10-09d 未達の用途／トリガー作成の失敗／トリガーの揃い／元栓';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1903,7 +1903,15 @@ function dailyHealthCheck(dryRun) {
     var bm = getBookingMetrics(1);
     var nf = bm.notifyFail || { total: 0, byReason: {}, byPurpose: {} };
     var rs = []; for (var k in nf.byReason) rs.push(k + ':' + nf.byReason[k]);
-    add('notify_fail', '通知', 'high', nf.total, '昨日のLINE未達（401=トークン失効/403=ブロック/429=上限）: ' + rs.join(' / '));
+    //   ★何の通知が届かなかったかも出す（2026-10-09）。
+    //     理由（429=上限）だけでは「誰に何が届かなかったか」が分からず、
+    //     **届かなかった連絡を人が代わりに入れる判断ができない。**
+    //     前日リマインドなら顧客が来店を忘れる。予約通知ならトレーナーが知らない。
+    var ps = []; for (var k2 in (nf.byPurpose || {})) ps.push(k2 + ':' + nf.byPurpose[k2]);
+    add('notify_fail', '通知', 'high', nf.total,
+        '昨日のLINE未達（401=トークン失効/403=ブロック/429=上限）: ' + rs.join(' / ')
+        + (ps.length ? '　用途: ' + ps.join(' / ') : '')
+        + '　★429（上限）なら、その通知は**送り直さないと届きません。**');
     add('booking_error', '予約', 'warn', bm.byOutcome['SERVER_ERROR'] || 0, '昨日の予約の内部失敗');
   } catch (e) { add('metrics_fail', '通知', 'warn', 1, '実測ログの集計に失敗: ' + e.message); }
 
@@ -1988,6 +1996,25 @@ function dailyHealthCheck(dryRun) {
       add('trigger_missing', '定期処理', 'high', _missing.length,
           '🚨 定期処理が登録されていません: ' + _missing.join(' ／ ')
           + '　setupTriggers を実行し直すと戻ります。');
+    }
+    //   ★実際に作れなかった記録があれば出す（2026-10-09）。
+    //     「近い」ではなく「もう当たっている」ので、重大度を上げる。
+    var _tf = [];
+    try { _tf = JSON.parse(_lbProp('LB_TRIGGER_FAIL') || '[]'); } catch (e2) { _tf = []; }
+    if (Object.prototype.toString.call(_tf) === '[object Array]' && _tf.length) {
+      var _recent = 0, _when = '';
+      for (var _fi = 0; _fi < _tf.length; _fi++) {
+        var _at = Number(_tf[_fi] && _tf[_fi].at);
+        if (!isFinite(_at) || (now.getTime() - _at) > 7 * 86400000) continue;
+        _recent++; if (!_when) _when = Utilities.formatDate(new Date(_at), tz, 'M/d HH:mm');
+      }
+      if (_recent) {
+        add('trigger_create_fail', '定期処理', 'high', _recent,
+            '🚨 一回限りトリガーを作れなかった回が直近7日で ' + _recent + '回（直近 ' + _when + '）。'
+            + 'ほぼ「トリガーが上限20本に当たった」が原因です。'
+            + 'その間、二重書きの速い道とカレンダー同期の即時反映が黙って止まります。'
+            + '不要なトリガーを減らしてください。');
+      }
     }
     //   ★上限（20本）に近いと、新しいトリガーが作れず**黙って失敗する**
     if (_trs.length >= 18) {

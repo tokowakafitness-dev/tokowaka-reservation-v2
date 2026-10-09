@@ -1406,6 +1406,21 @@ function _lbCalSyncAfterWrite() {
 }
 
 // ★ここで例外を外へ出してはいけない。予約は既に成立している。
+// 一回限りトリガーが作れなかったことを記録する。
+//   ★ログだけでは誰も気づけない。原因はほぼ「上限20本に当たった」。
+//     その状態では二重書きの速い道も黙って止まる。
+function _lbNoteTriggerFail(where, err) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var arr = [];
+    try { arr = JSON.parse(p.getProperty('LB_TRIGGER_FAIL') || '[]'); } catch (e) { arr = []; }
+    if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
+    arr.unshift({ at: Date.now(), where: String(where || ''), msg: String((err && err.message) || '').slice(0, 120) });
+    arr = arr.slice(0, 20);
+    p.setProperty('LB_TRIGGER_FAIL', JSON.stringify(arr));
+  } catch (e) { Logger.log('トリガー作成の失敗を記録できませんでした: ' + (e && e.message)); }
+}
+
 function _lbScheduleCalSync() {
   if (!_calsyncAutoOn()) return false;
   try {
@@ -1416,6 +1431,12 @@ function _lbScheduleCalSync() {
   } catch (e) {
     // 作れなくても予約は通る。1分ごとの同期が最大60秒で拾う。
     Logger.log('[calsync] 予約直後の同期を予約できませんでした（1分ごとの同期で反映されます）: ' + (e && e.message));
+    //   ★作れなかったことを記録する（2026-10-09）。
+    //     いままでログだけで、**誰も気づけなかった。**
+    //     作れない原因はほぼ「トリガーが上限（20本）に当たった」。
+    //     その状態では二重書きの速い道も黙って止まり、心拍（15分）まで遅れる。
+    //     一時的なら害は小さいが、**続いていれば上限の問題なので知る必要がある。**
+    _lbNoteTriggerFail('calsyncAfter', e);
     return false;
   }
 }

@@ -173,6 +173,22 @@ ok('⑥-b ★上限に近いと出す（新しいトリガーが黙って作れ�
 ok('⑥-b ★二重登録も出す（同じ人に2通届く）',
   /trigger_dup/.test(LB) && /_have\[_k\] > 1/.test(LB));
 ok('⑥-b 点検そのものが失敗しても気づける', /trigger_check_fail/.test(LB));
+//   ★「近い」ではなく「もう当たっている」を見る（2026-10-09）。
+//     一回限りトリガーの作成失敗は、いままでログだけで誰も気づけなかった。
+//     原因はほぼ上限20本。その間、二重書きの速い道が黙って止まる。
+ok('⑥-b ★作れなかったことを記録する',
+  /function _lbNoteTriggerFail\(where, err\)/.test(PE));
+ok('⑥-b 作成失敗の3箇所すべてで記録する',
+  (PE.match(/_lbNoteTriggerFail\(/g) || []).length >= 2
+  && (LB.match(/_lbNoteTriggerFail\(/g) || []).length >= 2,
+  'calsync・登録後同期・契約の温め直しの3つ');
+ok('⑥-b ★直近7日の失敗を high で出す',
+  /trigger_create_fail/.test(LB) && /add\('trigger_create_fail', '定期処理', 'high'/.test(LB));
+ok('⑥-b 何が止まるかを書いている',
+  /二重書きの速い道とカレンダー同期の即時反映が黙って止まります/.test(LB));
+ok('⑥-b 未達の用途（何の通知か）も出す',
+  /nf\.byPurpose/.test(LB) && /用途: /.test(LB),
+  '理由だけでは、届かなかった連絡を人が代わりに入れる判断ができない');
 
 console.log('=== 6-c. 点検の結果を、いま読めること ===');
 //   ★いままで点検の結果は「悪化したときのオーナーのメール」でしか見えなかった。
