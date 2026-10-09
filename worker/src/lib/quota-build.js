@@ -105,7 +105,13 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
     if (!res.hasMonthly) continue;
 
     const quota = Number(res.avail);
-    if (!quota) continue;   // その月に使える回数が無い＝枠は無い
+    //   ★使える回数が0でも枠の行は作る（2026-10-09・Codex関門②）。
+    //     以前は `if (!quota) continue;` で飛ばしていた。すると
+    //     「月額契約があって、頻度0・繰越0」の会員はD1に行が1つも無くなる。
+    //     読み取りをD1へ向けると、行の有無で「月額契約があるか」を判断するので、
+    //     **月額契約があるのに『契約なし』として顧客の画面に出る。**
+    //     行は作って、見せる残数（0）は coverage から決める。
+    //     ★行が増える害は無い：使える回数0なら引当も作られず、予約も通らない。
 
     //   ★契約が対象月を覆っていない月でも、**枠の行は作る**。
     //     作らないと引当の親が無く、外部キーで落ちる（本番で実際に落ちた）。
