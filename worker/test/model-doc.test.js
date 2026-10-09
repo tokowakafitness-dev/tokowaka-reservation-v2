@@ -247,6 +247,28 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
   ok('⑧地図に「反映はまとめて1回」がある', /反映はまとめて1回/.test(DOC));
 }
 
+// ---------- 8-b. ★作業依頼の出し方・読み方（地図の§8-2）----------
+{
+  const JOBS = rd('worker/src/routes/jobs.js');
+  ok('⑧-b★結果の読み取りは合言葉が要らない',
+     /GET \/jobs\/<request_id> … 結果を読む。合言葉は不要/.test(JOBS),
+     '地図の §8-2 の根拠。ここが変わったら地図も直す');
+  ok('⑧-b★登録と報告は合言葉が要る',
+     /if \(!authed\(request, env\)\) return json\(\{ success: false, code: 'FORBIDDEN' \}, 403\);/.test(JOBS));
+  ok('⑧-b requestId の形が決まっている', /\^\[A-Za-z0-9_-\]\{24,64\}\$/.test(JOBS));
+  //   ★EDGE_URL が公開情報であることの根拠（顧客のブラウザが叩く）
+  ok('⑧-b★WorkerのURLは画面に平文で入っている（公開情報）',
+     /var EDGE_URL = 'https:\/\/[a-z0-9.-]+workers\.dev';/.test(rd('liff/index.html')));
+  //   ★許可されている op の一覧と、地図の記述がそろっているか
+  const WF = rd('.github/workflows/edge-job.yml');
+  ok('⑧-b quotaBuild が許可されている', /quotaBuild\) : ;;/.test(WF));
+  ok('⑧-b 地図が「登録するだけ」と書いている', /★登録するだけ。結果は読まない/.test(DOC));
+  ok('⑧-b★地図が alloc 必須と書いている',
+     /\{"write":true,"alloc":true\} の\*\*両方\*\*が必須/.test(DOC)
+     && /ALLOC_REQUIRED/.test(rd('worker/src/routes/quota.js')));
+  ok('⑧-b★地図が正しい範囲を書いている', /\{"from":"2026-09","to":"2026-12"\}/.test(DOC));
+}
+
 // ---------- 9. 倒れる向き（地図の§0）----------
 {
   ok('⑨★地図の先頭に「答えない側へ倒す」がある',

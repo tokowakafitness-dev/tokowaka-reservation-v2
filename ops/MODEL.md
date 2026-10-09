@@ -298,6 +298,40 @@ used               トリガーが新しい行に積み直す
 
 ---
 
+## 8-2. ★作業依頼（job）の出し方と、結果の読み方
+
+**結果はCEOが自分で読める。オーナーに貼ってもらう必要はない。**
+
+```
+1. ops/job.json を書き換えて push
+     {"op":"quotaBuild","requestId":"job-<時刻>-<乱数>","args":{…}}
+     ★requestId は 24〜64文字の [A-Za-z0-9_-]
+     ★op は許可一覧にあるものだけ（.github/workflows/edge-job.yml の case 行）
+2. GitHub Actions が Worker へ登録する（★登録するだけ。結果は読まない）
+3. GAS の edgeJobPoll が**1分ごと**に拾って実行し、結果を Worker へ返す
+4. 読む： curl -sS "<EDGE_URL>/jobs/<requestId>"
+     ★合言葉は要らない（jobs.js：「IDを知っていることが鍵」）
+     ★EDGE_URL は liff/index.html に平文＝顧客のブラウザが叩く公開情報
+     ★15秒ごとに最大10分ポーリングする（foreground の sleep は禁止なので背景で）
+```
+
+### 書き込みを伴う依頼
+```
+quotaBuild で書くなら {"write":true,"alloc":true} の**両方**が必須
+  （alloc なしは 400 で弾かれる。枠だけ作ると used が古いまま）
+範囲は {"from":"2026-09","to":"2026-12"}
+  ★狭いと枠が0行になる（2026-01〜08 を指定すると枠0行・引当1件）
+```
+
+### 合言葉が要る窓口（CEOは叩けない）
+```
+POST /jobs（登録・受け取り・報告）／ /quota/status ／ /quota/build ／
+/quota/verify ／ /ingest
+→ これらは GAS か GitHub Actions が叩く。CEOは作業依頼を経由する
+```
+
+---
+
 ## 9. この文書の使い方
 
 ```
