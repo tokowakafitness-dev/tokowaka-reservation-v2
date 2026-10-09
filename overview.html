@@ -332,7 +332,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--cream);color:var(--i
         </div>
       </div>
       <div class="note" style="margin-top:10px">
-        <strong>トリガー変更方法：</strong>GASエディタで setupTriggers() を実行。既存トリガーを全削除して再設定します。
+        <strong>トリガー変更方法：</strong>★<code>setupTriggers()</code> は実行しないでください（既存トリガーを<strong>全部消して3本しか戻しません</strong>。いま18本あります）。用途ごとの関数で入れ直します：押し出し＝<code>setupEdgeTrigger</code>／作業依頼＝<code>setupEdgeJobTrigger</code>／カレンダー同期＝<code>setupCalSyncTrigger</code>／うながし＝<code>setupNudgeTrigger</code>／固定枠・シフト＝<code>setupRecurringTriggers</code>／その他＝<code>setupLineTriggers</code>。
       </div>
     </div>
   </div>

@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-09a 翌月解放の判断／日次点検が止まっていないかを見張る';
+var LB_NUDGE_BUILD = '2026-10-10a トリガーの入れ直しの案内を直した（setupTriggers は危険）';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -822,7 +822,15 @@ function _lbNudgeWatchHealthCheck(nowMs) {
         + '確かめること：\n'
         + '　・GASのトリガー一覧に dailyHealthCheck があるか\n'
         + '　・実行ログにエラーが出ていないか（6分の制限に当たっていないか）\n'
-        + '　・setupTriggers を実行し直すと戻ります\n');
+        //   ★★「setupTriggers を実行し直す」と案内してはいけない（2026-10-09）。
+        //     あの関数は名前で絞らずに**全部のトリガーを消し、3本しか戻さない**。
+        //     これはオーナーへ実際に送られるメール。案内どおりに実行すると、
+        //     押し出し・作業依頼・カレンダー同期・固定枠の自動予約まで丸ごと止まる。
+        + '　・★setupTriggers は実行しないでください（全部消して3本しか戻しません）\n'
+        + '　・入れ直すなら用途ごとの関数で：dailyHealthCheck は setupLineTriggers、\n'
+        + '　　押し出しは setupEdgeTrigger、作業依頼は setupEdgeJobTrigger、\n'
+        + '　　カレンダー同期は setupCalSyncTrigger、うながしは setupNudgeTrigger、\n'
+        + '　　固定枠・シフトは setupRecurringTriggers\n');
       PropertiesService.getScriptProperties().setProperty(notifiedKey, String(nowMs));
     }
   } catch (e) { Logger.log('[health] 通知に失敗: ' + (e && e.message)); }
