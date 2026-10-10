@@ -1853,7 +1853,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-10a トリガーの入れ直しの案内を直した（setupTriggers は危険）';
+var LB_HEALTH_BUILD = '2026-10-10b どこまで進んだかを残す（6分超えで落ちた）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1870,11 +1870,31 @@ function dailyHealthCheck(dryRun) {
     try { PropertiesService.getScriptProperties().setProperty('LB_HEALTH_LAST', String(Date.now())); }
     catch (e) { Logger.log('点検の実行時刻を残せませんでした: ' + (e && e.message)); }
   }
+  //   ★どこまで進んだかを残す（2026-10-10）。
+  //     2026-10-10、点検が**557秒（6分の制限超え）で落ちた**。
+  //     落ちると Logger も読みに行くしかなく、**どこが重いのか分からない。**
+  //     段ごとに「名前と経過時間」を Script Properties に残せば、
+  //     落ちても**最後に記録された段が落ちた場所**になる。
+  //   ★書き込みは数ミリ秒。段が20個あっても点検は重くならない。
+  var _hcT0 = Date.now();
+  var _hcSteps = [];
+  function _step(name) {
+    var ms = Date.now() - _hcT0;
+    _hcSteps.push(name + '=' + ms);
+    if (dryRun) return;
+    try {
+      PropertiesService.getScriptProperties().setProperty('LB_HEALTH_STEP',
+        name + '@' + ms + 'ms / ' + _hcSteps.slice(-6).join(' '));
+    } catch (e) {}
+  }
+  _step('開始');
+
   function add(key, area, severity, count, detail) {
     if (!count) return;
     issues.push({ key: key, area: area, severity: severity, count: count, detail: String(detail || '').slice(0, 300) });
   }
 
+  _step('会員データ');
   // ---- 会員データ（消化ペースの集計と同時に取る＝二度手間を避ける）----
   var pace = null;
   try { pace = refreshPaceBoard(); } catch (e) { add('pace_fail', '会員', 'high', 1, '消化ペースの集計に失敗: ' + e.message); }
@@ -1884,6 +1904,7 @@ function dailyHealthCheck(dryRun) {
   add('member_nocontract', '会員', 'info', Number(meta.noContractCount || 0),
       '契約が見つからない（退会・契約切れなら正常）: ' + (meta.noContractNames || []).join('、'));
 
+  _step('予約データ');
   // ---- 予約データ（重複・未紐付け）----
   try {
     var dh = debugDataHealth();
@@ -1901,6 +1922,7 @@ function dailyHealthCheck(dryRun) {
         + '★二重書きの最後の確認（振替の入口）は、これが1件以上あって照合が一致していれば満たされます。');
   } catch (e) { add('datahealth_fail', '予約', 'high', 1, '予約データの点検に失敗: ' + e.message); }
 
+  _step('カレンダー');
   // ---- カレンダーと台帳の整合 ----
   try {
     var oe = debugOrphanEvents();
@@ -1911,6 +1933,7 @@ function dailyHealthCheck(dryRun) {
     add('cal_manual', 'カレンダー', 'info', oe.manual.length, '手動作成（台帳に無い）: ' + oe.manual.join(' / '));
   } catch (e) { add('orphan_fail', 'カレンダー', 'high', 1, 'カレンダー突合に失敗: ' + e.message); }
 
+  _step('通知');
   // ---- 通知（未達）----
   try {
     var bm = getBookingMetrics(1);
@@ -1928,6 +1951,7 @@ function dailyHealthCheck(dryRun) {
     add('booking_error', '予約', 'warn', bm.byOutcome['SERVER_ERROR'] || 0, '昨日の予約の内部失敗');
   } catch (e) { add('metrics_fail', '通知', 'warn', 1, '実測ログの集計に失敗: ' + e.message); }
 
+  _step('LINE通数');
   // ---- LINE通数 ----
   try {
     var q = _lbQuotaFetch();
@@ -1935,6 +1959,7 @@ function dailyHealthCheck(dryRun) {
     else if (q && q.ok && q.limited && q.pct >= 80) add('quota_near', '通知', 'warn', 1, 'LINE通数が' + q.pct + '%（残' + q.left + '通）');
   } catch (e) {}
 
+  _step('定期処理の鮮度');
   // ---- 定期処理が動いているか（止まっていても誰も気づけない）----
   try {
     var ss = _lbSheet(LB_SYNC_STATUS_SHEET);
@@ -1955,6 +1980,7 @@ function dailyHealthCheck(dryRun) {
     }
   } catch (e) {}
 
+  _step('うながしの取りこぼし');
   // ---- 予約を促すリマインドが取りこぼしていないか（2026-10-07）----
   //   ★ロックが取れずに1通も送れなかった日があると、その日の対象者は
   //     翌日には条件（昨日来店）から外れて**永久に取りこぼす**。
@@ -1977,6 +2003,7 @@ function dailyHealthCheck(dryRun) {
     }
   } catch (e) {}
 
+  _step('トリガーの揃い');
   // ---- 定期処理（トリガー）が揃っているか（2026-10-09）----
   //   ★いままで塞いだ見張りは、どれも「定期処理が動いている」ことが前提。
   //     トリガーが消えると、その処理が黙って止まる。
@@ -2058,6 +2085,7 @@ function dailyHealthCheck(dryRun) {
         'トリガーの点検そのものが失敗しました: ' + (e && e.message));
   }
 
+  _step('作業依頼のロック');
   // ---- 作業依頼がロックで落ちていないか（2026-10-09）----
   //   ★作業依頼は私（CEO）が調査・修復に使うもの。落ちると調べ直しになり、
   //     そのあいだ本番の状態が分からない。
@@ -2081,6 +2109,7 @@ function dailyHealthCheck(dryRun) {
     }
   } catch (e) {}
 
+  _step('押し出しの元栓');
   // ---- 押し出しの元栓が開いているか（2026-10-08）----
   //   ★EDGE_PUSH_ON が '1' でなければ、写しの押し出しも二重書きも**丸ごと動かない。**
   //     既定は停止（安全側）なので、切れたことに誰も気づかない経路があった。
@@ -2095,6 +2124,7 @@ function dailyHealthCheck(dryRun) {
     }
   } catch (e) {}
 
+  _step('shadowの心拍');
   // ---- shadow が on なのに一度も比べていないか（2026-10-09）----
   //   ★「食い違い0件」は、次の**全部**で同じ0件になる。
   //       人が来なかった／モードが off／入口の配線の渡し忘れ／
@@ -2135,6 +2165,7 @@ function dailyHealthCheck(dryRun) {
     } catch (e2) { /* 窓口が読めないだけ＝点検そのものは続ける */ }
   } catch (e) {}
 
+  _step('支払い待ち');
   // ---- 支払い待ち（枠を超えて押さえた予約）が月末まで残っていないか（2026-10-08）----
   //   ★オーナーの運用：未登録顧客の予定を作るとき、既存顧客の未払いチケット分を先に押さえる。
   //     次回のセッションで支払いをいただき、トレーナーが確認してからチケットを付与して相殺する。
@@ -2186,6 +2217,7 @@ function dailyHealthCheck(dryRun) {
         '支払い待ちの点検そのものが失敗しました: ' + (e && e.message));
   }
 
+  _step('翌月の解放');
   // ---- 解放日に「翌月の契約が無くて案内を送れなかった人」（2026-10-08）----
   //   ★解放の判定は25日にしか走らない。その日に翌月の契約が入っていなければ、
   //     **後から入れても案内は飛ばない。** ここで出さないと誰も気づかない。
@@ -2206,6 +2238,7 @@ function dailyHealthCheck(dryRun) {
     }
   } catch (e) {}
 
+  _step('二重書き');
   // ---- 二重書き（段階3-a・2026-10-08）----
   //   ★新しいトリガーは作らない。この日次点検に相乗りする（上限20本・設計第4節）。
   //   「14日連続で食い違い0件」を待つ代わりに、**毎日照合して食い違いを見つける。**
@@ -2220,6 +2253,7 @@ function dailyHealthCheck(dryRun) {
         '二重書きの点検そのものが失敗しました: ' + (e && e.message));
   }
 
+  _step('記録');
   // ---- 記録（推移が見えるよう追記）----
   if (!dryRun) {
     try {

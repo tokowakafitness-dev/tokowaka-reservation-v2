@@ -51,7 +51,8 @@ ok('②用途ごとの関数を名指しで案内する',
    /setupEdgeTrigger/.test(LB) && /setupEdgeJobTrigger/.test(LB)
    && /setupCalSyncTrigger/.test(LB) && /setupNudgeTrigger/.test(LB)
    && /setupRecurringTriggers/.test(LB) && /setupLineTriggers/.test(LB));
-ok('②版の印を上げている', /LB_HEALTH_BUILD = '2026-10-10a/.test(LB));
+//   ★版の印は第5節（expected-builds.json との完全一致）で見る。
+//     ここで日付を固定すると、上げるたびに2箇所を直すことになる。
 
 // ---------- 3. ★月次のものを日次と混同しないこと（私の誤り）----------
 //   atHour だけを見て onMonthDay を見ていなかった。
@@ -172,6 +173,23 @@ ok('②版の印を上げている', /LB_HEALTH_BUILD = '2026-10-10a/.test(LB));
      Object.keys(where).every((k) => expected[k] != null)
      && Object.keys(expected).length === Object.keys(where).length,
      `一覧=${Object.keys(expected).join(',')}`);
+}
+
+// ---------- 6. ★点検が落ちたとき、どこで落ちたか分かること ----------
+//   ★2026-10-10、点検が**557秒（6分の制限超え）で落ちた**。
+//     そのとき「どこが重いのか分からなかった」。
+//     段ごとに名前と経過時間を残せば、最後に記録された段が落ちた場所になる。
+{
+  const AU2 = rd('gas/EdgeAudit.js');
+  ok('⑥★段ごとに進んだ場所を残す',
+     /function _step\(name\) \{/.test(LB) && /LB_HEALTH_STEP/.test(LB),
+     '落ちると Logger しか無く、どこが重いか分からない');
+  ok('⑥★dryRun では残さない', /if \(dryRun\) return;/.test(LB),
+     '手で回したときの値で、本番の記録を上書きしない');
+  ok('⑥段の数が十分', (LB.match(/_step\('/g) || []).length >= 15,
+     `入っている段=${(LB.match(/_step\('/g) || []).length}`);
+  ok('⑥★作業依頼から読める', /LB_HEALTH_STEP/.test(AU2) && /点検がどこまで進んだか/.test(AU2));
+  ok('⑥読み方も書いてある', /6分（360000ms）に近い段が、重い段/.test(AU2));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} トリガーの安全 検証: ${pass} passed / ${fail} failed`);
