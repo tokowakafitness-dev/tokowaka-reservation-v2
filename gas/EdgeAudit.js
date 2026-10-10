@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-10c 点検がどこまで進んだか／トリガーの一覧／shadow の合格判定';
+var LB_AUDIT_BUILD = '2026-10-10d 締めの窓口に cutover の棚卸しと preview を足した';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2708,6 +2708,82 @@ function closingStatusText() {
   out.push('　 ・締めの売上計算では**対象外**（未割当は数えない）');
   out.push('　 ・カレンダー経路からは**外さない**＝旧billingで請求する（振替＝手動請求と同じ扱い）');
   out.push('　 ＝二重計上も計上漏れも起きない。起きるのは「その月の締めが実行できない」ことだけ。');
+
+  // ■ 最初の締め（cutover）の準備（2026-10-10）
+  //   ★なぜここに足すのか
+  //     給与計算を正本（D1）側へ移すには、まず1か月を締める必要がある。
+  //     ところが「締めを一度も実行していない」ことは分かっても、
+  //     **あと何が足りないのか**を読む手段が無かった。それを1回で読めるようにする。
+  //   ★書き込みは一切しない。previewCutoverClose と同じ組み立てを呼ぶだけ
+  //     （preview そのものを呼ばないのは、あちらが氏名を Logger に出すため）。
+  //   ★出すのは「件数」と「コード」だけ。氏名・顧客IDは出さない
+  //     （この結果は合言葉なしで読めるため）。
+  out.push('');
+  out.push('■ 最初の締め（cutover）の準備');
+  try {
+    var tgt = '';
+    try { tgt = String(_lbProp('LB_TARGET_MONTH') || ''); } catch (e1) { tgt = ''; }
+    var usedProp = /^\d{4}-(0[1-9]|1[0-2])$/.test(tgt);
+    var mk = usedProp ? tgt
+      : _lbMonthKeyJst(new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime());
+    out.push('  対象月: ' + mk + (usedProp ? '（LB_TARGET_MONTH）' : '（未設定のため前月で試算）'));
+
+    var inv = null;
+    try { inv = _lbReadCutoverInventory(); } catch (e2) { out.push('  棚卸しシートが読めません: ' + e2.message); }
+    if (!inv) {
+      out.push('  棚卸しシート cutover_inventory: ★ありません');
+      out.push('  → setupCutoverInventorySheet("' + mk + '") を実行して作り、残数を入力する必要があります');
+    } else {
+      var cids = Object.keys(inv);
+      var mIn = 0, mBlank = 0, mNa = 0, pIn = 0, pBlank = 0, pNa = 0;
+      for (var ci = 0; ci < cids.length; ci++) {
+        var row = inv[cids[ci]];
+        if (row.monthly) {
+          if (row.monthly.status === 'input') mIn++;
+          else if (row.monthly.status === 'na') mNa++;
+          else mBlank++;
+        }
+        var pids = Object.keys(row.packs || {});
+        for (var pi = 0; pi < pids.length; pi++) {
+          var st = row.packs[pids[pi]].status;
+          if (st === 'input') pIn++; else if (st === 'na') pNa++; else pBlank++;
+        }
+      }
+      out.push('  棚卸しシート cutover_inventory: あります（会員 ' + cids.length + '名ぶん）');
+      out.push('    月額の残入力  : 入力済 ' + mIn + ' / ★空欄 ' + mBlank + ' / 対象外 ' + mNa);
+      out.push('    チケットの残入力: 入力済 ' + pIn + ' / ★空欄 ' + pBlank + ' / 対象外 ' + pNa);
+      if (mBlank + pBlank > 0) out.push('    → 空欄が残っている間は締められません（オーナーの入力が必要）');
+
+      // preview と同じ組み立て（書込なし）。氏名・顧客IDは出さない。
+      var e3 = _lbCutoverEntByCustomer(mk);
+      if (e3 && e3.err) {
+        out.push('  preview: 実行できません（' + e3.err + '）');
+      } else {
+        var r3 = _lbBuildCutoverOpening(inv, e3.entByCustomer, mk, e3.carryRate);
+        var byCode = {}, nErr = 0, nWarn = 0;
+        var iss3 = (r3 && r3.issues) || [];
+        for (var k3 = 0; k3 < iss3.length; k3++) {
+          var cd = String(iss3[k3].code || '?');
+          byCode[cd] = (byCode[cd] || 0) + 1;
+          if (String(iss3[k3].severity) === 'warning') nWarn++; else nErr++;
+        }
+        out.push('  preview（書込なし）: ' + (r3 && r3.ok ? '✅ 問題なし' : '❌ 止まります')
+          + '  止める指摘 ' + ((r3 && r3.blockingCount) || 0) + '件 / error ' + nErr + '件 / warning ' + nWarn + '件');
+        var codes = Object.keys(byCode).sort();
+        for (var c3 = 0; c3 < codes.length; c3++) out.push('    ' + codes[c3] + ' … ' + byCode[codes[c3]] + '件');
+        if (r3 && r3.ok) {
+          out.push('  inputHash: ' + _lbCutoverOpeningHash(r3.opening));
+          out.push('  → 次の手順（オーナーの承認が要る）:');
+          out.push('     ① approveMigrationBalance("' + mk + '", "承認者名", "<上のhash>")');
+          out.push('     ② runCutoverClose("' + mk + '", "<上のhash>")');
+          out.push('     ③ billing で lineRevenueShadow("' + mk + '") → 旧集計と突き合わせ');
+        }
+      }
+    }
+  } catch (eC) {
+    out.push('  ⛔ 準備状況を読めませんでした: ' + (eC && eC.message));
+  }
+
   var t = out.join('\n');
   Logger.log(t);
   return t;
