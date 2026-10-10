@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# push の前にテストを全部走らせる（2026-10-10）
+#
+# ★なぜ CI ではなくここなのか
+#   .github/workflows/ は PAT の `workflow` 権限が無いと push できない。
+#   その権限を私のPATに足すと、gas-deploy の「オーナー承認」ゲート自体を
+#   書き換えられるようになる＝最後の砦が消える。だから足さない。
+#   代わりに、**壊れたものが外に出ないこと**だけをここで保証する。
+#
+# ★入れ方（リポジトリごとに1回）
+#   ln -sf ../../worker/test/pre-push .git/hooks/pre-push
+#
+# ★抜け道を塞がない
+#   急いでいるときは `git push --no-verify` で飛ばせる。
+#   飛ばしたら、その場で `bash worker/test/run-all.sh` を走らせること。
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+echo "▶ push の前にテストを走らせます（worker/test/run-all.sh）"
+if bash "$ROOT/worker/test/run-all.sh"; then
+  exit 0
+fi
+
+echo
+echo "⛔ テストが落ちているため push を止めました。"
+echo "   直してから push してください（どうしても飛ばすなら --no-verify）。"
+exit 1
