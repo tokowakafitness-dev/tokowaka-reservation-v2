@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-10a トリガーの入れ直しの案内を直した（setupTriggers は危険）';
+var LB_NUDGE_BUILD = '2026-10-10b 「記録が無い」と「止まっている」を区別する';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -799,6 +799,26 @@ function _lbNudgeFirstOfMonth(logs, customerId, now) {
 function _lbNudgeWatchHealthCheck(nowMs) {
   var last = Number(_lbProp('LB_HEALTH_LAST') || 0);
   var hours = last ? Math.floor((nowMs - last) / 3600000) : -1;
+
+  //   ★「記録が無い」と「止まっている」を区別する（2026-10-10）。
+  //     記録の仕組みを入れた直後は、まだ一度も記録していない。
+  //     それを「止まっている」と知らせると、**必ず1回は誤って鳴る**
+  //     （2026-10-10 に実際に鳴った）。
+  //     だから「見張りを始めた時刻」を覚えておき、そこから36時間は猶予する。
+  //     猶予のあいだに点検が1回でも走れば last が入り、以後は普通の判定になる。
+  var watchKey = 'LB_HEALTH_WATCH_FROM';
+  var watchFrom = Number(_lbProp(watchKey) || 0);
+  if (!watchFrom) {
+    try { PropertiesService.getScriptProperties().setProperty(watchKey, String(nowMs)); }
+    catch (e) { Logger.log('見張りの開始時刻を残せませんでした: ' + (e && e.message)); }
+    watchFrom = nowMs;
+  }
+  //   ★記録が無く、かつ見張りを始めてから36時間たっていない＝まだ分からない。鳴らさない
+  if (!last && (nowMs - watchFrom) < 36 * 3600000) {
+    Logger.log('[health] 記録はまだ無いが、見張りを始めてから36時間たっていない（鳴らさない）');
+    return;
+  }
+
   //   36時間＝1日分飛んでも許す（実行の揺れ・手動停止の猶予）。2日飛んだら知らせる
   if (last && hours < 36) return;
   //   1日1回までにする（毎日同じメールが来ると読まれなくなる）
@@ -807,7 +827,8 @@ function _lbNudgeWatchHealthCheck(nowMs) {
   if (lastAlert && (nowMs - lastAlert) < 20 * 3600000) return;
 
   var msg = (last === 0)
-    ? '日次点検（dailyHealthCheck）が一度も走った記録がありません。'
+    ? ('日次点検（dailyHealthCheck）が一度も走った記録がありません'
+       + '（見張りを始めてから ' + Math.floor((nowMs - watchFrom) / 3600000) + '時間）。')
     : ('日次点検（dailyHealthCheck）が ' + hours + '時間走っていません（最終 '
        + Utilities.formatDate(new Date(last), SETTINGS.TIMEZONE, 'M/d HH:mm') + '）。');
   Logger.log('[health] ' + msg);

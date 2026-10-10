@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-10a shadow の合格判定（比べた会員の数を見る）';
+var LB_AUDIT_BUILD = '2026-10-10b トリガーの一覧（triggerListText）／shadow の合格判定';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2560,6 +2560,93 @@ function shadowStatusText(args) {
       out.push('      写しの鮮度: ' + l3.join(' / '));
     }
   }
+
+  var t = out.join('\n');
+  Logger.log(t);
+  return t;
+}
+
+// トリガーの一覧（2026-10-10）。読み取りだけ。
+//   ★なぜ要るか
+//     日次点検は「必須の8つがあるか」しか見ない。
+//     「一覧に何があるか」が分からないと、止まった原因の特定に往復が増える。
+//     2026-10-10、「日次点検が一度も走った記録がありません」の通知が来たとき、
+//     **トリガーがあるのか無いのかを確かめる手段が無かった。**
+//   ★周期（everyMinutes / onMonthDay）は完全には読み出せない。
+//     読めるもの（ハンドラ名・種別・固有ID）だけを出し、周期は「コードの期待値」と
+//     突き合わせる形にする（設計15）。
+function triggerListText() {
+  var out = [];
+  out.push('===== トリガーの一覧（読み取りだけ）=====');
+  out.push('版: ' + LB_AUDIT_BUILD);
+  var all;
+  try { all = ScriptApp.getProjectTriggers(); }
+  catch (e) { out.push('読めません: ' + e.message); var t0 = out.join('\n'); Logger.log(t0); return t0; }
+
+  out.push('本数: ' + all.length + ' / 上限 20'
+           + (all.length >= 18 ? '　★上限に近い（一回限りのトリガーを作る余地がない）' : ''));
+  out.push('');
+
+  //   ハンドラごとにまとめる（同じ名前が複数あれば重複）
+  var byName = {};
+  for (var i = 0; i < all.length; i++) {
+    var h = all[i].getHandlerFunction();
+    var src = '';
+    try { src = String(all[i].getEventType()); } catch (e2) { src = '?'; }
+    (byName[h] = byName[h] || []).push(src);
+  }
+  var names = Object.keys(byName).sort();
+  out.push('--- 登録されているもの（' + names.length + '種類）---');
+  for (var n = 0; n < names.length; n++) {
+    var list = byName[names[n]];
+    out.push('  ' + names[n] + '  ' + list.length + '本'
+             + (list.length > 1 ? '　★重複' : '') + '　種別=' + list.join(',')); 
+  }
+
+  //   ★コードが期待するもの（設計15 第2節の一覧）と突き合わせる
+  var expect = [
+    ['edgeJobPoll', '1分・作業依頼の見回り'],
+    ['lbCalSyncTick', '5分・カレンダー同期'],
+    ['warmupCache', '10分・キャッシュの温め'],
+    ['pushToEdgeSlots', '10分・枠の押し出し'],
+    ['pushToEdgeLight', '15分・写しの押し出しと二重書きの心拍'],
+    ['pushToEdgeHome', '30分・残数の写し'],
+    ['dailySync', '6時間・カレンダー取込'],
+    ['syncContractStatus', '3時・退会と失効の反映'],
+    ['pushToEdgeFullSync', '4時・完全同期'],
+    ['refreshPaceBoard', '6時・ペース表'],
+    ['autoBookRecurringPatterns', '★毎月25日6時・固定枠の翌月自動予約'],
+    ['dailyHealthCheck', '7時・この点検そのもの'],
+    ['checkLineQuota', '8時・LINEの残量'],
+    ['sendReminderMails', '9時・メールのリマインド'],
+    ['lbNudgeDaily', '10時・予約のうながし'],
+    ['sendShiftReminders', '★毎月20日10時・シフト提出の連絡'],
+    ['sendLineReminders', '12時・前日リマインド'],
+    ['weeklyPaceReport', '週1・ペースの報告']
+  ];
+  var missing = [];
+  for (var e = 0; e < expect.length; e++) {
+    if (!byName[expect[e][0]]) missing.push(expect[e][0] + '（' + expect[e][1] + '）');
+  }
+  out.push('');
+  if (missing.length) {
+    out.push('--- ★登録されていないもの（' + missing.length + '件）---');
+    for (var m2 = 0; m2 < missing.length; m2++) out.push('  🚨 ' + missing[m2]);
+    out.push('');
+    out.push('  ★setupTriggers は実行しないでください（全部消して3本しか戻しません）。');
+    out.push('  入れ直す関数：押し出し＝setupEdgeTrigger ／ 作業依頼＝setupEdgeJobTrigger ／');
+    out.push('  カレンダー同期＝setupCalSyncTrigger ／ うながし＝setupNudgeTrigger ／');
+    out.push('  固定枠・シフト＝setupRecurringTriggers ／ その他＝setupLineTriggers');
+  } else {
+    out.push('--- ✅ コードが期待するものは全部そろっています ---');
+  }
+
+  //   点検が最後に走った時刻（これが無いと「止まっている」と見分けられない）
+  var hl = Number(_lbProp('LB_HEALTH_LAST') || 0);
+  out.push('');
+  out.push('日次点検が最後に走った時刻: '
+           + (hl ? Utilities.formatDate(new Date(hl), SETTINGS.TIMEZONE, 'M/d HH:mm')
+                 : '★記録なし（一度も走っていないか、記録の仕組みを入れた直後）'));
 
   var t = out.join('\n');
   Logger.log(t);
