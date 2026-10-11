@@ -173,8 +173,27 @@ function getCachedSlots(trainerId) {
   return buildAndCacheSlots();
 }
 
+// 枠を「いつカレンダーから読んだか」を残す鍵（2026-10-11）。
+//   ★なぜ要るのか
+//     D1の slots に入る computed_at は**押し出した時刻**であって、
+//     カレンダーを読んだ時刻ではない。だから 20分前のデータも「たったいま」に見える。
+//     トレーナーが「カレンダーを直したのに反映されない」と言ったとき、
+//     **何分遅れているのかを答える手段が無かった**（2026-10-11 実際に答えられなかった）。
+var LB_SLOTS_BUILT_AT_PROP = 'LB_SLOTS_BUILT_AT';
+
+//   ★この実行で枠を作った時刻（2026-10-11・関門②の指摘）。
+//     Script Properties は実行をまたいで共有されるので、読み直すと
+//     **別の実行（warmupCache 等）が作った時刻**を自分のものと取り違える。
+//     GASの実行は独立しているので、この変数は「自分の実行だけ」の値になる。
+var LB_SLOTS_BUILT_AT_LOCAL = 0;
+
 function buildAndCacheSlots() {
   var slots = buildAvailableSlots();
+  //   ★カレンダーを読み終えた**直後**の時刻を残す（キャッシュ・公開シートを書く前）。
+  //     あとで残すと「カレンダーを読んだ時刻」ではなくなる。
+  LB_SLOTS_BUILT_AT_LOCAL = Date.now();
+  try { PropertiesService.getScriptProperties().setProperty(LB_SLOTS_BUILT_AT_PROP, String(LB_SLOTS_BUILT_AT_LOCAL)); }
+  catch (e) { Logger.log('枠を作った時刻を残せませんでした: ' + (e && e.message)); }
   var cache = CacheService.getScriptCache();
 
   // 共有キャッシュ（trainer未指定のfallback用）は直近14日のみ（100KB上限対策）
@@ -215,7 +234,35 @@ function invalidateCache() {
 }
 
 function warmupCache() {
-  Logger.log('=== ウォームアップ開始 ' + new Date() + ' ===');
+  //   ★作りたてなら作り直さない（2026-10-11・関門②の指摘）。
+  //
+  //     枠の押し出し（pushToEdgeSlots・10分ごと）が、押し出す前に自分で作り直すように
+  //     なった。この関数も10分ごとに同じことをするので、**二重になる**。
+  //     施設と全トレーナーのカレンダーを読み、キャッシュを書き、公開シートまで
+  //     書き直す処理を2本走らせると、
+  //       ・実行時間・Calendar API・Spreadsheet API を倍に使う（6分の制限に近づく）
+  //       ・同時に走ると、同じキャッシュと同じ公開シートを取り合う
+  //     どちらも避けたい。
+  //
+  //     ★この関数を消さない理由：押し出しが止まっている（EDGE_PUSH_ON が 0・
+  //       作り直しが失敗し続ける）ときに、**画面の速さを保つ最後の砦**になる。
+  //       消すとそのとき画面が遅くなる。だから「要らないときだけ省く」形にする。
+  //   ★60秒まで（2026-10-11・関門②の指摘で 5分 から縮めた）。
+  //     キャッシュの寿命は660秒＝11分、この関数は10分ごと。
+  //     5分省くと「最後に作ってから15分」まで作り直されない窓ができ、
+  //     11分で切れたキャッシュのぶん（最大4分）画面が全構築に入って遅くなる。
+  //     省く目的は「同時に2本走らせない」ことなので、60秒で足りる。
+  var FRESH_MS = 30 * 1000;   // 660-600=60秒ぴったりでは余裕が無いので半分にする
+  var builtAt = 0;
+  try { builtAt = Number(PropertiesService.getScriptProperties().getProperty(LB_SLOTS_BUILT_AT_PROP) || 0); }
+  catch (e) { builtAt = 0; }   // 読めなければ作り直す（安全側＝画面が遅くならない側）
+  var age = builtAt ? (Date.now() - builtAt) : -1;
+  if (builtAt && age >= 0 && age < FRESH_MS) {
+    Logger.log('=== ウォームアップ省略（' + Math.round(age / 1000) + '秒前に作ってある）===');
+    return;
+  }
+  Logger.log('=== ウォームアップ開始 ' + new Date()
+             + (builtAt ? '（前回は' + Math.round(age / 60000) + '分前）' : '（記録なし）') + ' ===');
   buildAndCacheSlots();
   Logger.log('=== ウォームアップ完了 ===');
 }

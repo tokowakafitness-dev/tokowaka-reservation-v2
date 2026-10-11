@@ -54,12 +54,23 @@ ok('①送信に scope を載せている', (SRC.match(/scope:\s*scope/g) || [])
 //   古い行が新しいものとして残る。1人ぶんの押し出しで起きていた事故と同じ形。
 ok("③予約直後の1人ぶんは partial",
   /_edgePushRows\('reservations', mine, Date\.now\(\), \{ scope: 'partial' \}\)/.test(SRC));
-ok("③1トレーナーぶんの枠も partial",
-  /_edgePushRows\('slots', mine, Date\.now\(\), \{ scope: 'partial' \}\)/.test(SRC));
+//   ★2026-10-11：書き込み直後の枠の押し出しは**やめた**（関門②の指摘）。
+//     確定フローは空き枠を作り直さない（warmupCacheに委ねている）ので、
+//     古いキャッシュを新しい batchId で押し出し直すだけだった。
+//     さらに世代のガードを迂回して、新しい枠を巻き戻せた。
+ok("③★書き込み直後は枠を送らない",
+  !/_edgePushRows\('slots'/.test(SRC) && !/_edgePushSlotsFor/.test(SRC),
+  '代わりに _syncedSlots=false と名乗り、画面は枠だけGASへ落ちる（遅いが新しい）');
 ok("③1人ぶんの残数も partial",
   /_edgePushRows\('home', rows, Date\.now\(\), \{ scope: 'partial' \}\)/.test(SRC));
 ok("③15分ごとの全件同期は all", /_edgePushRowsF\('reservations', _edgeReservations\(\), batchId, \{ scope: 'all'/.test(SRC));
-ok("③枠だけの同期（全トレーナー）も all", /_edgePushRowsF\('slots', _edgeSlotRows\(\), batchId, \{ scope: 'all'/.test(SRC));
+//   ★2026-10-11：枠を送る経路を _edgeSendSlots の1本にまとめた（設計：巻き戻し防止）。
+//     scope は送信関数の中で 'all' に固定してある。
+ok("③枠の同期（全トレーナー）も all",
+  /_edgePushRowsF\('slots', _edgeSlotRows\(builtAt, builtSlots\), batchId,\s*\n?\s*\{ scope: 'all'/.test(SRC));
+ok("③★枠を送る経路は1本だけ",
+  (SRC.match(/_edgePushRowsF\('slots'/g) || []).length === 1,
+  '別の経路から送ると、世代のガードを迂回して新しい枠を巻き戻せる');
 
 // ★残数は時間切れで途中までしか送れないことがある。
 //   「全件処理から呼ばれた」ことは全件を見終えたことを意味しない（Codex指摘）。
@@ -148,8 +159,10 @@ ok('⑧残数の押し直しが成否を返す',
 ok('⑧★作れなかったときは false', /if \(!rows\.length\) return false;/.test(SRC));
 ok('⑧予約の押し直しも読めなければ false',
   /function _edgePushReservationsFor[\s\S]{0,200}all == null\) return false;/.test(SRC));
-ok('⑧枠の押し直しも読めなければ false',
-  /function _edgePushSlotsFor[\s\S]{0,200}all == null\) return false;/.test(SRC));
+ok('⑧★枠を変える操作なら「同期できていない」と名乗る',
+  /var _slotsChanged = !!EDGE_CALSYNC_AFTER\[String\(action \|\| ''\)\];/.test(SRC)
+  && /var _syncedSlots = !_slotsChanged;/.test(SRC),
+  '送らないので同期済みと名乗ってはいけない。取消・変更は trainerId を持たないので有無で判断しない');
 ok('⑧★3つとも成功したときだけ真にする',
   /_syncedHome && _syncedResv && _syncedSlots/.test(SRC));
 ok('⑧応答に結果を載せている', /res\.edgeSynced = /.test(SRC));

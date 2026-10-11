@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-10d 締めの窓口に cutover の棚卸しと preview を足した';
+var LB_AUDIT_BUILD = '2026-10-11a 出勤枠の新しさを測れるようにした（作ってから押す／見送りを記録）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -3139,4 +3139,74 @@ function lbVerifySetupMember() {
   say('次：lbVerifyEntriesRun() で6つの入口を通します（まだ実装中）。');
   say('※ この会員は各種の一覧に1名増えます。氏名で見分けられます。');
   return out.join('\n');
+}
+
+/**
+ * 出勤枠がどれだけ新しいかを出す（読み取りだけ・2026-10-11）
+ *
+ *   ★なぜ要るのか
+ *     トレーナーが「カレンダーを直したのに反映されない」と言ったとき、
+ *     **何分遅れているのかを答える手段が無かった**（2026-10-11 実際に答えられなかった）。
+ *     D1に入る computed_at は押し出した時刻なので、
+ *     20分前のカレンダーを押し出しても「たったいま」に見えていた。
+ *
+ *   ここで出すのは3つだけ：
+ *     ① カレンダーを最後に読んだ時刻（＝枠を作った時刻）
+ *     ② 枠を最後に押し出せた時刻（★成功だけ）
+ *     ③ ほかの押し出しとぶつかって見送った回数
+ */
+function slotsFreshnessText() {
+  var out = [];
+  var now = Date.now();
+  var tz = (typeof SETTINGS !== 'undefined' && SETTINGS.TIMEZONE) || 'Asia/Tokyo';
+  function when(ms) {
+    if (!ms) return '★記録なし';
+    return Utilities.formatDate(new Date(ms), tz, 'MM/dd HH:mm:ss')
+      + '（' + Math.round((now - ms) / 60000) + '分前）';
+  }
+
+  out.push('===== 出勤枠の新しさ（読み取りだけ）=====');
+  out.push('版: ' + LB_AUDIT_BUILD);
+  out.push('いま: ' + Utilities.formatDate(new Date(now), tz, 'MM/dd HH:mm:ss'));
+  out.push('');
+
+  var builtAt = Number(_lbProp('LB_SLOTS_BUILT_AT') || 0);
+  var pushedAt = Number(_lbProp('LB_SLOTS_PUSHED_AT') || 0);
+  out.push('① カレンダーを最後に読んだ: ' + when(builtAt));
+  out.push('② 枠を最後に押し出せた    : ' + when(pushedAt));
+
+  //   ①と②がほぼ同じなら「作ってから押す」が効いている。
+  //   ①のほうが古いなら、前のキャッシュを押し出している＝作り直しに失敗している。
+  if (builtAt && pushedAt) {
+    var gap = Math.round((pushedAt - builtAt) / 1000);
+    out.push('   ①→②の差: ' + gap + '秒 '
+      + (gap >= 0 && gap <= 120 ? '（✅ 作ってから押している）'
+         : gap < 0 ? '（★押し出しのほうが古い＝作り直しだけ走った）'
+         : '（★' + Math.round(gap / 60) + '分ぶん古いカレンダーを押し出している）'));
+  }
+  out.push('');
+
+  var tm = String(_lbProp('LB_SLOTS_TIMING') || '');
+  out.push('   所要時間（最後の1回）: ' + (tm || '★記録なし'));
+  out.push('');
+
+  var skipRaw = String(_lbProp('LB_EDGE_LOCK_SKIPS') || '');
+  var sk = skipRaw.split('|');
+  var skN = Number(sk[0] || 0);
+  out.push('③ 押し出しを見送った回数: ' + skN + '回'
+    + (skN ? '　最後 ' + when(Number(sk[1] || 0)) + '　種類 ' + (sk[2] || '?') : ''));
+  if (!skN) out.push('   （0回。ほかの押し出しとぶつかっていない）');
+  out.push('');
+
+  out.push('■ いまカレンダーを直したら、何分で反映されるか');
+  out.push('  枠の押し出しは10分ごと。押し出す直前にカレンダーを読み直すので、');
+  out.push('  **最大10分**（平均5分）。');
+  out.push('  ★2026-10-11 より前は、作り直しが別トリガー（10分ごと）だったため');
+  out.push('    最大10分＋10分、さらに見送りで+10分＝**最大約30分**だった。');
+  out.push('');
+  out.push('※ ①が「記録なし」のときは、まだ新しい版が反映されていません。');
+
+  var t = out.join('\n');
+  Logger.log(t);
+  return t;
 }

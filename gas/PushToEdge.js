@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-09e 振替権を写しに入れる（読めなければ押し出さない）';
+var LB_EDGE_BUILD = '2026-10-11b 枠は作り直してから押す（作り直しはロックの外・builtAt・見送りを記録）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -439,9 +439,38 @@ function _edgeBodyRows() {
 }
 
 // 空き枠の写し。枠の作り方（吸着方式）はGASのまま、出来上がりをKVへ。
-function _edgeSlotRows() {
+function _edgeSlotRows(builtAtOverride, builtSlots) {
   var entries = [];
   var list = (CALENDAR_IDS && CALENDAR_IDS.TRAINERS) || [];
+
+  //   ★ここでは枠を作り直さない（2026-10-11・関門②の指摘で直した）。
+  //
+  //     一度は「押し出す前に作り直す」をここに書いた。だが**ここは共有ロックの中**である。
+  //     buildAndCacheSlots は施設と全トレーナーのカレンダーを読み、キャッシュを書き、
+  //     公開シートまで書き直す。重い。これをロックの中で回すと、
+  //     15分ごとの押し出しと4時の完全同期が**5秒で諦めて見送る**。
+  //     ＝「枠が負ける」問題を「ほかが枠に負ける」問題に反転させていた。
+  //
+  //     作り直すのは呼ぶ側（pushToEdgeSlots）が**ロックを取る前に**行う。
+  //     ここはキャッシュを読むだけに戻す。15分同期・完全同期からも呼ばれるので、
+  //     それらが無条件に作り直してしまうのも防げる。
+  //
+  //   builtAtOverride ＝ 呼ぶ側が「自分が作り直した時刻」を渡す。
+  //     渡されなければ記録（LB_SLOTS_BUILT_AT）を読む。
+  //     ★自分で作り直していない経路（15分同期・完全同期）では、
+  //       別の実行が作った時刻になる。それが事実なので隠さない。
+  var builtAt = 0;
+  if (builtAtOverride != null && Number(builtAtOverride) > 0) {
+    builtAt = Number(builtAtOverride);
+  } else {
+    try { builtAt = Number(_edgeProp(LB_SLOTS_BUILT_AT_PROP) || 0); } catch (e) { builtAt = 0; }
+  }
+
+  //   ★作りたての枠を渡されたら、それを使う（キャッシュを読み直さない）。
+  //     読み直すと、保存に失敗していた場合や別の実行が上書きした場合に
+  //     builtAt と中身がずれる。
+  //   渡されなければ従来どおりキャッシュから読む（15分同期・完全同期の経路）。
+  var fresh = (builtSlots && builtSlots.length != null) ? builtSlots : null;
   var rules = {
     leadMinutes: (SETTINGS && SETTINGS.BOOKING_LEAD_MINUTES) || 180,
     morningUntilHour: (SETTINGS && SETTINGS.MORNING_UNTIL_HOUR) || 12,
@@ -452,8 +481,17 @@ function _edgeSlotRows() {
     if (!tid) continue;
     var slots = [];
     try {
-      var r = getTrainerSlots({ trainerId: tid });
-      var src = (r && r.slots) || [];
+      var src;
+      if (fresh) {
+        //   getCachedSlots のキャッシュ外れ時と同じ絞り方にする（ふるまいを変えない）。
+        //     トレーナーで絞る → 締め切り済みを落とす
+        src = _lbDropClosedSlots(fresh.filter(function (s0) {
+          return String(s0.trainerId) === String(tid);
+        }));
+      } else {
+        var r = getTrainerSlots({ trainerId: tid });
+        src = (r && r.slots) || [];
+      }
       for (var j = 0; j < src.length; j++) {
         var s = src[j];
         var ms = s.startISO ? new Date(s.startISO).getTime() : NaN;
@@ -466,8 +504,24 @@ function _edgeSlotRows() {
           trainerId: s.trainerId, trainerName: s.trainerName, trialOk: !!s.trialOk
         });
       }
-    } catch (e) { continue; }   // 1人分が取れなくても他を止めない
-    entries.push({ trainer_id: tid, payload: JSON.stringify({ trainerId: tid, slots: slots, rules: rules }), computed_at: Date.now() });
+    } catch (e) {
+      //   ★1人でも組み立てられなければ**送信ごと中止する**（2026-10-11・関門②の指摘）。
+      //
+      //     以前は continue で飛ばしていた。だが枠は
+      //     「含まれない＝Google側から消えたトレーナー」として消す設定になった。
+      //     飛ばすと、**変換に失敗しただけのトレーナーの枠がD1から消え、
+      //     そのトレーナーは誰にも予約されなくなる。**
+      //     消えたのか失敗したのかは区別できないので、区別できない側に倒れず止める。
+      throw new Error('枠を組み立てられないトレーナーがいます（' + tid + '）: ' + (e && e.message));
+    }
+    //   ★builtAt＝カレンダーを読んだ時刻。computed_at（押し出した時刻）とは**別物**。
+    //     これが無いと「反映されない」と言われたときに何分遅れているか答えられない。
+    //     0 は「作り直した時刻が分からない」＝前のキャッシュを使った印（隠さない）。
+    entries.push({
+      trainer_id: tid,
+      payload: JSON.stringify({ trainerId: tid, slots: slots, rules: rules, builtAt: builtAt }),
+      computed_at: Date.now(),
+    });
   }
   return entries;
 }
@@ -790,17 +844,23 @@ function _edgePushReservationsFor(customerId) {
   return _edgePushRows('reservations', mine, Date.now(), { scope: 'partial' });
 }
 
-// そのトレーナーの枠だけを送り直す。
-function _edgePushSlotsFor(trainerId) {
-  var all = _edgeSlotRows();
-  if (all == null) return false;                  // 読めなかった＝送らない（写しは直っていない）
-  var mine = [];
-  for (var i = 0; i < all.length; i++) {
-    if (String(all[i].trainer_id || '') === String(trainerId)) mine.push(all[i]);
-  }
-  if (!mine.length) return 0;
-  return _edgePushRows('slots', mine, Date.now(), { scope: 'partial' });
-}
+// そのトレーナーの枠だけを送り直す ――★やめた（2026-10-11・関門②の指摘）。
+//
+//   この経路は**速くしていなかった**。
+//     LINEの予約・ブロックの確定フローは、重い空き枠の再計算（invalidateCache）を
+//     意図的に外して warmupCache（10分ごと）に委ねている（LineBooking.js の TECH_SPEC §8.5）。
+//     つまりここで読むキャッシュは**古いまま**で、古い枠を新しい batchId で押し出し直すだけだった。
+//
+//   そのうえ害があった。
+//     枠を送る経路には「古いスナップショットで新しいものを巻き戻さない」ガードを入れたが、
+//     ここはガードを通らない（_edgePushRows を直に呼んでいた）。
+//     ＝専用同期が新しい枠を送った直後に、ここが古い1トレーナー分を送って巻き戻せる。
+//
+//   だから送らない。代わりに**「写しは同期できていない」と名乗る**（_syncedSlots = false）。
+//     画面はそれを見てGASへ落ち、カレンダーを直接読む＝遅いが**新しい**。
+//     枠そのものは10分ごとの専用同期が、作り直してからガードを通して送る。
+//
+//   ★関数は残さない。残すと「あるのに呼んでいない」状態になり、また呼ばれる。
 
 // 振り分けの出口から呼ぶ。書き込みが成功したときだけ働く。
 function edgeAfterWrite(action, params, res, lineUserId) {
@@ -848,9 +908,17 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     var _syncedHome = pushToEdgeHomeFor(cid, nm);                   // 残数
     var _syncedResv = (_edgePushReservationsFor(cid) !== false);    // その人の予約
 
-    var tid = String(res.trainerId || params.trainerId || '');
-    var _syncedSlots = true;
-    if (tid) _syncedSlots = (_edgePushSlotsFor(tid) !== false);     // 空き枠
+    //   ★枠はここから送らない（上の理由）。
+    //     「同期できていない」と名乗るので、画面はGASへ落ちる（遅いが新しい）。
+    //
+    //   ★trainerId の有無で判断しない（2026-10-11・関門②の指摘）。
+    //     取消（line_cancelReservation）と変更（line_changeReservation）は
+    //     入力も応答も reservationId だけで **trainerId を持たない**。
+    //     有無で判断すると、枠を送っていないのに「同期済み」と名乗り、
+    //     **取消で空いた枠・変更で埋まった枠を古い写しから読ませてしまう。**
+    //     判断は「その操作が枠を変えるか」で行う（カレンダー同期と同じ集合）。
+    var _slotsChanged = !!EDGE_CALSYNC_AFTER[String(action || '')];
+    var _syncedSlots = !_slotsChanged;
 
     if (res && typeof res === 'object') {
       res.edgeSynced = !!(_syncedHome && _syncedResv && _syncedSlots);
@@ -863,23 +931,57 @@ function edgeAfterWrite(action, params, res, lineUserId) {
 
 // 押し出し同士が重ならないようにする。
 //   定期実行と手動実行が重なると、古い方が後から完了して新しい内容を巻き戻しうる。
-function _edgeLocked(fn) {
+// 見送った回数を残す鍵（2026-10-11）。
+//   ★なぜ要るのか
+//     以前は見送りを Logger にしか書いていなかった。
+//     ログは誰も見ないので、**押し出しが毎回見送られていても気づけない。**
+//     2026-10-11、トレーナーの「カレンダーを直したのに30分反映されない」で
+//     初めて気づいた。顧客が申告するまで分からない状態だった。
+var LB_EDGE_SKIP_PROP = 'LB_EDGE_LOCK_SKIPS';   // '件数|最後の時刻|最後の種類'
+
+function _edgeRecordLockSkip(label) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var cur = String(p.getProperty(LB_EDGE_SKIP_PROP) || '').split('|');
+    var n = Number(cur[0] || 0) + 1;
+    p.setProperty(LB_EDGE_SKIP_PROP, n + '|' + Date.now() + '|' + String(label || '?'));
+  } catch (e) {}
+}
+
+/**
+ * 押し出しを1つずつ走らせる。
+ *   @param fn      中身
+ *   @param waitMs  ロックを待つ時間。★既定は 5秒（これまでと同じ）
+ *   @param label   見送ったときに残す名前
+ *
+ * ★待ち時間を種類ごとに変えられるようにした（2026-10-11）。
+ *   枠の押し出しは10分ごと・2秒で終わるのに、15分ごとの押し出し（約43秒）と
+ *   30分おきに必ずぶつかる。5秒で諦めると**その回を丸ごと捨てて次は10分後**になる。
+ *   待てば済む話なので待つ。ただし既定は変えない（重い押し出しまで長く待たせない）。
+ */
+function _edgeLocked(fn, waitMs, label) {
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) { Logger.log('[edge] ほかの押し出しが動いているので今回は見送ります'); return; }
+  var wait = (waitMs == null) ? 5000 : Number(waitMs);
+  if (!lock.tryLock(wait)) {
+    Logger.log('[edge] ほかの押し出しが動いているので今回は見送ります（' + (label || '?')
+               + '・' + Math.round(wait / 1000) + '秒待ちました）');
+    _edgeRecordLockSkip(label);
+    return;
+  }
   try { return fn(); } finally { try { lock.releaseLock(); } catch (e) {} }
 }
 
 function pushToEdgeAll(withHome) {
   if (withHome === undefined) withHome = true;
   if (!_edgeEnabled()) { Logger.log('EDGE_PUSH_ON が 1 ではないので何もしません'); return; }
-  return _edgeLocked(function () { return _pushToEdgeAllImpl(withHome, false); });
+  return _edgeLocked(function () { return _pushToEdgeAllImpl(withHome, false); }, null, 'all');
 }
 
 // 1日1回の完全同期。全行を書き直し、Google側から消えた行を消す。
 //   ふだんの押し出しは「変わった行だけ」書くので、消す判断はここでまとめて行う。
 function pushToEdgeFullSync() {
   if (!_edgeEnabled()) return;
-  return _edgeLocked(function () { return _pushToEdgeAllImpl(true, true); });
+  return _edgeLocked(function () { return _pushToEdgeAllImpl(true, true); }, null, 'fullSync');
 }
 
 function _pushToEdgeAllImpl(withHome, full) {
@@ -912,7 +1014,26 @@ function _pushToEdgeAllImpl(withHome, full) {
   //     **最後の固定枠だけが永久に残る**（2026-10-03・Codexの再判定）。
   //     名乗ってよいのは、読めなかったときに null を返して送信ごと中止するから。
   step('recurring',    function () { return _edgePushRowsF('recurring', _edgeRecurring(), batchId, { scope: 'all', deleteStale: true, allowEmpty: true }); });
-  step('slots',        function () { return _edgePushRowsF('slots', _edgeSlotRows(), batchId, { scope: 'all', deleteStale: full }); });
+  //   ★枠はここから送らない（2026-10-11・関門②の指摘）。
+  //
+  //     枠は専用の同期（pushToEdgeSlots・10分ごと）が、作り直してから世代のガードを
+  //     通して送る。ここから素のキャッシュを送ると、**そのガードを迂回して
+  //     新しい枠を古いキャッシュで巻き戻せる**。
+  //     15分同期は10分同期と重複しているだけなので、外して問題ない。
+  //
+  //     完全同期（4時）だけは残す：Google側から消えたトレーナーの行を
+  //     落とせるのはこの経路だけ（deleteStale）。ただし**同じガードを通す**。
+  //   ★枠はここから送らない（2026-10-11・関門②の指摘）。
+  //
+  //     完全同期だけ残して「消えたトレーナーの行を落とす」役にしようとしたが、
+  //     この経路はトレーナー別キャッシュを**順番に読む**ので、
+  //     その間に別の実行が作り直すと**混ざった集合**になる。
+  //     しかも枠は全トレーナー共通の施設の空きを引いて作るので、
+  //     混ざった集合は「全体として一度も実在しなかった状態」になり得る。
+  //
+  //     10分ごとの専用同期は、全トレーナーぶんを**1回で作った自己完結の集合**を送る。
+  //     そこで deleteStale を立てれば、消えたトレーナーの行もそこで落ちる。
+  //     ＝枠を送る経路は専用同期の1本だけになり、例外経路が無くなる。
   step('body',         function () { return _edgePushRowsF('body', _edgeBodyRows(), batchId, { scope: 'all', deleteStale: full }); });
   // 残数計算の入力（シート読み込みは1回にまとめる）
   step('計算入力',      function () {
@@ -944,17 +1065,134 @@ function pushToEdgeAllText() {
 // 枠だけを短い間隔で押し出す（予約の反映を早くするため）
 function pushToEdgeSlots() {
   if (!_edgeEnabled()) return;
-  return _edgeLocked(_pushToEdgeSlotsImpl);
-}
-function _pushToEdgeSlotsImpl() {
-  var batchId = Date.now();
+  var _t0Slots = Date.now();
+
+  //   ★順番が大事（2026-10-11・関門②の指摘）。
+  //
+  //     ① 共有ロックの**外**で枠を作り直す（重い：カレンダー読み＋キャッシュ＋公開シート）
+  //     ② 共有ロックを取って、作りたてを**送るだけ**（軽い：約2秒）
+  //
+  //     逆にすると、重い作り直しのあいだロックを握り続け、
+  //     15分ごとの押し出しと4時の完全同期が5秒で諦めて見送る。
+  //   ★作った枠そのものを持ち回す（2026-10-11・関門②の指摘）。
+  //
+  //     はじめは「作り直す → キャッシュを読み直して送る」と書いた。だがそれでは
+  //     **送る枠と builtAt が別のスナップショットになり得る**：
+  //       ・buildAndCacheSlots はキャッシュ保存の失敗を**握りつぶして正常に返る**
+  //         → 古いキャッシュを読み、いまの時刻を付けて送る
+  //         ＝「古い枠なのに新しい」と見える。見張りが逆に倒れる
+  //       ・作り直してからロックを取るまでに warmupCache が同じキャッシュを上書きし得る
+  //     戻り値をそのまま送れば、どちらも起きない。
+  var builtSlots = null;
+  var builtAt = 0;
   try {
-    var n = _edgePushRowsF('slots', _edgeSlotRows(), batchId, { scope: 'all', deleteStale: false });
+    builtSlots = buildAndCacheSlots();
+    //   ★カレンダーを読み終えた時刻（キャッシュ・公開シートを書く前の時刻）。
+    //     Script Properties を読み直さない。読み直すと別の実行の時刻になる。
+    builtAt = Number(LB_SLOTS_BUILT_AT_LOCAL || 0);
+  } catch (e) {
+    //   作り直せなくても押し出しは続ける。前のキャッシュが出る。
+    //   古い枠が出るのは「枠が1つも出ない」より軽い（予約できなくなるのを防ぐ）。
+    Logger.log('[edge] 枠を作り直せませんでした（前のキャッシュで押し出します）: ' + (e && e.message));
+  }
+
+  //   ★所要時間を残す（2026-10-11・関門②の指摘）。
+  //     「作り直し」「ロック待ち」「送信」の合計がこの実行の6分枠を使う。
+  //     既存の _wlap はカレンダー読みまでしか測っておらず、
+  //     キャッシュ保存・公開シート更新・送信が入っていない。
+  //     ★測らずに「6分に遠い」と言わない（前の版でそう書いて指摘された）。
+  var _tBuild = Date.now() - _t0Slots;
+  var _tLock0 = Date.now();
+
+  //   ★90秒待つ。15分ごとの押し出しは約43秒かかる。
+  //     5秒で諦めると「次は10分後」になり、カレンダーの編集が最大30分届かない。
+  //     ここで待つのは**送るだけ**なので、作り直しを待たせない。
+  var r = _edgeLocked(function () { return _pushToEdgeSlotsImpl(builtAt, builtSlots); }, 90000, 'slots');
+
+  var _timing = '作り直し=' + _tBuild + 'ms / ロック待ち＋送信=' + (Date.now() - _tLock0) + 'ms'
+    + ' / 合計=' + (Date.now() - _t0Slots) + 'ms';
+  //   ★Property は「いまどうか」、ログは「分布」。両方に残す（2026-10-11・関門②の指摘）。
+  //     Property は最後の1回しか残らないので、p95や最大を出せない。
+  Logger.log('[edge] 枠の所要時間 ' + _timing);
+  try { PropertiesService.getScriptProperties().setProperty('LB_SLOTS_TIMING', _timing + ' @' + Date.now()); }
+  catch (e) {}
+  return r;
+}
+var LB_SLOTS_PUSHED_AT_PROP = 'LB_SLOTS_PUSHED_AT';   // 最後に枠を押し出せた時刻（★成功だけ）
+
+var LB_SLOTS_LAST_BUILT_PROP = 'LB_SLOTS_LAST_PUSHED_BUILT_AT';   // 最後に送れたスナップショットの時刻
+
+/**
+ * 枠を送る。**枠を送る経路はここだけにする**（2026-10-11・関門②の指摘）。
+ *
+ *   ★なぜ1本にするのか
+ *     はじめはガードを枠専用の同期（10分）にだけ置いた。だが枠は
+ *     15分同期・4時の完全同期からも送られていて、**そちらはガードを通らなかった**。
+ *     ＝専用同期が新しい枠を送った直後に、15分同期が古いキャッシュを送って巻き戻せた。
+ *
+ *   ★巻き戻さない仕組み
+ *     ロックの外で枠を作るので「作り終えた順」と「ロックを取れた順」は一致しない。
+ *       実行A 作る(100) / 実行B 作る(200) / B が先に送る / A があとから 100 を送る
+ *     ＝消したはずのブロックが「空き」に戻って見える。だから世代を比べる。
+ *
+ *   ★記録は**送る前**に書く（関門②の指摘）。
+ *     あとに書くと「送れたのに記録に失敗した／直後に実行が終わった」ときに
+ *     記録が古いまま残り、より古いスナップショットが通る窓が開く。
+ *     先に書いても止まらない：比較は `<` なので同じ世代の再送は通り、新しい世代も通る。
+ *
+ *   @param builtAt    その枠がいつのカレンダーか（0＝分からない）
+ *   @param builtSlots 作りたての枠（無ければキャッシュから読む）
+ *   @param opts       { batchId, deleteStale }
+ */
+function _edgeSendSlots(builtAt, builtSlots, opts) {
+  opts = opts || {};
+  var batchId = opts.batchId || Date.now();
+
+  var last = 0;
+  try { last = Number(_edgeProp(LB_SLOTS_LAST_BUILT_PROP) || 0); } catch (e0) { last = 0; }
+  if (last > 0) {
+    if (builtAt > 0 && builtAt < last) {
+      Logger.log('[edge] 枠は送りません（これより新しいものを既に送っています: '
+                 + builtAt + ' < ' + last + '）');
+      return 'STALE_SNAPSHOT';
+    }
+    //   builtAt が 0 ＝ どの時点の枠か分からない（作り直しに失敗して前のキャッシュを使った）。
+    //   既に分かっている世代を送れているなら、**分からないもので上書きしない**。
+    //   止まりはしない：ウォームアップが作り直せば記録が進み、次の回で送れる。
+    if (!(builtAt > 0)) {
+      Logger.log('[edge] 枠は送りません（いつの枠か分からないため・既に ' + last + ' を送っています）');
+      return 'UNKNOWN_SNAPSHOT';
+    }
+  }
+
+  //   ★送る前に記録する。
+  if (builtAt > 0) {
+    try { PropertiesService.getScriptProperties().setProperty(LB_SLOTS_LAST_BUILT_PROP, String(builtAt)); }
+    catch (e1) {
+      //   記録できないなら送らない。送ると、次に古いものが通る窓が開く。
+      Logger.log('[edge] 枠は送りません（世代を記録できませんでした: ' + (e1 && e1.message) + '）');
+      return 'RECORD_FAILED';
+    }
+  }
+
+  var n = _edgePushRowsF('slots', _edgeSlotRows(builtAt, builtSlots), batchId,
+                         { scope: 'all', deleteStale: !!opts.deleteStale });
+  try { PropertiesService.getScriptProperties().setProperty(LB_SLOTS_PUSHED_AT_PROP, String(Date.now())); }
+  catch (e2) {}
+  return n;
+}
+
+function _pushToEdgeSlotsImpl(builtAt, builtSlots) {
+  try {
+    //   ★deleteStale を立てる（2026-10-11）。枠を送るのはここだけになったので、
+    //     Google側から消えたトレーナーの行を落とすのもここの役目になる。
+    //     送るのは全トレーナーぶんを1回で作った自己完結の集合なので安全。
+    //     0件のときは受け取る側が EMPTY_SOURCE で削除を止める（全消しを防ぐ）。
+    var n = _edgeSendSlots(builtAt, builtSlots, { batchId: Date.now(), deleteStale: true });
     Logger.log('[edge] 枠 ' + n);
   } catch (e) { Logger.log('[edge] 枠の押し出しに失敗: ' + (e && e.message)); }
 }
 
-// 残数を含まない押し出し。10秒程度で終わるので短い間隔で回せる。
 function pushToEdgeLight() {
   // ★それぞれ別の try で囲む（2026-10-08・Codex関門②）。
   //   以前は押し出しのあとに二重書きを呼んでいた。**押し出しが落ちると
@@ -1022,7 +1260,15 @@ function testEdgeConnectionText() {
   var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/health', { muteHttpExceptions: true });
   out.push('health: HTTP ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 300));
   try {
-    _edgePost({ kind: 'slots', batchId: Date.now(), rows: [], final: true });   // 0件＝何も書き換えない
+    //   ★scope は 'partial'（2026-10-11・関門②の指摘で2回直した）。
+    //
+    //     付けないと受け取る側が SCOPE_REQUIRED で断るので、
+    //     **合言葉が正しくても「失敗」と出る**（疎通テストが嘘をつく）。
+    //     だが 'all' にすると `final` と合わさって「全件を見終えた」と名乗り、
+    //     **データを送らないはずの疎通テストが slots の同期時刻を押してしまう。**
+    //     押されると、同時に走っていた本物の枠同期が「古いバッチ」として断られ得る。
+    //     'partial' なら認証・入力検査・応答までは通り、状態は何も変えない。
+    _edgePost({ kind: 'slots', batchId: Date.now(), rows: [], final: true, scope: 'partial' });
     out.push('合言葉の照合: OK（取り込み口に届きました）');
   } catch (e) {
     out.push('合言葉の照合: 失敗 — ' + (e && e.message));

@@ -512,7 +512,7 @@ export async function quotaBehind(request, env) {
         ORDER BY customer_id LIMIT ?`
     ).bind(after, limit).all();
     const rows = r.results || [];
-    return jsonRes({
+    return json({
       ok: true,
       after,
       limit,
@@ -531,6 +531,6 @@ export async function quotaBehind(request, env) {
   } catch (e) {
     //   表が無い（migration 未適用）場合もここに来る。落とさず「読めなかった」と返す。
     //   ★呼ぶ側は栞を進めない（進めると、その区間が1周するまで飛ばされる）。
-    return jsonRes({ ok: false, code: 'READ_FAILED', detail: String((e && e.message) || e).slice(0, 200) });
+    return json({ ok: false, code: 'READ_FAILED', detail: String((e && e.message) || e).slice(0, 200) });
   }
 }

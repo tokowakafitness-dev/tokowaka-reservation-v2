@@ -106,6 +106,9 @@ function _ejRunInner(op, args) {
       // shadow（写しとD1の食い違い）の心拍。args.shadow='preflight' なら入れる前の確認だけ。
       //   ★「0件」が「一致」なのか「比べていない」のかを区別するために作った（設計12）。
       if (args && args.shadow) return _ejScrub(shadowStatusText(args));
+      // 出勤枠がどれだけ新しいか（読み取りだけ）。
+      //   ★「カレンダーを直したのに反映されない」に何分遅れか答えるため（2026-10-11）。
+      if (args && args.slotsFresh) return _ejScrub(slotsFreshnessText());
       // トリガーの一覧（読み取りだけ）。止まった原因の特定に要る。
       //   ★2026-10-10、「点検が一度も走った記録がありません」の通知が来たとき、
       //     トリガーがあるのか無いのかを確かめる手段が無かった。

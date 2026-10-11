@@ -138,7 +138,11 @@ export default {
     if (url.pathname === '/quota/status') return quotaStatus(request, env);
     //   作り直しが追いついていない会員のID（読み取りだけ・設計16）。
     //   呼ぶ側は積むだけ。ここでは作り直さない（古い入力に印を付ける窓を作らないため）。
-    if (url.pathname === '/quota/behind') return quotaBehind(request, env);
+    if (url.pathname === '/quota/behind') {
+      //   読み取りだけなので GET に限る（書き換えの入口と見間違えないため）
+      if (request.method !== 'GET') return new Response('Method Not Allowed', { status: 405 });
+      return quotaBehind(request, env);
+    }
     // D1の枠と引当から出した残数が、計算と一致するか（読み取りだけ）。
     //   ★既存の /verify とは別物。あちらは「GASの計算 vs Workerの計算」で、
     //     同じコードを回すので合って当然。こちらは「計算 vs D1の行」を比べる。
