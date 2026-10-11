@@ -69,7 +69,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-10-10a トリガーの一覧を読めるようにした';
+var LB_JOB_BUILD = '2026-10-11a 締めの準備と出勤枠の新しさを読めるようにした';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);

@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-10b 「記録が無い」と「止まっている」を区別する';
+var LB_NUDGE_BUILD = '2026-10-11a リマインドの引数は数値だけ受け付ける（イベントで Invalid Date になっていた）';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -1437,7 +1437,14 @@ function lbNudgeCatchUp(fromYmd, toYmd) {
 }
 
 function lbNudgeDaily(nowMs) {
-  var ms = (nowMs != null) ? nowMs : new Date().getTime();
+  //   ★時間主導のトリガーは第1引数にイベントオブジェクトを渡す（2026-10-11）。
+  //     `(nowMs != null)` で判定していたので、オブジェクトがそのまま ms に入り、
+  //       ・lbNudgePlanAll の `new Date(nowMs)` が **Invalid Date**
+  //       ・_lbNudgeWatchHealthCheck の `(nowMs - last)` が **NaN**
+  //         ＝「点検が止まっている」の警告が**永久に鳴らない**
+  //     という状態になっていた。
+  //   ★数値だけを受け付ける。それ以外は「いま」を使う。
+  var ms = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : new Date().getTime();
   //   ★日次点検が止まっていないかを**ここから**見張る（2026-10-09）。
   //     点検は「悪化したときだけ」メールを送る。だから**点検そのものが止まると
   //     何も届かず、沈黙が正常と区別できない。**

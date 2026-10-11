@@ -1853,11 +1853,26 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-10b どこまで進んだかを残す（6分超えで落ちた）';
+var LB_HEALTH_BUILD = '2026-10-11a トリガーの第1引数がイベントで dryRun が常に真だった（点検が一度も機能していなかった）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
-function dailyHealthCheck(dryRun) {
+function dailyHealthCheck(dryRunArg) {
+  //   ★★時間主導のトリガーは**第1引数にイベントオブジェクトを渡す**（2026-10-11）。
+  //
+  //     この関数は `dailyHealthCheck(dryRun)` という形だったので、
+  //     トリガーから呼ばれると dryRun にイベントオブジェクトが入り、
+  //     オブジェクトは真なので **dryRun が常に真**になっていた。
+  //     結果：`if (!dryRun)` の中が一度も実行されず、
+  //       ・最後に走った時刻を残さない（LB_HEALTH_LAST）
+  //       ・どこまで進んだかを残さない（LB_HEALTH_STEP）
+  //       ・★悪化してもメールを送らない
+  //     ＝**点検が一度も機能していなかった。** しかも「悪化したときだけ鳴る」作りなので
+  //       沈黙が正常と区別できず、誰も気づけなかった。
+  //
+  //   ★`=== true` にする。手で dry-run したいときだけ true を渡す。
+  //     それ以外（undefined・イベントオブジェクト）は**本番の実行**として扱う。
+  var dryRun = (dryRunArg === true);
   var tz = SETTINGS.TIMEZONE, now = new Date();
   var stamp = Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm');
   var issues = [];   // { key, area, severity, count, detail }
@@ -2317,7 +2332,10 @@ function _lbPaceThresholds() {
   function num(key, def) { var v = Number(_lbProp(key)); return (_lbIsFiniteNum(v) && v > 0) ? v : def; }
   return { warn: num('LB_PACE_WARN', 1), alert: num('LB_PACE_ALERT', 2) };
 }
-function weeklyPaceReport(dryRun) {
+function weeklyPaceReport(dryRunArg) {
+  //   ★同じ穴（2026-10-11）。トリガーの第1引数はイベントオブジェクトなので
+  //     dryRun が常に真になり、**トレーナーへのLINEもメールも一度も送られていなかった。**
+  var dryRun = (dryRunArg === true);
   var th = _lbPaceThresholds();
   var r = _lbCollectPace(true);   // 週次は最新の契約で判断する
   var byTrainer = {}, allLines = [];
