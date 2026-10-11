@@ -265,6 +265,27 @@ ok('④★古いカレンダーを送っていることを指摘する',
    /ぶん古いカレンダーを送っている/.test(AUDIT),
    '作り直しに失敗して前のキャッシュを送った状態を見分ける');
 
+// ---------- 4-b. 「拾われているか」を切り分けられる（2026-10-11） ----------
+//   ★「反映されない」には2つの原因があり、切り分けられなかった：
+//     ① 遅れ（押し出しの間隔・キャッシュ・見送り）
+//     ② そもそも拾われていない（タイトルで判定しているため）＝**永久に反映されない**
+ok('④-b認識を切り分ける窓口がある', /function calendarRecognitionText\(dateStr\)/.test(AUDIT));
+ok('④-b★判定は同じ関数を呼ぶ（規則を別に書かない）',
+   /isShiftEvent\(title\)/.test(AUDIT) && /_lbIsBusyTitle\(title\)/.test(AUDIT),
+   '規則を2箇所に書くと、片方だけ直した日に診断が嘘をつく');
+ok('④-b★タイトルを出さない（顧客名が入る）',
+   !/out\.push\([^)]*title/.test(AUDIT),
+   'この結果は合言葉なしで読める');
+ok('④-b★未認識は「遅れではない」と書く',
+   /永久に反映されません/.test(AUDIT),
+   '待てば直ると誤解させない');
+ok('④-b直し方を出す',
+   /「ブロック」/.test(AUDIT) && /「出勤可能」/.test(AUDIT));
+ok('④-b既存の窓口に繋がっている',
+   /if \(args && args\.calCheck\) return _ejScrub\(calendarRecognitionText\(String\(args\.calCheck\)\)\);/
+     .test(rd('gas/EdgeJob.js')),
+   '新しい op を足すと許可一覧3箇所の更新がオーナー作業になる');
+
 // ---------- 5. 退行しない ----------
 ok('⑤枠の押し出しは全消ししない',
    /deleteStale: !!opts\.deleteStale/.test(PUSH),

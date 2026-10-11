@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-11b 枠の新しさは「送ったスナップショット」と比べる（誤警報を直した）';
+var LB_AUDIT_BUILD = '2026-10-11c カレンダーの予定が何として認識されたかを出せるようにした';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -3224,4 +3224,97 @@ function slotsFreshnessText() {
   var t = out.join('\n');
   Logger.log(t);
   return t;
+}
+
+/**
+ * カレンダーの予定が「何として認識されたか」を日ごとに出す（読み取りだけ・2026-10-11）
+ *
+ *   ★なぜ要るのか
+ *     トレーナーが「カレンダーに入れたのに反映されない」と言ったとき、
+ *     原因は2つあり、**手持ちの道具では切り分けられなかった**：
+ *       ① 遅れ（押し出しの間隔・キャッシュ・見送り）… 2026-10-11 に最大10分へ短縮
+ *       ② ★そもそも拾われていない（タイトルで判定しているため）
+ *     ②は「遅れ」ではなく**永久に反映されない**。だから別物として見えるようにする。
+ *
+ *   判定の規則（_lbIsBusyTitle / isShiftEvent と**同じ関数**を呼ぶ。別に書かない）
+ *     出勤枠       タイトルに 出勤可能 / 出勤 / シフト / available / AVAILABLE を含む
+ *     席を塞ぐ     タイトルに 休憩 / ブロック を含む、または [RESERVED] / ✅ で始まる
+ *     ★未認識     上のどちらでもない ＝ **その予定は何の効果も持たない**
+ *
+ *   ★タイトルは出さない。顧客名が入るため（この結果は合言葉なしで読める）。
+ *     時刻だけ出せば、オーナーはカレンダー上でその予定を特定できる。
+ */
+function calendarRecognitionText(dateStr) {
+  var out = [];
+  var tz = (typeof SETTINGS !== 'undefined' && SETTINGS.TIMEZONE) || 'Asia/Tokyo';
+  var raw = String(dateStr || '');
+  var m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  out.push('===== カレンダーの予定が何として認識されたか（読み取りだけ）=====');
+  out.push('版: ' + LB_AUDIT_BUILD);
+  if (!m) {
+    out.push('');
+    out.push('日付を YYYY-MM-DD の形で args.calCheck に渡してください。');
+    out.push('例: {"op":"remaining","args":{"calCheck":"2026-10-12"}}');
+    var t0 = out.join('\n'); Logger.log(t0); return t0;
+  }
+  var y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
+  var dayStart = new Date(y, mo, d, 0, 0, 0);
+  var dayEnd = new Date(y, mo, d + 1, 0, 0, 0);
+  out.push('対象日: ' + m[1] + '/' + m[2] + '/' + m[3]);
+  out.push('');
+  out.push('※ タイトルは出しません（顧客名が入るため）。時刻でカレンダー上の予定を特定してください。');
+  out.push('');
+
+  function hhmm(dt) { return Utilities.formatDate(dt, tz, 'HH:mm'); }
+
+  var list = (CALENDAR_IDS && CALENDAR_IDS.TRAINERS) || [];
+  var totalUnknown = 0;
+  for (var t = 0; t < list.length; t++) {
+    var tr = list[t];
+    out.push('── ' + tr.name + '（' + tr.id + '）');
+    var cal = null;
+    try { cal = CalendarApp.getCalendarById(tr.email); } catch (e) { cal = null; }
+    if (!cal) { out.push('   ⛔ カレンダーを開けません'); out.push(''); continue; }
+
+    var events = [];
+    try { events = cal.getEvents(dayStart, dayEnd); } catch (e2) {
+      out.push('   ⛔ 予定を読めません: ' + (e2 && e2.message)); out.push(''); continue;
+    }
+    if (!events.length) { out.push('   （この日の予定はありません）'); out.push(''); continue; }
+
+    var nShift = 0, nBusy = 0, nUnknown = 0;
+    for (var j = 0; j < events.length; j++) {
+      var ev = events[j], title = '';
+      try { title = ev.getTitle(); } catch (e3) { title = ''; }
+      var span = hhmm(ev.getStartTime()) + '-' + hhmm(ev.getEndTime());
+      if (isShiftEvent(title)) {
+        out.push('   ' + span + '  ✅ 出勤枠として認識');
+        nShift++;
+      } else if (_lbIsBusyTitle(title)) {
+        out.push('   ' + span + '  ✅ 席を塞ぐものとして認識（予約・実施済み・休憩・ブロック）');
+        nBusy++;
+      } else {
+        out.push('   ' + span + '  ★認識されません（この予定は何の効果も持ちません）');
+        nUnknown++;
+      }
+    }
+    out.push('   → 出勤枠 ' + nShift + '件 / 席を塞ぐ ' + nBusy + '件 / ★未認識 ' + nUnknown + '件');
+    totalUnknown += nUnknown;
+    out.push('');
+  }
+
+  if (totalUnknown) {
+    out.push('⚠️ 認識されない予定が ' + totalUnknown + '件あります。');
+    out.push('   ブロック（席を塞ぎたい）なら、タイトルに **「ブロック」** か **「休憩」** を入れてください。');
+    out.push('   出勤枠なら、タイトルに **「出勤可能」**（または 出勤／シフト）を入れてください。');
+    out.push('   ★これは遅れではありません。直さない限り**永久に反映されません**。');
+  } else {
+    out.push('✅ 認識されない予定はありません。');
+    out.push('   反映の遅れは「出勤枠の新しさ」（args.slotsFresh）で見てください。');
+  }
+
+  var t2 = out.join('\n');
+  Logger.log(t2);
+  return t2;
 }

@@ -69,7 +69,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-10-11a 締めの準備と出勤枠の新しさを読めるようにした';
+var LB_JOB_BUILD = '2026-10-11b カレンダーの認識を切り分ける窓口を足した';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);
@@ -106,6 +106,9 @@ function _ejRunInner(op, args) {
       // shadow（写しとD1の食い違い）の心拍。args.shadow='preflight' なら入れる前の確認だけ。
       //   ★「0件」が「一致」なのか「比べていない」のかを区別するために作った（設計12）。
       if (args && args.shadow) return _ejScrub(shadowStatusText(args));
+      // カレンダーの予定が「何として認識されたか」（読み取りだけ）。
+      //   ★「反映されない」の原因を、遅れ／そもそも拾われていない に切り分けるため。
+      if (args && args.calCheck) return _ejScrub(calendarRecognitionText(String(args.calCheck)));
       // 出勤枠がどれだけ新しいか（読み取りだけ）。
       //   ★「カレンダーを直したのに反映されない」に何分遅れか答えるため（2026-10-11）。
       if (args && args.slotsFresh) return _ejScrub(slotsFreshnessText());
