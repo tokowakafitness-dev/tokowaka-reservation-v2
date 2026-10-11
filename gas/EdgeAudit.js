@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-11a 出勤枠の新しさを測れるようにした（作ってから押す／見送りを記録）';
+var LB_AUDIT_BUILD = '2026-10-11b 枠の新しさは「送ったスナップショット」と比べる（誤警報を直した）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -3170,19 +3170,34 @@ function slotsFreshnessText() {
   out.push('いま: ' + Utilities.formatDate(new Date(now), tz, 'MM/dd HH:mm:ss'));
   out.push('');
 
+  //   ★比べる相手を直した（2026-10-11）。
+  //
+  //     はじめは「最後にカレンダーを読んだ時刻（LB_SLOTS_BUILT_AT）」と
+  //     「最後に押し出せた時刻」を比べていた。だが前者は**共有の記録**で、
+  //     押し出しのあとに走る warmupCache が上書きする。
+  //     そのため正常な状態でも「押し出しのほうが古い」と**誤警報が出た**
+  //     （実際に 16:09:10 に押し出し → 16:10:01 に温め直し → -51秒 と表示された）。
+  //
+  //     比べるべきは「**実際に送ったスナップショットの時刻**」と「送った時刻」。
+  //     前者は巻き戻し防止のために既に記録している（LB_SLOTS_LAST_PUSHED_BUILT_AT）。
   var builtAt = Number(_lbProp('LB_SLOTS_BUILT_AT') || 0);
+  var sentBuiltAt = Number(_lbProp('LB_SLOTS_LAST_PUSHED_BUILT_AT') || 0);
   var pushedAt = Number(_lbProp('LB_SLOTS_PUSHED_AT') || 0);
-  out.push('① カレンダーを最後に読んだ: ' + when(builtAt));
-  out.push('② 枠を最後に押し出せた    : ' + when(pushedAt));
+  out.push('① 誰かがカレンダーを読んだ: ' + when(builtAt) + '（温め直しも含む・参考）');
+  out.push('② ★送った枠がいつのカレンダーか: ' + when(sentBuiltAt));
+  out.push('③ 送れた時刻              : ' + when(pushedAt));
 
-  //   ①と②がほぼ同じなら「作ってから押す」が効いている。
-  //   ①のほうが古いなら、前のキャッシュを押し出している＝作り直しに失敗している。
-  if (builtAt && pushedAt) {
-    var gap = Math.round((pushedAt - builtAt) / 1000);
-    out.push('   ①→②の差: ' + gap + '秒 '
-      + (gap >= 0 && gap <= 120 ? '（✅ 作ってから押している）'
-         : gap < 0 ? '（★押し出しのほうが古い＝作り直しだけ走った）'
-         : '（★' + Math.round(gap / 60) + '分ぶん古いカレンダーを押し出している）'));
+  //   ②と③がほぼ同じなら「作ってから押す」が効いている。
+  //   ②のほうが古いなら、前のキャッシュを押し出している＝作り直しに失敗している。
+  if (sentBuiltAt && pushedAt) {
+    var gap = Math.round((pushedAt - sentBuiltAt) / 1000);
+    out.push('   ②→③の差: ' + gap + '秒 '
+      + (gap >= 0 && gap <= 180 ? '（✅ 作ってから押している）'
+         : gap < 0 ? '（★記録が前後している。要調査）'
+         : '（★' + Math.round(gap / 60) + '分ぶん古いカレンダーを送っている）'));
+  } else if (!sentBuiltAt) {
+    out.push('   ★「送った枠がいつのカレンダーか」の記録がありません。');
+    out.push('     作り直しに失敗して前のキャッシュを送った回だけが続いている可能性があります。');
   }
   out.push('');
 
