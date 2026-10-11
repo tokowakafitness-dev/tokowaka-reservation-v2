@@ -250,8 +250,9 @@ console.log('=== 10. ★待ち行列が壊れたとき（Codex関門②）===');
   ok('⑩人数の上限が容量に収まる値',
     /MAX_QUEUE: 80,/.test(DW),
     '200名だと全部取り置き中で16.6KB。Script Properties の上限9KBを超える');
+  //   ★2026-10-11：数え方と上限を共通化した（修復の巡回でも同じ数え方で測るため）。
   ok('⑩★書く直前にバイト数も見る',
-    /var LIMIT = 8500;/.test(DW) && /_bytes\(json\) > LIMIT/.test(DW),
+    /var LB_DW_QUEUE_BYTES_LIMIT = 8500;/.test(DW) && /_lbDwBytes\(json\) > LIMIT/.test(DW),
     '人数だけでは守れない（項目が増える・顧客IDが長くなる）。'
     + '文字数で測ると、日本語など1文字が複数バイトの値が入ったとき足りない');
   ok('⑩容量で捨てたぶんも記録する',
@@ -281,9 +282,13 @@ console.log('=== 11. ★1回の実行が長くなりすぎないこと（Codex�
     '1名が重いと、人数の上限内でも6分に届く');
   ok('⑪かかった時間を記録する（実機で測れるようにする）',
     /ms: ms/.test(DW) && /Logger\.log\('\[dw\] ' \+ ms \+ 'ms/.test(DW));
+  //   ★2026-10-11：あいだに「遅れている会員の巡回」が入った（設計16）。
+  //     それぞれ別の try で囲まれていることが要点なので、間隔を広げる。
   ok('⑪★心拍は押し出しが落ちても動く',
-    /try \{ pushToEdgeAll\(false\); \} catch[\s\S]{0,400}?try \{ lbDualWriteDrain\(\); \}/.test(PE),
+    /try \{ pushToEdgeAll\(false\); \} catch[\s\S]{0,1600}?try \{ lbDualWriteDrain\(\); \}/.test(PE),
     '同じ try に入れると、押し出しが落ちると心拍まで届かない');
+  ok('⑪★巡回も別の try（落ちても心拍は動く）',
+    /try \{ lbDwPullBehind\(\); \} catch[\s\S]{0,300}?try \{ lbDualWriteDrain\(\); \}/.test(PE));
 }
 
 console.log('=== 13. ★反映が入ったかを一目で確かめられること ===');

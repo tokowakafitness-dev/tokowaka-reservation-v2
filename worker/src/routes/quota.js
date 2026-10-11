@@ -358,6 +358,25 @@ export async function quotaStatus(request, env) {
       ).all();
       syncVersion.staleIds = (r.results || []).map((x) => `${x.customer_id} ${x.source_version}>${x.built_version}`);
     }
+
+    //   ★「何件あるか」だけでは居座りを見つけられない（2026-10-11・設計16）。
+    //
+    //     前日 5名 → 本日 5名 → 翌日 5名 は、増えも減りもしないので
+    //     「前日より増えた」では永久に鳴らない。だが同じ5名が居座っているのは
+    //     まさに検知したい状態である。**滞留の長さ**を見る。
+    //
+    //   ★`source_at` は NULL を許し、既存データへ世代を後付けした migration 0017 は
+    //     NULL で作っている。SQL の MIN() は NULL を無視するので、
+    //     **全部 NULL だと滞留が判定できない**。それを別に数えて異常として扱う
+    //     （「時刻が無いから新しい扱い」ではなく「判定できないから警告」へ倒す）。
+    const st = await env.DB.prepare(
+      `SELECT MIN(source_at) AS oldest,
+              SUM(CASE WHEN source_at IS NULL THEN 1 ELSE 0 END) AS noAt
+         FROM customer_sync_version
+        WHERE source_version > built_version`
+    ).first();
+    syncVersion.behindOldestSourceAt = st?.oldest == null ? null : Number(st.oldest);
+    syncVersion.behindSourceAtMissing = Number(st?.noAt || 0);
   } catch (e) {
     syncVersion = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
   }

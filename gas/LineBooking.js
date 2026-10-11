@@ -1853,7 +1853,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-11a トリガーの第1引数がイベントで dryRun が常に真だった（点検が一度も機能していなかった）';
+var LB_HEALTH_BUILD = '2026-10-11b 世代の追いつきを見張る（滞留・時刻欠落・容量不足）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2136,6 +2136,56 @@ function dailyHealthCheck(dryRunArg) {
           '🚨 押し出しの元栓（EDGE_PUSH_ON）が 1 ではありません。'
           + '写しの更新と二重書きが**丸ごと止まっています。**'
           + 'D1は止まった時点の値で固まります。Script Properties で EDGE_PUSH_ON を 1 にしてください。');
+    }
+  } catch (e) {}
+
+  _step('世代の追いつき');
+  // ---- 作り直しが追いついていない会員が居座っていないか（2026-10-11・設計16）----
+  //
+  //   ★「何件あるか」だけでは居座りを見つけられない。
+  //     前日5名 → 本日5名 → 翌日5名 は増えも減りもしないので「前日より増えた」では
+  //     永久に鳴らない。だが同じ5名が居座っているのはまさに検知したい状態である。
+  //     だから**滞留の長さ**（いちばん古い source_at）を主に見る。
+  //
+  //   ★検知は最長およそ30時間遅れる。点検は7時に1回だけなので、
+  //     4時に遅れ始めた会員は7時には3時間で鳴らず、次の点検は翌日7時になる。
+  //     いまは許容する（遅れていること自体は顧客に害が無い＝写しへ落ちるだけ）。
+  //
+  //   ★倒れる向き：時刻が無い（source_at が NULL）ときは「新しい扱い」にしない。
+  //     滞留を判定できないので**警告**へ倒す。
+  try {
+    var _svSt = _edgeQuotaStatus('');
+    var _sv = (_svSt && _svSt.syncVersion) || null;
+    if (_sv && _sv.table === 'ok') {
+      var _behind = Number(_sv.stale || 0);
+      add('gen_behind', 'D1', 'info', _behind, '作り直しが追いついていない会員の数');
+
+      var _oldest = (_sv.behindOldestSourceAt == null) ? null : Number(_sv.behindOldestSourceAt);
+      if (_behind && _oldest) {
+        var _hrs = Math.floor((Date.now() - _oldest) / 3600000);
+        if (_hrs >= 6) {
+          add('gen_behind_stuck', 'D1', 'warn', _behind,
+              'いちばん古い会員が ' + _hrs + '時間 追いつけていません。'
+              + '巡回（15分ごとに2名）が回っていれば、40名でも約5時間で追いつきます。'
+              + '回っていないか、同じ会員が何度やっても作り直せていない可能性があります。');
+        }
+      }
+      var _noAt = Number(_sv.behindSourceAtMissing || 0);
+      if (_noAt) {
+        add('gen_behind_no_time', 'D1', 'warn', _noAt,
+            '遅れている会員のうち ' + _noAt + '名は「いつ入力が進んだか」の記録がありません。'
+            + '滞留しているかを判定できません（migration 0017 で後付けした行は時刻が空です）。');
+      }
+    }
+  } catch (e) {}
+
+  //   ★容量で積めなかった回数（増え続けていたら修復が永久に回っていない）
+  try {
+    var _capSkip = Number(_lbProp('LB_DW_BEHIND_SKIPPED_CAPACITY') || 0);
+    if (_capSkip) {
+      add('gen_behind_capacity', 'D1', 'warn', _capSkip,
+          '待ち行列に空きが無くて、遅れている会員を積めなかった回数（累計）。'
+          + '増え続けているなら、実データの変更が詰まっていて修復が回っていません。');
     }
   } catch (e) {}
 

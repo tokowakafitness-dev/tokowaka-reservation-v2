@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-11b 枠は作り直してから押す（作り直しはロックの外・builtAt・見送りを記録）';
+var LB_EDGE_BUILD = '2026-10-11c 遅れている会員を拾ってキューに積む（栞・容量ガード・状態で返す）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -1199,6 +1199,12 @@ function pushToEdgeLight() {
   //   二重書きの心拍まで届かない。**「15分ごとに必ず再送する」が嘘になる。
   try { pushToEdgeAll(false); } catch (e) { Logger.log('[edge] 押し出しで例外: ' + (e && e.message)); }
   try { _edgeHealJobTrigger(); } catch (e) { Logger.log('[edge] 見回りの回復で例外: ' + (e && e.message)); }
+  //   ★遅れている会員を拾ってキューに積む（2026-10-11・設計16）。
+  //     drain の**前**に置く。積んだぶんがこの回の drain で処理され始める。
+  //     ★キューが空かどうかを条件にしない。`todo` が空でも「全員が取り置き中」のことがあり、
+  //       キューが空にならない運用では修復が永久に走らない（関門①の指摘）。
+  //     ★別の try で囲む。ここが落ちても drain は動かす。
+  try { lbDwPullBehind(); } catch (e) { Logger.log('[dw] 遅れている会員の巡回で例外: ' + (e && e.message)); }
   // 二重書きの心拍：速い道（_lbCalSyncAfterWrite）が働かなかったぶんを15分ごとに拾う。
   //   新しいトリガーを作らないためにここへ相乗りする（上限20本・設計第4節）。
   try { lbDualWriteDrain(); } catch (e) { Logger.log('[dw] 心拍で例外: ' + (e && e.message)); }
@@ -2721,26 +2727,31 @@ function _lbDwReadQueue() {
 //   ★9KBを超えたら古い順に落としてから書く（2026-10-08・Codex関門②）。
 //     人数の上限だけでは守れない（項目が増えたり顧客IDが長くなったりする）。
 //     溢れたぶんは記録する（黙って捨てない）。
+// キューの大きさをバイトで測る（2026-10-11・設計16で共通化）。
+//   ★数え方を2箇所に書かない。片方だけ直した日に黙ってずれる。
+var LB_DW_QUEUE_BYTES_LIMIT = 8500;   // 9KBに対する余裕（★この数字も1箇所にする）
+
+function _lbDwBytes(str) {
+  var n = 0;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF) { n += 4; i++; }   // 4バイト文字（上位・下位の対）
+    else n += 3;
+  }
+  return n;
+}
+
 function _lbDwWriteQueue(q, protectIds) {
-  var LIMIT = 8500;   // 9KBに対する余裕
+  var LIMIT = LB_DW_QUEUE_BYTES_LIMIT;
   var json = JSON.stringify(q);
   var dropped = [];
   //   ★見るのは**バイト数**（2026-10-08・Codex関門②の4回目）。
   //     JSONの文字数で測ると、日本語など1文字が複数バイトになる値が入ったとき足りない。
   //     いまの顧客IDは 'C'＋数字14桁なので文字数＝バイト数だが、
   //     将来ほかの文字が入っても守れるようにしておく。
-  function _bytes(str) {
-    var n = 0;
-    for (var i = 0; i < str.length; i++) {
-      var c = str.charCodeAt(i);
-      if (c < 0x80) n += 1;
-      else if (c < 0x800) n += 2;
-      else if (c >= 0xD800 && c <= 0xDBFF) { n += 4; i++; }   // 4バイト文字（上位・下位の対）
-      else n += 3;
-    }
-    return n;
-  }
-  if (_bytes(json) > LIMIT) {
+  if (_lbDwBytes(json) > LIMIT) {
     //   ★取り置いた会員は**最後まで残す**（2026-10-08・Codex関門②の3回目）。
     //     取り置きも容量削りも「古い順」なので、素朴に削ると
     //     **いま取り置いた会員が最初に捨てられる。**
@@ -2754,7 +2765,7 @@ function _lbDwWriteQueue(q, protectIds) {
     for (var a = 0; a < keys.length; a++) if (!protect[keys[a]]) order.push(keys[a]);
     for (var b = 0; b < keys.length; b++) if (protect[keys[b]]) order.push(keys[b]);
     //   ★1件だけでも超えるなら、その1件も捨てる（keys.length > 1 だと守れない）
-    while (_bytes(json) > LIMIT && order.length) {
+    while (_lbDwBytes(json) > LIMIT && order.length) {
       var k = order.shift();
       delete q[k]; dropped.push(k);
       json = JSON.stringify(q);
@@ -2771,6 +2782,188 @@ function _lbDwWriteQueue(q, protectIds) {
 // その会員を待ち行列に積む。既に居れば version を上げる。
 //   ★「読む→直す→書く」の全体をロックで囲む。個々の setProperty は原子的だが、
 //     全体は原子的ではない。囲わないと並行予約で会員IDが失われる。
+/**
+ * 遅れている会員を「いなければ足す」だけ（修復専用・2026-10-11・設計16）
+ *
+ *   ★なぜ lbDwEnqueue を使わないのか（関門①の指摘）
+ *     lbDwEnqueue は**冪等ではない**。既にいる会員に対しても
+ *       version   +1 される
+ *       queuedAt  いまの時刻に押し直される
+ *     を行う。これは「実データが変わった」という通知なので正しい。だが修復では害になる：
+ *       ① 処理中の会員をもう一度積むと version が合わなくなり、
+ *          作り直しが成功していても「やり直し」と判定される（成功した仕事を捨てる）
+ *       ② 取り出しは queuedAt の古い順。押し直すと**列の後ろへ送られる**
+ *          ＝取消を早く伝えるべき会員が待たされる
+ *
+ *   ★容量は2つとも見る（人数だけでは守れない）
+ *     溢れると _lbDwWriteQueue が古い順に捨てる。古い＝先に待っていた予約・取消の会員。
+ *     **修復を積むためにそれを捨てては本末転倒**なので、
+ *     「超えたら足さない」（削って収めない）に倒す。
+ *
+ *   @param customerIds 会員IDの配列
+ *   @return { status, added, missing } … status は呼ぶ側が栞を進めるかの判断に使う
+ *       ADDED / EXISTS / CAPACITY        → 栞を進める
+ *       BROKEN / LOCKED / WRITE_FAILED   → 栞を進めない（進めると1周まで再試行されない）
+ */
+var LB_DW_BEHIND_PROP = 'LB_DW_BEHIND_AFTER';            // 巡回の栞（最後に見た customer_id）
+var LB_DW_BEHIND_SKIP_PROP = 'LB_DW_BEHIND_SKIPPED_CAPACITY';   // 容量で積めなかった回数
+var LB_DW_BEHIND_N = 2;   // 1回に拾う人数（★drainは1回5名。実データに3枠残す）
+
+/**
+ * 作り直しが追いついていない会員を、**キューに積むだけ**（2026-10-11・設計16）
+ *
+ *   ★作り直さない。積むだけ。
+ *     作り直しは既存の drain が行う（台帳を読む → 計算入力をD1へ送る → 正しい範囲で作り直す）。
+ *     ここで自分で作り直そうとすると、入力がまだ届いていない窓で
+ *     **古い入力に「最新」の印を付ける**（＝顧客の残数が1回多く見える）。
+ *     関門①でこの穴を作りかけて止められた。
+ *
+ *   ★なぜ要るのか
+ *     `calcMeta`（契約表の列の並び）が一度でも本当に変わると、全員の世代が進む。
+ *     キューに積むのは「その会員に何か起きたとき」の3箇所だけなので、
+ *     活動のない会員は正当な変更のあとも**永久に追いつかない**。
+ *
+ *   ★順序の契約
+ *     ① 栞を読む（ロックの外）
+ *     ② WorkerへGET（★通信中はロックを持たない）
+ *     ③ ロックを取る → 栞が②の時点と変わっていたら**結果を捨てて次回へ**
+ *     ④ キューを書く → 成功を確かめる → **最後に栞を書く**
+ *        逆だと「キューを書けず栞だけ進む」＝その区間が1周まで飛ばされる
+ */
+function lbDwPullBehind() {
+  if (!_edgeEnabled()) return { skipped: 'EDGE_OFF' };
+  var url = _edgeProp('EDGE_URL');
+  var secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return { skipped: 'NOT_CONFIGURED' };
+
+  var before = '';
+  try { before = String(_edgeProp(LB_DW_BEHIND_PROP) || ''); } catch (e) { before = ''; }
+
+  var body;
+  try {
+    var res = UrlFetchApp.fetch(
+      url.replace(/\/+$/, '') + '/quota/behind?limit=' + LB_DW_BEHIND_N
+        + '&after=' + encodeURIComponent(before),
+      { method: 'get', headers: { 'X-Ingest-Secret': secret }, muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) {
+      Logger.log('[dw] 遅れている会員を引けません（HTTP ' + res.getResponseCode() + '）');
+      return { skipped: 'HTTP_' + res.getResponseCode() };       // ★栞を進めない
+    }
+    body = JSON.parse(res.getContentText());
+  } catch (e) {
+    Logger.log('[dw] 遅れている会員を引けません: ' + (e && e.message));
+    return { skipped: 'FETCH_FAILED' };                          // ★栞を進めない
+  }
+  if (!body || body.ok !== true) {
+    Logger.log('[dw] 遅れている会員を読めません: ' + (body && body.code));
+    return { skipped: (body && body.code) || 'BAD_BODY' };       // ★栞を進めない
+  }
+
+  var ids = body.customerIds || [];
+  //   末尾に到達（返りが limit 未満）→ 栞を空に戻して次は先頭から
+  var nextCursor = body.done ? '' : String(body.next || '');
+
+  //   ★ロックの中で「栞の再確認 → キュー → 栞」を行う
+  var r = _lbDwLocked(function () {
+    var now = '';
+    try { now = String(_edgeProp(LB_DW_BEHIND_PROP) || ''); } catch (e) { now = ''; }
+    if (now !== before) return { status: 'CURSOR_CHANGED' };      // 別の実行が先に進めた
+
+    var er = { status: 'EXISTS', added: 0 };
+    if (ids.length) {
+      //   ★ロックの中で二重に取らない。_lbDwEnsureQueuedInLock が中身を行う
+      er = _lbDwEnsureQueuedInLock(ids);
+      if (er.status === 'BROKEN' || er.status === 'WRITE_FAILED') return er;   // 栞を進めない
+      if (er.status === 'CAPACITY') {
+        try {
+          var p = PropertiesService.getScriptProperties();
+          p.setProperty(LB_DW_BEHIND_SKIP_PROP,
+            String(Number(p.getProperty(LB_DW_BEHIND_SKIP_PROP) || 0) + 1));
+        } catch (e2) {
+          //   ★握り潰さない（2026-10-11・関門②の指摘）。
+          //     数えられなかった回は、容量不足を**見張れない回**になる。
+          Logger.log('[dw] 容量不足の回数を記録できませんでした（この回は見張りに出ません）: '
+                     + (e2 && e2.message));
+        }
+      }
+    }
+    //   ★栞は最後。ADDED / EXISTS / CAPACITY のときだけ進める
+    try { PropertiesService.getScriptProperties().setProperty(LB_DW_BEHIND_PROP, nextCursor); }
+    catch (e3) {
+      //   ★状態を分けて返す（2026-10-11・関門②の指摘）。
+      //     正しさは壊れない（栞が古いまま＝次回同じ区間を取り直し、
+      //     EnsureQueued は既存項目を触らない）。だが元の状態を返すと
+      //     **ログ上は栞が進んだように見える**ので、診断で迷う。
+      return { status: 'CURSOR_WRITE_FAILED', added: er.added || 0, inner: er.status,
+               detail: (e3 && e3.message) };
+    }
+    return { status: er.status, added: er.added || 0 };
+  });
+  if (r === null) return { status: 'LOCKED' };                   // ★栞を進めない
+
+  //   ★栞が実際に進んだのかを、嘘なく出す。
+  var moved = (r.status !== 'CURSOR_CHANGED' && r.status !== 'CURSOR_WRITE_FAILED'
+               && r.status !== 'BROKEN' && r.status !== 'WRITE_FAILED');
+  Logger.log('[dw] 遅れている会員 ' + ids.length + '名を拾いました（' + r.status
+             + (r.inner ? '/' + r.inner : '')
+             + '／積んだ ' + (r.added || 0) + '名／栞 '
+             + (moved ? '"' + before + '" → "' + nextCursor + '"'
+                      : '"' + before + '" のまま（進めていません）') + '）');
+  return { status: r.status, pulled: ids.length, added: r.added || 0,
+           oldestSourceAt: body.oldestSourceAt == null ? null : Number(body.oldestSourceAt) };
+}
+
+function lbDwEnsureQueued(customerIds) {
+  var ids = [];
+  for (var i = 0; i < (customerIds || []).length; i++) {
+    var cid = String(customerIds[i] || '').replace(/^\s+|\s+$/g, '');
+    if (cid) ids.push(cid);
+  }
+  if (!ids.length) return { status: 'EXISTS', added: 0, missing: 0 };
+
+  var r = _lbDwLocked(function () { return _lbDwEnsureQueuedInLock(ids); });
+  //   ロックが取れなかった（_lbDwLocked が null を返す）
+  if (r === null) return { status: 'LOCKED', added: 0, missing: 0 };
+  return r;
+}
+
+//   ★ロックの中身だけを切り出す（2026-10-11）。
+//     修復の巡回は「栞の再確認 → キュー → 栞」を**ひとつのロック区間**で行う必要があり、
+//     ロックを二重に取ると（GASのScript Lockは再入可能でも）区間が分かれて意味が消える。
+function _lbDwEnsureQueuedInLock(ids) {
+  {
+    var q = _lbDwReadQueue();
+    if (q === null) return { status: 'BROKEN', added: 0, missing: 0 };
+
+    //   まだキューにいない人だけを数える（2名とも既にいれば増える人数は0）
+    var missing = [];
+    for (var k = 0; k < ids.length; k++) if (!q[ids[k]]) missing.push(ids[k]);
+    if (!missing.length) return { status: 'EXISTS', added: 0, missing: 0 };
+
+    //   ① 人数：実データ用に枠を残す
+    var room = LB_DW.MAX_QUEUE - 10;
+    if (Object.keys(q).length + missing.length > room) {
+      return { status: 'CAPACITY', added: 0, missing: missing.length, why: 'count' };
+    }
+
+    //   ② バイト数：足したあとの大きさを**書く前に**測る
+    var probe = {};
+    for (var a in q) probe[a] = q[a];
+    for (var b = 0; b < missing.length; b++) probe[missing[b]] = { version: 1, queuedAt: Date.now() };
+    if (_lbDwBytes(JSON.stringify(probe)) > LB_DW_QUEUE_BYTES_LIMIT) {
+      return { status: 'CAPACITY', added: 0, missing: missing.length, why: 'bytes' };
+    }
+
+    //   ★新規の形は固定する。leaseUntil は付けない（取り置きは _lbDwClaim の役目）。
+    //     version は 1 から。あとで実データの変更が来れば 1→2 になり、
+    //     処理中なら確実に「やり直し」になる＝実データの変更が修復に埋もれない。
+    for (var c = 0; c < missing.length; c++) q[missing[c]] = { version: 1, queuedAt: Date.now() };
+    try { _lbDwWriteQueue(q); }
+    catch (e) { return { status: 'WRITE_FAILED', added: 0, missing: missing.length, detail: (e && e.message) }; }
+    return { status: 'ADDED', added: missing.length, missing: missing.length };
+  }
+}
+
 function lbDwEnqueue(customerId) {
   var cid = String(customerId || '').replace(/^\s+|\s+$/g, '');
   if (!cid) return false;
