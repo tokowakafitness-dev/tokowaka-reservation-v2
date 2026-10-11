@@ -233,15 +233,22 @@ async function ingest(request, env) {
   //   ただし deleteStale（1日1回の完全同期）のときは、全行を書く。
   //   古い行を消す判断に synced_at を使うため、書かないと消えてしまう。
   const full = body.deleteStale === true;
+  //   ★完全同期のときも「いまの中身」を読む（2026-10-11・設計16）。
+  //
+  //     以前は full のとき読まなかった。全行を書くので比べる必要が無いからである。
+  //     ところが**世代を進めるかどうかも同じ条件で判定していた**ため、
+  //     毎晩4時の完全同期が「変わっていない行」まで全会員の世代を進めていた。
+  //     その結果、追いついている会員が 40名 → 3名 に落ちた（実測）。
+  //
+  //     ここで読む目的は**書くかどうかではなく、世代を進めるかどうか**である。
+  //     表1つにつき1日1回の SELECT なので安い（読み取りは1日500万行まで無料）。
   let existing = {};
-  if (!full) {
-    try {
-      const cur = await env.DB.prepare(
-        `SELECT ${conf.cols.join(', ')} FROM ${conf.table}`
-      ).all();
-      for (const row of (cur.results || [])) existing[String(row[conf.key])] = row;
-    } catch (_) { existing = {}; }   // 読めなければ全部書く（安全側）
-  }
+  try {
+    const cur = await env.DB.prepare(
+      `SELECT ${conf.cols.join(', ')} FROM ${conf.table}`
+    ).all();
+    for (const row of (cur.results || [])) existing[String(row[conf.key])] = row;
+  } catch (_) { existing = {}; }   // 読めなければ全部書く＋全部進める（安全側＝写しへ落ちる）
   const skipCmp = new Set(conf.skipCompare || []);
   const same = (a, b) => {
     if (!b) return false;
@@ -257,12 +264,18 @@ async function ingest(request, env) {
 
   const stmts = [];
   let skipped = 0;
+  //   ★「入力の中身が本当に変わったか」を、書いた文の数とは**別に**持つ（2026-10-11・設計16）。
+  //     stmts にはこの後ろに世代の文・削除の文が積まれる。
+  //     数で判断すると、積む順番を変えた日に静かに壊れる（関門①の指摘）。
+  let changedInput = false;
   for (const r of rows) {
     const key = r[conf.key];
     if (key == null || key === '') continue;          // 主キーのない行は捨てる
+    const unchanged = same(r, existing[String(key)]);
+    if (!unchanged) changedInput = true;
     //   ★scope:'customer' のときは「中身が同じ行」も必ず書く（2026-10-08・Codex関門①）。
     //     下で「この世代より古い行を消す」ので、書かないと**変わっていない正常な行が消える。**
-    if (!full && !replaceCustomer && same(r, existing[String(key)])) { skipped++; continue; }
+    if (!full && !replaceCustomer && unchanged) { skipped++; continue; }
     const vals = conf.cols.map((c) => (r[c] === undefined ? null : r[c])).concat([batchId]);
     stmts.push(env.DB.prepare(sql).bind(...vals));
   }
@@ -288,7 +301,12 @@ async function ingest(request, env) {
     for (const r of rows) {
       const key = r[conf.key];
       if (key == null || key === '') continue;
-      if (!full && !replaceCustomer && same(r, existing[String(key)])) continue;   // 書かなかった行
+      //   ★`!full` を外した（2026-10-11・設計16）。
+      //     「行を書くか」と「世代を進めるか」は**別の判断**である。
+      //       書く   … full なら全行書く（synced_at が古い行を消す判断に要る）
+      //       進める … 中身が変わった会員だけ（full でも same() を見る）
+      //     ここを同じ条件にしていたため、完全同期が毎晩全員を進めていた。
+      if (!replaceCustomer && same(r, existing[String(key)])) continue;   // 中身が変わっていない
       const cid = String(r.customer_id || '').trim();
       if (cid) touched[cid] = 1;
     }
@@ -301,8 +319,17 @@ async function ingest(request, env) {
       stmts.push(env.DB.prepare(st.sql).bind(...st.args));
       bumped++;
     }
-  } else if (affectsQuotaInputGlobally(kind) && stmts.length) {
+  } else if (affectsQuotaInputGlobally(kind) && changedInput) {
     //   会員で分かれていない入力（契約表の列の並び）。変わると全員の計算が変わる。
+    //
+    //   ★条件は `stmts.length` ではなく `changedInput`（2026-10-11・設計16）。
+    //     full のときは中身が同じでも必ず書くので `stmts.length > 0` が常に真になり、
+    //     **毎晩4時に全員の世代が進んでいた**（原因B）。
+    //
+    //   ★前提：`calcMeta` は正常に読めたなら必ず1行送られてくる。
+    //     送り手は読めなければリクエストごと送らない（PushToEdge.js の `m.length` 判定）。
+    //     ＝「行が消えた」は届かないので、ここでは扱えない。
+    //     この前提は検査で固定してある（worker/test/sync-version-converge.test.js）。
     const st = bumpAllSourceStatement(nowMs);
     stmts.push(env.DB.prepare(st.sql).bind(...st.args));
     bumped = -1;   // 全員（件数は数えない）

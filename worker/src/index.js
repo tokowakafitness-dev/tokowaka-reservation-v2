@@ -15,7 +15,7 @@ import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
 import { handleCalSync } from './routes/calsync.js';
 import { handleCalCompare } from './routes/calcompare.js';
-import { buildQuota, quotaStatus } from './routes/quota.js';
+import { buildQuota, quotaStatus, quotaBehind } from './routes/quota.js';
 import { verifyQuota } from './routes/quota-verify.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
@@ -136,6 +136,9 @@ export default {
     //   合言葉で守る。お客様のブラウザからは呼ばせない（CORSも許さない）。
     if (url.pathname === '/quota/build') return buildQuota(request, env);
     if (url.pathname === '/quota/status') return quotaStatus(request, env);
+    //   作り直しが追いついていない会員のID（読み取りだけ・設計16）。
+    //   呼ぶ側は積むだけ。ここでは作り直さない（古い入力に印を付ける窓を作らないため）。
+    if (url.pathname === '/quota/behind') return quotaBehind(request, env);
     // D1の枠と引当から出した残数が、計算と一致するか（読み取りだけ）。
     //   ★既存の /verify とは別物。あちらは「GASの計算 vs Workerの計算」で、
     //     同じコードを回すので合って当然。こちらは「計算 vs D1の行」を比べる。

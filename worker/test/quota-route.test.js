@@ -52,9 +52,29 @@ ok('③結果に生の顧客IDを入れない',
 ok('③氏名を出す経路が無い', !/customer_name|\.name\b/.test(ROUTE));
 
 // ---------- 4. ルーティングに繋がっている ----------
-ok('④2つの道が通っている',
-  /url\.pathname === '\/quota\/build'/.test(INDEX) && /url\.pathname === '\/quota\/status'/.test(INDEX));
-ok('④読み込まれている', /import \{ buildQuota, quotaStatus \} from '\.\/routes\/quota\.js';/.test(INDEX));
+ok('④3つの道が通っている',
+  /url\.pathname === '\/quota\/build'/.test(INDEX) && /url\.pathname === '\/quota\/status'/.test(INDEX)
+  && /url\.pathname === '\/quota\/behind'/.test(INDEX));
+ok('④読み込まれている', /import \{ buildQuota, quotaStatus, quotaBehind \} from '\.\/routes\/quota\.js';/.test(INDEX));
+
+// ---------- 4-b. behind の窓口（設計16・2026-10-11） ----------
+ok('④-b★合言葉が要る',
+  /export async function quotaBehind\(request, env\) \{\s*\n\s*const deny = requireSecret\(request, env\);/.test(ROUTE),
+  '顧客IDを返すため、お客様のブラウザからは呼ばせない');
+ok('④-b★遅れている会員だけ返す',
+  /source_version > built_version AND customer_id > \?/.test(ROUTE));
+ok('④-b★customer_id 順（巡回できる）', /ORDER BY customer_id LIMIT \?/.test(ROUTE));
+ok('④-b limit に上下限がある',
+  /Math\.min\(50, Math\.max\(1, Math\.trunc\(rawLimit\)\)\)/.test(ROUTE),
+  '渡し間違いで全員を引かせない');
+ok('④-b★ここでは作り直さない',
+  !/buildQuotaForCustomer/.test(ROUTE.slice(ROUTE.indexOf('export async function quotaBehind'))),
+  '古い入力に「最新」の印を付ける窓を作らないため、積むだけにする');
+ok('④-b 読めなければ ok:false を返す（落とさない）',
+  /code: 'READ_FAILED'/.test(ROUTE));
+ok('④-b★末尾に到達したことを呼ぶ側へ伝える',
+  /done: rows\.length < limit/.test(ROUTE),
+  '栞を先頭へ戻す判断に使う');
 
 // ---------- 5. ★used に触れない（設計の不変条件） ----------
 ok('⑤★更新で used を書き換えない',

@@ -290,11 +290,14 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
   ok('⑧-b★地図が「進むとは限らない」と書いている',
      /`source_version` が進むとは限らない/.test(DOC)
      && /実際にD1へ書いた会員だけ source_version が進む/.test(DOC));
-  ok('⑧-b★その根拠（書かなかった行は数えない）',
-     /if \(!full && !replaceCustomer && same\(r, existing\[String\(key\)\]\)\) continue;   \/\/ 書かなかった行/.test(rd('worker/src/routes/ingest.js')));
-  ok('⑧-b★完全同期なら全行を書く（だから進む）',
+  //   ★2026-10-11（設計16）：「完全同期なら全員進む」も**事実と違っていた**（正しくなくなった）。
+  //     完全同期は全行を書くが、**中身が変わった会員しか世代は進まない**ようにした。
+  //     以前は毎晩4時に全員が進み、追いつく会員が 40名 → 3名 に落ちていた。
+  ok('⑧-b★その根拠（中身が変わった会員だけ進む）',
+     /if \(!replaceCustomer && same\(r, existing\[String\(key\)\]\)\) continue;   \/\/ 中身が変わっていない/.test(rd('worker/src/routes/ingest.js')));
+  ok('⑧-b★完全同期でも「変わっていなければ進まない」',
      /const full = body\.deleteStale === true;/.test(rd('worker/src/routes/ingest.js'))
-     && /削除まで確定するのは\*\*日次の完全同期\*\*/.test(DOC));
+     && /完全同期でも、中身が変わっていなければ `source_version` は進まない/.test(DOC));
   ok('⑧-b★後付けの手順（bootstrap）が書いてある',
      /世代表を既存の入力へ後付けするとき/.test(DOC)
      && /既存の 0\/0 の行も 1\/0 に直す/.test(DOC));

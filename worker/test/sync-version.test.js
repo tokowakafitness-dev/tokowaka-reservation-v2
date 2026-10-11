@@ -224,8 +224,22 @@ ok('⑥-b★古い作り直しで built_at が動かない',
   ok('⑧★行の書き込みと同じ batch に入れる',
      /stmts\.push\(env\.DB\.prepare\(st\.sql\)\.bind\(\.\.\.st\.args\)\)/.test(IG),
      '別の batch にすると「行は書けたが世代は増えていない」状態が残る');
-  ok('⑧実際に書いた行だけ数える',
-     /if \(!full && !replaceCustomer && same\(r, existing\[String\(key\)\]\)\) continue;   \/\/ 書かなかった行/.test(IG));
+  //   ★2026-10-11（設計16）：ここは `!full` を**外した**。
+  //     「行を書くか」と「世代を進めるか」は別の判断である。
+  //     以前は同じ条件だったため、毎晩4時の完全同期が
+  //     変わっていない行まで全会員の世代を進めていた（追いつく会員が40名→3名）。
+  ok('⑧中身が変わった会員だけ進める（fullでも same を見る）',
+     /if \(!replaceCustomer && same\(r, existing\[String\(key\)\]\)\) continue;   \/\/ 中身が変わっていない/.test(IG),
+     '!full が付いていると完全同期が全員を進める');
+  ok('⑧★full でも「いまの中身」を読む',
+     !/if \(!full\) \{\s*\n\s*try \{\s*\n\s*const cur = await env\.DB\.prepare\(/.test(IG),
+     '読まないと比べられず、full のとき全員が進む');
+  ok('⑧★全員進めは書いた文の数で判断しない',
+     /affectsQuotaInputGlobally\(kind\) && changedInput/.test(IG)
+     && !/affectsQuotaInputGlobally\(kind\) && stmts\.length/.test(IG),
+     'stmts には後ろに世代の文・削除の文が積まれる。数で判断すると順番を変えた日に壊れる');
+  ok('⑧★変わったかどうかは独立した印で持つ',
+     /let changedInput = false;/.test(IG) && /if \(!unchanged\) changedInput = true;/.test(IG));
   ok('⑧★scope:customer は0件でも進める',
      /if \(replaceCustomer && onlyCustomer\) touched\[onlyCustomer\] = 1;/.test(IG),
      '全件取り消された状態は正常。送られてこないこと自体が入力の変化');

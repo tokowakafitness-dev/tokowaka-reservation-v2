@@ -476,3 +476,61 @@ function json(obj, status = 200) {
     status, headers: { 'content-type': 'application/json; charset=utf-8' },
   });
 }
+
+/**
+ * GET /quota/behind … 作り直しが追いついていない会員のIDを返す（2026-10-11・設計16）
+ *
+ *   ★読み取りだけ。ここでは作り直さない。
+ *     呼ぶ側（GAS）はこのIDを**待ち行列に積むだけ**で、
+ *     作り直しは既存の drain が行う（台帳を読む → 計算入力を送る → 正しい範囲で作り直す）。
+ *     自分で作り直そうとすると、入力がまだ届いていない窓で
+ *     **古い入力に「最新」の印を付ける**（＝顧客の残数が1回多く見える）。
+ *
+ *   ★巡回できるようにする。`after` より大きいIDを customer_id 順で返す。
+ *     先頭の会員がいつも失敗しても、1周すれば後ろの会員に届く（飢えない）。
+ *
+ *   ★除外しない。契約入力が無くなった会員や、何度やっても作り直せない会員も返す。
+ *     除外すると本当の異常を隠す。
+ *
+ *   合言葉が要る。顧客IDを返すため、お客様のブラウザからは呼ばせない。
+ */
+export async function quotaBehind(request, env) {
+  const deny = requireSecret(request, env);
+  if (deny) return deny;
+  const url = new URL(request.url);
+
+  //   上限と下限を固定する。渡し間違いで全員を引かせない。
+  const rawLimit = Number(url.searchParams.get('limit') || 5);
+  const limit = Number.isFinite(rawLimit) ? Math.min(50, Math.max(1, Math.trunc(rawLimit))) : 5;
+  const after = (url.searchParams.get('after') || '').trim();
+
+  try {
+    const r = await env.DB.prepare(
+      `SELECT customer_id, source_version, built_version, source_at
+         FROM customer_sync_version
+        WHERE source_version > built_version AND customer_id > ?
+        ORDER BY customer_id LIMIT ?`
+    ).bind(after, limit).all();
+    const rows = r.results || [];
+    return jsonRes({
+      ok: true,
+      after,
+      limit,
+      // 呼ぶ側はこれを積む。IDの順に並んでいる
+      customerIds: rows.map((x) => String(x.customer_id)),
+      // 栞を進める先。返りが limit 未満なら末尾に到達した＝呼ぶ側は栞を空へ戻す
+      next: rows.length ? String(rows[rows.length - 1].customer_id) : '',
+      done: rows.length < limit,
+      // 滞留の判断に使う（時刻が無い行もあるので null をそのまま返す）
+      oldestSourceAt: rows.reduce((m, x) => {
+        const v = x.source_at == null ? null : Number(x.source_at);
+        if (v == null) return m;
+        return m == null ? v : Math.min(m, v);
+      }, null),
+    });
+  } catch (e) {
+    //   表が無い（migration 未適用）場合もここに来る。落とさず「読めなかった」と返す。
+    //   ★呼ぶ側は栞を進めない（進めると、その区間が1周するまで飛ばされる）。
+    return jsonRes({ ok: false, code: 'READ_FAILED', detail: String((e && e.message) || e).slice(0, 200) });
+  }
+}
