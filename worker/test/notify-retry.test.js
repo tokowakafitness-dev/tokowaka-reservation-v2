@@ -413,6 +413,17 @@ console.log('=== 3. 公開窓口に個人情報を出さない（N7）===');
     const t2 = rem.ctx.notifyFailsText(14);
     ok('3-7 ★リマインドの候補は状態で絞らない（送った後に取り消された予約も対象だった）', /翌日の予約・リマインドの対象）: 2件/.test(t2) && /status=cancelled/.test(t2));
   }
+  {
+    // ★日付セルが日付型で返っても、直近N日の絞り込みが効く（2026-10-13 本番で効いていなかった）
+    const old = new Date(T0 - 28 * 24 * 60 * MIN);   // 9/15 相当
+    const d1 = makeEnv({ metrics: [
+      [old, old, 'NOTIFY_FAIL_HTTP_429', 'push', ''],                                             // 日付型で返るセル
+      [fmt(new Date(T0), 'yyyy/MM/dd HH:mm:ss'), fmt(new Date(T0), 'yyyy-MM-dd'), 'NOTIFY_FAIL_HTTP_429', 'booking_customer', ''],
+    ] });
+    const t3 = d1.ctx.notifyFailsText(1);
+    ok('3-8 ★日付型のセルも「直近1日」で正しく外れる', /失敗の行: 1件/.test(t3) && !/用途=push/.test(t3),
+       'String(Date) は曜日の英字で始まり、数字の日付より常に大きいと判定されていた');
+  }
   ok('3-6 送り直しの状態が出る', /送り直しの状態: 待ち 0件 ／ オーナー未通知 1件/.test(txt));
 }
 

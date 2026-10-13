@@ -1854,7 +1854,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-13b 届かなかった通知を積んで送り直し、駄目ならオーナーへメール（設計17）';
+var LB_HEALTH_BUILD = '2026-10-13c 実測記録の日付の絞り込みが効いていなかった（9/15の4件を毎日数えていた）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -4230,6 +4230,19 @@ var LB_NQ = {
 };
 function _lbNqCol(name) { return LB_NQ.HEAD.indexOf(name); }
 
+// 記録の日付セルを 'yyyy-MM-dd' にそろえる。
+//   ★スプレッドシートは '2026-09-15' という文字列を書くと**日付型に変える**。読むと Date が返り、
+//     String(Date) は 'Tue Sep 15 2026 …' になる。これを '2026-10-12' と文字で比べると**常に新しい側**に入る。
+//     そのため booking_metrics の「直近N日」の絞り込みが効かず、9/15（無料枠を使い切った日）の4件を
+//     **毎朝「昨日のLINE未達4件」と数え続けていた**（2026-10-13 実測で確定）。存在しない失敗に2回対処した。
+function _lbDateKey(v) {
+  if (v && typeof v.getTime === 'function') {
+    var t = v.getTime();
+    return isFinite(t) ? Utilities.formatDate(v, SETTINGS.TIMEZONE, 'yyyy-MM-dd') : '';
+  }
+  return String(v == null ? '' : v).slice(0, 10);
+}
+
 // 用途ごとの扱い（設計17 §2）
 //   'single' … 1件の予約に紐づく。予約IDなどが揃っていれば送り直す
 //   'alert'  … 送り直さずオーナーへ（複数の予約をまとめた通知・予約に紐づかない通知）
@@ -4713,7 +4726,7 @@ function notifyFailsText(days) {
     var w = Math.max(5, msh.getLastColumn());
     var mv = msh.getRange(2, 1, msh.getLastRow() - 1, w).getValues();
     for (var i = 0; i < mv.length; i++) {
-      if (String(mv[i][1]) < cutoff) continue;
+      if (_lbDateKey(mv[i][1]) < cutoff) continue;
       var oc = String(mv[i][2] || '');
       if (oc.indexOf('NOTIFY_FAIL_') !== 0) continue;
       fails.push({ ts: mv[i][0], reason: oc.slice('NOTIFY_FAIL_'.length), purpose: String(mv[i][3] || ''), detail: String(mv[i][4] || '') });
@@ -8025,7 +8038,7 @@ function getNotifyFailDetails(sinceDays) {
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, w).getValues();
   var out = {};
   for (var i = 0; i < v.length; i++) {
-    if (String(v[i][1]) < cutoff) continue;
+    if (_lbDateKey(v[i][1]) < cutoff) continue;
     var oc = String(v[i][2] || '');
     if (oc.indexOf('NOTIFY_FAIL_') !== 0) continue;
     var rs = oc.slice('NOTIFY_FAIL_'.length) || '?';
@@ -8044,7 +8057,7 @@ function getBookingMetrics(sinceDays) {
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
   var byOutcome = {}, byChannel = {}, total = 0, nfTotal = 0, nfByReason = {}, nfByPurpose = {};
   for (var i = 0; i < v.length; i++) {
-    if (String(v[i][1]) < cutoff) continue;   // yyyy-MM-dd の辞書比較＝時系列比較
+    if (_lbDateKey(v[i][1]) < cutoff) continue;   // yyyy-MM-dd の辞書比較＝時系列比較（★日付型のセルはそろえてから）
     var oc = String(v[i][2] || '?'), ch = String(v[i][3] || '?');
     if (oc.indexOf('NOTIFY_FAIL_') === 0) {   // 通知失敗は予約成否と別勘定（成功率を歪めない）
       var rs = oc.slice('NOTIFY_FAIL_'.length) || '?';
