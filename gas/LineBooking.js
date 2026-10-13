@@ -1853,7 +1853,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-11b 世代の追いつきを見張る（滞留・時刻欠落・容量不足）';
+var LB_HEALTH_BUILD = '2026-10-13a 通知が届かなかった理由（相手の応答）を記録して点検に載せる';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1960,7 +1960,18 @@ function dailyHealthCheck(dryRunArg) {
     //     前日リマインドなら顧客が来店を忘れる。予約通知ならトレーナーが知らない。
     var ps = []; for (var k2 in (nf.byPurpose || {})) ps.push(k2 + ':' + nf.byPurpose[k2]);
     add('notify_fail', '通知', 'high', nf.total,
-        '昨日のLINE未達（401=トークン失効/403=ブロック/429=上限）: ' + rs.join(' / ')
+        '昨日のLINE未達（401=トークン失効/403=ブロック/429=上限か送りすぎ）: ' + rs.join(' / ')
+        + (function () {
+            //   ★相手が何と言って断ったかを載せる（2026-10-13）。
+            //     件数だけだと、同じ対処を繰り返して効かない、ということが起きる。
+            try {
+              var d = getNotifyFailDetails(2), ks = Object.keys(d);
+              if (!ks.length) return '　（理由の記録はまだありません。次回から出ます）';
+              var lines = [];
+              for (var i = 0; i < ks.length; i++) lines.push(ks[i] + '＝' + d[ks[i]]);
+              return '　★相手の応答: ' + lines.join(' / ');
+            } catch (e) { return ''; }
+          })()
         + (ps.length ? '　用途: ' + ps.join(' / ') : '')
         + '　★429（上限）なら、その通知は**送り直さないと届きません。**');
     add('booking_error', '予約', 'warn', bm.byOutcome['SERVER_ERROR'] || 0, '昨日の予約の内部失敗');
@@ -4226,9 +4237,12 @@ function _lbPush(to, text, purpose) {
     }
     var body = ''; try { body = String(res.getContentText()).slice(0, 200); } catch (eB) {}
     Logger.log('_lbPush 失敗 HTTP' + code + ': ' + body);
-    _lbLogNotifyFail('HTTP_' + code, purpose);   // 失敗は稀＝書き込みコストが問題にならない
+    //   ★相手の応答をそのまま残す（2026-10-13）。
+    //     「429が4件」だけでは、上限なのか送りすぎなのかが分からない。
+    //     同じ対処（待ちを伸ばす）を2回繰り返して効かなかったのは、ここが無かったため。
+    _lbLogNotifyFail('HTTP_' + code, purpose, body);   // 失敗は稀＝書き込みコストが問題にならない
     return false;
-  } catch (e) { Logger.log('_lbPush エラー: ' + e.message); _lbLogNotifyFail('EXCEPTION', purpose); return false; }
+  } catch (e) { Logger.log('_lbPush エラー: ' + e.message); _lbLogNotifyFail('EXCEPTION', purpose, String(e && e.message)); return false; }
 }
 
 // reply（友だち追加あいさつ等・reply枠は無料）。follow直後の応答に使う。
@@ -7393,12 +7407,54 @@ function _lbMetricsSheet() {
 }
 // 通知(push)の失敗を実測ログに記録。予約の成否率を歪めないよう outcome に NOTIFY_FAIL_ 接頭辞を付け、
 //   getBookingMetrics 側で予約集計から分離して notifyFail として数える。記録自体の失敗は無視（非致命）。
-function _lbLogNotifyFail(reason, purpose) {
-  try { _lbLogOutcome('NOTIFY_FAIL_' + String(reason || '?'), String(purpose || 'push')); } catch (e) { Logger.log('通知失敗ログの記録に失敗: ' + e.message); }
+function _lbLogNotifyFail(reason, purpose, detail) {
+  try { _lbLogOutcome('NOTIFY_FAIL_' + String(reason || '?'), String(purpose || 'push'), detail); }
+  catch (e) { Logger.log('通知失敗ログの記録に失敗: ' + e.message); }
 }
-function _lbLogOutcome(outcome, channel) {
+function _lbLogOutcome(outcome, channel, detail) {
   var tz = SETTINGS.TIMEZONE, now = new Date();
-  _lbMetricsSheet().appendRow([Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm:ss'), Utilities.formatDate(now, tz, 'yyyy-MM-dd'), String(outcome || ''), String(channel || '')]);
+  //   ★5列目に「相手が何と言って断ったか」を残す（2026-10-13）。
+  //
+  //     2026-10-08 と 2026-10-12 に、どちらも **429で4件**が届かなかった。
+  //     10-08 のあと待ち時間を 1.2秒→3秒→6秒 の3回に増やしたが、**また同じ4件が落ちた**。
+  //     ＝**効かなかった対処を繰り返している。** 原因が分かっていないまま直そうとしたため。
+  //
+  //     LINEは429の本文に理由を返す（月間上限なのか、短時間の送りすぎなのか）。
+  //     いままで Logger にしか出しておらず、**翌日の点検では理由が分からなかった**。
+  //     ここに残せば、次からは点検のメールが理由まで教えてくれる。
+  //
+  //   ★集計（getBookingMetrics）は4列しか読まないので、足しても壊れない。
+  //   ★相手の応答にはお客様の情報は入らない（LINEの汎用のエラー文）。長さだけ切る。
+  _lbMetricsSheet().appendRow([
+    Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm:ss'),
+    Utilities.formatDate(now, tz, 'yyyy-MM-dd'),
+    String(outcome || ''),
+    String(channel || ''),
+    String(detail == null ? '' : detail).slice(0, 200)
+  ]);
+}
+
+// 直近 sinceDays 日の「通知失敗の理由（相手の応答）」を、種別ごとに1件ずつ返す。
+//   ★件数だけでは何も分からない。**相手が何と言ったか**が分かれば、
+//     「上限」か「送りすぎ」かが一発で決まる（2026-10-13）。
+function getNotifyFailDetails(sinceDays) {
+  var days = (_lbIsFiniteNum(Number(sinceDays)) && Number(sinceDays) > 0) ? Number(sinceDays) : 2;
+  var sh = _lbSheet(LB_METRICS_SHEET);
+  if (!sh || sh.getLastRow() < 2) return {};
+  var cutoff = Utilities.formatDate(new Date(new Date().getTime() - days * 86400000), SETTINGS.TIMEZONE, 'yyyy-MM-dd');
+  var w = Math.max(5, sh.getLastColumn());
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, w).getValues();
+  var out = {};
+  for (var i = 0; i < v.length; i++) {
+    if (String(v[i][1]) < cutoff) continue;
+    var oc = String(v[i][2] || '');
+    if (oc.indexOf('NOTIFY_FAIL_') !== 0) continue;
+    var rs = oc.slice('NOTIFY_FAIL_'.length) || '?';
+    var dt = String(v[i][4] || '').replace(/^\s+|\s+$/g, '');
+    //   ★新しいものを残す（行は時系列に積まれる）。空の行で上書きしない
+    if (dt) out[rs] = dt;
+  }
+  return out;
 }
 
 // 直近 sinceDays 日の成否を集計（date列=yyyy-MM-dd の辞書比較でフィルタ＝日付parse不要で軽い）。
