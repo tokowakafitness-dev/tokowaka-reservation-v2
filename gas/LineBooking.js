@@ -1854,7 +1854,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-13c 実測記録の日付の絞り込みが効いていなかった（9/15の4件を毎日数えていた）';
+var LB_HEALTH_BUILD = '2026-10-13d 日付の絞り込みを直す＋送り直しのロックを待つ・取り損ねを見える化';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1983,7 +1983,9 @@ function dailyHealthCheck(dryRunArg) {
       var nqAge = nq.completedAgeMin;
       add('notify_retry_stalled', '通知', 'high', (nqAge == null || nqAge > 60) ? 1 : 0,
           '届かなかったLINEの送り直しが動いていない（最後に終えたのは'
-          + (nqAge == null ? '記録なし' : nqAge + '分前') + '）' + (nq.lastError ? '　最後の例外: ' + nq.lastError : ''));
+          + (nqAge == null ? '記録なし' : nqAge + '分前') + '・最後に始めたのは'
+          + (nq.startedAgeMin == null ? '記録なし' : nq.startedAgeMin + '分前') + '・ロックを取り損ねたのは'
+          + (nq.lockMissAgeMin == null ? '記録なし' : nq.lockMissAgeMin + '分前') + '）' + (nq.lastError ? '　最後の例外: ' + nq.lastError : ''));
       add('notify_retry_pending', '通知', 'warn', nq.pending, '送り直し待ちのLINE通知');
       add('notify_alert_unsent', '通知', 'high', nq.emailFailing,
           '届かなかった通知を知らせるメールが送れていない（notify_retry シートの state=alert を確認）');
@@ -4220,6 +4222,9 @@ var LB_NQ = {
   TICK_BUDGET_MS: 90000,            // 1回の送り直しで使ってよい時間
   TICK_MAX_START_MS: 3 * 60000,     // warmupCache の開始からこれを過ぎていたら、送り直しはしない（6分の制限）
   CLAIM_MAX: 8,                     // 1回で送り直す上限
+  CLAIM_LOCK_WAIT_MS: 30000,        // 取り分けのロックを待つ上限。★0（待たない）だと、押し出し（_edgeLocked）が
+                                    //   作業中ずっとロックを持つため毎回取り損ね、反映後1回も走らなかった（2026-10-13）。
+                                    //   待っている間はロックを持たないので、予約の10秒待ちは妨げない
   ALERT_MAX: 30,                    // 1通のメールに載せる上限
   ON_PROP: 'LB_NOTIFY_RETRY_ON',               // '0' で自動の送り直しだけを止める（記録とオーナーへのメールは続ける）
   FAIL_PROP: 'LB_NOTIFY_QUEUE_WRITE_FAIL',     // キューに書けなかった（別の媒体に残す）
@@ -4503,8 +4508,8 @@ function lbNotifyRetryTick(startedAtMs) {
   try {
     var leaseId = Utilities.getUuid();
     var lock = LockService.getScriptLock();
-    if (!lock.tryLock(0)) {
-      try { props.setProperty(LB_NQ.LOCKMISS_PROP, String(t0)); } catch (eL) {}
+    if (!lock.tryLock(LB_NQ.CLAIM_LOCK_WAIT_MS)) {
+      try { props.setProperty(LB_NQ.LOCKMISS_PROP, String(Date.now())); } catch (eL) {}
       return { ok: false, code: 'LOCK_MISS' };
     }
     var sh, w = LB_NQ.HEAD.length, claimed = [], alerts = [];
@@ -4698,6 +4703,10 @@ function _lbNqStatus(now) {
               lastError: String(p.getProperty(LB_NQ.ERROR_PROP) || '') };
   var done = Number(p.getProperty(LB_NQ.COMPLETED_PROP) || 0);
   if (done) out.completedAgeMin = Math.round((now - done) / 60000);
+  //   ★「終えていない」理由を外から読めるように（2026-10-13：反映後1回も終わらず、理由が読めなかった）
+  var began = Number(p.getProperty(LB_NQ.STARTED_PROP) || 0), miss = Number(p.getProperty(LB_NQ.LOCKMISS_PROP) || 0);
+  out.startedAgeMin = began ? Math.round((now - began) / 60000) : null;
+  out.lockMissAgeMin = miss ? Math.round((now - miss) / 60000) : null;
   var sh = _lbNqSheet(false);
   if (sh && sh.getLastRow() >= 2) {
     var vals = sh.getRange(2, 1, sh.getLastRow() - 1, LB_NQ.HEAD.length).getValues();
@@ -4778,7 +4787,10 @@ function notifyFailsText(days) {
     out.push('');
     out.push('■ 送り直しの状態: 待ち ' + st.pending + '件 ／ オーナー未通知 ' + st.alertOpen + '件（メール失敗 ' + st.emailFailing + '）'
       + ' ／ 直近24時間: 送り直しで届いた ' + st.sent24h + '件・オーナーへ知らせた ' + st.closed24h + '件');
-    out.push('  最後に送り直しを終えた: ' + (st.completedAgeMin == null ? '記録なし（まだ一度も走っていない）' : st.completedAgeMin + '分前'));
+    out.push('  最後に送り直しを終えた: ' + (st.completedAgeMin == null ? '記録なし（まだ一度も走っていない）' : st.completedAgeMin + '分前')
+      + ' ／ 最後に始めた: ' + (st.startedAgeMin == null ? '記録なし' : st.startedAgeMin + '分前')
+      + ' ／ 最後にロックを取り損ねた: ' + (st.lockMissAgeMin == null ? '記録なし' : st.lockMissAgeMin + '分前')
+      + (st.lastError ? ' ／ 最後の例外: ' + _lbNqSafeDetail(st.lastError) : ''));
     if (st.writeFail) out.push('  ★キューに書けなかった記録: ' + st.writeFail.split('|')[0] + '件');
   } catch (eS) { out.push('■ 送り直しの状態: 読めない（' + eS.message + '）'); }
   out.push('');

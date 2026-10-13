@@ -304,6 +304,8 @@ function enqueue(e, purpose, ctx) {
   const out = e.ctx.lbNotifyRetryTick(e.clock.now);
   ok('2-19 ロックが取れなければ何もしない（予約を待たせない）', out.code === 'LOCK_MISS' && e.fetches.length === n0 && e.mails.length === 0);
   ok('2-20 ★取れなかったときは「終えた」を記録しない（見張りが気づける）', !e.props.has('LB_NOTIFY_RETRY_COMPLETED'));
+  const st = e.ctx._lbNqStatus(e.clock.now);
+  ok('2-20b ★取り損ねたこと・始めたことが外から読める', st.lockMissAgeMin === 0 && st.startedAgeMin === 0 && st.completedAgeMin === null);
 }
 {
   const e = makeEnv({});
@@ -455,6 +457,8 @@ ok('4-14 ★変更の通知だけで足りる：トレーナーへ変更後の�
    /_lbTrainerRemainText\(String\(r\[2\]\), customerName, _newStart\), 'change_trainer', _chCtx\)/.test(S));
 ok('4-15 予約確定の残数も同じ関数で作る（文面が分かれない）',
    /var _remTxt = isTransfer \? '' : _lbTrainerRemainText\(customerId, customerName, start\);/.test(S));
+ok('4-16 ★取り分けのロックは待つ（0だと押し出しと毎回重なって1回も走らなかった）',
+   /if \(!lock\.tryLock\(LB_NQ\.CLAIM_LOCK_WAIT_MS\)\)/.test(S) && /CLAIM_LOCK_WAIT_MS: 30000/.test(S));
 ok('4-11 窓口 notifyFails が繋がっている', /args\.notifyFails\) return _ejScrub\(notifyFailsText\(Number\(args\.notifyFails\)\)\)/.test(readFileSync(join(ROOT, 'gas/EdgeJob.js'), 'utf8')));
 
 console.log('');
