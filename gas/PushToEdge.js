@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-11c 遅れている会員を拾ってキューに積む（栞・容量ガード・状態で返す）';
+var LB_EDGE_BUILD = '2026-10-13a 写しに連続ルールの印とモード（設計18）・送る処理は絞らない全部の枠';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -476,6 +476,9 @@ function _edgeSlotRows(builtAtOverride, builtSlots) {
     morningUntilHour: (SETTINGS && SETTINGS.MORNING_UNTIL_HOUR) || 12,
     prevDeadlineHour: (SETTINGS && SETTINGS.MORNING_PREV_DEADLINE_HOUR) || 22
   };
+  //   ★連続ルール（設計18 §3-4）の印を数える。変換の前（src）と後（slots）で別々に数え、
+  //     全トレーナー分を通して見てからモードを決める（トレーナーごとに決めない）
+  var cMark = { srcBool: 0, srcNone: 0, outBool: 0, outNone: 0 };
   for (var i = 0; i < list.length; i++) {
     var tid = String(list[i].id || '');
     if (!tid) continue;
@@ -489,7 +492,7 @@ function _edgeSlotRows(builtAtOverride, builtSlots) {
           return String(s0.trainerId) === String(tid);
         }));
       } else {
-        var r = getTrainerSlots({ trainerId: tid });
+        var r = _lbTrainerSlotsAll(tid);   // ★絞らない全部の枠（顧客用に絞った枠を写しに入れない・設計18）
         src = (r && r.slots) || [];
       }
       for (var j = 0; j < src.length; j++) {
@@ -498,11 +501,14 @@ function _edgeSlotRows(builtAtOverride, builtSlots) {
         if (!ms || isNaN(ms)) continue;
         // 画面がそのまま描けるよう、GASが作った項目をそのまま持たせる。
         // startMs は Worker 側で締め切り判定に使う（毎回パースしないで済む）。
-        slots.push({
+        var row = {
           startMs: ms, startISO: s.startISO, endISO: s.endISO,
           date: s.date, dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime,
           trainerId: s.trainerId, trainerName: s.trainerName, trialOk: !!s.trialOk
-        });
+        };
+        if (typeof s.consecOk === 'boolean') { row.consecOk = s.consecOk; cMark.srcBool++; } else cMark.srcNone++;
+        if (typeof row.consecOk === 'boolean') cMark.outBool++; else cMark.outNone++;
+        slots.push(row);
       }
     } catch (e) {
       //   ★1人でも組み立てられなければ**送信ごと中止する**（2026-10-11・関門②の指摘）。
@@ -519,11 +525,39 @@ function _edgeSlotRows(builtAtOverride, builtSlots) {
     //     0 は「作り直した時刻が分からない」＝前のキャッシュを使った印（隠さない）。
     entries.push({
       trainer_id: tid,
-      payload: JSON.stringify({ trainerId: tid, slots: slots, rules: rules, builtAt: builtAt }),
+      _payload: { trainerId: tid, slots: slots, rules: rules, builtAt: builtAt },
       computed_at: Date.now(),
     });
   }
+  //   ★写しのモードは「作った枠」と「いまのスイッチ」の表で決める（設計18 §3-4・関門①で7往復）。
+  //     スイッチを読み直すだけだと、作ったあとに切り替えると枠とモードが食い違う。
+  //     枠だけで決めると、変換で印が全部落ちたとき off に見えて禁止の枠を顧客に出す。
+  var consec = _edgeConsecModeFor(cMark, (typeof _lbConsecMode === 'function') ? _lbConsecMode() : 'off');
+  //   点検用の記録は**送れた後**に書く（_edgeSendSlots）。ここでは控えるだけ。
+  //   ★組み立てた時点で書くと、送信が失敗し続けても「送った」ことになり見張りが黙る（関門②）
+  _LB_SLOTS_CONSEC_BUILT = consec.mode;
+  for (var k = 0; k < entries.length; k++) {
+    entries[k]._payload.consec = consec;
+    entries[k].payload = JSON.stringify(entries[k]._payload);
+    delete entries[k]._payload;
+  }
   return entries;
+}
+
+var _LB_SLOTS_CONSEC_BUILT = '';   // この実行で組み立てた写しのモード（送れたら記録する）
+
+// 写しの consec を決める（純粋）。送ってはいけない組み合わせは例外＝送信ごと中止（既存の作法）
+//   cMark: 変換の前（srcBool/srcNone）と後（outBool/outNone）の印の数。switchMode: いまのスイッチ
+function _edgeConsecModeFor(cMark, switchMode) {
+  var total = cMark.srcBool + cMark.srcNone;
+  if (total === 0) return { mode: (switchMode === 'on') ? 'on' : 'off', version: 1 };           // 0件：どちらでも見える枠は0件
+  if (cMark.srcBool > 0 && cMark.srcNone > 0) throw new Error('連続ルールの印が混ざった枠は送らない（' + cMark.srcBool + '/' + total + '）');
+  if (cMark.srcBool === total) {
+    if (cMark.outBool !== total) throw new Error('連続ルールの印が変換で落ちた（' + cMark.outBool + '/' + total + '）。送らない');
+    return { mode: 'on', version: 1 };                                                           // 作ったのは on の枠
+  }
+  if (switchMode === 'on') throw new Error('スイッチは on なのに印の無い枠。切り替え直後か取りこぼしか分からないので送らない');
+  return { mode: 'off', version: 1 };                                                            // off/dry の枠（今の形）
 }
 
 // 押し出しの間だけ、シートの読み込みを1回で済ませる。
@@ -1175,10 +1209,15 @@ function _edgeSendSlots(builtAt, builtSlots, opts) {
     }
   }
 
+  _LB_SLOTS_CONSEC_BUILT = '';
   var n = _edgePushRowsF('slots', _edgeSlotRows(builtAt, builtSlots), batchId,
                          { scope: 'all', deleteStale: !!opts.deleteStale });
   try { PropertiesService.getScriptProperties().setProperty(LB_SLOTS_PUSHED_AT_PROP, String(Date.now())); }
   catch (e2) {}
+  //   ★送れた（_edgePushRowsF が例外を投げずに戻った）ときだけ、写しのモードを記録する（設計18・点検用）
+  if (_LB_SLOTS_CONSEC_BUILT) {
+    try { PropertiesService.getScriptProperties().setProperty('LB_SLOTS_CONSEC_SENT', _LB_SLOTS_CONSEC_BUILT + '|' + Date.now()); } catch (eCs) {}
+  }
   return n;
 }
 

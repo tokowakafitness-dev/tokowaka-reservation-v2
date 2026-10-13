@@ -101,6 +101,11 @@ trg_alloc_return_pack       同
 | I18 | 送り直しの失敗は再び積まない（tick は `_lbPushOnce` だけを使う）。通信例外・400番台・まとめ通知は送り直さない | `notify-retry.test.js` 1-5〜1-8・2-16 |
 | I19 | LINEへ送っているあいだ ScriptLock を持たない（予約・取消・変更が同じロックを10秒待つ） | `notify-retry.test.js` 2-3 |
 | I20 | 届かなかった通知が記録できないときは Script Properties に残し、送り直しが止まれば点検が high を出す | `notify-retry.test.js` 1-15・2-20・4-10 |
+| I21 | **連続ルールの判定の正本は `_lbConsecVerdict`（BookingRules.js）の1つ。** 画面の枠（`_lbApplyConsecToSlots`）と確定（`_lbConsecCheckAt`）は同じ関数を呼ぶ（設計18） | `consec-rule.test.js`・`consec-slots.test.js`・`consec-gas-entry.test.js` 2 |
+| I22 | `LB_CONSEC_RULE` が off/dry のとき、枠は**変更前のコードと順番まで同じ**（`consecOk` を1つも付けない） | `consec-slots.test.js` 1-1（ランダム500通り） |
+| I23 | 顧客にだけ絞る。トレーナー・オーナーには全部の枠。写しへ送る処理は絞らない `_lbTrainerSlotsAll` だけを使う | `consec-gas-entry.test.js` 1・`consec-worker.test.js` 1-3, 3-8 |
+| I24 | 写しのモードは「作った枠」と「いまのスイッチ」の表で決める。on なのに印の無い枠は顧客に出さない（Worker は _fallback、GAS は作り直し→だめなら失敗で答える） | `consec-worker.test.js` 1-5〜1-8, 3 |
+| I25 | 連続ルールは顧客が自分で取る予約だけ（`consecRule`）。代行・自動予約・トレーナーが他人の予約を変える、には効かない | `consec-gas-entry.test.js` 3 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。

@@ -425,16 +425,43 @@ export async function compatTrainerSlots({ env, body, who }) {
   const computedAt = Number(r.computedAt || 0);
   if (!computedAt) return { _fallback: true };
 
+  // ---- 連続ルール（設計18 §3-4）：顧客にだけ絞る ----
+  //   ★モードは写し全体の consec で決める（枠の項目から推測しない＝印が全部落ちたら off に見えるため）。
+  //   トレーナー・オーナー（代行で取る）には全部返す。
+  const picked = consecPick(r, who, excludeStartMs, SLOT_SOURCE.CACHE);
+  if (picked._fallback) return { _fallback: true };
+
   // ★ここで締め切りをもう一度判定しない。routeSlots が keepSlot（この下の isSlotOpen）で
   //   すでに絞っている。二重に判定すると、excludeStartISO で残した「自分の枠」まで
   //   落としてしまう（予約変更ができなくなる）。
-  const slots = (r.slots || []).map((s) => ({
+  const slots = picked.slots.map((s) => ({
     date: s.date, dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime,
     startISO: s.startISO, endISO: s.endISO,
     trainerName: s.trainerName, trainerId: s.trainerId, trialOk: s.trialOk,
   }));
 
   return { slots, computedAt, ageMs: Date.now() - computedAt };
+}
+
+// 連続ルールで顧客に返す枠を決める（純粋）。返り値 { slots } か { _fallback: true }
+//   consec が on の写し … consecOk === true だけ。真偽値でない枠が1つでもあれば答えない（GAS へ）
+//                         ★予約の変更（excludeStartMs）も答えない：写しは自分の旧予定を連続に数えたまま。
+//                           GAS はその場で旧予定を外して計算する
+//   consec が off の写し／無い（反映前の古い写し）… 今のまま
+//   知らない mode・version … 答えない
+//   ①（calendar）から作った枠 … consec を持たない＝今のまま（①を本番に出す前に①へ入れる・C10）
+export function consecPick(r, who, excludeStartMs, cacheSource) {
+  const slots = (r && r.slots) || [];
+  if (!who || who.role !== 'customer') return { slots };
+  if (r.source !== cacheSource) return { slots };   // SLOT_SOURCE は slots.js を遅延 import しているので引数で受ける
+  const c = r.consec;
+  if (c == null) return { slots };
+  if (c.version !== 1) return { _fallback: true };
+  if (c.mode === 'off') return { slots };
+  if (c.mode !== 'on') return { _fallback: true };
+  if (excludeStartMs) return { _fallback: true };
+  if (!slots.every((s) => s && typeof s.consecOk === 'boolean')) return { _fallback: true };
+  return { slots: slots.filter((s) => s.consecOk === true) };
 }
 
 // 午前枠は前日22時で締め切る（GASの BookingRules.js と同じ規則）

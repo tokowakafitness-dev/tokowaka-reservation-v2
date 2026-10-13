@@ -356,7 +356,13 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
   var calB1    = CalendarApp.getCalendarById(CALENDAR_IDS.CAPACITY_B1);
   // [消化]は計上の証跡として残るが席は空き。施設キャパから除外（共通ルール）
   // 1-A/1-B：通常予約はB1のみ。1F(MT・体験用)は空き判定に使わない（無駄なAPI呼び出しも除去）
-  var eventsB1 = calB1.getEvents(now, endDate).filter(function(ev){ return ev.getTitle().indexOf('[消化]') !== 0 && _notExcluded(ev); }).map(function(ev){ return { start:ev.getStartTime(), end:ev.getEndTime() }; });
+  var _b1raw   = calB1.getEvents(now, endDate);
+  var eventsB1 = _b1raw.filter(function(ev){ return ev.getTitle().indexOf('[消化]') !== 0 && _notExcluded(ev); }).map(function(ev){ return { start:ev.getStartTime(), end:ev.getEndTime() }; });
+  //   ★連続ルール（設計18）。on のときだけ使う。off では何も読まず、枠の作り方も今と同じ。
+  //     体験の見分けに B1 のタイトルが要る（トレーナーのcalのタイトルには「体験」が入らない）。読み取りは増やさない
+  var _consecOn = (typeof _lbConsecMode === 'function') && _lbConsecMode() === 'on';
+  var b1Titled = _consecOn ? _b1raw.filter(function(ev){ return ev.getTitle().indexOf('[消化]') !== 0; })
+    .map(function(ev){ return { title: ev.getTitle(), start: ev.getStartTime().getTime(), end: ev.getEndTime().getTime() }; }) : [];
   Logger.log('キャパシティ 地下=' + eventsB1.length + '件');
   // 1Fオンライン等はB1容量を使わないが担当トレーナーを塞ぐ→トレーナー別busyに合算（Codex#1）。担当姓不明はblockAll(全員)。
   //   フラグ LB_1F_TRAINER_BLOCK=on のときだけ適用（既定OFF＝現行挙動・staging無し環境で安全にデプロイ）。
@@ -370,6 +376,7 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
 
   var trainerShifts   = {};
   var trainerReserved = {};
+  var trainerEvTitled = {};   // 連続ルール（on のときだけ）
 
   for (var t = 0; t < CALENDAR_IDS.TRAINERS.length; t++) {
     var tr  = CALENDAR_IDS.TRAINERS[t];
@@ -383,9 +390,11 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
     var events   = cal.getEvents(now, endDate);
     var shifts   = [];
     var reserved = [];
+    var evTitled = [];
     for (var j = 0; j < events.length; j++) {
       var ev    = events[j];
       var title = ev.getTitle();
+      if (_consecOn) evTitled.push({ title: title, start: ev.getStartTime().getTime(), end: ev.getEndTime().getTime() });
       if (isShiftEvent(title)) {
         shifts.push({ start: ev.getStartTime(), end: ev.getEndTime() });
       } else if (_lbIsBusyTitle(title) && _notExcluded(ev)) {
@@ -394,6 +403,7 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
     }
     trainerShifts[tr.id]   = shifts;
     trainerReserved[tr.id] = reserved;
+    trainerEvTitled[tr.id] = evTitled;
     Logger.log(tr.name + ': 出勤可能=' + shifts.length + '件 / 予約済=' + reserved.length + '件');
   }
 
@@ -407,12 +417,15 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
   // 吸着方式：各トレーナーの出勤シフトから「予約＋施設埋まり」を引いた空きブロックを作り、
   //   各ブロックの端から60分刻みで枠を出す。既存予約(任意時刻)に自然に噛み合い、無駄は各ブロック端の最小値に限定。
   var ownerWin = _lbOwnerSlotWindow();   // 中野(hidden)の固定客向け枠を曜日×時間帯に絞る（未設定＝制限なし）
+  var _surCount = _consecOn ? _lbConsecSurCount(CALENDAR_IDS.TRAINERS) : null;
   for (var ti = 0; ti < CALENDAR_IDS.TRAINERS.length; ti++) {
     var trainer = CALENDAR_IDS.TRAINERS[ti];
     var shifts  = trainerShifts[trainer.id] || [];
     // B1施設(全員)＋自分のトレーナーcal予約＋1Fで自分に帰属する予約(オンライン等)＋1F帰属不能(全員)
     var f1mine  = ((f1busy.trainerBusy || {})[trainer.id] || []).map(function(iv){ return { start: iv.start, end: iv.end }; });
     var busy    = (trainerReserved[trainer.id] || []).concat(eventsB1).concat(f1mine).concat(f1BlockAll);   // 1FオンラインでそのトレーナーをブロックしB1二重予約を防ぐ（Codex#1）
+    var tSlots  = [];          // このトレーナーの枠（off のときはそのまま allSlots へ。順番も今と同じ）
+    var tBlocks = [];          // 空きブロック（on の追加の枠が収まるかを見る）
     for (var si = 0; si < shifts.length; si++) {
       var shiftEndMs = shifts[si].end.getTime();   // 退勤時刻。体験90分がここを超えるのは許す（下の trialOk）
       var freeBlocks = _lbSubtractIntervals(shifts[si], busy);
@@ -421,31 +434,20 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
         // 残り時間で刻みを動的に切替：2枠以上残る区間は60分刻みで詰めて予約（断片化防止＝2枠確保）／
         //   最後の1枠になったら15分刻みで営業終了まで柔軟に選択（例 20:30-23:00→20:30/21:30/21:45/22:00）
         var blockEnd = blk.end.getTime();
+        if (_consecOn) tBlocks.push({ s: blk.start.getTime(), e: blockEnd, shiftEndMs: shiftEndMs });
         for (var cur = blk.start.getTime(); cur + sessionMs <= blockEnd;
              cur += ((blockEnd - cur) >= 2 * sessionMs ? sessionMs : pickStep)) {
-          if (!_lbBookingOpen(cur, nowMs, _lbBookingCfg(SETTINGS))) continue;   // 締め切り済みの枠は出さない（午前枠＝前日22時／他＝3時間前）
-          var st = new Date(cur), en = new Date(cur + sessionMs);
-          if (trainer.hidden && !_lbInOwnerWindow(st, ownerWin)) continue;   // 中野(hidden)は設定した曜日×時間帯の枠だけ固定客に見せる
-          // 体験は90分押さえる。会員(LINE)は60分のまま全枠見えるので、ここでは除外せずフラグだけ持たせる。
-          //   ただし「ブロックの終わりが退勤時刻」の場合は超過を許す（2026-09-25 オーナー判断）。
-          //   22時台の枠が全滅していたのはシフト終端(23時)が理由で、他のお客様とぶつかるわけではないため。
-          //   体験不可にするのは「後ろ90分に他の予約が入っている」ときだけにする。
-          var trialOk = ((cur + trialMs) <= blockEnd)
-            || ((blockEnd === shiftEndMs) && (cur + sessionMs) <= blockEnd);
-          allSlots.push({
-            date:        Utilities.formatDate(st, tz, 'yyyy/MM/dd'),
-            dayOfWeek:   ['日','月','火','水','木','金','土'][st.getDay()],
-            startTime:   Utilities.formatDate(st, tz, 'HH:mm'),
-            endTime:     Utilities.formatDate(en, tz, 'HH:mm'),
-            startISO:    st.toISOString(),
-            endISO:      en.toISOString(),
-            trainerName: trainer.name,
-            trainerId:   trainer.id,
-            trialOk:     trialOk
-          });
+          var _sl = _lbMakeSlot(trainer, cur, blockEnd, shiftEndMs, sessionMs, trialMs, nowMs, ownerWin, tz);
+          if (_sl) tSlots.push(_sl);
         }
       }
     }
+    //   ★連続ルール（on のときだけ・設計18 §3-3）。
+    //     ① 3時間以上の連続の前後に、吸着では生まれない開始時刻（13:15・8:45・7:45）を足す
+    //     ② 全部の枠に consecOk（顧客に見せてよいか）を付ける。枠は消さない（トレーナーには全部見える）
+    if (_consecOn) _lbApplyConsecToSlots(tSlots, tBlocks, trainer, trainerEvTitled[trainer.id] || [], b1Titled, _surCount,
+                                         excludeStartMs, sessionMs, trialMs, nowMs, ownerWin, tz);
+    for (var _k = 0; _k < tSlots.length; _k++) allSlots.push(tSlots[_k]);
   }
   _wlap('吸着枠計算');
   // 体験に出せる枠（90分確保できる枠）の割合をログに残す＝シフト終端や既存予約で体験枠が細っていないか監視する
@@ -454,6 +456,61 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
   Logger.log('空き枠構築完了: ' + allSlots.length + '件（うち体験に出せる枠: ' + (allSlots.length - _trialNg)
     + '件 / 90分取れず体験不可: ' + _trialNg + '件）');
   return allSlots;
+}
+
+// 枠を1つ作る（buildAvailableSlots の刻みの中身。連続ルールの追加の枠も同じ条件を通すために切り出した）。
+//   締め切り済み・オーナー(hidden)の曜日×時間帯の外なら null。
+function _lbMakeSlot(trainer, cur, blockEnd, shiftEndMs, sessionMs, trialMs, nowMs, ownerWin, tz) {
+  if (!_lbBookingOpen(cur, nowMs, _lbBookingCfg(SETTINGS))) return null;   // 締め切り済みの枠は出さない（午前枠＝前日22時／他＝3時間前）
+  var st = new Date(cur), en = new Date(cur + sessionMs);
+  if (trainer.hidden && !_lbInOwnerWindow(st, ownerWin)) return null;   // 中野(hidden)は設定した曜日×時間帯の枠だけ固定客に見せる
+  // 体験は90分押さえる。会員(LINE)は60分のまま全枠見えるので、ここでは除外せずフラグだけ持たせる。
+  //   ただし「ブロックの終わりが退勤時刻」の場合は超過を許す（2026-09-25 オーナー判断）。
+  //   22時台の枠が全滅していたのはシフト終端(23時)が理由で、他のお客様とぶつかるわけではないため。
+  //   体験不可にするのは「後ろ90分に他の予約が入っている」ときだけにする。
+  var trialOk = ((cur + trialMs) <= blockEnd)
+    || ((blockEnd === shiftEndMs) && (cur + sessionMs) <= blockEnd);
+  return {
+    date:        Utilities.formatDate(st, tz, 'yyyy/MM/dd'),
+    dayOfWeek:   ['日','月','火','水','木','金','土'][st.getDay()],
+    startTime:   Utilities.formatDate(st, tz, 'HH:mm'),
+    endTime:     Utilities.formatDate(en, tz, 'HH:mm'),
+    startISO:    st.toISOString(),
+    endISO:      en.toISOString(),
+    trainerName: trainer.name,
+    trainerId:   trainer.id,
+    trialOk:     trialOk
+  };
+}
+
+// 連続ルール（設計18）を1人分の枠に当てる。on のときだけ呼ばれる。
+//   ★判定は BookingRules.js の _lbConsecVerdict（確定時と同じ関数）。
+//   ★セッションが読めない（invalid）ときは、その人の枠を全部 consecOk:false＝顧客に出さない（答えない側）。
+function _lbApplyConsecToSlots(tSlots, tBlocks, trainer, trEvents, b1Titled, surCount, excludeStartMs, sessionMs, trialMs, nowMs, ownerWin, tz) {
+  var sur = String(trainer.name || '').split(' ')[0];
+  var sessions = _lbConsecSessionsOf(trEvents, b1Titled, sur, surCount, _lbIsSessionTitle, excludeStartMs || null);
+  var runs = _lbConsecLongRuns(sessions);
+  function blockOf(st) {
+    for (var b = 0; b < tBlocks.length; b++) if (st >= tBlocks[b].s && st + sessionMs <= tBlocks[b].e) return tBlocks[b];
+    return null;
+  }
+  if (runs) {
+    var have = {};
+    for (var i = 0; i < tSlots.length; i++) have[new Date(tSlots[i].startISO).getTime()] = true;
+    var extra = _lbConsecExtraStarts(runs, sessionMs / 60000, function (st) { return !!blockOf(st); });
+    for (var x = 0; x < extra.length; x++) {
+      if (have[extra[x]]) continue;
+      var blk = blockOf(extra[x]);
+      var sl = _lbMakeSlot(trainer, extra[x], blk.e, blk.shiftEndMs, sessionMs, trialMs, nowMs, ownerWin, tz);
+      if (sl) { tSlots.push(sl); have[extra[x]] = true; }
+    }
+    tSlots.sort(function (a, b) { return a.startISO < b.startISO ? -1 : (a.startISO > b.startISO ? 1 : 0); });
+  }
+  for (var k = 0; k < tSlots.length; k++) {
+    var s0 = new Date(tSlots[k].startISO).getTime();
+    var v = runs ? _lbConsecVerdict(sessions, s0, s0 + sessionMs) : { ok: false };
+    tSlots[k].consecOk = !!v.ok;
+  }
 }
 
 // ── 入力検証＋レート制限（無認証エンドポイントの乱用・偽予約スパム対策）──

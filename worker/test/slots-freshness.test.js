@@ -113,8 +113,8 @@ ok('①-c絞り方は既存と同じ（ふるまいを変えない）',
    /_lbDropClosedSlots\(fresh\.filter\(/.test(slotRows),
    'getCachedSlots のキャッシュ外れ時と同じ：トレーナーで絞る→締切済みを落とす');
 ok('①-c渡されなければ従来どおりキャッシュから読む',
-   /getTrainerSlots\(\{ trainerId: tid \}\)/.test(slotRows),
-   '15分同期・完全同期の経路を変えない');
+   /_lbTrainerSlotsAll\(tid\)/.test(slotRows),
+   '15分同期・完全同期の経路を変えない（2026-10-13 設計18：顧客用に絞る getTrainerSlots ではなく、絞らない _lbTrainerSlotsAll。中身は同じキャッシュ読み）');
 ok('①-c★時刻はこの実行だけの値を使う',
    /LB_SLOTS_BUILT_AT_LOCAL/.test(CODE) && /builtAt = Number\(LB_SLOTS_BUILT_AT_LOCAL \|\| 0\);/.test(pushSlots),
    'Script Properties は実行をまたぐので、読み直すと別の実行の時刻になる');

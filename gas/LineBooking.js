@@ -177,7 +177,7 @@ function doPost(e) {
       case 'verifyMembership':   _res = verifyMembership(lineUserId, body.code); break;
       case 'getMemberStatus':    _res = getMemberStatus(lineUserId); break;
       case 'getTrainers':        _res = getTrainers(); break;
-      case 'getTrainerSlots':    _res = getTrainerSlots(body); break;
+      case 'getTrainerSlots':    _res = getTrainerSlots(body, lineUserId); break;   // ★検証済みの lineUserId（顧客かを見る・設計18）
       case 'makeReservationLine':_res = makeReservationLine(lineUserId, body); break;
       case 'makeReservationLineProxy': {
         var tr = requireTrainer(lineUserId);           // 案B：トレーナー権限を確認
@@ -216,7 +216,7 @@ function liffApi(payloadJson) {
       case 'getMemberStatus':    res = getMemberStatus(lineUserId); break;
       case 'verifyMembership':   res = verifyMembership(lineUserId, body.code); break;
       case 'getTrainers':        res = getTrainers(); break;
-      case 'getTrainerSlots':    res = getTrainerSlots(body); break;
+      case 'getTrainerSlots':    res = getTrainerSlots(body, lineUserId); break;   // ★検証済みの lineUserId（設計18）
       case 'makeReservationLine':res = makeReservationLine(lineUserId, body); break;
       case 'makeReservationLineProxy': {
         var tr = requireTrainer(lineUserId);
@@ -271,7 +271,7 @@ function _lbDispatch(params, action, lineUserId, auth) {
     case 'line_setLang':            return setMemberLang(lineUserId, params.lang);
     case 'line_getTrainers':        return getTrainers(lineUserId);
     case 'line_getAllTrainers':     return requireTrainer(lineUserId) ? getAllTrainers(lineUserId) : { success: false, code: 'FORBIDDEN' };   // 未登録客枠の担当選択用（全トレーナー・越権はmakeAdminBookingが遮断）
-    case 'line_getTrainerSlots':    return getTrainerSlots({ trainerId: params.trainerId, excludeStartISO: params.excludeStartISO });
+    case 'line_getTrainerSlots':    return getTrainerSlots({ trainerId: params.trainerId, excludeStartISO: params.excludeStartISO }, lineUserId);   // ★検証済みの lineUserId（設計18）
     case 'line_makeReservationLine':return makeReservationLine(lineUserId, { trainerId: params.trainerId, startISO: params.startISO, attendeeCount: params.attendeeCount, packKind: params.packKind });   // packKind＝消化先の明示（併存会員用・省略時は実体から自動）
     case 'line_makeRecurringReservation':return makeRecurringReservationLine(lineUserId, { trainerId: params.trainerId, startISO: params.startISO, repeatCount: params.repeatCount });
     case 'line_makeBatchReservation':   return makeBatchReservationLine(lineUserId, { items: _lbParseItems(params.items) });   // まとめて予約（会員本人・items=JSON配列[{trainerId,startISO}]）
@@ -1854,7 +1854,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-13d 日付の絞り込みを直す＋送り直しのロックを待つ・取り損ねを見える化';
+var LB_HEALTH_BUILD = '2026-10-13e 連続ルール（設計18）：確定時の判定・顧客にだけ絞る・点検';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1992,6 +1992,21 @@ function dailyHealthCheck(dryRunArg) {
       add('notify_queue_write_fail', '通知', 'high', Number(String(nq.writeFail).split('|')[0]) || 0,
           '届かなかった通知を記録できなかった（Script Properties ' + LB_NQ.FAIL_PROP + '）');
     } catch (eNq) { add('notify_retry_read_fail', '通知', 'warn', 1, '送り直しの状態が読めない: ' + eNq.message); }
+    //   ★連続ルール（設計18）。on なのに写しが on で届いていない＝顧客に禁止の枠が出ているかもしれない
+    try {
+      var _cmode = _lbConsecMode();
+      var _sent = String(_lbProp('LB_SLOTS_CONSEC_SENT') || '').split('|');
+      var _sentAge = Number(_sent[1]) ? Math.round((Date.now() - Number(_sent[1])) / 60000) : null;
+      add('consec_display_miss', '予約', 'high', (_cmode === 'on' && (_sent[0] !== 'on' || _sentAge == null || _sentAge > 20)) ? 1 : 0,
+          '連続ルールが on なのに、on の写しが届いていない（最後に送った写し: ' + (_sent[0] || '記録なし')
+          + (_sentAge == null ? '' : '・' + _sentAge + '分前') + '）。顧客に禁止の枠が出ている可能性');
+      var _cc = bm.consec || {}, _cl = [];
+      for (var _ck in _cc) _cl.push(_ck.replace('CONSEC_', '') + ':' + _cc[_ck]);
+      var _cp = _lbConsecPerf(1);
+      add('consec_counts', '予約', 'info', _cl.length ? 1 : 0, '昨日の連続ルール（モード ' + _cmode + '）: ' + _cl.join(' / ')
+          + (_cp.n ? '　判定の時間 中央値' + _cp.median + 'ms・最大' + _cp.max + 'ms（' + _cp.n + '件）' : '')
+          + '　★DRY_OK/DRY_REJECT＝dry で on なら通した/弾いた数／REJECT＝弾いた数（表示の後に別の予約が入った競合も含む）／UNKNOWN＝カレンダーが読めなかった数');
+    } catch (eCo) { add('consec_read_fail', '予約', 'warn', 1, '連続ルールの状態が読めない: ' + eCo.message); }
   } catch (e) { add('metrics_fail', '通知', 'warn', 1, '実測ログの集計に失敗: ' + e.message); }
 
   _step('LINE通数');
@@ -3577,19 +3592,148 @@ function _lbAllVerifiedCustomers() {
   return out;
 }
 
-// 選択トレーナーの空き枠（既存 getCachedSlots を流用＝事前計算を直読み・TECH_SPEC §8.5）
-function getTrainerSlots(body) {
-  var trainerId = String((body && body.trainerId) || '');
+// 選択トレーナーの空き枠（顧客・トレーナーの入口）。
+//   ★lineUserId は入口で検証済みのものだけを渡す（body の値は使わない・設計18 §3-5）。
+//   ★連続ルール（LB_CONSEC_RULE=on）のとき、顧客には consecOk === true の枠だけを返す。
+//     トレーナー（代行で取る）には全部返す。トレーナー表が読めなければ顧客として扱う（顧客側に倒す）。
+function getTrainerSlots(body, lineUserId) {
+  var r = _lbTrainerSlotsAll(String((body && body.trainerId) || ''), body && body.excludeStartISO);
+  if (!r.success || _lbConsecMode() !== 'on' || _lbIsTrainerCaller(lineUserId)) return r;
+  var slots = r.slots || [];
+  if (!_lbConsecAllMarked(slots) && !r.fresh) {
+    //   ★on に切り替えた直後は、印の無い古いキャッシュが残っている（寿命は最大11分）。
+    //     そのまま絞ると枠が全部消え、絞らないと禁止の枠が出る。どちらも避けて、その場で作り直す
+    Logger.log('[consec] 印の無いキャッシュ → 作り直す');
+    var built = buildAndCacheSlots();
+    slots = _lbDropClosedSlots(built.filter(function (s) { return String(s.trainerId) === String(body.trainerId); }));
+  }
+  //   ★作り直しても印が無い＝判定できない。全部見せず、0件とも言わず、失敗で答える（MODEL §0）
+  if (!_lbConsecAllMarked(slots)) return { success: false, code: 'SLOTS_UNAVAILABLE', message: '空き枠を確認できませんでした。時間をおいて開き直してください。' };
+  return { success: true, slots: slots.filter(function (s) { return s.consecOk === true; }) };
+}
+
+// 内部用：絞らない全部の枠（写しへ送る処理・トレーナーの入口）。
+//   ★写しへ送る処理（_edgeSlotRows）は必ずこれを使う。顧客用に絞った枠を写しに入れると、
+//     トレーナーの画面からも枠が消える（設計18 §3-4）。
+function _lbTrainerSlotsAll(trainerId, excludeStartISO) {
+  trainerId = String(trainerId || '');
   if (!trainerId) return { success: false, code: 'BAD_REQUEST', message: 'trainerId必須' };
   // 変更/振替時は自分の旧予定を除外してリアルタイム計算（キャッシュは元予定を含み22:00等が候補に出ない＝問題2）
-  var exISO = body && body.excludeStartISO;
+  var exISO = excludeStartISO;
   if (exISO && !isNaN(new Date(exISO).getTime())) {
     var exMs = new Date(exISO).getTime();
     var rt = buildAvailableSlots(exMs).filter(function (s) { return String(s.trainerId) === trainerId; });
-    return { success: true, slots: rt };
+    return { success: true, slots: rt, fresh: true };
   }
   var slots = getCachedSlots(trainerId); // 既存グローバル（コード.js）: trainerIdでフィルタ済み
   return { success: true, slots: slots };
+}
+
+// 連続ルールのモード（Script Properties LB_CONSEC_RULE）。未設定・知らない値は off
+function _lbConsecMode() {
+  var v = String(_lbProp('LB_CONSEC_RULE') || '').toLowerCase();
+  return (v === 'on' || v === 'dry') ? v : 'off';
+}
+// 全部の枠に真偽値の consecOk があるか（0件は「ある」とみなす）
+function _lbConsecAllMarked(slots) {
+  for (var i = 0; i < (slots || []).length; i++) if (typeof slots[i].consecOk !== 'boolean') return false;
+  return true;
+}
+// 確定時の連続ルールの判定（設計18 §3-6）。その日（0〜24時）のトレーナーcal と B1 を読む（+2回）。
+//   返り値 { ok, unknown, lengthMin, side }。★読めない・判定できないは unknown（呼ぶ側が弾く＝MODEL §0）
+function _lbConsecCheckAt(trainer, start, end, exStart) {
+  try {
+    var d0 = new Date(start.getTime()); d0.setHours(0, 0, 0, 0);
+    var d1 = new Date(d0.getTime() + 24 * 3600000);
+    var tcal = CalendarApp.getCalendarById(trainer.email);
+    var b1 = CalendarApp.getCalendarById(CALENDAR_IDS.CAPACITY_B1);
+    if (!tcal || !b1) return { ok: false, unknown: true };
+    var tev = tcal.getEvents(d0, d1).map(function (ev) { return { title: ev.getTitle(), start: ev.getStartTime().getTime(), end: ev.getEndTime().getTime() }; });
+    var bev = b1.getEvents(d0, d1).filter(function (ev) { return ev.getTitle().indexOf('[消化]') !== 0; })
+      .map(function (ev) { return { title: ev.getTitle(), start: ev.getStartTime().getTime(), end: ev.getEndTime().getTime() }; });
+    var sessions = _lbConsecSessionsOf(tev, bev, String(trainer.name || '').split(' ')[0], _lbConsecSurCount(CALENDAR_IDS.TRAINERS), _lbIsSessionTitle, exStart || null);
+    var v = _lbConsecVerdict(sessions, start.getTime(), end.getTime());
+    if (v.invalid) return { ok: false, unknown: true };
+    return { ok: v.ok, unknown: false, lengthMin: v.lengthMin, side: v.side };
+  } catch (e) {
+    Logger.log('[consec] 確定時の判定で例外: ' + e.message);
+    return { ok: false, unknown: true };
+  }
+}
+
+// dry の後判定。いま作った予約（新しい開始）と、変更なら旧予定を連続から外して判定し、かかった時間と一緒に残す
+function _lbConsecDryRecord(body, channel) {
+  var trainer = _lbTrainerById(String((body && body.trainerId) || ''));
+  var st = new Date(body && body.startISO);
+  if (!trainer || isNaN(st.getTime())) return;
+  var en = new Date(st.getTime() + SETTINGS.SESSION_MINUTES * 60000);
+  var ex = [st.getTime()];
+  if (body.excludeStartISO) { var ox = new Date(body.excludeStartISO).getTime(); if (isFinite(ox)) ex.push(ox); }
+  var t0 = Date.now();
+  var cv = _lbConsecCheckAt(trainer, st, en, ex);
+  _lbLogOutcome('CONSEC_DRY_' + (cv.unknown ? 'UNKNOWN' : (cv.ok ? 'OK' : 'REJECT')), channel,
+                (cv.unknown ? 'read_fail' : ('len=' + cv.lengthMin + ' side=' + cv.side)) + ' ms=' + (Date.now() - t0));
+}
+
+// 判定にかかった時間（点検用）。直近 days 日の CONSEC_ 行の ms= から中央値・最大を出す
+function _lbConsecPerf(days) {
+  var sh = _lbSheet(LB_METRICS_SHEET);
+  if (!sh || sh.getLastRow() < 2) return { n: 0, median: null, max: null };
+  var cutoff = Utilities.formatDate(new Date(Date.now() - (days || 1) * 86400000), SETTINGS.TIMEZONE, 'yyyy-MM-dd');
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(5, sh.getLastColumn())).getValues(), ms = [];
+  for (var i = 0; i < v.length; i++) {
+    if (_lbDateKey(v[i][1]) < cutoff) continue;
+    if (String(v[i][2] || '').indexOf('CONSEC_') !== 0) continue;
+    var m = String(v[i][4] || '').match(/ms=(\d+)/);
+    if (m) ms.push(Number(m[1]));
+  }
+  ms.sort(function (a, b) { return a - b; });
+  return { n: ms.length, median: ms.length ? ms[Math.floor(ms.length / 2)] : null, max: ms.length ? ms[ms.length - 1] : null };
+}
+
+// ★連続ルールの切り替え（オーナーが GAS エディタで1回押す。エディタからは引数を渡せないので3つに分ける）。
+//   切り替えたら**その場で枠を作り直して写しを送る**（次の定期処理まで最大10分、画面と判定がずれるのを防ぐ・関門③）。
+//   返す文で、写しが届いたモードを確かめられる。
+function lbConsecSetOff() { return _lbConsecSwitch('off'); }
+function lbConsecSetDry() { return _lbConsecSwitch('dry'); }
+function lbConsecSetOn()  { return _lbConsecSwitch('on'); }
+function _lbConsecSwitch(mode) {
+  if (mode !== 'off' && mode !== 'dry' && mode !== 'on') throw new Error('mode は off / dry / on');
+  var p = PropertiesService.getScriptProperties();
+  var before = _lbConsecMode();
+  var want = (mode === 'on') ? 'on' : 'off';
+  //   ★「今回送れたか」は、押した時刻より**後**に書かれた送信記録だけで判定する（関門③）。
+  //     5分以内の記録で判定すると、直前に別の実行が送った記録で ✅ になる（今回の送信が失敗していても）。
+  //     送信記録は送れた後にしか書かれない（_edgeSendSlots）。
+  function sentSince(t0) {
+    var s = String(p.getProperty('LB_SLOTS_CONSEC_SENT') || '').split('|');
+    return (Number(s[1]) >= t0) ? s[0] : '';
+  }
+  var t0 = Date.now();
+  p.setProperty('LB_CONSEC_RULE', mode);
+  var note = '';
+  try { pushToEdgeSlots(); } catch (e) { note = '　例外: ' + e.message; }
+  var got = sentSince(t0);
+  if (got === want) {
+    var okMsg = '連続ルール: ' + before + ' → ' + mode + '／写しのモード: ' + got + '（たったいま送った）　✅ 切り替え完了';
+    Logger.log(okMsg);
+    return okMsg;
+  }
+  //   ★送れなかった：スイッチを元に戻して送り直す（GAS だけ on・写しは off のまま、を残さない）
+  p.setProperty('LB_CONSEC_RULE', before);
+  var t1 = Date.now(), back = '';
+  try { pushToEdgeSlots(); } catch (e2) { back = '　戻しの送信でも例外: ' + e2.message; }
+  var gotBack = sentSince(t1);
+  var msg = '連続ルール: ' + mode + ' に切り替えられませんでした（写しが送れていない: ' + (got || '送信記録なし') + '）' + note
+    + '　→ ' + before + ' に戻しました（戻しの写し: ' + (gotBack || '★送れていない') + '）' + back + '　❌ CEO に連絡してください';
+  Logger.log(msg);
+  return msg;
+}
+
+// 呼んだのがトレーナー（オーナー含む）か。読めなければ false＝顧客として扱う
+function _lbIsTrainerCaller(lineUserId) {
+  if (!lineUserId) return false;
+  try { return !!getTrainerByLine(lineUserId); } catch (e) { return false; }
 }
 
 // CALENDAR_IDS.TRAINERS から id で引く
@@ -4911,7 +5055,13 @@ function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerN
 //   薄いラッパで成否を実測ログに1行記録する（軽量・非致命）。ログ失敗は予約に影響させない。
 function _lbReserveCore(custInfo, body, channel) {
   var r = _lbReserveCoreImpl(custInfo, body, channel);
-  try { _lbLogOutcome((r && r.success) ? 'success' : ((r && r.code) || 'ERROR'), channel); } catch (e) { Logger.log('outcomeログ失敗（予約は継続）: ' + e.message); }
+  if (r && r._skipOutcome) delete r._skipOutcome;   // 連続ルールで弾いた分は CONSEC_ で記録済み（二重に数えない）
+  else { try { _lbLogOutcome((r && r.success) ? 'success' : ((r && r.code) || 'ERROR'), channel); } catch (e) { Logger.log('outcomeログ失敗（予約は継続）: ' + e.message); } }
+  //   ★連続ルールの dry（設計18 §3-10・関門③）：予約が成立したあとで「on なら弾いたか」と「判定にかかった時間」を記録する。
+  //     ロックの外なので同時に予約した人を待たせない。結果は変えない。例外は外へ出さない
+  if (r && r.success && custInfo && custInfo.consecRule === true && String(custInfo.contractType || '').indexOf('体験') < 0) {
+    try { if (_lbConsecMode() === 'dry') _lbConsecDryRecord(body, channel); } catch (eDry) { Logger.log('[consec] dry の記録に失敗（予約は成立済み）: ' + eDry.message); }
+  }
   return r;
 }
 // custInfo: { customerId, customerName, lineUserId(空可) }
@@ -4991,6 +5141,29 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
       }
     }
     _lap('トレーナー空き照合');
+    //   ★連続ルール（設計18 §3-6）。顧客が自分で取る予約だけ（custInfo.consecRule）。
+    //     体験の契約の予約は連続に数えないので当てない。カレンダーを作る前＝弾いても巻き戻しは要らない
+    if (custInfo.consecRule === true && String(custInfo.contractType || '').indexOf('体験') < 0) {
+      //   ★ロックの中で判定するのは on のときだけ。dry は結果を変えないので、予約が成立して
+      //     ロックを離した後（_lbReserveCore）で判定する＝同時に予約した人を待たせない（関門③）
+      var _cm = _lbConsecMode();
+      if (_cm === 'on') {
+        var _cvT0 = Date.now();
+        var _cv = _lbConsecCheckAt(trainer, start, end, exStart);
+        if (!_cv.ok) {
+          //   記録は CONSEC_ で始める（予約の成否の集計に混ぜない）
+          try { _lbLogOutcome('CONSEC_' + (_cv.unknown ? 'UNKNOWN' : 'REJECT'), channel,
+                              (_cv.unknown ? 'read_fail' : ('len=' + _cv.lengthMin + ' side=' + _cv.side)) + ' ms=' + (Date.now() - _cvT0)); } catch (eCl) {}
+          {
+            //   ★_skipOutcome：CONSEC_ で記録済み。外側（_lbReserveCore）で SLOT_TAKEN をもう一度記録すると、
+            //     「他の方が先に取った」の集計に連続ルールの分が混ざる（関門②）
+            if (_cv.unknown) return { success: false, code: 'SLOT_CHECK_UNAVAILABLE', message: '空き状況を確認できませんでした。時間をおいて再度お試しください。', _skipOutcome: true };
+            return { success: false, code: 'SLOT_TAKEN', message: 'この時間帯は選択されたトレーナーが対応できません。', _skipOutcome: true };
+          }
+        }
+      }
+      _lap('連続ルール');
+    }
     // カレンダー登録（TECH_SPEC §5・末尾 _line で billingパーサ非破壊）※B1のみ＋トレーナーカレンダー
     var lastName = trainer.name.split(' ')[0];
     // 予約種別プレフィックス：振替(channel) → レンタル(契約種別) → 通常 の優先順で決定。
@@ -5061,7 +5234,8 @@ function makeReservationLine(lineUserId, body) {
     customerId: String(rec.data[MAP_COL.CUSTOMER_ID - 1]),
     customerName: _cn,
     contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''),   // 契約から最新種別（総括C：自己予約のタイトル/計上を正す）・無ければmap値
-    lineUserId: lineUserId
+    lineUserId: lineUserId,
+    consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
   }, body, 'line');
 }
 
@@ -5074,7 +5248,9 @@ function makeRecurringReservationLine(lineUserId, body) {
   if (cstat && cstat !== 'active') return { success: false, code: 'CONTRACT_INACTIVE', message: '現在ご予約いただけない契約状態です。' };
   var _cn = String(rec.data[MAP_COL.NAME - 1] || '会員');
   var custInfo = { customerId: String(rec.data[MAP_COL.CUSTOMER_ID - 1]), customerName: _cn,
-    contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''), lineUserId: lineUserId };
+    contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''), lineUserId: lineUserId,
+    consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+  };
   // 繰り返しは常に通常経路（1名・normal）で作る。ペアは来店人数を回ごとに選ぶ必要があるため、この経路では
   //   ペアpackを消化させない（契約種別の文字列で会員を弾くのではなく、消化先を固定して安全にする）。
   var start0 = new Date(body.startISO);
@@ -5189,7 +5365,8 @@ function makeTransferReservationLine(lineUserId, body) {
       customerId: customerId,
       customerName: _cn2,
       contractType: _lbContractTypeOf(_cn2) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''),
-      lineUserId: lineUserId
+      lineUserId: lineUserId,
+      consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
     }, body, 'transfer');   // 同一Lockを共有（_lbReserveCoreはhasLock時に再取得しない）
     if (!(res && res.success)) _lbRevertTransferCredit(use.rowIndex);   // 予約不成立→権利を未使用に戻す
     return res;
@@ -7475,7 +7652,9 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
       made = _lbReserveCore(
         //   ★suppressNotify（2026-10-13・設計17）：それまで変更のたびに「ご予約を承りました」【新規予約】も送られ、
         //     「変更しました」と合わせて**1回の変更で4通**届いていた。通知は下の「変更」2通だけにする
-        { customerId: String(r[2]), customerName: customerName, lineUserId: String(r[3]), contractType: _chType, suppressNotify: true },
+        { customerId: String(r[2]), customerName: customerName, lineUserId: String(r[3]), contractType: _chType, suppressNotify: true,
+          //   ★連続ルールは「自分の予約を自分で変える」ときだけ（設計18 §3-6）。トレーナーが他人の予約を変えるときは当てない
+          consecRule: (String(r[3]) === String(lineUserId)) },
         { trainerId: String(r[4]), startISO: newStartISO, excludeStartISO: oldStart.toISOString(),
           // 変更は「日時だけ」が不変条件。会計属性（来店人数・消化先）は旧行から復元して持ち越す。
           //   packKindを渡さないと月額＋ペア併存会員の「ペア1名」予約が変更で月額/通常packへ変質する。
@@ -7946,7 +8125,8 @@ function makeBatchReservationLine(lineUserId, body) {
   var _cn = String(rec.data[MAP_COL.NAME - 1] || '会員');
   return _lbBatchReserve({
     customerId: String(rec.data[MAP_COL.CUSTOMER_ID - 1]), customerName: _cn,
-    contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''), lineUserId: lineUserId
+    contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''), lineUserId: lineUserId,
+    consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
   }, (body && body.items) || [], 'line');
 }
 
@@ -8067,7 +8247,7 @@ function getBookingMetrics(sinceDays) {
   var sh = _lbSheet(LB_METRICS_SHEET); if (!sh || sh.getLastRow() < 2) return { total: 0, byOutcome: {}, byChannel: {}, notifyFail: { total: 0, byReason: {}, byPurpose: {} }, days: days };
   var cutoff = Utilities.formatDate(new Date(new Date().getTime() - days * 86400000), SETTINGS.TIMEZONE, 'yyyy-MM-dd');
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
-  var byOutcome = {}, byChannel = {}, total = 0, nfTotal = 0, nfByReason = {}, nfByPurpose = {};
+  var byOutcome = {}, byChannel = {}, total = 0, nfTotal = 0, nfByReason = {}, nfByPurpose = {}, consec = {};
   for (var i = 0; i < v.length; i++) {
     if (_lbDateKey(v[i][1]) < cutoff) continue;   // yyyy-MM-dd の辞書比較＝時系列比較（★日付型のセルはそろえてから）
     var oc = String(v[i][2] || '?'), ch = String(v[i][3] || '?');
@@ -8075,9 +8255,10 @@ function getBookingMetrics(sinceDays) {
       var rs = oc.slice('NOTIFY_FAIL_'.length) || '?';
       nfByReason[rs] = (nfByReason[rs] || 0) + 1; nfByPurpose[ch] = (nfByPurpose[ch] || 0) + 1; nfTotal++; continue;
     }
+    if (oc.indexOf('CONSEC_') === 0) { consec[oc] = (consec[oc] || 0) + 1; continue; }   // 連続ルール（設計18）も別勘定
     byOutcome[oc] = (byOutcome[oc] || 0) + 1; byChannel[ch] = (byChannel[ch] || 0) + 1; total++;
   }
-  return { total: total, byOutcome: byOutcome, byChannel: byChannel, notifyFail: { total: nfTotal, byReason: nfByReason, byPurpose: nfByPurpose }, days: days };
+  return { total: total, byOutcome: byOutcome, byChannel: byChannel, notifyFail: { total: nfTotal, byReason: nfByReason, byPurpose: nfByPurpose }, consec: consec, days: days };
 }
 
 // 直近7日の成否レポート（GASエディタから実行、または週次トリガーで）。数字で失敗率を把握。

@@ -331,6 +331,187 @@ function _lbAutoBreakSame(a, b) {
   return Number(a.startMs) === Number(b.startMs) && Number(a.endMs) === Number(b.endMs);
 }
 
+// ============================================================
+// 同じトレーナーの連続を3時間で区切る（設計18・2026-10-13 オーナー確定）
+//
+//   ルール：
+//     1. すでに3時間続いている予約のすぐ前・すぐ後は15分あける（3時間を超える伸ばし方は不可）
+//     2. すき間を埋める予約は、つながっても5時間まで可（1より優先）
+//     3. どんな場合も連続5時間を超えない
+//   「連続」＝同じトレーナーのセッションどうしの間が15分未満。ちょうど15分あいたら別の連続。
+//   体験は数えない（呼び出し側が sessions から外して渡す）。顧客が自分で取る予約だけに効かせる。
+//
+//   ★判定の正本はこの1つ。画面に枠を出すときも、予約を確定するときも、これを呼ぶ
+//     （2か所に書くと「画面に出るのに取れない」が起きる）。
+// ============================================================
+var LB_CONSEC_DEFAULTS = {
+  GAP_MIN: 15,              // これ未満の隙間は同じ連続
+  ONE_SIDE_MAX_MIN: 180,    // 片側に伸ばすとき、伸ばしたあとの上限
+  BOTH_SIDES_MAX_MIN: 300,  // すき間埋め（両側につながる）の上限
+  // 片側の判定方式。'result_max_180'＝伸ばしたあとが180以下（2026-10-13 オーナー確定）
+  //               'existing_run_under_180'＝伸ばす前の連続が180未満なら300まで（字面どおり・不採用）
+  ONE_SIDE_MODE: 'result_max_180'
+};
+
+// sessions を読める形にそろえる。1つでも読めなければ null（＝判定できない＝答えない側）
+function _lbConsecNorm(sessions) {
+  var out = [];
+  for (var i = 0; i < (sessions || []).length; i++) {
+    var x = sessions[i];
+    var s = Number(x && x.start), e = Number(x && x.end);
+    if (!isFinite(s) || !isFinite(e) || e <= s) return null;
+    out.push({ start: s, end: e });
+  }
+  out.sort(function (a, b) { return (a.start - b.start) || (a.end - b.end); });
+  return out;
+}
+
+// [cs, ce) から始めて、間が gap 未満でつながるセッションを全部取り込んだ幅を返す
+function _lbConsecChain(list, cs, ce, gapMs, skipIdx) {
+  var used = {}, changed = true;
+  if (skipIdx != null) used[skipIdx] = true;
+  while (changed) {
+    changed = false;
+    for (var i = 0; i < list.length; i++) {
+      if (used[i]) continue;
+      if (list[i].start < ce + gapMs && list[i].end > cs - gapMs) {   // 重なり・接する・間が gap 未満
+        used[i] = true; changed = true;
+        if (list[i].start < cs) cs = list[i].start;
+        if (list[i].end > ce) ce = list[i].end;
+      }
+    }
+  }
+  return { start: cs, end: ce };
+}
+
+// 判定。返り値 { ok, lengthMin, existingMin, side, invalid }
+//   side: 'none'（どこにもつながらない）／'one'（片側だけ＝端を伸ばす）／'both'（すき間埋め）
+//   existingMin: none→0 ／ one→伸ばす前につながる片側の連続の幅 ／ both→null
+function _lbConsecVerdict(sessions, slotStart, slotEnd, opt) {
+  opt = opt || {};
+  var D = LB_CONSEC_DEFAULTS;
+  var gapMs = Number(opt.gapMin != null ? opt.gapMin : D.GAP_MIN) * 60000;
+  var oneMax = Number(opt.oneSideMaxMin != null ? opt.oneSideMaxMin : D.ONE_SIDE_MAX_MIN) * 60000;
+  var bothMax = Number(opt.bothSidesMaxMin != null ? opt.bothSidesMaxMin : D.BOTH_SIDES_MAX_MIN) * 60000;
+  var mode = opt.oneSideMode || D.ONE_SIDE_MODE;
+  var s = Number(slotStart), e = Number(slotEnd);
+  var bad = { ok: false, lengthMin: null, existingMin: null, side: 'none', invalid: true };
+  if (!isFinite(s) || !isFinite(e) || e <= s) return bad;
+  if (mode !== 'result_max_180' && mode !== 'existing_run_under_180') return bad;
+  var list = _lbConsecNorm(sessions);
+  if (!list) return bad;
+  // 左右に直接つながるセッション
+  var leftIdx = -1, rightIdx = -1;
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].start < s && list[i].end > s - gapMs) leftIdx = (leftIdx < 0 || list[i].end > list[leftIdx].end) ? i : leftIdx;
+    if (list[i].end > e && list[i].start < e + gapMs) rightIdx = (rightIdx < 0 || list[i].start < list[rightIdx].start) ? i : rightIdx;
+  }
+  var chain = _lbConsecChain(list, s, e, gapMs, null);
+  var L = chain.end - chain.start;
+  var out = { ok: true, lengthMin: L / 60000, existingMin: 0, side: 'none', invalid: false };
+  if (leftIdx < 0 && rightIdx < 0) return out;
+  if (leftIdx >= 0 && rightIdx >= 0) {
+    out.side = 'both'; out.existingMin = null; out.ok = (L <= bothMax);
+    return out;
+  }
+  out.side = 'one';
+  var adj = (leftIdx >= 0) ? leftIdx : rightIdx;
+  var ex = _lbConsecChain(list, list[adj].start, list[adj].end, gapMs, adj);
+  out.existingMin = (ex.end - ex.start) / 60000;
+  if (mode === 'result_max_180') out.ok = (L <= oneMax);
+  else out.ok = ((ex.end - ex.start) < oneMax) && (L <= bothMax);
+  return out;
+}
+
+// 3時間以上の連続（体験を除いたセッションで数える）。[{start,end}]
+function _lbConsecLongRuns(sessions, opt) {
+  opt = opt || {};
+  var D = LB_CONSEC_DEFAULTS;
+  var gapMs = Number(opt.gapMin != null ? opt.gapMin : D.GAP_MIN) * 60000;
+  var minMs = Number(opt.oneSideMaxMin != null ? opt.oneSideMaxMin : D.ONE_SIDE_MAX_MIN) * 60000;
+  var list = _lbConsecNorm(sessions);
+  if (!list) return null;
+  var runs = [];
+  for (var i = 0; i < list.length; i++) {
+    var cur = runs.length ? runs[runs.length - 1] : null;
+    if (cur && list[i].start < cur.end + gapMs) { if (list[i].end > cur.end) cur.end = list[i].end; }
+    else runs.push({ start: list[i].start, end: list[i].end });
+  }
+  return runs.filter(function (r) { return (r.end - r.start) >= minMs; });
+}
+
+// 追加の枠の開始時刻（on のときだけ使う・設計18 §3-3）。
+//   吸着は空きブロックの先頭から刻むので、判定で落とすだけでは 13:15 も 8:45・7:45 も生まれない。
+//   3時間以上の連続 R ごとに：後ろ R.end+15 ／前 R.start−15−60×k（k=1,2,…）。
+//   fits(startMs) が false になったところで前への列挙を止める（空きブロックの先頭を割らない・
+//   別のブロックへ飛び越えない）。枠として出すかの条件（締め切り等）は呼び出し側が通常と同じものを通す。
+function _lbConsecExtraStarts(longRuns, sessionMin, fits) {
+  var D = LB_CONSEC_DEFAULTS, buf = D.GAP_MIN * 60000, len = Number(sessionMin) * 60000, out = [];
+  for (var i = 0; i < (longRuns || []).length; i++) {
+    var r = longRuns[i];
+    var after = r.end + buf;
+    if (fits(after)) out.push(after);
+    for (var k = 1; k <= 24; k++) {
+      var st = r.start - buf - len * k;
+      if (!fits(st)) break;
+      out.push(st);
+    }
+  }
+  return out;
+}
+
+// B1 の予定が「このトレーナーの体験」か。
+//   B1 のタイトルはどの経路でも `[RESERVED] <種別>_<担当の姓>_<顧客名>様`（hpb-mail-to-calendar/gas/sync.js も同じ）。
+//   ★時刻の重なりだけで決めない：B1 で A の体験、1F で B の通常が同じ時刻になりうる（設計18 §3-2）。
+//   ★同じ姓が2人いたら曖昧＝体験とみなさない（数える側に倒す）。[消化] は見ない。
+function _lbConsecIsTrialFor(b1Title, trainerSur, surCount) {
+  var t = String(b1Title == null ? '' : b1Title).replace(/^\[TEST\]\s*/, '');
+  if (t.indexOf('[RESERVED]') !== 0) return false;   // [消化] や手で作った予定は体験と判定しない
+  var parts = t.replace(/^\[RESERVED\]\s*/, '').split('_');
+  if (parts.length < 3) return false;
+  var kind = _lbNormTok(parts[0]), sur = _lbNormTok(parts[1]);
+  if (kind.indexOf('体験') < 0) return false;          // ★_lbClassifyBooking は完全一致の「体験」だけ。HPB体験 も拾うため「含む」
+  if (!sur || sur !== _lbNormTok(trainerSur)) return false;
+  return !!(surCount && surCount[sur] === 1);
+}
+
+// トレーナーのセッション（体験を除く）。trainerEvents/b1Events: [{title,start,end}]（ms）
+//   isSession(title) … セッションか（コード.js の _lbIsSessionTitle を渡す）
+//   excludeStartMs   … 変更のとき自分の旧予定を外す（既存と同じ「開始時刻の一致」）
+function _lbConsecSessionsOf(trainerEvents, b1Events, trainerSur, surCount, isSession, excludeStartMs) {
+  var out = [];
+  for (var i = 0; i < (trainerEvents || []).length; i++) {
+    var ev = trainerEvents[i];
+    if (!isSession(ev.title)) continue;
+    if (_lbConsecIsExcluded(ev.start, excludeStartMs)) continue;
+    var trial = false;
+    for (var j = 0; j < (b1Events || []).length; j++) {
+      var b = b1Events[j];
+      if (Number(b.start) < Number(ev.end) && Number(b.end) > Number(ev.start) && _lbConsecIsTrialFor(b.title, trainerSur, surCount)) { trial = true; break; }
+    }
+    if (!trial) out.push({ start: Number(ev.start), end: Number(ev.end) });
+  }
+  return out;
+}
+
+// 除外する開始時刻（数でも配列でも受ける。dry の後判定は「旧予定」と「いま作った予約」の2つを外す）
+function _lbConsecIsExcluded(startMs, ex) {
+  if (ex == null || ex === '') return false;
+  var list = (Object.prototype.toString.call(ex) === '[object Array]') ? ex : [ex];
+  for (var i = 0; i < list.length; i++) if (list[i] && Number(list[i]) === Number(startMs)) return true;
+  return false;
+}
+
+// 姓 → 人数（同じ姓が2人いたら曖昧にするため）
+function _lbConsecSurCount(trainers) {
+  var c = {};
+  for (var i = 0; i < (trainers || []).length; i++) {
+    var sur = _lbNormTok(String((trainers[i] && trainers[i].name) || '').split(' ')[0]);
+    if (sur) c[sur] = (c[sur] || 0) + 1;
+  }
+  return c;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { _lbClassifyBooking: _lbClassifyBooking, _lbNormTok: _lbNormTok, _lbTransferCreditState: _lbTransferCreditState,
     _lbRecurringStartMs: _lbRecurringStartMs, _lbCountTicketConsumption: _lbCountTicketConsumption, _lbBookTypePrefix: _lbBookTypePrefix,
@@ -342,5 +523,8 @@ if (typeof module !== 'undefined' && module.exports) {
     _lbOverlaps: _lbOverlaps, _lbEventOverlaps: _lbEventOverlaps,
     LB_AUTO_BREAK_DEFAULTS: LB_AUTO_BREAK_DEFAULTS, _lbAutoBreakCfgCheck: _lbAutoBreakCfgCheck,
     _lbAutoBreakNeeded: _lbAutoBreakNeeded, _lbAutoBreakClip: _lbAutoBreakClip,
-    _lbAutoBreakSame: _lbAutoBreakSame, _lbAutoBreakKey: _lbAutoBreakKey, _lbMsOk: _lbMsOk };
+    _lbAutoBreakSame: _lbAutoBreakSame, _lbAutoBreakKey: _lbAutoBreakKey, _lbMsOk: _lbMsOk,
+    LB_CONSEC_DEFAULTS: LB_CONSEC_DEFAULTS, _lbConsecVerdict: _lbConsecVerdict, _lbConsecLongRuns: _lbConsecLongRuns,
+    _lbConsecExtraStarts: _lbConsecExtraStarts, _lbConsecIsTrialFor: _lbConsecIsTrialFor,
+    _lbConsecSessionsOf: _lbConsecSessionsOf, _lbConsecSurCount: _lbConsecSurCount };
 }

@@ -163,6 +163,7 @@ export async function routeSlots({ body, env, who }) {
   return {
     trainerId,
     slots: cached.slots.filter((s) => keepSlot(s && s.startMs)),
+    consec: cached.consec,
     source: SLOT_SOURCE.CACHE,
     computedAt: cached.computedAt,
     ageMs,
@@ -288,6 +289,8 @@ async function readCache(env, trainerId) {
     slots: raw.slots,
     rules: (raw.rules && typeof raw.rules === 'object') ? raw.rules : null,
     computedAt: isFinite(computedAt) && computedAt > 0 ? computedAt : null,
+    // 連続ルール（設計18）の写しのモード。無い＝反映前に作られた古い写し
+    consec: (raw.consec && typeof raw.consec === 'object' && !Array.isArray(raw.consec)) ? raw.consec : null,
   };
 }
 

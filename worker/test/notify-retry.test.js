@@ -434,7 +434,7 @@ console.log('=== 4. 配線（ソース）===');
 const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((ln) => ln.replace(/\/\/.*$/, '')).join('\n');
 const S = strip(LB), C = strip(CODE);
 ok('4-1 ★N8 予約変更は「承りました」を送らない（suppressNotify）',
-   /contractType: _chType, suppressNotify: true \}/.test(S),
+   /contractType: _chType, suppressNotify: true,/.test(S),
    'それまで1回の変更で4通（承りました＋変更しました×顧客・トレーナー）');
 ok('4-2 予約確定に予約IDを渡す', /custInfo\.customerName, channel, custInfo\.customerId, resId\)/.test(S));
 ok('4-3 変更に新旧の予約IDを渡す', /var _chCtx = \{ resId: String\(made\.reservationId \|\| ''\), oldResId: String\(reservationId\)/.test(S)

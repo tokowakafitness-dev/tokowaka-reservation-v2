@@ -2276,6 +2276,7 @@
   }
 
   function loadSlots(){
+    state.slotsGen = (state.slotsGen || 0) + 1;   // 裏の取り直し（refreshSlotsQuietly）の古い結果で上書きさせない
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_getTrainerSlots', trainerId: state.trainerId, excludeStartISO: state.excludeStartISO || '' }).then(function(res){
       if (!res.success) { showError(t('err_slots')); return; }
@@ -2285,6 +2286,22 @@
       state._repaint = function(){ renderWeek(); renderBatchBar(); };   // 言語切替で週グリッド＋バッチバーを再描画
       show('s-week');
     }).catch(function(e){ showError(t('comm_fail',{msg:e})); });
+  }
+
+  // 枠を見分ける鍵（トレーナー＋開始時刻）
+  function slotKeyOf(sl){ return sl ? String(sl.trainerId || state.trainerId || '') + '|' + String(sl.startISO || '') : ''; }
+  // 画面を移さずに枠の一覧だけ取り直す（失敗しても何もしない＝今の一覧のまま）
+  //   ★取り直しのたびに番号を振り、最新の取り直しだけを採用する（関門②）。
+  //     待つ間に一覧を開き直す（loadSlots）・変更モードに入る等で条件が変わったら、古い結果で上書きしない
+  function refreshSlotsQuietly(){
+    var gen = state.slotsGen = (state.slotsGen || 0) + 1;
+    var tid = state.trainerId, ex = state.excludeStartISO || '';
+    api({ action:'line_getTrainerSlots', trainerId: tid, excludeStartISO: ex }).then(function(res){
+      if (!res || !res.success) return;
+      if (state.slotsGen !== gen || state.trainerId !== tid || (state.excludeStartISO || '') !== ex) return;
+      state.slots = res.slots || [];
+      try { renderWeek(); renderBatchBar(); } catch (e) {}
+    }).catch(function(){});
   }
 
   function fmtDate(d){
@@ -2489,7 +2506,9 @@
   // 選択肢が対象日基準で確定するまで／確定できなかった場合は「予約を確定する」を押させない
   function setConfirmEnabled(){
     var b = document.getElementById('confirmBtn'); if (!b) return;
-    b.disabled = !(state.optReady && !state.optError);
+    //   取れなかった枠（SLOT_TAKEN）のままなら押させない（あとから選択肢の取得が終わって有効に戻るのを防ぐ）
+    var taken = !!(state.slotTakenKey && state.selected && slotKeyOf(state.selected) === state.slotTakenKey);
+    b.disabled = !(state.optReady && !state.optError) || taken;
   }
   // #9 振替券の選択・#6 繰り返し を確定画面に動的描画（通常の会員予約フローのみ）
   function buildConfirmOptions(){
@@ -2690,6 +2709,15 @@
         } else {
           errEl.textContent = res.message || t('book_fail');
           errEl.hidden = false;
+          //   ★その時間が取れなかった（SLOT_TAKEN）ときは、裏で枠の一覧だけ新しくする（2026-10-13・設計18 §3-7）。
+          //     それまではエラー文を出すだけで一覧が古いまま残り、戻ると同じ枠をまた選べた。
+          //     画面は移さない（エラー文を読めるように）。戻ったときに新しい一覧が出る。
+          if (res.code === 'SLOT_TAKEN' && !state.proxyMode) {
+            //   ★同じ枠で押し直させない（関門②）。別の枠を選べば openConfirm がボタンを作り直す
+            state.slotTakenKey = slotKeyOf(state.selected);   // トレーナー＋時刻（同じ時刻の別トレーナーは止めない）
+            btn.disabled = true;
+            refreshSlotsQuietly();
+          }
         }
       }).catch(function(e){
         // ★ボタンをここで戻さない。戻すと、成立しているのに押し直せてしまう。
