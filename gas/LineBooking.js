@@ -4221,6 +4221,7 @@ var LB_NQ = {
   TICK_MAX_START_MS: 3 * 60000,     // warmupCache の開始からこれを過ぎていたら、送り直しはしない（6分の制限）
   CLAIM_MAX: 8,                     // 1回で送り直す上限
   ALERT_MAX: 30,                    // 1通のメールに載せる上限
+  ON_PROP: 'LB_NOTIFY_RETRY_ON',               // '0' で自動の送り直しだけを止める（記録とオーナーへのメールは続ける）
   FAIL_PROP: 'LB_NOTIFY_QUEUE_WRITE_FAIL',     // キューに書けなかった（別の媒体に残す）
   STARTED_PROP: 'LB_NOTIFY_RETRY_STARTED',
   COMPLETED_PROP: 'LB_NOTIFY_RETRY_COMPLETED', // ★見張り：これが1時間より古ければ送り直しが止まっている
@@ -4500,6 +4501,8 @@ function lbNotifyRetryTick(startedAtMs) {
       if (last >= 2) {
         var vals = sh.getRange(2, 1, last - 1, w).getValues();
         var now = Date.now(), anyChanged = false;
+        //   ★止めたときは「送らずにオーナーへ」に倒す（待たせたまま誰にも知らせない、にしない）
+        var retryOff = String(props.getProperty(LB_NQ.ON_PROP) || '') === '0';
         for (var i = 0; i < vals.length; i++) {
           var row = vals[i], st = String(row[_lbNqCol('state')] || ''), changed = false;
           var lu = Number(row[_lbNqCol('lease_until')]) || 0;
@@ -4508,6 +4511,10 @@ function lbNotifyRetryTick(startedAtMs) {
             st = (st === 'sending') ? 'pending' : 'alert';
             row[_lbNqCol('state')] = st; row[_lbNqCol('lease_id')] = ''; row[_lbNqCol('lease_until')] = '';
             changed = true; out.recovered++;
+          }
+          if (st === 'pending' && retryOff) {
+            st = 'alert'; row[_lbNqCol('state')] = 'alert'; row[_lbNqCol('last_detail')] = 'not_sent: RETRY_OFF / ' + String(row[_lbNqCol('last_detail')] || '');
+            changed = true;
           }
           if (st === 'pending' && claimed.length < LB_NQ.CLAIM_MAX && (Number(row[_lbNqCol('next_at')]) || 0) <= now) {
             row[_lbNqCol('state')] = 'sending'; row[_lbNqCol('lease_id')] = leaseId; row[_lbNqCol('lease_until')] = now + LB_NQ.LEASE_MS;
@@ -4821,6 +4828,37 @@ function _lbWelcomeText() {
     '登録後は、LINEからいつでもセッションのご予約・変更・キャンセルができます。\nご不明な点は担当トレーナーへお気軽にどうぞ。';
 }
 
+// トレーナー向けの「顧客の残り」の文面（予約した日の月で出す）。
+//   ★予約確定と予約変更の両方で使う（2026-10-13・関門③）。変更で「新規予約」通知を止めたとき、
+//     この情報が変更通知から消えていた。月をまたぐ変更では対象月の残数が変わるので、変更でも要る。
+function _lbTrainerRemainText(customerId, customerName, start) {
+  var _remTxt = '';
+  try {
+    var _h = _lbBuildHome(customerId, customerName, null, start.getTime());   // 予約した日の月で出す
+    if (_h && _h.type) {
+      var _lines = [];
+      // 予約が翌月以降なら「10月分：」のように月を明記する（今月の残数と取り違えないため）
+      var _now = new Date();
+      var _sameMonth = (start.getFullYear() === _now.getFullYear() && start.getMonth() === _now.getMonth());
+      var _mPfx = _sameMonth ? '' : ((start.getMonth() + 1) + '月分　');
+      if (_h.type === 'monthly' || _h.type === 'both') {
+        var _quota = (_h.quota || 0) + (_h.carryover || 0);                       // 枠＝頻度＋繰越
+        var _mRem = (_h.monthlyRemaining != null) ? _h.monthlyRemaining : 0;
+        var _used = Math.max(0, _quota - _mRem);                                   // 対象月の消化数（枠−残）
+        _lines.push(_mPfx + '月額：月' + (_h.quota || 0) + '回中' + _used + '回目（残' + _mRem + '回）'
+          + ((_h.carryover || 0) > 0 ? '　※繰越' + _h.carryover + '回を含む' : ''));
+      }
+      if (_h.type === 'ticket' || _h.type === 'both') {
+        var _tRem = (_h.type === 'ticket') ? _h.remaining : _h.ticketRemaining;
+        var _tExp = (_h.type === 'ticket') ? _h.expire : _h.ticketExpire;
+        _lines.push(_mPfx + 'チケット：残' + _tRem + '枚' + (_tExp ? '（期限 ' + _tExp + '）' : ''));
+      }
+      if (_lines.length) _remTxt = '\n【顧客の残り】\n' + _lines.join('\n');
+    }
+  } catch (e) { Logger.log('通知の残数取得失敗: ' + e.message); }
+  return _remTxt;
+}
+
 function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerName, channel, customerId, resId) {
   //   ★予約IDを渡す（2026-10-13・設計17）。届かなかったとき、送り直す前に「その予約がまだ有効か」を台帳で確かめるため
   var _nctx = { resId: String(resId || ''), customerId: String(customerId || ''), startMs: start.getTime() };
@@ -4838,32 +4876,7 @@ function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerN
   // 選択トレーナーへ通知push
   var trId = getTrainerLineId(trainer.id);
   if (trId) {
-    var _remTxt = '';
-    if (!isTransfer) {   // 振替は残数を消化しないため残数は載せない
-      try {
-        var _h = _lbBuildHome(customerId, customerName, null, start.getTime());   // 予約した日の月で出す
-        if (_h && _h.type) {
-          var _lines = [];
-          // 予約が翌月以降なら「10月分：」のように月を明記する（今月の残数と取り違えないため）
-          var _now = new Date();
-          var _sameMonth = (start.getFullYear() === _now.getFullYear() && start.getMonth() === _now.getMonth());
-          var _mPfx = _sameMonth ? '' : ((start.getMonth() + 1) + '月分　');
-          if (_h.type === 'monthly' || _h.type === 'both') {
-            var _quota = (_h.quota || 0) + (_h.carryover || 0);                       // 枠＝頻度＋繰越
-            var _mRem = (_h.monthlyRemaining != null) ? _h.monthlyRemaining : 0;
-            var _used = Math.max(0, _quota - _mRem);                                   // 対象月の消化数（枠−残）
-            _lines.push(_mPfx + '月額：月' + (_h.quota || 0) + '回中' + _used + '回目（残' + _mRem + '回）'
-              + ((_h.carryover || 0) > 0 ? '　※繰越' + _h.carryover + '回を含む' : ''));
-          }
-          if (_h.type === 'ticket' || _h.type === 'both') {
-            var _tRem = (_h.type === 'ticket') ? _h.remaining : _h.ticketRemaining;
-            var _tExp = (_h.type === 'ticket') ? _h.expire : _h.ticketExpire;
-            _lines.push(_mPfx + 'チケット：残' + _tRem + '枚' + (_tExp ? '（期限 ' + _tExp + '）' : ''));
-          }
-          if (_lines.length) _remTxt = '\n【顧客の残り】\n' + _lines.join('\n');
-        }
-      } catch (e) { Logger.log('通知の残数取得失敗: ' + e.message); }
-    }
+    var _remTxt = isTransfer ? '' : _lbTrainerRemainText(customerId, customerName, start);   // 振替は残数を消化しないため残数は載せない
     _lbPush(trId, (isTransfer ? '【振替予約】' : '【新規予約】') + customerName + '様\n日時：' + s + '〜' + e + _remTxt +
       (isTransfer ? '\n※振替セッション（5,500円・手動請求）' : ''), 'booking_trainer', _nctx);
   }
@@ -7422,6 +7435,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
   var customerName = String(r[1]);
   var trainer = _lbTrainerById(String(r[4]));
 
+  var _chType = _lbContractTypeOf(customerName);   // 予約の作成と通知の終了時刻で同じ値を使う（ロックの外で読む）
   // 変更全体を単一Lockで原子化（並行二重変更を防ぐ・C3）。_lbReserveCore は hasLock を見て再取得しない。
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
@@ -7436,7 +7450,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
       made = _lbReserveCore(
         //   ★suppressNotify（2026-10-13・設計17）：それまで変更のたびに「ご予約を承りました」【新規予約】も送られ、
         //     「変更しました」と合わせて**1回の変更で4通**届いていた。通知は下の「変更」2通だけにする
-        { customerId: String(r[2]), customerName: customerName, lineUserId: String(r[3]), contractType: _lbContractTypeOf(customerName), suppressNotify: true },
+        { customerId: String(r[2]), customerName: customerName, lineUserId: String(r[3]), contractType: _chType, suppressNotify: true },
         { trainerId: String(r[4]), startISO: newStartISO, excludeStartISO: oldStart.toISOString(),
           // 変更は「日時だけ」が不変条件。会計属性（来店人数・消化先）は旧行から復元して持ち越す。
           //   packKindを渡さないと月額＋ペア併存会員の「ペア1名」予約が変更で月額/通常packへ変質する。
@@ -7460,11 +7474,19 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
 
   var _cl = _lbMemberLang(String(r[3]));
   var _chCtx = { resId: String(made.reservationId || ''), oldResId: String(reservationId), customerId: String(r[2]), startMs: new Date(newStartISO).getTime() };
-  _lbPush(String(r[3]), _lbSt(_cl, 'push_changed', { old: _lbFmtResvLabel(r[0], _cl), new: _lbFmtResvLabel(new Date(newStartISO), _cl), trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
+  //   ★変更の通知だけで足りるように補う（2026-10-13・関門③）。
+  //     それまでは「ご予約を承りました」【新規予約】も一緒に届いていて、終了時刻・場所・無料キャンセル・
+  //     トレーナー向けの残数はそちらにしか無かった。二重通知を止めたので、ここに載せる。
+  var _newStart = new Date(newStartISO);
+  var _chMins = (String(_chType || '').indexOf('体験') >= 0) ? (SETTINGS.TRIAL_SESSION_MINUTES || SETTINGS.SESSION_MINUTES) : SETTINGS.SESSION_MINUTES;
+  var _newEndHm = Utilities.formatDate(new Date(_newStart.getTime() + _chMins * 60000), SETTINGS.TIMEZONE, 'HH:mm');
+  _lbPush(String(r[3]), _lbSt(_cl, 'push_changed', { old: _lbFmtResvLabel(r[0], _cl), new: _lbFmtResvLabel(_newStart, _cl) + '〜' + _newEndHm, trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
+    '\n' + _lbSt(_cl, 'rem_place') + _lbSt(_cl, 'gym_name') + '\n' + _lbSt(_cl, 'rem_free_cancel') +
     (free ? '' : _lbSt(_cl, 'push_change_penalty')), 'change_customer', _chCtx);
   if (trainer) {
     var trId = getTrainerLineId(trainer.id);
-    if (trId) _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(new Date(newStartISO)), 'change_trainer', _chCtx);
+    if (trId) _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(_newStart) + '〜' + _newEndHm
+      + _lbTrainerRemainText(String(r[2]), customerName, _newStart), 'change_trainer', _chCtx);
   }
 
   //   ★取消と同じ理由で会員IDを返す（2026-10-08）。

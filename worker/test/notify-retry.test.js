@@ -373,6 +373,18 @@ function enqueue(e, purpose, ctx) {
      `ロック内の往復 ${inLock} 回（予約は同じロックを10秒しか待たない）`);
 }
 
+{
+  // スイッチ：自動の送り直しだけを止める。止めたら「送らずにオーナーへ」
+  const e = makeEnv({ resv: [resvRow('R1', 'confirmed')] });
+  enqueue(e, 'booking_customer', CTX);
+  e.props.set('LB_NOTIFY_RETRY_ON', '0');
+  const n0 = e.fetches.length;
+  e.clock.now += 11 * MIN;
+  e.ctx.lbNotifyRetryTick(e.clock.now);
+  ok('2-28 ★送り直しを止めたら送らない', e.fetches.length === n0);
+  ok('2-29 ★止めても待たせたままにせず、オーナーへメール', e.mails.length === 1 && e.qrows()[0][e.col('state')] === 'closed' && /RETRY_OFF/.test(e.qrows()[0][e.col('last_detail')]));
+}
+
 // ============================================================
 console.log('=== 3. 公開窓口に個人情報を出さない（N7）===');
 {
@@ -409,7 +421,7 @@ console.log('=== 4. 配線（ソース）===');
 const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((ln) => ln.replace(/\/\/.*$/, '')).join('\n');
 const S = strip(LB), C = strip(CODE);
 ok('4-1 ★N8 予約変更は「承りました」を送らない（suppressNotify）',
-   /contractType: _lbContractTypeOf\(customerName\), suppressNotify: true \}/.test(S),
+   /contractType: _chType, suppressNotify: true \}/.test(S),
    'それまで1回の変更で4通（承りました＋変更しました×顧客・トレーナー）');
 ok('4-2 予約確定に予約IDを渡す', /custInfo\.customerName, channel, custInfo\.customerId, resId\)/.test(S));
 ok('4-3 変更に新旧の予約IDを渡す', /var _chCtx = \{ resId: String\(made\.reservationId \|\| ''\), oldResId: String\(reservationId\)/.test(S)
@@ -424,6 +436,14 @@ ok('4-9 ★tick がシートを作り、_lbPush の失敗経路では作らな�
 ok('4-10 点検が「送り直しが止まっている」を high で出す', /add\('notify_retry_stalled', '通知', 'high'/.test(S));
 ok('4-12 ★書き戻しは全行まとめて1回のロック（行ごとに待たない）',
    (S.match(/_lbNqWriteBack\(sh, leaseId, (claimed|alerts)\)/g) || []).length === 2 && !/_lbNqWriteBack\(sh, claimed\[k\]/.test(S));
+ok('4-13 ★変更の通知だけで足りる：お客様へ終了時刻・場所・無料キャンセル',
+   /new: _lbFmtResvLabel\(_newStart, _cl\) \+ '〜' \+ _newEndHm/.test(S)
+   && /_lbSt\(_cl, 'rem_place'\) \+ _lbSt\(_cl, 'gym_name'\) \+ '\\n' \+ _lbSt\(_cl, 'rem_free_cancel'\)/.test(S),
+   '「承りました」を止めたとき、これらはそちらにしか無かった（関門③）');
+ok('4-14 ★変更の通知だけで足りる：トレーナーへ変更後の残数',
+   /_lbTrainerRemainText\(String\(r\[2\]\), customerName, _newStart\), 'change_trainer', _chCtx\)/.test(S));
+ok('4-15 予約確定の残数も同じ関数で作る（文面が分かれない）',
+   /var _remTxt = isTransfer \? '' : _lbTrainerRemainText\(customerId, customerName, start\);/.test(S));
 ok('4-11 窓口 notifyFails が繋がっている', /args\.notifyFails\) return _ejScrub\(notifyFailsText\(Number\(args\.notifyFails\)\)\)/.test(readFileSync(join(ROOT, 'gas/EdgeJob.js'), 'utf8')));
 
 console.log('');
