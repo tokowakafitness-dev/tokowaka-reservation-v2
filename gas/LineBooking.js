@@ -911,7 +911,8 @@ function sendLineReminders() {
         '\n' + _lbSt(clang,'rem_place') + _lbSt(clang,'gym_name') +
         (zanC ? '\n' + _lbSt(clang,'rem_status') + zanC : '') +
         '\n\n' + _lbSt(clang,'rem_arrive') +
-        '\n\n' + _lbSt(clang,'rem_footer') + (isTransfer ? '' : '\n' + _lbSt(clang,'rem_free_cancel')), 'reminder_customer');
+        '\n\n' + _lbSt(clang,'rem_footer') + (isTransfer ? '' : '\n' + _lbSt(clang,'rem_free_cancel')), 'reminder_customer',
+        { resId: String(r[8] || '').split('|')[0], customerId: String(r[2]), startMs: dt.getTime() });
       if (_okPush) sent++; else failed++;
       Utilities.sleep(250);   // 連続送信で429を招かないための間隔（対象20名でも5秒程度）
     } else { noLine++; }   // LINE未連携の会員（同期で取り込んだ予約など）＝送りようがない
@@ -1853,7 +1854,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-13a 通知が届かなかった理由（相手の応答）を記録して点検に載せる';
+var LB_HEALTH_BUILD = '2026-10-13b 届かなかった通知を積んで送り直し、駄目ならオーナーへメール（設計17）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -1975,6 +1976,20 @@ function dailyHealthCheck(dryRunArg) {
         + (ps.length ? '　用途: ' + ps.join(' / ') : '')
         + '　★429（上限）なら、その通知は**送り直さないと届きません。**');
     add('booking_error', '予約', 'warn', bm.byOutcome['SERVER_ERROR'] || 0, '昨日の予約の内部失敗');
+    //   ★届かなかった通知の送り直し（2026-10-13・設計17）が止まっていないか。
+    //     送り直しは warmupCache（10分ごと）に相乗りしている。最後に終えたのが1時間より前なら止まっている
+    try {
+      var nq = _lbNqStatus();
+      var nqAge = nq.completedAgeMin;
+      add('notify_retry_stalled', '通知', 'high', (nqAge == null || nqAge > 60) ? 1 : 0,
+          '届かなかったLINEの送り直しが動いていない（最後に終えたのは'
+          + (nqAge == null ? '記録なし' : nqAge + '分前') + '）' + (nq.lastError ? '　最後の例外: ' + nq.lastError : ''));
+      add('notify_retry_pending', '通知', 'warn', nq.pending, '送り直し待ちのLINE通知');
+      add('notify_alert_unsent', '通知', 'high', nq.emailFailing,
+          '届かなかった通知を知らせるメールが送れていない（notify_retry シートの state=alert を確認）');
+      add('notify_queue_write_fail', '通知', 'high', Number(String(nq.writeFail).split('|')[0]) || 0,
+          '届かなかった通知を記録できなかった（Script Properties ' + LB_NQ.FAIL_PROP + '）');
+    } catch (eNq) { add('notify_retry_read_fail', '通知', 'warn', 1, '送り直しの状態が読めない: ' + eNq.message); }
   } catch (e) { add('metrics_fail', '通知', 'warn', 1, '実測ログの集計に失敗: ' + e.message); }
 
   _step('LINE通数');
@@ -4169,81 +4184,618 @@ function _lbCountReservations(customerId, mode, contract) {
   return cnt;
 }
 
+// ==== NOTIFY_QUEUE_BEGIN ====
+// ★この区画は worker/test/notify-retry.test.js が丸ごと取り出して動かす。
+//   区画の外の関数を足したら、テストのモックにも足すこと。
+//
 // 予約通知（新チャネルの Messaging API で個別 lineUserId へ push）
 // ★既存 sendLineReservationNotice（旧通知bot・GROUP宛）とは別。新チャネルの LINE_MESSAGING_TOKEN を使う。
 //   ★muteHttpExceptions のため LINE 側のエラー（トークン失効401・ブロック403・レート超過429）は
 //     例外を投げない＝黙って届かない。ステータスを必ず検査し、失敗は実測ログ(booking_metrics)に残して可視化する。
 //     戻り値 true=送信成功／false=未送信。予約処理は従来どおり通知失敗で覆さない（非致命）。
-//   purpose: 用途タグ（reminder_customer / booking_trainer など）。プランの通数を何が食っているかを
-//     用途別に数え、削る対象を数字で決められるようにする。省略時は 'other'。
+//   purpose: 用途タグ（reminder_customer / booking_trainer など）。省略時は 'other'。
 //   ★連続送信のあいだに最小の間隔を空ける（2026-10-09）。
 //     429（短時間に送りすぎ）は**そもそも出さないほうがよい。**
-//     再送で粘れるようにもしたが、再送は待ち時間が長く、落ちた人だけが遅れる。
-//     送る側で間隔を空ければ、429自体が減る。
 //     ★1件目は待たない（単発の予約通知を遅くしない）。2件目以降だけ空ける。
 //     ★260ms＝1秒あたり約4通。前日リマインド30通で約8秒。6分の制限に対して十分小さい。
+//
+// ★届かなかった通知を、誰も気づかないまま終わらせない（2026-10-13・設計17）。
+//   それまでは失敗の「理由と用途」しか残しておらず、**誰にどの文面が届かなかったかが分からなかった。**
+//   9/17・10/08・10/12 に、いずれも4件が届かなかった。
+//   いまは：
+//     ・1件の予約に紐づく通知は、宛先・本文・予約IDごと notify_retry に積み、10分ごとに送り直す
+//       （送る前に、その予約が今もその状態かを台帳で確かめる＝取り消した予約に「承りました」を送らない）
+//     ・それ以外（まとめ通知・通信例外・ブロック等）と、送り直しても届かなかったものはオーナーへメール
+//   倒れる向き：迷ったら**送らずにオーナーへ知らせる。** 間違った案内は、届かないより悪い。
 var _LB_PUSH_LAST_MS = 0;
 var LB_PUSH_MIN_GAP_MS = 260;
 
-function _lbPush(to, text, purpose) {
+var LB_NQ = {
+  SHEET: 'notify_retry',
+  HEAD: ['id', 'created_at', 'token_key', 'to', 'text', 'purpose', 'ctx_json', 'state', 'attempts', 'next_at',
+         'last_code', 'last_detail', 'alerted_at', 'email_attempts', 'last_email_error', 'lease_id', 'lease_until'],
+  RETRY_AFTER_MIN: [10, 30, 120],   // 積んだ10分後 → 1回目が駄目なら30分後 → 2回目が駄目なら2時間後 → 3回目で駄目ならオーナーへ
+  MAX_ATTEMPTS: 3,
+  LEASE_MS: 5 * 60000,              // 取り分けた行を他の実行が触らない時間
+  TICK_BUDGET_MS: 90000,            // 1回の送り直しで使ってよい時間
+  TICK_MAX_START_MS: 3 * 60000,     // warmupCache の開始からこれを過ぎていたら、送り直しはしない（6分の制限）
+  CLAIM_MAX: 8,                     // 1回で送り直す上限
+  ALERT_MAX: 30,                    // 1通のメールに載せる上限
+  FAIL_PROP: 'LB_NOTIFY_QUEUE_WRITE_FAIL',     // キューに書けなかった（別の媒体に残す）
+  STARTED_PROP: 'LB_NOTIFY_RETRY_STARTED',
+  COMPLETED_PROP: 'LB_NOTIFY_RETRY_COMPLETED', // ★見張り：これが1時間より古ければ送り直しが止まっている
+  LOCKMISS_PROP: 'LB_NOTIFY_RETRY_LOCK_MISS',
+  ERROR_PROP: 'LB_NOTIFY_RETRY_LAST_ERROR'
+};
+function _lbNqCol(name) { return LB_NQ.HEAD.indexOf(name); }
+
+// 用途ごとの扱い（設計17 §2）
+//   'single' … 1件の予約に紐づく。予約IDなどが揃っていれば送り直す
+//   'alert'  … 送り直さずオーナーへ（複数の予約をまとめた通知・予約に紐づかない通知）
+//   'none'   … 何もしない（声かけ。独自の記録があり、二重に送る害のほうが大きい）
+function _lbNqPolicy(purpose) {
+  var p = String(purpose || '');
+  if (p.indexOf('nudge_') === 0) return 'none';
+  if (/^(booking|change|cancel)_(customer|trainer)$/.test(p) || p === 'reminder_customer') return 'single';
+  return 'alert';
+}
+
+// 送り直してよい応答か。
+//   ★通信例外（uncertain）は送り直さない：LINE側に届いていて、応答だけ失われた可能性がある
+//   ★400番台（401=トークン失効 403=ブロック 等）は待っても通らない
+function _lbNqRetryable(r) {
+  if (!r || r.uncertain) return false;
+  var c = r.code;
+  return c === 429 || (typeof c === 'number' && c >= 500 && c <= 599);
+}
+
+function _lbPushCode(res) {
+  try { var c = Number(res.getResponseCode()); return isFinite(c) ? c : 0; } catch (e) { return 0; }
+}
+function _lbPushBody(res) {
+  try { return String(res.getContentText()).slice(0, 200); } catch (e) { return ''; }
+}
+
+// 送るだけ（記録も積むこともしない）。送り直しの tick はこちらだけを使う＝**送り直しの失敗が再び積まれない**。
+//   返り値 { ok, code, body, uncertain }
+//     code は**最後の試行**の値（429→401 なら 401。最初の値を返すと、待っても通らないものを送り直してしまう）
+//     uncertain=true … 通信例外・応答コードが読めない＝届いたかどうか分からない
+//   opts.noInlineRetry … 429 の短い粘り（最大約10秒）を省く。tick の時間を読めるようにするため
+function _lbPushOnce(to, text, opts) {
+  opts = opts || {};
   var token = _lbProp('LINE_MESSAGING_TOKEN');
-  if (!token || !to) { Logger.log('_lbPush skip: token/to無し'); return false; }   // 未設定＝意図的（staging等）なので記録しない
+  if (!token) return { ok: false, code: 'NO_TOKEN', body: '', uncertain: false };
+  if (!to) return { ok: false, code: 'NO_TO', body: '', uncertain: false };
   //   前回の送信からの間隔が足りなければ、足りないぶんだけ待つ
   if (_LB_PUSH_LAST_MS) {
     var _gap = Date.now() - _LB_PUSH_LAST_MS;
     if (_gap >= 0 && _gap < LB_PUSH_MIN_GAP_MS) Utilities.sleep(LB_PUSH_MIN_GAP_MS - _gap);
   }
   _LB_PUSH_LAST_MS = Date.now();
-  try {
-    var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+  function send() {
+    return UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
       method: 'post',
       contentType: 'application/json',
       headers: { Authorization: 'Bearer ' + token },
       payload: JSON.stringify({ to: to, messages: [{ type: 'text', text: text }] }),
       muteHttpExceptions: true
     });
-    var code = 0;
-    try { code = Number(res.getResponseCode()); } catch (eC) { code = 0; }
-    // ★成功時は一切書き込まない。予約完了フロー（Lock内）でシート往復を増やさないため。
-    //   送信した通数はLINEのquota APIが正として持ち、用途別の内訳は月次で既存データから再構成する。
-    if (code === 200) return true;
-    // 429＝短時間に送りすぎ（月間上限ではない。2026-09-18に実測：5,000通中249通で発生）。
-    //   前日リマインドは対象者へ連続送信するためここで弾かれる。
-    //
-    //   ★待ち時間を段階的に伸ばす（2026-10-09）。
-    //     それまで「1.2秒待って1回だけ」だったが、**2026-10-08に4件落ちた。**
-    //     月の枠は5,000通中162通＝97%余っていたので、原因は集中送信。
-    //     1回では足りないので3回まで、1.2秒 → 3秒 → 6秒 と伸ばす。
-    //     ★合計で最大10秒。前日リマインドは数十人へ送るので、
-    //       全員が待つと6分の制限に当たりうる。だから**落ちた人だけ**待つ形を保つ。
-    //     ★429は「送れていない」。顧客に届かないので、諦める前に粘る価値がある。
-    if (code === 429) {
-      var waits = [1200, 3000, 6000];
-      for (var wi = 0; wi < waits.length; wi++) {
-        Utilities.sleep(waits[wi]);
-        try {
-          var res2 = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
-            method: 'post', contentType: 'application/json',
-            headers: { Authorization: 'Bearer ' + token },
-            payload: JSON.stringify({ to: to, messages: [{ type: 'text', text: text }] }),
-            muteHttpExceptions: true
-          });
-          var c2 = Number(res2.getResponseCode());
-          if (c2 === 200) { Logger.log('_lbPush 429→再送で成功（' + (wi + 1) + '回目・' + waits[wi] + 'ms待ち）'); return true; }
-          if (c2 !== 429) break;   // 429以外（401/403等）は待っても直らない
-        } catch (eR) { Logger.log('_lbPush 再送エラー(' + (wi + 1) + '回目): ' + eR.message); }
+  }
+  var res;
+  try { res = send(); }
+  catch (e) { return { ok: false, code: 'EXCEPTION', body: String((e && e.message) || e).slice(0, 200), uncertain: true }; }
+  var code = _lbPushCode(res);
+  // ★成功時は一切書き込まない。予約完了フロー（Lock内）でシート往復を増やさないため。
+  if (code === 200) return { ok: true, code: 200, body: '', uncertain: false };
+  var body = _lbPushBody(res);
+  // 429：1.2秒 → 3秒 → 6秒 と待って粘る（2026-10-09）。合計で最大10秒＝落ちた人だけが待つ。
+  //   ★ただし 2026-10-12 にこれでも4件届かなかった＝「短時間の送りすぎ」という見立て自体が疑わしい。
+  //     原因は相手の応答本文（body）で確かめる。
+  if (code === 429 && !opts.noInlineRetry) {
+    var waits = [1200, 3000, 6000];
+    for (var wi = 0; wi < waits.length; wi++) {
+      Utilities.sleep(waits[wi]);
+      var res2;
+      //   ★送り直しで例外＝届いたかどうか分からない。もう送らない（二重送信を避ける）
+      try { res2 = send(); }
+      catch (eR) {
+        Logger.log('_lbPush 再送エラー(' + (wi + 1) + '回目): ' + eR.message);
+        return { ok: false, code: 'EXCEPTION', body: String(eR.message || eR).slice(0, 200), uncertain: true };
       }
-      Logger.log('_lbPush 429→3回送り直しても届きませんでした（用途: ' + String(purpose || '?') + '）');
+      var c2 = _lbPushCode(res2);
+      code = c2; body = _lbPushBody(res2);   // ★最後の試行の値を持つ
+      if (c2 === 200) { Logger.log('_lbPush 429→再送で成功（' + (wi + 1) + '回目・' + waits[wi] + 'ms待ち）'); return { ok: true, code: 200, body: '', uncertain: false }; }
+      if (c2 !== 429) break;   // 429以外（401/403等）は待っても直らない
     }
-    var body = ''; try { body = String(res.getContentText()).slice(0, 200); } catch (eB) {}
-    Logger.log('_lbPush 失敗 HTTP' + code + ': ' + body);
-    //   ★相手の応答をそのまま残す（2026-10-13）。
-    //     「429が4件」だけでは、上限なのか送りすぎなのかが分からない。
-    //     同じ対処（待ちを伸ばす）を2回繰り返して効かなかったのは、ここが無かったため。
-    _lbLogNotifyFail('HTTP_' + code, purpose, body);   // 失敗は稀＝書き込みコストが問題にならない
-    return false;
-  } catch (e) { Logger.log('_lbPush エラー: ' + e.message); _lbLogNotifyFail('EXCEPTION', purpose, String(e && e.message)); return false; }
+    if (code === 429) Logger.log('_lbPush 429→3回送り直しても届きませんでした（用途: ' + String(opts.purpose || '?') + '）');
+  }
+  return { ok: false, code: code, body: body, uncertain: code === 0 };
 }
+
+// 今までの入口（呼び出し元13か所はこのまま）。4つ目の ctx は任意：
+//   { resId, oldResId, customerId, startMs } … 1件の予約に紐づく通知だけが渡す（設計17 §4-0 の配線表）
+function _lbPush(to, text, purpose, ctx) {
+  var r;
+  try { r = _lbPushOnce(to, text, { purpose: purpose }); }
+  catch (e) { r = { ok: false, code: 'EXCEPTION', body: String((e && e.message) || e).slice(0, 200), uncertain: true }; }
+  if (r.ok) return true;
+  if (r.code === 'NO_TO') { Logger.log('_lbPush skip: to無し'); return false; }   // LINE未連携＝想定内
+  //   ★トークンが無い：staging は意図的（記録しない）。本番で無いのは**全通知の停止**＝記録して知らせる
+  if (r.code === 'NO_TOKEN' && _lbIsStaging()) { Logger.log('_lbPush skip: token無し（staging）'); return false; }
+  Logger.log('_lbPush 失敗 ' + r.code + ': ' + r.body);
+  var reason = (typeof r.code === 'number') ? ('HTTP_' + r.code) : String(r.code);
+  _lbLogNotifyFail(reason, purpose, r.body);   // 失敗は稀＝書き込みコストが問題にならない
+  try { _lbNqOnFail(to, text, purpose, ctx, r); }
+  catch (eQ) { _lbNqEmergency(purpose, r.code, eQ); }
+  return false;
+}
+
+// 届かなかった通知を積む。送り直すか（pending）、オーナーへ知らせるか（alert）をここで決める。
+//   ★シートはここでは作らない（予約のロックの中を重くしない）。無ければ例外→非常用記録へ
+function _lbNqOnFail(to, text, purpose, ctx, r) {
+  var pol = _lbNqPolicy(purpose);
+  if (pol === 'none') return;
+  var c = ctx || {};
+  var hasCtx = !!(c.resId && c.customerId && _lbIsFiniteNum(Number(c.startMs)));
+  if (String(purpose || '').indexOf('change_') === 0 && !c.oldResId) hasCtx = false;
+  var state = (pol === 'single' && hasCtx && _lbNqRetryable(r)) ? 'pending' : 'alert';
+  var now = Date.now();
+  var row = [];
+  for (var i = 0; i < LB_NQ.HEAD.length; i++) row.push('');
+  row[_lbNqCol('id')] = 'N' + Utilities.getUuid();
+  row[_lbNqCol('created_at')] = now;
+  row[_lbNqCol('token_key')] = 'msg';
+  row[_lbNqCol('to')] = String(to || '');
+  row[_lbNqCol('text')] = String(text || '');
+  row[_lbNqCol('purpose')] = String(purpose || 'other');
+  row[_lbNqCol('ctx_json')] = JSON.stringify(c);
+  row[_lbNqCol('state')] = state;
+  row[_lbNqCol('attempts')] = 0;
+  row[_lbNqCol('next_at')] = (state === 'pending') ? now + LB_NQ.RETRY_AFTER_MIN[0] * 60000 : '';
+  row[_lbNqCol('last_code')] = String(r && r.code);
+  row[_lbNqCol('last_detail')] = ((r && r.uncertain) ? 'delivery_unknown: ' : '') + String((r && r.body) || '').slice(0, 200);
+  row[_lbNqCol('email_attempts')] = 0;
+  _lbNqAppendRow(row);
+}
+
+// 体験予約のスタッフ通知（旧トークン・コード.js）など、送り直さずオーナーへ知らせるだけのもの
+function _lbNqRecordAlert(purpose, tokenKey, to, text, code, body) {
+  try {
+    var row = [];
+    for (var i = 0; i < LB_NQ.HEAD.length; i++) row.push('');
+    row[_lbNqCol('id')] = 'N' + Utilities.getUuid();
+    row[_lbNqCol('created_at')] = Date.now();
+    row[_lbNqCol('token_key')] = String(tokenKey || '');
+    row[_lbNqCol('to')] = String(to || '');
+    row[_lbNqCol('text')] = String(text || '');
+    row[_lbNqCol('purpose')] = String(purpose || 'other');
+    row[_lbNqCol('ctx_json')] = '{}';
+    row[_lbNqCol('state')] = 'alert';
+    row[_lbNqCol('attempts')] = 0;
+    row[_lbNqCol('last_code')] = String(code);
+    row[_lbNqCol('last_detail')] = String(body || '').slice(0, 200);
+    row[_lbNqCol('email_attempts')] = 0;
+    _lbNqAppendRow(row);
+  } catch (e) { _lbNqEmergency(purpose, code, e); }
+}
+
+function _lbNqAppendRow(row) {
+  var sh = _lbSs().getSheetByName(LB_NQ.SHEET);
+  if (!sh) throw new Error('NO_QUEUE_SHEET');   // tick が作る。まだ無い＝反映直後の10分以内
+  sh.appendRow(row);
+}
+
+// ★キューに書けなかったことを、**スプレッドシートとは別の媒体**に残す。
+//   booking_metrics に書くだけだと、同じ原因（権限・障害）で一緒に書けず、完全に無言になる。
+//   氏名・本文・LINE ID は入れない。
+function _lbNqEmergency(purpose, code, err) {
+  try {
+    Logger.log('🔴 通知のキューに書けません（' + String(purpose) + '/' + String(code) + '）: ' + String((err && err.message) || err));
+    var p = PropertiesService.getScriptProperties();
+    var cur = String(p.getProperty(LB_NQ.FAIL_PROP) || '');
+    var n = Number(cur.split('|')[0]) || 0;
+    p.setProperty(LB_NQ.FAIL_PROP, [n + 1, Date.now(), String(purpose || '?').slice(0, 40), String(code).slice(0, 20)].join('|'));
+  } catch (e2) { Logger.log('非常用記録にも書けません: ' + e2.message); }
+}
+
+function _lbNqSheet(create) {
+  var ss = _lbSs();
+  var sh = ss.getSheetByName(LB_NQ.SHEET);
+  if (!sh && create) {
+    sh = ss.insertSheet(LB_NQ.SHEET);
+    sh.getRange(1, 1, 1, LB_NQ.HEAD.length).setValues([LB_NQ.HEAD]);
+  }
+  return sh;
+}
+
+function _lbNqReadResv() {
+  try {
+    var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+    if (!sh) return null;
+    var last = sh.getLastRow();
+    if (last < 2) return [];
+    return sh.getRange(2, 1, last - 1, 11).getValues();
+  } catch (e) { Logger.log('[notify-retry] 台帳が読めません: ' + e.message); return null; }
+}
+
+// 予約IDで台帳の行を引く。★備考(I列)は取消・変更のあと「予約ID|無料取消」等になるので '|' の前で比べる
+function _lbNqFindResv(vals, resId) {
+  var hits = [], id = String(resId || '');
+  if (!id) return hits;
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][8] || '').split('|')[0] === id) hits.push(vals[i]);
+  }
+  return hits;
+}
+
+function _lbNqSameStart(v, startMs) {
+  var d = _lbParseResvDate(v);
+  return !!d && Math.abs(d.getTime() - Number(startMs)) < 60000;
+}
+
+// 送る前の確認（設計17 §2）。返り値 { ok } か { ok:false, state:'stale'|'alert', why }
+//   stale … 送るべきでなくなった（取消・変更済み・開始時刻を過ぎた）。オーナーにも知らせない
+//   alert … 判定できない。送らずにオーナーへ
+function _lbNqValidate(purpose, ctx, vals, now) {
+  var p = String(purpose || '');
+  var c = ctx || {};
+  if (_lbNqPolicy(p) !== 'single' || !c.resId || !c.customerId) return { ok: false, state: 'alert', why: 'NO_CTX' };
+  var startMs = Number(c.startMs);
+  if (!_lbIsFiniteNum(startMs)) return { ok: false, state: 'alert', why: 'NO_START' };
+  if (!(startMs > now)) return { ok: false, state: 'stale', why: 'PAST' };
+  if (!vals) return { ok: false, state: 'alert', why: 'NO_LEDGER' };
+  var hits = _lbNqFindResv(vals, c.resId);
+  if (hits.length !== 1) return { ok: false, state: 'alert', why: hits.length ? 'AMBIGUOUS' : 'NOT_FOUND' };
+  var r = hits[0], st = String(r[6] || '');
+  if (String(r[2]) !== String(c.customerId)) return { ok: false, state: 'alert', why: 'OTHER_CUSTOMER' };
+  if (p.indexOf('booking_') === 0 || p === 'reminder_customer') {
+    return (st === 'confirmed' && _lbNqSameStart(r[0], startMs)) ? { ok: true } : { ok: false, state: 'stale', why: 'NOT_CONFIRMED' };
+  }
+  if (p.indexOf('change_') === 0) {
+    if (!(st === 'confirmed' && _lbNqSameStart(r[0], startMs))) return { ok: false, state: 'stale', why: 'NEW_NOT_CONFIRMED' };
+    var old = _lbNqFindResv(vals, c.oldResId);
+    if (old.length !== 1) return { ok: false, state: 'alert', why: old.length ? 'OLD_AMBIGUOUS' : 'OLD_NOT_FOUND' };
+    return (String(old[0][6]) === 'changed') ? { ok: true } : { ok: false, state: 'stale', why: 'OLD_NOT_CHANGED' };
+  }
+  if (p.indexOf('cancel_') === 0) {
+    if (st !== 'cancelled' && st !== 'consumed') return { ok: false, state: 'stale', why: 'NOT_CANCELLED' };
+    //   ★同じ会員が同じ時刻を取り直していたら、遅れて届く「キャンセル」は今の予約まで取り消したと誤解させる
+    for (var i = 0; i < vals.length; i++) {
+      if (String(vals[i][2]) === String(c.customerId) && String(vals[i][6]) === 'confirmed' && _lbNqSameStart(vals[i][0], startMs)) {
+        return { ok: false, state: 'stale', why: 'REBOOKED' };
+      }
+    }
+    return { ok: true };
+  }
+  return { ok: false, state: 'alert', why: 'UNKNOWN_PURPOSE' };
+}
+
+// 送り直し（warmupCache の末尾から呼ぶ。新しいトリガーは作らない）。
+//   startedAtMs … warmupCache が始まった時刻（数値だけ受け付ける。トリガーのイベントを渡さない）
+//
+//   ★ScriptLock は「取り分け」の短い区間だけ（tryLock(0)＝取れなければこの回は何もしない）。
+//     予約・取消・変更は同じ ScriptLock を10秒待つので、LINEへの送信中に握ると予約が失敗する。
+//   ★取り分けた行には lease_id を書く。書き戻しは「lease_id が自分の行だけ」。
+//     lease の期限（5分）内は他の実行がその行を触らないので、書き戻しにロックは要らない。
+function lbNotifyRetryTick(startedAtMs) {
+  var t0 = Date.now();
+  var props = PropertiesService.getScriptProperties();
+  try { props.setProperty(LB_NQ.STARTED_PROP, String(t0)); } catch (eP) {}
+  if (typeof startedAtMs === 'number' && isFinite(startedAtMs) && t0 - startedAtMs > LB_NQ.TICK_MAX_START_MS) {
+    Logger.log('[notify-retry] warmupCache に時間がかかったので、今回は送り直さない');
+    return { ok: false, code: 'LATE' };
+  }
+  var out = { ok: true, sent: 0, retry: 0, stale: 0, alert: 0, mailed: 0, recovered: 0 };
+  try {
+    var leaseId = Utilities.getUuid();
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(0)) {
+      try { props.setProperty(LB_NQ.LOCKMISS_PROP, String(t0)); } catch (eL) {}
+      return { ok: false, code: 'LOCK_MISS' };
+    }
+    var sh, w = LB_NQ.HEAD.length, claimed = [], alerts = [];
+    try {
+      sh = _lbNqSheet(true);
+      var last = sh.getLastRow();
+      if (last >= 2) {
+        var vals = sh.getRange(2, 1, last - 1, w).getValues();
+        var now = Date.now(), anyChanged = false;
+        for (var i = 0; i < vals.length; i++) {
+          var row = vals[i], st = String(row[_lbNqCol('state')] || ''), changed = false;
+          var lu = Number(row[_lbNqCol('lease_until')]) || 0;
+          //   途中で止まった実行の後始末：期限切れの取り分けを元に戻す
+          if ((st === 'sending' || st === 'alerting') && lu && lu < now) {
+            st = (st === 'sending') ? 'pending' : 'alert';
+            row[_lbNqCol('state')] = st; row[_lbNqCol('lease_id')] = ''; row[_lbNqCol('lease_until')] = '';
+            changed = true; out.recovered++;
+          }
+          if (st === 'pending' && claimed.length < LB_NQ.CLAIM_MAX && (Number(row[_lbNqCol('next_at')]) || 0) <= now) {
+            row[_lbNqCol('state')] = 'sending'; row[_lbNqCol('lease_id')] = leaseId; row[_lbNqCol('lease_until')] = now + LB_NQ.LEASE_MS;
+            claimed.push({ rowNum: i + 2, row: row }); changed = true;
+          } else if (st === 'alert' && alerts.length < LB_NQ.ALERT_MAX) {
+            row[_lbNqCol('state')] = 'alerting'; row[_lbNqCol('lease_id')] = leaseId; row[_lbNqCol('lease_until')] = now + LB_NQ.LEASE_MS;
+            alerts.push({ rowNum: i + 2, row: row }); changed = true;
+          }
+          if (changed) anyChanged = true;
+        }
+        //   ★ロックの中のシート往復は「読み1回・書き1回」（関門②）。行ごとに書くと予約の10秒待ちを超えうる
+        if (anyChanged) sh.getRange(2, 1, vals.length, w).setValues(vals);
+      }
+    } finally { lock.releaseLock(); }
+
+    // ---- 送り直し（ロックの外） ----
+    var resv = null, resvRead = false;
+    for (var k = 0; k < claimed.length; k++) {
+      var cr = claimed[k].row;
+      var purpose = String(cr[_lbNqCol('purpose')] || '');
+      var ctx = {}; try { ctx = JSON.parse(String(cr[_lbNqCol('ctx_json')] || '{}')) || {}; } catch (eJ) { ctx = {}; }
+      var attempts = Number(cr[_lbNqCol('attempts')]) || 0;
+      if (Date.now() - t0 > LB_NQ.TICK_BUDGET_MS) {   // 時間切れ：送らずに戻す
+        cr[_lbNqCol('state')] = 'pending'; out.retry++;
+      } else {
+        if (!resvRead) { resv = _lbNqReadResv(); resvRead = true; }
+        var v = _lbNqValidate(purpose, ctx, resv, Date.now());
+        if (!v.ok) {
+          cr[_lbNqCol('state')] = v.state; cr[_lbNqCol('last_detail')] = 'not_sent: ' + v.why;
+          if (v.state === 'stale') out.stale++; else out.alert++;
+        } else {
+          var r = _lbPushOnce(String(cr[_lbNqCol('to')]), String(cr[_lbNqCol('text')]), { purpose: purpose, noInlineRetry: true });
+          attempts++;
+          cr[_lbNqCol('attempts')] = attempts;
+          cr[_lbNqCol('last_code')] = String(r.code);
+          cr[_lbNqCol('last_detail')] = (r.uncertain ? 'delivery_unknown: ' : '') + String(r.body || '').slice(0, 200);
+          if (r.ok) { cr[_lbNqCol('state')] = 'sent'; out.sent++; }
+          else if (_lbNqRetryable(r) && attempts < LB_NQ.MAX_ATTEMPTS) {
+            cr[_lbNqCol('state')] = 'pending'; cr[_lbNqCol('next_at')] = Date.now() + LB_NQ.RETRY_AFTER_MIN[attempts] * 60000; out.retry++;
+          } else { cr[_lbNqCol('state')] = 'alert'; out.alert++; }
+        }
+      }
+      cr[_lbNqCol('lease_id')] = ''; cr[_lbNqCol('lease_until')] = '';
+    }
+    _lbNqWriteBack(sh, leaseId, claimed);   // ★全行まとめて1回のロックで
+
+    // ---- オーナーへまとめて1通（ロックの外） ----
+    if (alerts.length) {
+      var mail = _lbNqMailAlerts(alerts);
+      for (var a = 0; a < alerts.length; a++) {
+        var ar = alerts[a].row;
+        if (mail.ok) { ar[_lbNqCol('state')] = 'closed'; ar[_lbNqCol('alerted_at')] = Date.now(); }
+        else {
+          ar[_lbNqCol('state')] = 'alert';
+          ar[_lbNqCol('email_attempts')] = (Number(ar[_lbNqCol('email_attempts')]) || 0) + 1;
+          ar[_lbNqCol('last_email_error')] = String(mail.error || '').slice(0, 200);
+        }
+        ar[_lbNqCol('lease_id')] = ''; ar[_lbNqCol('lease_until')] = '';
+      }
+      _lbNqWriteBack(sh, leaseId, alerts);
+      if (mail.ok) out.mailed = alerts.length;
+    }
+    try { props.setProperty(LB_NQ.COMPLETED_PROP, String(Date.now())); } catch (eC) {}
+    if (claimed.length || alerts.length || out.recovered) Logger.log('[notify-retry] ' + JSON.stringify(out));
+    return out;
+  } catch (e) {
+    Logger.log('[notify-retry] 例外: ' + e.message);
+    try { props.setProperty(LB_NQ.ERROR_PROP, Date.now() + '|' + String(e.message).slice(0, 150)); } catch (eE) {}
+    return { ok: false, code: 'EXCEPTION', detail: String(e.message) };
+  }
+}
+
+// lease_id が自分のときだけ書き戻す（期限切れで他の実行に回収されていたら触らない）。
+//   ★「読む→確かめる→書く」をロックの中で行う（関門②・2026-10-13）。
+//     ロック無しだと、確かめた直後に期限が切れて別の実行が回収し、その印を古い行で上書きしうる。
+//     ロックを持つのはシートの読み書きの一瞬だけ（LINE・メールの通信中は持たない）。
+//   ★全行をまとめて**1回のロック**で書く（関門②）。行ごとに待つと、待ちが行数ぶん積み上がる。
+//     待つのは最大5秒×1回。待たない（tryLock(0)）にしないのは、予約がたまたまロックを持っていた瞬間に
+//     書き戻せず、5分後に回収されて**送信済みの通知をもう一度送る**（顧客に2通届く）ため。
+//   ★取れなければ書き戻さない。行は sending のまま残り、期限（5分）のあと回収される。
+//     そのとき送信済みなら二重に届きうる（設計17 §7：絶対に防げるとは言わない）。
+function _lbNqWriteBack(sh, leaseId, items) {
+  if (!items || !items.length) return 0;
+  var w = LB_NQ.HEAD.length;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) { Logger.log('[notify-retry] 書き戻しでロックが取れない（' + items.length + '行は期限後に回収）'); return 0; }
+  var n = 0;
+  try {
+    //   ★対象の最小行〜最大行を1回で読み、メモリ上で lease_id を確かめて差し替え、1回で書く（関門②）。
+    //     範囲の途中にある他の行も、同じロックの中で読んだ値をそのまま書き戻すだけなので変わらない。
+    //     新しく積まれる行は末尾への追記なので、この範囲には入らない。
+    var lo = Infinity, hi = -Infinity;
+    for (var i = 0; i < items.length; i++) { lo = Math.min(lo, items[i].rowNum); hi = Math.max(hi, items[i].rowNum); }
+    var block = sh.getRange(lo, 1, hi - lo + 1, w).getValues();
+    for (var j = 0; j < items.length; j++) {
+      var off = items[j].rowNum - lo;
+      if (String(block[off][_lbNqCol('lease_id')]) !== String(leaseId)) {
+        Logger.log('[notify-retry] 行' + items[j].rowNum + 'は他の実行に回収済み。書き戻さない');
+        continue;
+      }
+      block[off] = items[j].row;
+      n++;
+    }
+    if (n) sh.getRange(lo, 1, hi - lo + 1, w).setValues(block);
+  } finally { lock.releaseLock(); }
+  return n;
+}
+
+var LB_NQ_LABEL = {
+  booking_customer: '予約確定（お客様へ）', booking_trainer: '予約確定（トレーナーへ）',
+  change_customer: '予約変更（お客様へ）', change_trainer: '予約変更（トレーナーへ）',
+  cancel_customer: 'キャンセル（お客様へ）', cancel_trainer: 'キャンセル（トレーナーへ）',
+  reminder_customer: '前日リマインド（お客様へ）', reminder_trainer: '翌日の予定（トレーナーへ）',
+  batch_customer: 'まとめて予約（お客様へ）', batch_trainer: 'まとめて予約（トレーナーへ）',
+  autobook_customer: '自動予約（お客様へ）', autobook_trainer: '自動予約（トレーナー・オーナーへ）',
+  shift_trainer: 'シフト提出のお願い', pace_trainer: '消化ペースの案内', trial_staff: '体験予約（スタッフグループへ）'
+};
+
+// 宛先の呼び名（メールはオーナーだけが読むので氏名を出してよい）
+function _lbNqWho(row) {
+  var purpose = String(row[_lbNqCol('purpose')] || '');
+  var ctx = {}; try { ctx = JSON.parse(String(row[_lbNqCol('ctx_json')] || '{}')) || {}; } catch (e) {}
+  try {
+    if (purpose === 'trial_staff') return 'スタッフのLINEグループ';
+    if (/_trainer$/.test(purpose)) { var t = getTrainerByLine(String(row[_lbNqCol('to')])); if (t && t.name) return t.name + '（トレーナー）'; }
+    if (ctx.customerId) { var ci = _lbCustInfoById(String(ctx.customerId)); if (ci && ci.customerName) return ci.customerName + ' 様'; }
+  } catch (e2) {}
+  return '不明（本文をご確認ください）';
+}
+
+function _lbNqMailAlerts(alerts) {
+  var to = '';
+  try { to = _lbAlertEmail(); } catch (e) { to = ''; }
+  if (!to) return { ok: false, error: 'NO_EMAIL' };
+  var tz = SETTINGS.TIMEZONE, has401 = false, lines = [];
+  for (var i = 0; i < alerts.length; i++) {
+    var r = alerts[i].row;
+    var code = String(r[_lbNqCol('last_code')] || '');
+    if (code === '401') has401 = true;
+    var ctx = {}; try { ctx = JSON.parse(String(r[_lbNqCol('ctx_json')] || '{}')) || {}; } catch (eJ) {}
+    var when = _lbIsFiniteNum(Number(ctx.startMs)) && Number(ctx.startMs) > 0
+      ? Utilities.formatDate(new Date(Number(ctx.startMs)), tz, 'M/d HH:mm') : '—';
+    var purpose = String(r[_lbNqCol('purpose')] || '');
+    lines.push((i + 1) + '. ' + (LB_NQ_LABEL[purpose] || purpose)
+      + '\n   宛先：' + _lbNqWho(r)
+      + '\n   予約：' + when
+      + '\n   理由：' + code + (r[_lbNqCol('last_detail')] ? '（' + String(r[_lbNqCol('last_detail')]).slice(0, 120) + '）' : '')
+      + '\n   送ろうとした文面：\n' + String(r[_lbNqCol('text')] || '').split('\n').map(function (s) { return '     ' + s; }).join('\n'));
+  }
+  var subject = has401
+    ? '【至急】LINE通知がすべて止まっています（トークン失効）'
+    : '【要対応】LINEの通知が ' + alerts.length + ' 件届いていません';
+  var body = '以下のLINE通知が届いていません。予約そのものは成立しています。\n'
+    + '必要に応じて、担当トレーナーからお客様へご連絡ください。\n'
+    + (has401 ? '\n★401＝LINEのトークンが無効です。予約確定・変更・取消・リマインドのすべてが今届いていません。\n' : '')
+    + '\n' + lines.join('\n\n')
+    + '\n\n（自動送信：予約システム。送り直しで届いたものはここに載りません）';
+  try { MailApp.sendEmail(to, subject, body); return { ok: true }; }
+  catch (e2) { return { ok: false, error: String(e2.message || e2) }; }
+}
+
+// 点検（dailyHealthCheck）が読む状態。シートは読むだけ。
+function _lbNqStatus(now) {
+  now = _lbIsFiniteNum(now) ? now : Date.now();
+  var p = PropertiesService.getScriptProperties();
+  var out = { pending: 0, alertOpen: 0, emailFailing: 0, closed24h: 0, sent24h: 0,
+              completedAgeMin: null, writeFail: String(p.getProperty(LB_NQ.FAIL_PROP) || ''),
+              lastError: String(p.getProperty(LB_NQ.ERROR_PROP) || '') };
+  var done = Number(p.getProperty(LB_NQ.COMPLETED_PROP) || 0);
+  if (done) out.completedAgeMin = Math.round((now - done) / 60000);
+  var sh = _lbNqSheet(false);
+  if (sh && sh.getLastRow() >= 2) {
+    var vals = sh.getRange(2, 1, sh.getLastRow() - 1, LB_NQ.HEAD.length).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      var st = String(vals[i][_lbNqCol('state')] || '');
+      var created = Number(vals[i][_lbNqCol('created_at')]) || 0;
+      if (st === 'pending' || st === 'sending') out.pending++;
+      if (st === 'alert' || st === 'alerting') { out.alertOpen++; if ((Number(vals[i][_lbNqCol('email_attempts')]) || 0) > 0) out.emailFailing++; }
+      if (now - created < 86400000) { if (st === 'closed') out.closed24h++; if (st === 'sent') out.sent24h++; }
+    }
+  }
+  return out;
+}
+
+// 作業依頼（公開URLに出る）用：過去の失敗が誰のどの通知だったかの「候補」。
+//   ★許可した項目だけで組み立てる（行を文字列化して伏せる方式にしない＝氏名・本文・LINE ID を出さない）
+//   ★過去の失敗には宛先の記録が無い。出せるのは「候補」まで。2件以上なら AMBIGUOUS と明記する
+function notifyFailsText(days) {
+  var d = (typeof days === 'number' && isFinite(days) && days > 0) ? Math.min(days, 60) : 14;
+  var tz = SETTINGS.TIMEZONE;
+  var out = ['===== 届かなかったLINE通知（直近' + d + '日・読み取りだけ）=====', '版: ' + LB_HEALTH_BUILD, ''];
+  var msh = _lbSheet(LB_METRICS_SHEET);
+  var fails = [];
+  if (msh && msh.getLastRow() >= 2) {
+    var cutoff = Utilities.formatDate(new Date(Date.now() - d * 86400000), tz, 'yyyy-MM-dd');
+    var w = Math.max(5, msh.getLastColumn());
+    var mv = msh.getRange(2, 1, msh.getLastRow() - 1, w).getValues();
+    for (var i = 0; i < mv.length; i++) {
+      if (String(mv[i][1]) < cutoff) continue;
+      var oc = String(mv[i][2] || '');
+      if (oc.indexOf('NOTIFY_FAIL_') !== 0) continue;
+      fails.push({ ts: mv[i][0], reason: oc.slice('NOTIFY_FAIL_'.length), purpose: String(mv[i][3] || ''), detail: String(mv[i][4] || '') });
+    }
+  }
+  var resv = _lbNqReadResv() || [];
+  function tsMs(v) {
+    if (v && typeof v.getTime === 'function') return v.getTime();
+    var m = String(v || '').match(/^(\d{4})\/(\d{1,2})\/(\d{1,2}) (\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return NaN;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0)).getTime();
+  }
+  function cand(r) {
+    var dt = _lbParseResvDate(r[0]);
+    return '      ・' + (dt ? Utilities.formatDate(dt, tz, 'M/d HH:mm') : '日時不明') + '　担当 ' + String(r[5] || '?')
+      + '　' + _lbNqMemberTag(r[2]) + '　status=' + String(r[6] || '') + '　channel=' + String(r[9] || '');
+  }
+  out.push('失敗の行: ' + fails.length + '件');
+  for (var f = 0; f < fails.length; f++) {
+    var x = fails[f], fm = tsMs(x.ts), list = [];
+    out.push('');
+    out.push((f + 1) + '. ' + (fm === fm ? Utilities.formatDate(new Date(fm), tz, 'M/d HH:mm:ss') : String(x.ts))
+      + '　' + _lbNqSafeReason(x.reason) + '　用途=' + _lbNqSafePurpose(x.purpose) + (x.detail ? '　応答=' + _lbNqSafeDetail(x.detail) : ''));
+    if (fm !== fm) { out.push('    候補: 時刻が読めない'); continue; }
+    if (x.purpose.indexOf('reminder_') === 0) {
+      //   リマインドは「失敗した日の翌日」の予約が対象。
+      //   ★状態では絞らない（関門②の指摘を検討して逆にした）。リマインドは前日12時に送るが、
+      //     そのあと17時までの無料取消・変更・当日消化で状態が変わる。**いまの状態は送った時点の状態ではない。**
+      //     全部を候補に出し、状態を併記する
+      var nd = new Date(fm); nd.setDate(nd.getDate() + 1);
+      var key = Utilities.formatDate(nd, tz, 'yyyy-MM-dd');
+      for (var j = 0; j < resv.length; j++) {
+        var rd = _lbParseResvDate(resv[j][0]);
+        if (rd && Utilities.formatDate(rd, tz, 'yyyy-MM-dd') === key) list.push(resv[j]);
+      }
+      out.push('    候補（翌日の予約・リマインドの対象）: ' + list.length + '件' + (list.length > 1 ? '　AMBIGUOUS（どれか1件または複数）' : ''));
+    } else {
+      //   それ以外は、台帳の記録日時（分単位）が失敗時刻の3分前〜1分後の行
+      for (var k = 0; k < resv.length; k++) {
+        var rm = tsMs(resv[k][10]);
+        if (rm === rm && rm >= fm - 3 * 60000 && rm <= fm + 60000) list.push(resv[k]);
+      }
+      out.push('    候補（台帳の記録日時が近い予約）: ' + list.length + '件' + (list.length > 1 ? '　AMBIGUOUS' : '') + (list.length === 0 ? '　★取消は記録日時が更新されないので、ここには出ない' : ''));
+    }
+    for (var c = 0; c < list.length && c < 15; c++) out.push(cand(list[c]));
+  }
+  try {
+    var st = _lbNqStatus();
+    out.push('');
+    out.push('■ 送り直しの状態: 待ち ' + st.pending + '件 ／ オーナー未通知 ' + st.alertOpen + '件（メール失敗 ' + st.emailFailing + '）'
+      + ' ／ 直近24時間: 送り直しで届いた ' + st.sent24h + '件・オーナーへ知らせた ' + st.closed24h + '件');
+    out.push('  最後に送り直しを終えた: ' + (st.completedAgeMin == null ? '記録なし（まだ一度も走っていない）' : st.completedAgeMin + '分前'));
+    if (st.writeFail) out.push('  ★キューに書けなかった記録: ' + st.writeFail.split('|')[0] + '件');
+  } catch (eS) { out.push('■ 送り直しの状態: 読めない（' + eS.message + '）'); }
+  out.push('');
+  out.push('===== ここまで。何も書き換えていません =====');
+  return out.join('\n');
+}
+
+function _lbNqMemberTag(customerId) {
+  var s = String(customerId || '');
+  return '会員#' + (s ? s.slice(-4) : '不明');
+}
+
+// 公開窓口に出す応答は**固定の語彙だけ**（関門②・2026-10-13）。
+//   本文をそのまま（英数字だけに絞っても）出すと、英字の氏名や例外文に混ざった本文が公開URLに出る。
+//   ★原因の切り分けに要るのは「どの種類の断りか」だけ。生の応答はオーナー宛てのメールと点検に出る
+function _lbNqSafeDetail(s) {
+  var t = String(s || '');
+  if (!t) return '';
+  if (/monthly limit/i.test(t)) return 'MONTHLY_LIMIT（月の上限）';
+  if (/rate limit/i.test(t)) return 'RATE_LIMIT（短時間の送りすぎ）';
+  if (/authentication|access token|invalid.*token/i.test(t)) return 'AUTH（トークン）';
+  if (/^delivery_unknown/.test(t)) return 'DELIVERY_UNKNOWN（通信例外）';
+  if (/Failed to send messages/i.test(t)) return 'FAILED_TO_SEND';
+  if (/not found/i.test(t)) return 'NOT_FOUND';
+  return 'OTHER（未知の応答・' + t.length + '文字）';
+}
+//   理由・用途も**既知の値だけ**を通す（文字を削るだけだと、混ざった英字の氏名が残る）
+function _lbNqSafeReason(s) {
+  var t = String(s || '');
+  return /^(HTTP_\d{1,3}|EXCEPTION|NO_TOKEN)$/.test(t) ? t : 'UNKNOWN';
+}
+function _lbNqSafePurpose(s) {
+  var t = String(s || '');
+  if (Object.prototype.hasOwnProperty.call(LB_NQ_LABEL, t)) return t;
+  return /^(nudge_[a-z_]{1,30}|push|other)$/.test(t) ? t : 'UNKNOWN';
+}
+// ==== NOTIFY_QUEUE_END ====
 
 // reply（友だち追加あいさつ等・reply枠は無料）。follow直後の応答に使う。
 function _lbReply(replyToken, text) {
@@ -4269,7 +4821,9 @@ function _lbWelcomeText() {
     '登録後は、LINEからいつでもセッションのご予約・変更・キャンセルができます。\nご不明な点は担当トレーナーへお気軽にどうぞ。';
 }
 
-function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerName, channel, customerId) {
+function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerName, channel, customerId, resId) {
+  //   ★予約IDを渡す（2026-10-13・設計17）。届かなかったとき、送り直す前に「その予約がまだ有効か」を台帳で確かめるため
+  var _nctx = { resId: String(resId || ''), customerId: String(customerId || ''), startMs: start.getTime() };
   var tz = SETTINGS.TIMEZONE;
   var dow = ['日', '月', '火', '水', '木', '金', '土'][start.getDay()];
   var s = Utilities.formatDate(start, tz, 'yyyy年MM月dd日') + '（' + dow + '）' + Utilities.formatDate(start, tz, 'HH:mm');
@@ -4279,7 +4833,7 @@ function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerN
   if (customerLineUserId) {
     _lbPush(customerLineUserId, isTransfer
       ? '振替セッションを承りました。\n日時：' + s + '〜' + e + '\n担当：' + trainer.name + '\n場所：' + SETTINGS.GYM_NAME + '\n※振替料金 5,500円は別途ご請求します。'
-      : 'ご予約を承りました。\n日時：' + s + '〜' + e + '\n担当：' + trainer.name + '\n場所：' + SETTINGS.GYM_NAME + '\nキャンセルは前日17時まで無料です。', 'booking_customer');
+      : 'ご予約を承りました。\n日時：' + s + '〜' + e + '\n担当：' + trainer.name + '\n場所：' + SETTINGS.GYM_NAME + '\nキャンセルは前日17時まで無料です。', 'booking_customer', _nctx);
   }
   // 選択トレーナーへ通知push
   var trId = getTrainerLineId(trainer.id);
@@ -4311,7 +4865,7 @@ function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerN
       } catch (e) { Logger.log('通知の残数取得失敗: ' + e.message); }
     }
     _lbPush(trId, (isTransfer ? '【振替予約】' : '【新規予約】') + customerName + '様\n日時：' + s + '〜' + e + _remTxt +
-      (isTransfer ? '\n※振替セッション（5,500円・手動請求）' : ''), 'booking_trainer');
+      (isTransfer ? '\n※振替セッション（5,500円・手動請求）' : ''), 'booking_trainer', _nctx);
   }
 }
 
@@ -4440,7 +4994,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     //   suppressNotify＝自動予約(固定パターン)等で個別通知を抑制し、呼出側でまとめて1通知する場合に立てる。
     if (!custInfo.suppressNotify) {
       try {
-        _lbNotifyReservation(custInfo.lineUserId, trainer, start, end, custInfo.customerName, channel, custInfo.customerId);
+        _lbNotifyReservation(custInfo.lineUserId, trainer, start, end, custInfo.customerName, channel, custInfo.customerId, resId);
       } catch (e2) { Logger.log('通知失敗（予約は確定済み）: ' + e2.message); }
     }
     _lap('通知push');
@@ -6367,7 +6921,7 @@ function linkUnlinkedReservation(lineUserId, resId, customerId, attendeeCount) {
   ush.deleteRow(row);
   } finally { _linkLock.releaseLock(); }
   // 通知はLockの外（送信の遅さでLockを握り続けない）
-  if (member.lineUserId) { var _ml = _lbMemberLang(member.lineUserId); _lbPush(member.lineUserId, _lbSt(_ml, 'push_booked', { dt: _lbFmtResvLabel(rec[0], _ml) }), 'booking_customer'); }
+  if (member.lineUserId) { var _ml = _lbMemberLang(member.lineUserId); _lbPush(member.lineUserId, _lbSt(_ml, 'push_booked', { dt: _lbFmtResvLabel(rec[0], _ml) }), 'booking_customer', { resId: String(resId), customerId: String(customerId), startMs: start.getTime() }); }
   return { success: true };
 }
 
@@ -6802,10 +7356,10 @@ function cancelReservationLine(lineUserId, reservationId) {
       var s = _lbFmtResvLabel(r[0]);   // トレーナー通知用（日本語）
       var _cl = _lbMemberLang(String(r[3]));
       _lbPush(String(r[3]), _lbSt(_cl, 'push_cancelled', { dt: _lbFmtResvLabel(r[0], _cl), trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
-        _lbSt(_cl, free ? 'push_cancel_free' : 'push_cancel_penalty'), 'cancel_customer');
+        _lbSt(_cl, free ? 'push_cancel_free' : 'push_cancel_penalty'), 'cancel_customer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
       if (trainer) {
         var trId = getTrainerLineId(trainer.id);
-        if (trId) _lbPush(trId, '【予約キャンセル】' + customerName + '様\n日時：' + s + (free ? '\n（無料取消）' : '\n（当日消化）'), 'cancel_trainer');
+        if (trId) _lbPush(trId, '【予約キャンセル】' + customerName + '様\n日時：' + s + (free ? '\n（無料取消）' : '\n（当日消化）'), 'cancel_trainer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
       }
 
       //   ★会員IDを返す（2026-10-08・二重書きの穴を塞ぐ）。
@@ -6880,7 +7434,9 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
     try { SpreadsheetApp.flush(); } catch (eF) { sh.getRange(row, 7).setValue('confirmed'); return { success: false, code: 'SERVER_ERROR', message: eF.message }; }
     try {
       made = _lbReserveCore(
-        { customerId: String(r[2]), customerName: customerName, lineUserId: String(r[3]), contractType: _lbContractTypeOf(customerName) },
+        //   ★suppressNotify（2026-10-13・設計17）：それまで変更のたびに「ご予約を承りました」【新規予約】も送られ、
+        //     「変更しました」と合わせて**1回の変更で4通**届いていた。通知は下の「変更」2通だけにする
+        { customerId: String(r[2]), customerName: customerName, lineUserId: String(r[3]), contractType: _lbContractTypeOf(customerName), suppressNotify: true },
         { trainerId: String(r[4]), startISO: newStartISO, excludeStartISO: oldStart.toISOString(),
           // 変更は「日時だけ」が不変条件。会計属性（来店人数・消化先）は旧行から復元して持ち越す。
           //   packKindを渡さないと月額＋ペア併存会員の「ペア1名」予約が変更で月額/通常packへ変質する。
@@ -6903,11 +7459,12 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
   }
 
   var _cl = _lbMemberLang(String(r[3]));
+  var _chCtx = { resId: String(made.reservationId || ''), oldResId: String(reservationId), customerId: String(r[2]), startMs: new Date(newStartISO).getTime() };
   _lbPush(String(r[3]), _lbSt(_cl, 'push_changed', { old: _lbFmtResvLabel(r[0], _cl), new: _lbFmtResvLabel(new Date(newStartISO), _cl), trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
-    (free ? '' : _lbSt(_cl, 'push_change_penalty')), 'change_customer');
+    (free ? '' : _lbSt(_cl, 'push_change_penalty')), 'change_customer', _chCtx);
   if (trainer) {
     var trId = getTrainerLineId(trainer.id);
-    if (trId) _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(new Date(newStartISO)), 'change_trainer');
+    if (trId) _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(new Date(newStartISO)), 'change_trainer', _chCtx);
   }
 
   //   ★取消と同じ理由で会員IDを返す（2026-10-08）。

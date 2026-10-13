@@ -69,7 +69,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-10-11b カレンダーの認識を切り分ける窓口を足した';
+var LB_JOB_BUILD = '2026-10-13a 届かなかった通知の候補を読む窓口を足した';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);
@@ -116,6 +116,8 @@ function _ejRunInner(op, args) {
       //   ★2026-10-10、「点検が一度も走った記録がありません」の通知が来たとき、
       //     トリガーがあるのか無いのかを確かめる手段が無かった。
       if (args && args.triggers) return _ejScrub(triggerListText());
+      // 届かなかったLINE通知が「誰のどの予約か」の候補（args.notifyFails=日数）。氏名・本文は出さない
+      if (args && args.notifyFails) return _ejScrub(notifyFailsText(Number(args.notifyFails)));
       // トレーナーの連続セッションの実測（読み取りだけ・制限は入れない）。args.days/args.gap で条件を変える
       if (args && args.consec) return _ejScrub(consecutiveSessionsText(args));
       // LINEの用途別の送信通数（args.usage='2026-09'）。当月は予約が入りきっていないので

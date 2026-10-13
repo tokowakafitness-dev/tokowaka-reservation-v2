@@ -30,11 +30,14 @@ function ok(name, cond, why) {
 }
 
 // ---------- 1. 残す ----------
+// 2026-10-13（設計17）：送信が _lbPushOnce（送るだけ）と _lbPush（記録と積む）に分かれた。
+//   応答本文は r.body に入り、例外も r.code='EXCEPTION'＋本文で同じ出口を通る。
+//   ★挙動の保証は notify-retry.test.js（コードを実際に動かす）が持つ
 ok('①★相手の応答を記録に残す',
-   /_lbLogNotifyFail\('HTTP_' \+ code, purpose, body\)/.test(S),
+   /_lbLogNotifyFail\(reason, purpose, r\.body\)/.test(S) && /'HTTP_' \+ r\.code/.test(S),
    '件数だけでは「上限」か「送りすぎ」かが決まらない');
 ok('①例外のときも理由を残す',
-   /_lbLogNotifyFail\('EXCEPTION', purpose, String\(e && e\.message\)\)/.test(S));
+   /code: 'EXCEPTION', body: String\(\(e && e\.message\) \|\| e\)\.slice\(0, 200\)/.test(S));
 ok('①★5列目に書く（集計を壊さない）',
    /String\(detail == null \? '' : detail\)\.slice\(0, 200\)/.test(S),
    'getBookingMetrics は4列しか読まないので、足しても壊れない');

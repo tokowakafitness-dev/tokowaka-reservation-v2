@@ -234,6 +234,19 @@ function invalidateCache() {
 }
 
 function warmupCache() {
+  var _wcStart = Date.now();
+  try { _warmupCacheBody(); }
+  finally {
+    //   ★届かなかったLINE通知の送り直し（2026-10-13・設計17）。
+    //     新しいトリガーは作れない（18/20）。この関数は10分ごとに必ず動き、スイッチで止まらないので相乗りする
+    //     （edgeJobPoll 等はスイッチを切ると止まる＝送り直しが黙って止まる）。
+    //     ★枠の温め直しを先に終える。送り直しは開始から3分を過ぎていたら見送る（中で判定）。
+    //     ★例外を外へ出さない（枠の温め直しの結果を変えない）。
+    try { lbNotifyRetryTick(_wcStart); } catch (eNq) { Logger.log('通知の送り直しで例外: ' + eNq.message); }
+  }
+}
+
+function _warmupCacheBody() {
   //   ★作りたてなら作り直さない（2026-10-11・関門②の指摘）。
   //
   //     枠の押し出し（pushToEdgeSlots・10分ごと）が、押し出す前に自分で作り直すように
@@ -686,8 +699,12 @@ function sendLineReservationNotice(params, trainer, start, end) {
     (params.gclid      ? '※Google広告クリック\n'                  : '') +
     '\nよろしくお願いします🙏';
 
+  //   ★結果を見る（2026-10-13・設計17）。それまで応答コードを見ておらず、失敗しても誰も気づけなかった。
+  //     体験予約は通知が台帳記録より先なので、成立を確かめて送り直すことができない。
+  //     → 送り直さず、オーナーへメールで知らせる（notify_retry に alert で積む）。
+  var _code = 0, _body = '';
   try {
-    UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+    var _res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
       method: 'post',
       contentType: 'application/json',
       headers: { Authorization: 'Bearer ' + LINE_CONFIG.TOKEN },
@@ -697,10 +714,16 @@ function sendLineReservationNotice(params, trainer, start, end) {
       }),
       muteHttpExceptions: true
     });
-    Logger.log('LINE通知送信完了');
+    try { _code = Number(_res.getResponseCode()); } catch (eC) { _code = 0; }
+    if (_code === 200) { Logger.log('LINE通知送信完了'); return; }
+    try { _body = String(_res.getContentText()).slice(0, 200); } catch (eB) {}
+    Logger.log('LINE通知失敗 HTTP' + _code + ': ' + _body);
   } catch(err) {
+    _code = 'EXCEPTION'; _body = 'delivery_unknown: ' + String(err.message).slice(0, 180);
     Logger.log('LINE通知エラー: ' + err.message);
   }
+  try { _lbLogNotifyFail(typeof _code === 'number' ? 'HTTP_' + _code : String(_code), 'trial_staff', _body); } catch (eL) {}
+  try { _lbNqRecordAlert('trial_staff', 'legacy', LINE_CONFIG.GROUP_ID, text, _code, _body); } catch (eQ) { Logger.log('通知の記録に失敗: ' + eQ.message); }
 }
 
 // ── 予約データ記録 ──
