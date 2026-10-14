@@ -1343,7 +1343,14 @@ function debugOrphanEvents(daysAhead) {
       var nm = tt.replace(/^✅\s*/, '').split('｜')[0];
       var kt = key(tEvs[x].getStartTime(), nm);
       trSeen[kt] = true;
-      if (!ledger[kt]) orphanTr.push(label(tEvs[x].getStartTime()) + ' ' + disp(nm) + '（' + tr.name + '）');
+      if (!ledger[kt]) {
+        //   ★未登録のお客様の仮押さえ（makeAdminBooking・説明欄に channel：admin_hold）は台帳に書かない仕様。
+        //     施設cal側（上の②）は除外していたのに、ここでは見ておらず「残骸」と誤報していた
+        //     （2026-10-14：10/22 野崎様・10/29 名取様＝トレーナーが取った新規体験の仮押さえ）
+        var _td = ''; try { _td = String(tEvs[x].getDescription() || ''); } catch (eD) {}
+        if (_td.indexOf('admin_hold') >= 0) continue;
+        orphanTr.push(label(tEvs[x].getStartTime()) + ' ' + disp(nm) + '（' + tr.name + '）');
+      }
     }
   }
   for (var y = 0; y < ledgerList.length; y++) {
@@ -1854,7 +1861,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-13e 連続ルール（設計18）：確定時の判定・顧客にだけ絞る・点検';
+var LB_HEALTH_BUILD = '2026-10-14a 仮押さえを担当calの残骸と誤報しない';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 

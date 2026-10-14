@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-13a 写しに連続ルールの印とモード（設計18）・送る処理は絞らない全部の枠';
+var LB_EDGE_BUILD = '2026-10-14a 二重書きの失敗した会員と理由を残す';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -3213,6 +3213,7 @@ function _edgeQuotaBuildOne(customerId, all) {
   if (!from) {
     // 記録開始月が分からなければ作り直さない。範囲が決まらないのに書くほうが危険
     Logger.log('[dw] 記録開始月が分からないので枠は作り直しません: ' + customerId);
+    _LB_DW_WHY = 'NO_RECORDS_FROM（名簿の登録日時も棚卸しも無い）';
     return false;
   }
   var to = _lbDwMonthKeyAhead(LB_DW.MONTHS_AHEAD);
@@ -3221,7 +3222,7 @@ function _edgeQuotaBuildOne(customerId, all) {
   if (from > to) to = from;
 
   var url = _edgeProp('EDGE_URL');
-  if (!url) return false;
+  if (!url) { _LB_DW_WHY = 'NO_EDGE_URL'; return false; }
   var q = '/quota/build?dry=0&alloc=1&customer=' + encodeURIComponent(customerId)
         + '&from=' + from + '&to=' + to;
   try {
@@ -3236,6 +3237,7 @@ function _edgeQuotaBuildOne(customerId, all) {
     if (code !== 200 || body.ok !== true) {
       Logger.log('[dw] 枠の作り直しが失敗（HTTP ' + code + '）: ' + customerId
                  + ' ' + String(res.getContentText() || '').slice(0, 200));
+      _LB_DW_WHY = 'HTTP_' + code;
       return false;
     }
     // ★問題が記録されていたら成功としない。この会員は書かれていない（Workerが止めている）
@@ -3243,11 +3245,13 @@ function _edgeQuotaBuildOne(customerId, all) {
       Logger.log('[dw] 枠を作れませんでした: ' + customerId
                  + ' issues=' + JSON.stringify(body.issues || []).slice(0, 300)
                  + ' skipped=' + JSON.stringify(body.skipped || []).slice(0, 200));
+      _LB_DW_WHY = 'ISSUES ' + JSON.stringify((body.issues || []).concat(body.skipped || []).map(function (x) { return (x && (x.code || x.reason)) || '?'; })).slice(0, 80);
       return false;
     }
     return true;
   } catch (e) {
     Logger.log('[dw] 枠の作り直しで例外: ' + customerId + ' ' + (e && e.message));
+    _LB_DW_WHY = 'EXCEPTION ' + String((e && e.message) || '').slice(0, 60);
     return false;
   }
 }
@@ -3255,6 +3259,10 @@ function _edgeQuotaBuildOne(customerId, all) {
 // ------------------------------------------------------------
 // 待ち行列を処理する（相乗り先から呼ばれる）
 // ------------------------------------------------------------
+
+//   ★失敗した会員と理由（2026-10-14）。それまで実行ログにしか出ず、待ち行列に18時間残った1名が
+//     誰で、なぜ失敗しているのかを記録から読めなかった（検証用の会員の登録日時が空だった）。
+var _LB_DW_WHY = '';
 
 function lbDualWriteDrain(limit) {
   //   ★見送ったことも必ず記録する（2026-10-08・実際に見えなくなった）。
@@ -3301,7 +3309,7 @@ function lbDualWriteDrain(limit) {
     return _note({ skipped: 'LEDGER_UNREADABLE', left: queued });
   }
 
-  var done = 0, failed = 0, requeued = 0, overBudget = 0, anomaly = 0;
+  var done = 0, failed = 0, requeued = 0, overBudget = 0, anomaly = 0, failedWho = [];
   for (var i = 0; i < todo.length; i++) {
     // ★人数だけでなく時間でも縛る。1名が重いと人数の上限内でも6分に届く
     if (Date.now() - t0 > LB_DW.BUDGET_MS) {
@@ -3316,9 +3324,12 @@ function lbDualWriteDrain(limit) {
     // ★順序が要点：計算入力を先に入れ替え、そのあと枠・引当を作り直す。
     //   逆にすると、古い予約で引当を作ってしまう。
     var okResv = false, okQuota = false;
+    _LB_DW_WHY = '';
     try { okResv = _edgePushCalcResvFor(cid, all); } catch (e) {
       Logger.log('[dw] 計算入力の送信で例外: ' + cid + ' ' + (e && e.message));
+      _LB_DW_WHY = 'RESV_EXCEPTION ' + String((e && e.message) || '').slice(0, 60);
     }
+    if (!okResv && !_LB_DW_WHY) _LB_DW_WHY = 'RESV_NOT_SENT';
     if (okResv) {
       try { okQuota = _edgeQuotaBuildOne(cid, all); } catch (e) {
         Logger.log('[dw] 枠の作り直しで例外: ' + cid + ' ' + (e && e.message));
@@ -3339,6 +3350,7 @@ function lbDualWriteDrain(limit) {
     } else {
       _lbDwRelease(cid);   // 取り置きを外す（6分待たずに次の実行で再送）
       failed++;
+      if (failedWho.length < 5) failedWho.push(cid + ':' + (_LB_DW_WHY || '?'));
     }
   }
 
@@ -3346,7 +3358,7 @@ function lbDualWriteDrain(limit) {
   var left = (leftQ === null) ? -1 : Object.keys(leftQ).length;
   var ms = Date.now() - t0;
   PropertiesService.getScriptProperties().setProperty(LB_DW.LAST_PROP, JSON.stringify({
-    at: Date.now(), ms: ms, done: done, failed: failed,
+    at: Date.now(), ms: ms, done: done, failed: failed, failedWho: failedWho,
     requeued: requeued, overBudget: overBudget, anomaly: anomaly, left: left,
   }));
   Logger.log('[dw] ' + ms + 'ms 成功' + done + ' 失敗' + failed
@@ -3397,6 +3409,7 @@ function lbDualWriteStatusText() {
            + ' / 成功' + (last.done || 0) + ' / 失敗' + (last.failed || 0)
            + ' / 処理中に再更新' + (last.requeued || 0)
            + ' / 時間切れ' + (last.overBudget || 0) + ' / 残り' + (last.left || 0));
+    if (last.failedWho && last.failedWho.length) o.push('  失敗した会員と理由: ' + last.failedWho.join(' / '));
   } else {
     o.push('最後の処理: まだ一度も動いていません');
   }
@@ -3446,7 +3459,12 @@ function lbDwDailyCheck() {
     out.push({
       key: 'dualwrite_queue', severity: (ageH >= 1 ? 'high' : 'warn'), count: left,
       detail: '二重書きの待ち行列に' + left + '名残っています（最も古いもの ' + ageH + '時間前）。'
-            + (ageH >= 1 ? 'D1の引当が追いついていません。' : '処理中の可能性があります。'),
+            + (ageH >= 1 ? 'D1の引当が追いついていません。' : '処理中の可能性があります。')
+            + (function () {
+                //   ★誰が・なぜ（2026-10-14）。件数だけだと原因を探しに行く手間がかかる
+                try { var l = JSON.parse(p.getProperty(LB_DW.LAST_PROP) || '{}');
+                      return (l.failedWho && l.failedWho.length) ? '　直近の失敗: ' + l.failedWho.join(' / ') : ''; } catch (e) { return ''; }
+              })(),
     });
   }
 
