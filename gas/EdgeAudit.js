@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-11c カレンダーの予定が何として認識されたかを出せるようにした';
+var LB_AUDIT_BUILD = '2026-10-14a shadow の合格を値と配線に分ける・期間で集計';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2457,12 +2457,14 @@ function shadowStatusText(args) {
   var pre = !!(args && args.shadow === 'preflight');
   var q = '?shadow=' + (pre ? 'preflight' : '1');
   if (args && args.day) q += '&day=' + encodeURIComponent(String(args.day));
+  //   ★期間（設計19）：from〜day を通して集計する。合格の判定は期間で見る
+  if (args && args.from) q += '&from=' + encodeURIComponent(String(args.from));
   var r = null;
   try { r = _edgeQuotaStatus(q); }
   catch (e) { out.push('読めません: ' + e.message); var t0 = out.join('\n'); Logger.log(t0); return t0; }
 
   var pf = r.preflight || {};
-  out.push('日付: ' + (r.day || '-') + ' / モード: ' + (pf.mode || '-'));
+  out.push('日付: ' + ((r.from && r.from !== r.day) ? r.from + ' 〜 ' : '') + (r.day || '-') + ' / モード: ' + (pf.mode || '-'));
   out.push('');
   out.push('--- 入れる前の確認（preflight）---');
   var tb = pf.tables || {};
@@ -2497,23 +2499,31 @@ function shadowStatusText(args) {
               : _tm ? '（まだ ' + (_tm - _cm) + '名が一度も比べられていません）' : ''));
 
   //   ★合格の形をその場で判定して出す（基準を覚えておかなくてよいように）
-  var _ok = (tot.completed || 0) >= 100 && _tm > 0 && _cm >= Math.ceil(_tm * 0.875)
-            && !(tot.diffFields || 0) && !(tot.incomplete || 0);
+  //   ★2つに分ける（設計19・2026-10-14）：
+  //     ①値の確認 … 回数・人数・食い違い（毎日まとめて比べる sweep を含む全入口）
+  //     ②配線の確認 … 顧客の入口（boot / compat_member / compat_home）が**それぞれ**1回以上（sweep は数えない）
+  //     sweep だけで回数と人数を満たしても、顧客の画面からの読み取りを確かめたことにはならない
+  var _valOk = (tot.completed || 0) >= 100 && _tm > 0 && _cm >= Math.ceil(_tm * 0.875)
+               && !(tot.diffFields || 0) && !(tot.incomplete || 0);
+  var _wr = r.wiring || {}, _wz = [];
+  var _custEntries = ['boot', 'compat_member', 'compat_home'];
+  for (var _wi = 0; _wi < _custEntries.length; _wi++) if (!(Number(_wr[_custEntries[_wi]]) >= 1)) _wz.push(_custEntries[_wi]);
+  var _wireOk = (r.wiringOk === true) && !_wz.length;
+  var _ok = _valOk && _wireOk;
   out.push('');
   out.push('--- 合格の判定 ---');
+  out.push('  ①値の確認: ' + (_valOk ? '✅' : '⬜') + '　②配線の確認: ' + (_wireOk ? '✅' : '⬜'));
   out.push('  ' + (_ok ? '✅ 合格の形です（1人だけ D1 から読ませる段へ進めます）'
                       : '⬜ まだ合格ではありません。足りないもの：'));
-  if (!_ok) {
+  if (!_valOk) {
     if ((tot.completed || 0) < 100) out.push('   ・比べ終わった回数が ' + (tot.completed || 0) + '（100回以上ほしい）');
     if (!_tm) out.push('   ・対象の会員数が読めていません');
     else if (_cm < Math.ceil(_tm * 0.875)) out.push('   ・比べ終わった会員が ' + _cm + '/' + _tm + '名（' + Math.ceil(_tm * 0.875) + '名以上ほしい）');
     if (tot.diffFields) out.push('   ・★食い違いが ' + tot.diffFields + '種類（原因を潰してから数え直す）');
     if (tot.incomplete) out.push('   ・★結末を残せなかった回が ' + tot.incomplete + '（D1の障害か途中終了）');
-    var _z = [];
-    var _en0 = r.entries || {};
-    for (var _k0 in _en0) if (_en0.hasOwnProperty(_k0) && !(_en0[_k0].completed || 0)) _z.push(_k0);
-    if (_z.length) out.push('   ・入口で一度も比べ終わっていない: ' + _z.join(' / ') + '（配線を疑う）');
   }
+  //   ★入口0回の警告は合否に関係なくいつも出す
+  if (_wz.length) out.push('   ・②顧客の入口で一度も比べ終わっていない: ' + _wz.join(' / ') + '（配線を疑う）');
 
   var df = r.diffFields || {};
   var keys = Object.keys(df);

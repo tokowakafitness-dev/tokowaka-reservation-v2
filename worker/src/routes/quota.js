@@ -285,11 +285,20 @@ export async function quotaStatus(request, env) {
   //   ★shadow の心拍はここに相乗りさせる（新しいルートを足さない）。
   //     GAS側の許可一覧は私が編集できないので、既存の窓口へ寄せる方針に合わせる。
   const u = new URL(request.url);
+  //   ★shadow を毎日まとめて取る（設計19）。GAS が写しを送った後に呼ぶ。合言葉で守られた内部の窓口
+  if (u.searchParams.get('sweep') === '1') {
+    const { runSweep } = await import('../lib/shadow-sweep.js');
+    return json(await runSweep(env, {
+      limit: u.searchParams.get('limit'), after: u.searchParams.get('after') || '',
+      only: u.searchParams.get('only') || '', skip: u.searchParams.get('skip') || '',
+    }));
+  }
   const sh = u.searchParams.get('shadow');
   if (sh) {
     const { buildShadowStatus } = await import('../lib/shadow-status.js');
     return json(await buildShadowStatus(env, {
       day: u.searchParams.get('day') || undefined,
+      from: u.searchParams.get('from') || undefined,
       preflightOnly: sh === 'preflight',
     }));
   }

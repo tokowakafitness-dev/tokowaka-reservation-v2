@@ -1861,7 +1861,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-14a 仮押さえを担当calの残骸と誤報しない';
+var LB_HEALTH_BUILD = '2026-10-14c shadow のまとめた比較の心拍・状態の破損を点検に';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2014,6 +2014,22 @@ function dailyHealthCheck(dryRunArg) {
           + (_cp.n ? '　判定の時間 中央値' + _cp.median + 'ms・最大' + _cp.max + 'ms（' + _cp.n + '件）' : '')
           + '　★DRY_OK/DRY_REJECT＝dry で on なら通した/弾いた数／REJECT＝弾いた数（表示の後に別の予約が入った競合も含む）／UNKNOWN＝カレンダーが読めなかった数');
     } catch (eCo) { add('consec_read_fail', '予約', 'warn', 1, '連続ルールの状態が読めない: ' + eCo.message); }
+    //   ★shadow を毎日まとめて取る（設計19）の心拍。完了・期限切れ・計画的な見送り・MODE_OFF のどれでも心拍
+    try {
+      var _slRaw = _lbProp('LB_SHADOW_SWEEP_LAST') || '';
+      var _sl = JSON.parse(_slRaw || 'null');   // ★壊れていたら下の catch で「読めない」と出す（記録なしと区別する）
+      var _slAge = (_sl && _sl.at) ? Math.round((Date.now() - Number(_sl.at)) / 3600000) : null;
+      if (!_sl || _sl.result !== 'MODE_OFF') {
+        add('shadow_sweep_stale', 'D1', 'warn', (_slAge == null || _slAge > 26) ? 1 : 0,
+            'shadow のまとめた比較が動いていない（最後の記録: ' + (_slAge == null ? 'なし' : _slAge + '時間前') + '）');
+        add('shadow_sweep_expired', 'D1', 'warn', (_sl && _sl.result === 'expired') ? 1 : 0,
+            'shadow のまとめた比較が7時までに終わらなかった（' + (_sl && _sl.day) + '・比べ終わった ' + (_sl && _sl.completed) + '名／再試行に残った ' + (_sl && _sl.retry) + '名・理由 ' + JSON.stringify((_sl && _sl.why) || {}) + '）');
+        add('shadow_sweep_state_broken', 'D1', 'warn', (_sl && _sl.result === 'STATE_BROKEN') ? 1 : 0,
+            'shadow のまとめた比較の状態が壊れていて止まっています（' + (_sl && _sl.reason) + '）。Script Properties の LB_SHADOW_SWEEP_STATE を確認');
+        add('shadow_sweep_short', 'D1', 'warn', (_sl && _sl.result === 'done' && _sl.target && _sl.completed < _sl.target) ? 1 : 0,
+            'shadow のまとめた比較で、比べ終わった会員が対象より少ない（' + (_sl && _sl.completed) + '/' + (_sl && _sl.target) + '名・見送った ' + (_sl && _sl.terminal) + '名・理由 ' + JSON.stringify((_sl && _sl.why) || {}) + '）');
+      }
+    } catch (eSw) { add('shadow_sweep_read_fail', 'D1', 'warn', 1, 'shadow のまとめた比較の記録が読めない: ' + eSw.message); }
   } catch (e) { add('metrics_fail', '通知', 'warn', 1, '実測ログの集計に失敗: ' + e.message); }
 
   _step('LINE通数');

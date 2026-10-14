@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-14a 二重書きの失敗した会員と理由を残す';
+var LB_EDGE_BUILD = '2026-10-14c shadow を毎日まとめて取る（sweep・関門②）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -1269,8 +1269,18 @@ function _edgeHealJobTrigger() {
 
 // 残数だけ
 function pushToEdgeHome() {
-  if (!_edgeEnabled()) return;
-  return _edgeLocked(_pushToEdgeHomeImpl);
+  var t0 = Date.now();
+  if (!_edgeEnabled()) {
+    //   ★押し出しが止まっていても、期限切れ・前日の掃除・月初の心拍は要る（比べはしない）
+    try { _edgeMaybeShadowSweep({ pushOk: false, reason: 'EDGE_OFF', startedAt: t0 }); } catch (e) {}
+    return { ok: false, reason: 'EDGE_OFF' };
+  }
+  var pushed = _edgeLocked(_pushToEdgeHomeImpl);
+  //   ★shadow を毎日まとめて取る（設計19）。**ロックを離した後**・押し出しの成否にかかわらず必ず呼ぶ
+  //     （期限切れ・前日の掃除・月初の心拍は成否と関係なく要る）。比べる処理だけが成功時に限られる
+  try { _edgeMaybeShadowSweep({ pushOk: !!(pushed && pushed.ok === true), startedAt: t0 }); }
+  catch (e) { Logger.log('[sweep] 例外: ' + (e && e.message)); }
+  return pushed;
 }
 function _pushToEdgeHomeImpl() {
   var t0 = Date.now(), log = [];
@@ -1278,7 +1288,198 @@ function _pushToEdgeHomeImpl() {
   try {
     var n = _edgePushHome(customers, t0, t0, log);
     Logger.log('[edge] 残数 ' + n + ' (' + (Date.now() - t0) + 'ms) ' + log.join(' '));
-  } catch (e) { Logger.log('[edge] 残数の押し出しに失敗: ' + (e && e.message)); }
+    return { ok: true, result: n };   // ★成否を返す（設計19：成功したときだけ比べる）
+  } catch (e) {
+    Logger.log('[edge] 残数の押し出しに失敗: ' + (e && e.message));
+    return { ok: false, reason: String((e && e.message) || e) };
+  }
+}
+
+// ============================================================
+// shadow を毎日まとめて取る（sweep）・設計19（第8版・関門①を9往復で通過）
+//   ★作り直さない。食い違いはそのまま記録され、合格を止める。
+//   ★5〜7時（予約がほぼ入らない・日付の境目から遠い）。月の1日は計画的に見送る
+//   ★同時に1つだけ（リース）。状態は STATE（カーソル・再試行・数）／DAY（完了した日）／LAST（心拍）
+// ============================================================
+var LB_SWEEP = {
+  STATE: 'LB_SHADOW_SWEEP_STATE', DAY: 'LB_SHADOW_SWEEP_DAY', LEASE: 'LB_SHADOW_SWEEP_LEASE', LAST: 'LB_SHADOW_SWEEP_LAST',
+  HOUR_FROM: 5, HOUR_TO: 7, LEASE_MS: 10 * 60000, DEADLINE_MS: 300000, MIN_LEFT_MS: 30000, MAX_PAGES: 12, PAGE: 4
+};
+function _sweepRead(k) { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(k) || 'null'); } catch (e) { return null; } }
+//   ★「無い」と「壊れている」を分ける（関門②）。壊れた STATE を「無い」とみなすと、最初からやり直して
+//     再試行の会員とカーソルを上書きで失う
+function _sweepReadSafe(k) {
+  var raw = PropertiesService.getScriptProperties().getProperty(k);
+  if (!raw) return { ok: true, value: null };
+  try {
+    var v = JSON.parse(raw);
+    if (!v || typeof v !== 'object' || Object.prototype.toString.call(v) === '[object Array]') return { ok: false, reason: 'BAD_SHAPE' };
+    return { ok: true, value: v };
+  } catch (e) { return { ok: false, reason: 'BAD_JSON' }; }
+}
+//   ★形まで確かめる（関門②）。JSON として読めても、項目の型が違えば壊れている
+function _sweepReadLease() {
+  var r = _sweepReadSafe(LB_SWEEP.LEASE);
+  if (!r.ok || r.value == null) return r;
+  var v = r.value;
+  if (typeof v.token !== 'string' || !v.token || typeof v.until !== 'number' || !isFinite(v.until)) return { ok: false, reason: 'BAD_LEASE_SHAPE' };
+  return r;
+}
+function _sweepReadState() {
+  var r = _sweepReadSafe(LB_SWEEP.STATE);
+  if (!r.ok || r.value == null) return r;
+  var v = r.value;
+  var arrOk = Object.prototype.toString.call(v.retry) === '[object Array]';
+  var num = function (x) { return typeof x === 'number' && isFinite(x); };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v.day || '')) || typeof v.after !== 'string' || typeof v.listDone !== 'boolean'
+      || !arrOk || !v.retry.every(function (x) { return typeof x === 'string'; })
+      || !num(v.completed) || !num(v.terminal) || !num(v.diffs)
+      || !v.why || typeof v.why !== 'object' || Object.prototype.toString.call(v.why) === '[object Array]') {
+    return { ok: false, reason: 'BAD_STATE_SHAPE' };
+  }
+  return r;
+}
+function _sweepLast(o) {
+  o.at = Date.now();
+  try { PropertiesService.getScriptProperties().setProperty(LB_SWEEP.LAST, JSON.stringify(o)); } catch (e) {}
+}
+// 短い ScriptLock の中で、リースが自分（token）か空・期限切れなら fn を実行する
+function _sweepWithLease(token, fn, take) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return false;
+  try {
+    var Ls = _sweepReadLease();
+    if (!Ls.ok) return false;                                  // ★壊れたリースは「空」とみなさない（点検が STATE/LAST で気づく）
+    var L = Ls.value;
+    var live = L && Number(L.until) > Date.now();
+    if (live && L.token !== token) return false;              // ★別の実行が持っている
+    if (!live && !take) return false;                          // ★自分のリースが切れた＝もう書かない
+    if (take) PropertiesService.getScriptProperties().setProperty(LB_SWEEP.LEASE, JSON.stringify({ token: token, until: Date.now() + LB_SWEEP.LEASE_MS }));
+    fn();
+    return true;
+  } finally { lock.releaseLock(); }
+}
+function _sweepCall(q, skip) {
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) throw new Error('EDGE_URL / EDGE_SECRET が未設定です');
+  var qs = '?sweep=1&limit=' + LB_SWEEP.PAGE
+         + (q.only ? '&only=' + encodeURIComponent(q.only.join(',')) : '&after=' + encodeURIComponent(q.after || ''))
+         + '&skip=' + encodeURIComponent((skip || []).join(','));
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/quota/status' + qs, {
+    method: 'get', headers: { 'X-Ingest-Secret': secret }, muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) throw new Error('sweep が失敗（HTTP ' + res.getResponseCode() + '）');
+  return JSON.parse(res.getContentText());
+}
+
+function _edgeMaybeShadowSweep(o) {
+  o = o || {};
+  var t0 = Number(o.startedAt) || Date.now();
+  var p = PropertiesService.getScriptProperties();
+  var now = new Date(), tz = SETTINGS.TIMEZONE;
+  var today = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  var hour = Number(Utilities.formatDate(now, tz, 'H'));
+  var dom = Number(Utilities.formatDate(now, tz, 'd'));
+  var stS = _sweepReadState();
+  if (!stS.ok) {
+    //   ★壊れた状態は上書きしない。比べない。心拍に残して点検で知らせる
+    var lb = _sweepRead(LB_SWEEP.LAST);
+    if (!(lb && lb.day === today && lb.result === 'STATE_BROKEN')) _sweepLast({ result: 'STATE_BROKEN', day: today, reason: stS.reason });
+    return { skipped: 'STATE_BROKEN' };
+  }
+  var st = stS.value;
+  var lastL = _sweepRead(LB_SWEEP.LAST);
+  function summary(s0, result, day) {
+    return { result: result, day: day, completed: (s0 && s0.completed) || 0, terminal: (s0 && s0.terminal) || 0,
+             retry: ((s0 && s0.retry) || []).length, listDone: !!(s0 && s0.listDone), diffs: (s0 && s0.diffs) || 0,
+             target: (s0 && s0.target) || null, why: (s0 && s0.why) || {} };
+  }
+  // ① 前日以前の未完了 → expired を残して状態を捨てる（★時間帯の判定より先）
+  if (st && st.day && st.day !== today) {
+    var cleared = _sweepWithLease('_clear', function () {
+      if (p.getProperty(LB_SWEEP.DAY) !== st.day && !(lastL && lastL.day === st.day && lastL.result === 'expired')) _sweepLast(summary(st, 'expired', st.day));
+      p.deleteProperty(LB_SWEEP.STATE);
+      p.deleteProperty(LB_SWEEP.LEASE);
+    }, true);
+    if (!cleared) return { skipped: 'LEASE_BUSY' };
+    st = null; lastL = _sweepRead(LB_SWEEP.LAST);
+  }
+  if (p.getProperty(LB_SWEEP.DAY) === today) return { skipped: 'DONE_TODAY' };
+  // ② 月の1日：計画的な見送りを心拍として残す
+  if (dom === 1) {
+    if (!(lastL && lastL.day === today && lastL.result === 'MONTH_FIRST')) _sweepLast({ result: 'MONTH_FIRST', day: today });
+    return { skipped: 'MONTH_FIRST' };
+  }
+  // ③ 7時を過ぎて未完了 → expired（★時間帯の判定より先・1日1回だけ書く）
+  if (hour >= LB_SWEEP.HOUR_TO) {
+    //   ★リースを確かめてから書く（関門②）。実行中のものがいれば待つ（期限後の次の回で書く）
+    var ex = _sweepWithLease('_expire', function () {
+      var cur = _sweepRead(LB_SWEEP.STATE), l2 = _sweepRead(LB_SWEEP.LAST);
+      if (p.getProperty(LB_SWEEP.DAY) === today) return;
+      if (!(l2 && l2.day === today && l2.result === 'expired')) _sweepLast(summary(cur, 'expired', today));
+      p.deleteProperty(LB_SWEEP.LEASE);
+    }, true);
+    if (!ex) return { skipped: 'LEASE_BUSY' };
+    return { skipped: 'AFTER_WINDOW' };
+  }
+  if (hour < LB_SWEEP.HOUR_FROM) return { skipped: 'BEFORE_WINDOW' };
+  // ④ 写しが新しくなければ比べ始めない
+  if (o.pushOk !== true) return { skipped: 'PUSH_NOT_OK' };
+  // ⑤ リースを取って処理する
+  var token = Utilities.getUuid();
+  if (!_sweepWithLease(token, function () {}, true)) return { skipped: 'LEASE_BUSY' };
+  var res = { pages: 0 };
+  try {
+    var stS2 = _sweepReadState();
+    if (!stS2.ok) { res.stopped = 'STATE_BROKEN'; return res; }
+    st = stS2.value;
+    if (!st || st.day !== today) st = { day: today, after: '', listDone: false, retry: [], completed: 0, terminal: 0, diffs: 0, why: {}, target: null };
+    var skip = [];
+    try { var dq = _lbDwReadQueue(); if (dq) skip = Object.keys(dq); } catch (eQ) {}
+    var retryNow = (st.retry || []).slice();   // この回で再試行するのは始めた時点の集合だけ（同じ会員を回し続けない）
+    while (res.pages < LB_SWEEP.MAX_PAGES) {
+      if (Date.now() - t0 > LB_SWEEP.DEADLINE_MS - LB_SWEEP.MIN_LEFT_MS) { res.stopped = 'TIME'; break; }
+      var q;
+      if (retryNow.length) q = { only: retryNow.splice(0, LB_SWEEP.PAGE) };
+      else if (!st.listDone) q = { after: st.after };
+      else break;
+      var r;
+      try { r = _sweepCall(q, skip); }
+      catch (eC) {
+        //   ★失敗の理由を残す（関門②）。保存済みの状態は失わない（この回の結果を足さずに抜ける）
+        st.why.sweep_call_failed = (st.why.sweep_call_failed || 0) + 1;
+        st.lastError = String((eC && eC.message) || eC).slice(0, 120);
+        _sweepWithLease(token, function () { p.setProperty(LB_SWEEP.STATE, JSON.stringify(st)); }, false);
+        res.stopped = 'CALL_FAILED';
+        break;
+      }
+      res.pages++;
+      if (r && r.skipped === 'MODE_OFF') { res.modeOff = true; break; }
+      var gone = {};
+      (r.completedIds || []).concat(r.terminalIds || []).forEach(function (x) { gone[x] = true; });
+      var set = {};
+      (st.retry || []).concat(r.retry || []).forEach(function (x) { if (!gone[x]) set[x] = true; });
+      st.retry = Object.keys(set);
+      st.completed += (r.completedIds || []).length;
+      st.terminal += (r.terminalIds || []).length;
+      st.diffs += Number((r.done && r.done.diffs) || 0);
+      if (r.target != null && st.target == null) st.target = Number(r.target);
+      for (var w in (r.why || {})) st.why[w] = (st.why[w] || 0) + Number(r.why[w] || 0);
+      if (!q.only) { if (r.next) st.after = r.next; else st.listDone = true; }
+      var saved = _sweepWithLease(token, function () { p.setProperty(LB_SWEEP.STATE, JSON.stringify(st)); }, false);
+      if (!saved) { res.stopped = 'LEASE_LOST'; return res; }   // ★リースを失った＝古い実行は書かない
+    }
+    if (res.modeOff) {
+      _sweepWithLease(token, function () { p.setProperty(LB_SWEEP.DAY, today); _sweepLast({ result: 'MODE_OFF', day: today }); }, false);
+    } else if (st.listDone && !(st.retry || []).length) {
+      //   ★完了は「一覧を最後まで回った」かつ「再試行の集合が空」のときだけ
+      _sweepWithLease(token, function () { p.setProperty(LB_SWEEP.DAY, today); _sweepLast(summary(st, 'done', today)); }, false);
+      res.done = true;
+    }
+    return res;
+  } finally {
+    _sweepWithLease(token, function () { p.deleteProperty(LB_SWEEP.LEASE); }, false);
+  }
 }
 
 function setupEdgeTrigger() {

@@ -626,7 +626,7 @@ ok('⑪-e★post の上限＝枠の上限', POST_SKIP_COUNT_MAX === MAXT,
   ok('⑪-e incomplete の式が post を引いている',
      /x\.incomplete = x\.attempted - x\.completed - x\.failed - post;/.test(ST));
   ok('⑪-e★attempted は枠の表から数える',
-     /FROM remain_shadow_slot WHERE day = \? GROUP BY entry/.test(ST)
+     /FROM remain_shadow_slot WHERE day BETWEEN \? AND \? GROUP BY entry/.test(ST)   // 2026-10-14 設計19：期間で集計（1日のときは from=day）
      && !/field = '_attempted'/.test(ST),
      '集計表に書くと、枠を取ってから結末を書く前に消えた処理が検知できない');
   ok('⑪-e preclaim は引かない', /preclaim は枠を使っていないので引かない/.test(ST));

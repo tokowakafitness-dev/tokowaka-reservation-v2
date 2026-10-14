@@ -10,6 +10,9 @@
 //     だから「比べた回数」と「結末を記録できなかった回数」を**入口ごとに**出す。
 
 const ENTRIES = ['boot', 'compat_member', 'compat_home'];
+//   ★顧客の入口（配線の確認に使う）。sweep（設計19）は値の確認には数えるが、配線の確認には数えない。
+//     sweep だけで回数・人数の線を越えても、顧客の画面からの読み取りを確かめたことにはならない
+export const CUSTOMER_ENTRIES = ENTRIES;
 
 /** 表があるか（無くても落とさない） */
 async function tableOk(env, name) {
@@ -22,6 +25,9 @@ async function tableOk(env, name) {
 export async function buildShadowStatus(env, opts) {
   const o = opts || {};
   const day = String(o.day || dayKeyJstNow());
+  //   ★期間（設計19 §2-4）。from を渡したら from〜day を通して集計する。省略時は day の1日だけ（今と同じ）。
+  //     人数は期間全体での実人数（COUNT DISTINCT）。日ごとに数えて足すと同じ会員を重ねて数える
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(o.from || '')) && String(o.from) <= day ? String(o.from) : day;
   const mode = String((env && env.LB_D1_REMAIN_MODE) || 'off');
 
   // ---- preflight（表と世代）----
@@ -63,22 +69,22 @@ export async function buildShadowStatus(env, opts) {
       `SELECT entry, COUNT(*) AS n, MAX(claimed_at) AS last_at,
               SUM(CASE WHEN sample_key LIKE 'ver:%' THEN 1 ELSE 0 END) AS verSlots,
               COUNT(DISTINCT customer_id) AS members
-         FROM remain_shadow_slot WHERE day = ? GROUP BY entry`
-    ).bind(day).all(),
+         FROM remain_shadow_slot WHERE day BETWEEN ? AND ? GROUP BY entry`
+    ).bind(from, day).all(),
     env.DB.prepare(
       `SELECT entry, field, SUM(n) AS n, COUNT(DISTINCT customer_id) AS members,
               MAX(last_at) AS last_at, MAX(last_value) AS sample
-         FROM remain_shadow WHERE day = ? GROUP BY entry, field`
-    ).bind(day).all(),
+         FROM remain_shadow WHERE day BETWEEN ? AND ? GROUP BY entry, field`
+    ).bind(from, day).all(),
     //   ★比べ終わった会員の数（入口をまたいだ実数）と、契約がある会員の数
     env.DB.prepare(
       `SELECT
          (SELECT COUNT(DISTINCT customer_id) FROM remain_shadow
-           WHERE day = ? AND field = '_completed') AS comparedMembers,
+           WHERE day BETWEEN ? AND ? AND field = '_completed') AS comparedMembers,
          (SELECT COUNT(DISTINCT customer_id) FROM remain_shadow_slot
-           WHERE day = ?) AS slotMembers,
+           WHERE day BETWEEN ? AND ?) AS slotMembers,
          (SELECT COUNT(DISTINCT customer_id) FROM calc_contract_rows) AS targetMembers`
-    ).bind(day, day).first(),
+    ).bind(from, day, from, day).first(),
   ]);
 
   const byEntry = {};
@@ -135,8 +141,13 @@ export async function buildShadowStatus(env, opts) {
   const comparedMembers = Number((members && members.comparedMembers) || 0);
   const targetMembers = Number((members && members.targetMembers) || 0);
 
+  //   ★配線の確認：顧客の入口がそれぞれ1回以上比べ終わっているか（sweep は数えない）
+  const wiring = {};
+  for (const e of CUSTOMER_ENTRIES) wiring[e] = Number((byEntry[e] && byEntry[e].completed) || 0);
+  const wiringOk = CUSTOMER_ENTRIES.every((e) => wiring[e] >= 1);
+
   return {
-    ok: true, day, preflight,
+    ok: true, day, from, preflight, wiring, wiringOk,
     total: { attempted, completed, failed, incomplete, diffFields: Object.keys(diffKinds).length,
              //   ★比べ終わった会員の数 ／ 枠を取れた会員の数 ／ 契約がある会員の数
              comparedMembers, slotMembers: Number((members && members.slotMembers) || 0),
