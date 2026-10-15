@@ -122,12 +122,13 @@ ok('④★40分の線は既存の「使えない」と同じ',
 // ---------- 5. ★枠の確保（本物のSQLiteで走らせる）----------
 const DIR = mkdtempSync(join(tmpdir(), 'shadow-'));
 const DB = join(DIR, 't.db');
-const MIG = readFileSync(join(ROOT, 'worker/migrations/0015_remain_shadow.sql'), 'utf8');
+const MIG = readFileSync(join(ROOT, 'worker/migrations/0015_remain_shadow.sql'), 'utf8')
+  + '\n' + readFileSync(join(ROOT, 'worker/migrations/0018_shadow_slot_allow_sweep.sql'), 'utf8');   // 2026-10-15 枠の表を替えた
 function sql(text) { return execFileSync('sqlite3', [DB], { input: text, encoding: 'utf8' }); }
 sql(MIG);
-ok('⑤3つの表ができる',
-   sql("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;").trim().split('\n')
-     .filter((x) => x.indexOf('remain_shadow') === 0).length === 3);
+ok('⑤表ができる（3つ＋0018 で足した新しい枠の表。古い枠の表は消さずに残す）',
+   JSON.stringify(sql("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;").trim().split('\n')
+     .filter((x) => x.indexOf('remain_shadow') === 0)) === JSON.stringify(['remain_shadow', 'remain_shadow_sample', 'remain_shadow_slot', 'remain_shadow_slot2']));
 
 //   SQLite を env.DB に見せる小さな土台（.run() の changes を返す）
 function sqliteEnv(vars) {
@@ -189,15 +190,15 @@ const D = '2026-10-09';
   ok('⑤-b★2つめは取れない（世代の枠は1つ）', (await claimSlot(E, D, 'C1', 'boot', 'ver:2:2', 2100)) === false,
      '世代が何度も変わっても、時間帯の枠を食い潰してはいけない');
   ok('⑤-b★総数の上限に達したら取れない',
-     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C1' AND entry='boot';`).trim()) === SLOT_MAX_TOTAL
+     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE day='${D}' AND customer_id='C1' AND entry='boot';`).trim()) === SLOT_MAX_TOTAL
      && (await claimSlot(E, D, 'C1', 'boot', 'time:00-07', 2300)) === false,
-     `いまの枠=${sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C1' AND entry='boot';`).trim()}`);
+     `いまの枠=${sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE day='${D}' AND customer_id='C1' AND entry='boot';`).trim()}`);
 }
 // ★上限を超えないことを、連続して叩いて確かめる
 {
   for (let i = 0; i < 20; i++) await claimSlot(E, D, 'C9', 'boot', `ver:${i}:${i}`, 3000 + i);
-  const n = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C9' AND entry='boot';`).trim());
-  const v = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C9' AND entry='boot' AND sample_key LIKE 'ver:%';`).trim());
+  const n = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE day='${D}' AND customer_id='C9' AND entry='boot';`).trim());
+  const v = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE day='${D}' AND customer_id='C9' AND entry='boot' AND sample_key LIKE 'ver:%';`).trim());
   ok('⑤-c★20回叩いても世代の枠は上限どおり', v === SLOT_MAX_VER, `世代の枠=${v}`);
   ok('⑤-c★総数も上限を超えない', n <= SLOT_MAX_TOTAL, `総数=${n}`);
 }
@@ -206,13 +207,13 @@ const D = '2026-10-09';
   const broken = SH.match(/const SLOT_VER_SQL =\n([\s\S]*?)`;/);
   ok('⑤-d 世代の文に上限2の条件が入っている',
      broken && /sample_key LIKE 'ver:%'\) < \?/.test(broken[1]));
-  const s2 = broken[1].replace(/\s*AND \(SELECT COUNT\(\*\) FROM remain_shadow_slot[\s\S]*?LIKE 'ver:%'\) < \?/, '');
+  const s2 = broken[1].replace(/\s*AND \(SELECT COUNT\(\*\) FROM remain_shadow_slot2[\s\S]*?LIKE 'ver:%'\) < \?/, '');
   const noLimit = s2.replace(/^\s*`/, '').trim();
   for (let i = 0; i < 4; i++) {
     const f = fill(noLimit, [D, 'C8', 'boot', `ver:${i}:${i}`, 4000 + i, D, 'C8', 'boot', 99]);
     sql(f + ';');
   }
-  const v = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${D}' AND customer_id='C8' AND entry='boot' AND sample_key LIKE 'ver:%';`).trim());
+  const v = Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE day='${D}' AND customer_id='C8' AND entry='boot' AND sample_key LIKE 'ver:%';`).trim());
   ok('⑤-d★条件を外すと実際に2を超える（＝上の検査は効いている）', v > SLOT_MAX_VER, `外した結果=${v}`);
 }
 //   ★入口の名前が違えば SQL エラーになる（DO NOTHING で黙らない）
@@ -221,7 +222,7 @@ const D = '2026-10-09';
   //   ★sqlite3 は失敗を stderr に出すので捨てる（落ちること自体が期待する結果）
   try {
     execFileSync('sqlite3', [DB], {
-      input: `INSERT INTO remain_shadow_slot VALUES ('${D}','CX','bogus','time:08-15',1);`,
+      input: `INSERT INTO remain_shadow_slot2 VALUES ('${D}','CX','bogus','time:08-15',1);`,
       encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'],
     });
   } catch (_) { threw = true; }
@@ -229,7 +230,7 @@ const D = '2026-10-09';
      'OR IGNORE だと CHECK 違反まで「上限か重複」と読み違える');
   ok('⑤-e DO NOTHING で主キーだけを無視している',
      /ON CONFLICT\(day, customer_id, entry, sample_key\) DO NOTHING/.test(SH)
-     && !/INSERT OR IGNORE INTO remain_shadow_slot/.test(SH));
+     && !/INSERT OR IGNORE INTO remain_shadow_slot2?\b/.test(SH));
 }
 
 // ---------- 6. 比べて記録する（通しで） ----------
@@ -278,7 +279,7 @@ const D = '2026-10-09';
   ok('⑥鮮度の帯が残る',
      sql(`SELECT field FROM remain_shadow WHERE day='${day}' AND customer_id='${cid}' AND field LIKE '_age:%';`).trim() === '_age:0-5m');
   ok('⑥★枠が残る（＝attempted の実体）',
-     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${day}' AND customer_id='${cid}';`).trim()) === 1);
+     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE day='${day}' AND customer_id='${cid}';`).trim()) === 1);
 
   //   食い違わせる
   const r2 = await runShadow(E2, {
@@ -316,7 +317,7 @@ const D = '2026-10-09';
   });
   ok('⑦★写しが古ければ比べない', r.done === false && r.why === 'copy_stale_for_compare', JSON.stringify(r));
   ok('⑦★そのとき枠を消費しない',
-     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE day='${day}' AND customer_id='${cid}';`).trim()) === 0,
+     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE day='${day}' AND customer_id='${cid}';`).trim()) === 0,
      '消費すると、あとで新鮮な写しが来ても比べられなくなる');
   ok('⑦弾いた理由は残る',
      sql(`SELECT field FROM remain_shadow WHERE customer_id='${cid}' AND field LIKE '_pre:%';`).trim() === '_pre:copy_stale_for_compare');
@@ -361,7 +362,7 @@ const D = '2026-10-09';
   ok('⑨★枠の後に弾いたものとして数える',
      sql(`SELECT field FROM remain_shadow WHERE customer_id='${cid}' AND field='_post:no_version_row';`).trim() === '_post:no_version_row');
   ok('⑨★そのときは枠を消費している（incomplete に現れないように）',
-     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE customer_id='${cid}';`).trim()) === 1);
+     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE customer_id='${cid}';`).trim()) === 1);
 }
 
 // ---------- 10. 入口の意思とモード ----------
@@ -564,7 +565,7 @@ const D = '2026-10-09';
      sql(`SELECT field FROM remain_shadow WHERE customer_id='${cid}' AND field LIKE '_post:version%';`).trim()
        === '_post:version_changed_during_shadow');
   ok('⑪-d★枠は戻さない（並行した要求が取り直すと上限管理が壊れる）',
-     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE customer_id='${cid}';`).trim()) === 1);
+     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE customer_id='${cid}';`).trim()) === 1);
 }
 
 // ---------- 11-e. ★枠の後に弾いた回数の上限は、枠の上限と同じ ----------
@@ -609,7 +610,7 @@ const D = '2026-10-09';
   });
   ok('⑪-g★D1が持っていない月は比べない', r.why === 'out_of_range', JSON.stringify(r));
   ok('⑪-g★枠を消費しない',
-     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot WHERE customer_id='${cid}';`).trim()) === 0,
+     Number(sql(`SELECT COUNT(*) FROM remain_shadow_slot2 WHERE customer_id='${cid}';`).trim()) === 0,
      '比べられないと分かっている要求が枠を使うと、その日の機会が減る');
   ok('⑪-g 枠の前に弾いたものとして数える',
      sql(`SELECT field FROM remain_shadow WHERE customer_id='${cid}' AND field='_pre:out_of_range';`).trim() === '_pre:out_of_range');
@@ -626,7 +627,7 @@ ok('⑪-e★post の上限＝枠の上限', POST_SKIP_COUNT_MAX === MAXT,
   ok('⑪-e incomplete の式が post を引いている',
      /x\.incomplete = x\.attempted - x\.completed - x\.failed - post;/.test(ST));
   ok('⑪-e★attempted は枠の表から数える',
-     /FROM remain_shadow_slot WHERE day BETWEEN \? AND \? GROUP BY entry/.test(ST)   // 2026-10-14 設計19：期間で集計（1日のときは from=day）
+     /FROM \$\{SLOT_TABLE\} WHERE day BETWEEN \? AND \? GROUP BY entry/.test(ST)   // 2026-10-14 設計19：期間で集計（1日のときは from=day）
      && !/field = '_attempted'/.test(ST),
      '集計表に書くと、枠を取ってから結末を書く前に消えた処理が検知できない');
   ok('⑪-e preclaim は引かない', /preclaim は枠を使っていないので引かない/.test(ST));

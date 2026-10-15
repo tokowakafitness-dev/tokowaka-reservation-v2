@@ -440,8 +440,10 @@ export async function quotaStatus(request, env) {
   //     作業依頼の結果は私から読めない（この環境では gh が TLS で落ちる）。
   //     オーナーに貼っていただく必要があるので、**1回の依頼で確かめる量を増やす。**
   const shadowTables = {};
+  //   ★枠の表の実体は remain_shadow_slot2（0018）。返す名前は今までどおり
+  const _phys = { remain_shadow_slot: 'remain_shadow_slot2' };
   for (const t of ['remain_shadow_slot', 'remain_shadow', 'remain_shadow_sample']) {
-    try { await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first(); shadowTables[t] = true; }
+    try { await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${_phys[t] || t}`).first(); shadowTables[t] = true; }
     catch (_) { shadowTables[t] = false; }
   }
 

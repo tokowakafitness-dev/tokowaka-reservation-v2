@@ -10,6 +10,12 @@ import { readRemainDiag, monthKeyJst, monthRangeJst } from './remain-from-d1.js'
 
 export const SHADOW_MODE_ON = 'shadow';
 
+//   ★枠の表（2026-10-15）。0015 の remain_shadow_slot は CHECK で入口を3つに限っていて
+//     'sweep' が入らなかった。消して作り直さず、0018 で足した新しい表に替えた（古い表は残す）
+export const SLOT_TABLE = 'remain_shadow_slot2';
+//   ★下の SQL 文は表の名前を**直接**書く（テストが SQL 文を文字のまま取り出して本物の SQLite に流すため）。
+//     SLOT_TABLE と一致していることは worker/test/shadow-entry-check.test.js が確かめる
+
 //   1日・会員・入口ごとの上限
 //   ★5 → 3 に下げた（2026-10-09・関門③）。
 //     書き込みの最大は 1比較あたり**51行**（枠1＋_age1＋_completed1＋集計24＋標本24）。
@@ -143,18 +149,18 @@ export function compareHome(copy, d1) {
 //   書き換わった行数が 1 なら枠を取れた／0 なら比べない。
 //   ★2文に分けると（数えて → 入れる）その間で競合して上限を超える。
 const SLOT_TIME_SQL =
-  `INSERT INTO remain_shadow_slot (day, customer_id, entry, sample_key, claimed_at)
+  `INSERT INTO remain_shadow_slot2 (day, customer_id, entry, sample_key, claimed_at)
    SELECT ?, ?, ?, ?, ?
-    WHERE (SELECT COUNT(*) FROM remain_shadow_slot
+    WHERE (SELECT COUNT(*) FROM remain_shadow_slot2
             WHERE day = ? AND customer_id = ? AND entry = ?) < ?
    ON CONFLICT(day, customer_id, entry, sample_key) DO NOTHING`;
 
 const SLOT_VER_SQL =
-  `INSERT INTO remain_shadow_slot (day, customer_id, entry, sample_key, claimed_at)
+  `INSERT INTO remain_shadow_slot2 (day, customer_id, entry, sample_key, claimed_at)
    SELECT ?, ?, ?, ?, ?
-    WHERE (SELECT COUNT(*) FROM remain_shadow_slot
+    WHERE (SELECT COUNT(*) FROM remain_shadow_slot2
             WHERE day = ? AND customer_id = ? AND entry = ?) < ?
-      AND (SELECT COUNT(*) FROM remain_shadow_slot
+      AND (SELECT COUNT(*) FROM remain_shadow_slot2
             WHERE day = ? AND customer_id = ? AND entry = ?
               AND sample_key LIKE 'ver:%') < ?
    ON CONFLICT(day, customer_id, entry, sample_key) DO NOTHING`;

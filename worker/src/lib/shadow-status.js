@@ -9,6 +9,8 @@
 //       書き込み直後35分の迂回でWorkerに来ていない
 //     だから「比べた回数」と「結末を記録できなかった回数」を**入口ごとに**出す。
 
+import { SLOT_TABLE } from './remain-shadow.js';
+
 const ENTRIES = ['boot', 'compat_member', 'compat_home'];
 //   ★顧客の入口（配線の確認に使う）。sweep（設計19）は値の確認には数えるが、配線の確認には数えない。
 //     sweep だけで回数・人数の線を越えても、顧客の画面からの読み取りを確かめたことにはならない
@@ -32,7 +34,7 @@ export async function buildShadowStatus(env, opts) {
 
   // ---- preflight（表と世代）----
   const [slotOk, aggOk, sampleOk, verOk] = await Promise.all([
-    tableOk(env, 'remain_shadow_slot'),
+    tableOk(env, SLOT_TABLE),   // ★実体は新しい表（0018）。返す名前は今までどおり（GAS の表示を変えない）
     tableOk(env, 'remain_shadow'),
     tableOk(env, 'remain_shadow_sample'),
     tableOk(env, 'customer_sync_version'),
@@ -69,7 +71,7 @@ export async function buildShadowStatus(env, opts) {
       `SELECT entry, COUNT(*) AS n, MAX(claimed_at) AS last_at,
               SUM(CASE WHEN sample_key LIKE 'ver:%' THEN 1 ELSE 0 END) AS verSlots,
               COUNT(DISTINCT customer_id) AS members
-         FROM remain_shadow_slot WHERE day BETWEEN ? AND ? GROUP BY entry`
+         FROM ${SLOT_TABLE} WHERE day BETWEEN ? AND ? GROUP BY entry`
     ).bind(from, day).all(),
     env.DB.prepare(
       `SELECT entry, field, SUM(n) AS n, COUNT(DISTINCT customer_id) AS members,
@@ -81,7 +83,7 @@ export async function buildShadowStatus(env, opts) {
       `SELECT
          (SELECT COUNT(DISTINCT customer_id) FROM remain_shadow
            WHERE day BETWEEN ? AND ? AND field = '_completed') AS comparedMembers,
-         (SELECT COUNT(DISTINCT customer_id) FROM remain_shadow_slot
+         (SELECT COUNT(DISTINCT customer_id) FROM ${SLOT_TABLE}
            WHERE day BETWEEN ? AND ?) AS slotMembers,
          (SELECT COUNT(DISTINCT customer_id) FROM calc_contract_rows) AS targetMembers`
     ).bind(from, day, from, day).first(),
