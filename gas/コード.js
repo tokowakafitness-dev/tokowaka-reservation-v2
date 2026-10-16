@@ -892,16 +892,26 @@ function monitorCustomerBody_(name, s, e, mapUrl) {
     'https://tokowaka-gym.com/\n';
 }
 
+/**
+ * 食事の記録（宿題）を案内し始めた日。
+ * ★これより前のご予約は、宿題を受け取っていない。前日メールで宿題の話をすると
+ *   「何の話か分からない」ものが届く。日付で切って出し分ける。
+ */
+var MONITOR_HOMEWORK_FROM = new Date(2026, 9, 16);   // 2026-10-16
+
 /** モニター経由の前日メール。完了メールの再送にしない。新しい情報だけを置く */
-function monitorReminderBody_(name, s, trainer) {
+function monitorReminderBody_(name, s, trainer, bookedAt) {
   return name + ' 様\n\n' +
     '明日、' + s + ' にお待ちしております。\n\n' +
     '担当は ' + (trainer || '当店トレーナー') + ' です。\n\n' +
-    '--------------------------------\n' +
-    '■ お食事の記録\n\n' +
-    '　完璧でなくて大丈夫です。\n' +
-    '　思い出せる範囲のメモでも、写真が数枚でも構いません。\n' +
-    '　「記録が取れなかった」という場合も、正直にお伝えください。\n\n' +
+    /* 宿題を案内した方にだけ、宿題の話をする */
+    ((bookedAt instanceof Date && bookedAt >= MONITOR_HOMEWORK_FROM)
+      ? ('--------------------------------\n' +
+         '■ お食事の記録\n\n' +
+         '　完璧でなくて大丈夫です。\n' +
+         '　思い出せる範囲のメモでも、写真が数枚でも構いません。\n' +
+         '　「記録が取れなかった」という場合も、正直にお伝えください。\n\n')
+      : '') +
     '--------------------------------\n' +
     '■ 場所\n\n' +
     '　' + SETTINGS.GYM_ADDRESS + '\n' +
@@ -1065,7 +1075,8 @@ function sendReminderMails() {
         customerEmail,
         isM ? ('【明日】バルクアッププログラム モニター 体験予約')
             : ('【明日のご予約確認】体験トレーニングのご予約について | ' + SETTINGS.GYM_NAME),
-        isM ? monitorReminderBody_(customerName, dateLabel, trainerName) : body,
+        isM ? monitorReminderBody_(customerName, dateLabel, trainerName,
+                                   (row[10] instanceof Date ? row[10] : null)) : body,
         { name: SETTINGS.GYM_NAME }
       );
       sent++;
