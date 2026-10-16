@@ -407,14 +407,39 @@ window.addEventListener('load', function() {
 function loadSlots() {
   document.querySelector('#calTable tbody').innerHTML = '<tr><td colspan="8"><div class="loading">空き枠を取得しています...</div></td></tr>';
   fetch(SS_URL, { cache: 'no-store' })
-    .then(function(r){ return r.text(); })
+    .then(function(r){
+      /* ★HTTPの状態を見ずに本文を読むと、Googleが返したエラーページを
+         空き枠の表として解析してしまい、「空き枠ゼロ」になる。
+         お客様には「予約できる枠が1つもないジム」に見え、エラーも出ず、
+         記録も残らない。ここで失敗にしておけば、下の .catch が
+         GAS経由の取り直しへ回る（その仕組みは既に書いてある）。 */
+      if (!r.ok) throw new Error('空き枠の取得に失敗しました（' + r.status + '）');
+      return r.text();
+    })
     .then(function(csv){
+      /* 中身が本当に空き枠の表かを確かめる。200で別物が返ることがある */
+      if (!/^"?date"?\s*,/i.test(csv.replace(/^[\s\uFEFF]+/, ''))) {
+        throw new Error('空き枠の表が取得できませんでした');
+      }
       allSlots = parseSlotCsv(csv);
       renderGrid();
     })
     .catch(function(){
       gasCall('getSlots', null,
-        function(data){ allSlots = data||[]; renderGrid(); },
+        function(data){
+          /* ★GAS側も、HTMLや壊れたJSONを受け取ると onSuccess({}) を呼ぶ作りになっている
+             （gasCallFetch）。{} をそのまま入れると「空き枠ゼロ」として静かに表示され、
+             gviz が落ちたときと同じ見え方になる。形を確かめ、違えば失敗として見せる。
+             ★中身が空の配列は、本当に空き枠が無いだけなので通す。 */
+          if (!Array.isArray(data)) {
+            document.querySelector('#calTable tbody').innerHTML =
+              '<tr><td colspan="8" style="padding:24px;text-align:center;color:#999;font-size:12px">'+
+              '空き枠を取得できませんでした。'+
+              '&nbsp;<button onclick="loadSlots()" style="color:#1a6bb5;text-decoration:underline;background:none;border:none;cursor:pointer">再読み込み</button></td></tr>';
+            return;
+          }
+          allSlots = data; renderGrid();
+        },
         function(e){
           document.querySelector('#calTable tbody').innerHTML =
             '<tr><td colspan="8" style="padding:24px;text-align:center;color:#999;font-size:12px">'+e.message+
