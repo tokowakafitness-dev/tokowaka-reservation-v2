@@ -13,6 +13,7 @@ import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
 import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
+import { handleMailClick, handleMailClickList } from './routes/mailclick.js';
 import { handleCalSync } from './routes/calsync.js';
 import { handleCalCompare } from './routes/calcompare.js';
 import { buildQuota, quotaStatus, quotaBehind } from './routes/quota.js';
@@ -97,6 +98,15 @@ export default {
       } catch (_) {}
       return json({ ok: true, now: Date.now(), sync }, origin);
     }
+
+    // メールのリンクが踏まれたことの記録（2026-10-16）。
+    //   ★記録のために予約を止めない。何があっても 204 を返し、
+    //     呼び出し側（/r/ の中継ページ）は応答を待たずに予約サイトへ進む。
+    if (url.pathname === '/r') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return handleMailClick(request, env, origin);
+    }
+    if (url.pathname === '/r/list') return handleMailClickList(request, env);
 
     // GASからの押し出し。LINEのID Tokenではなく合言葉で確かめる別経路。
     //   お客様のブラウザからは呼ばせないので、CORSも許さない（Originを返さない）。
