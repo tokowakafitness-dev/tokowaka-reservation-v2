@@ -13,7 +13,7 @@ import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
 import { routeSlots, routeBookingOptions } from './routes/slots.js';
 import { handleIngest } from './routes/ingest.js';
-import { handleMailClick, handleMailClickList } from './routes/mailclick.js';
+import { handleMailClick, handleMailClickList, handleMailClickLookup } from './routes/mailclick.js';
 import { handleCalSync } from './routes/calsync.js';
 import { handleCalCompare } from './routes/calcompare.js';
 import { buildQuota, quotaStatus, quotaBehind } from './routes/quota.js';
@@ -107,6 +107,11 @@ export default {
       return handleMailClick(request, env, origin);
     }
     if (url.pathname === '/r/list') return handleMailClickList(request, env);
+    /* 台帳が「この印は踏まれたか」を引く口。印を知っていることが条件で、合言葉は要らない */
+    if (url.pathname === '/r/lookup') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return handleMailClickLookup(request, env);
+    }
 
     // GASからの押し出し。LINEのID Tokenではなく合言葉で確かめる別経路。
     //   お客様のブラウザからは呼ばせないので、CORSも許さない（Originを返さない）。
