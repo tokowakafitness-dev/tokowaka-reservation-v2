@@ -264,8 +264,9 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 // ---------- 8-b. ★作業依頼の出し方・読み方（地図の§8-2）----------
 {
   const JOBS = rd('worker/src/routes/jobs.js');
-  ok('⑧-b★結果の読み取りは合言葉が要らない',
-     /GET \/jobs\/<request_id> … 結果を読む。合言葉は不要/.test(JOBS),
+  ok('⑧-b★結果の読み取りは鍵が要る（2026-10-16・リポジトリが公開のため）',
+     /X-Job-Read-Key/.test(JOBS) && /result: okKey \? row\.result : null/.test(JOBS)
+     && /-H "X-Job-Read-Key: <KEY>" "<EDGE_URL>\/jobs\/<requestId>"/.test(DOC),
      '地図の §8-2 の根拠。ここが変わったら地図も直す');
   ok('⑧-b★登録と報告は合言葉が要る',
      /if \(!authed\(request, env\)\) return json\(\{ success: false, code: 'FORBIDDEN' \}, 403\);/.test(JOBS));

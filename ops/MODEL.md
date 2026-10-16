@@ -335,16 +335,21 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 ## 8-2. ★作業依頼（job）の出し方と、結果の読み方
 
 **結果はCEOが自分で読める。オーナーに貼ってもらう必要はない。**
+★2026-10-16 から**読み取りの鍵が必須**。このリポジトリは**一般公開**で、ops/job.json の requestId は誰でも見える。
+　日次点検の結果に顧客の氏名が入る回があった＝IDだけを鍵にすると外から読めた。
 
 ```
+0. 読み取りの鍵を手元で作る（乱数24バイトの16進。公開しない）。そのSHA-256を _rk にする
 1. ops/job.json を書き換えて push
-     {"op":"quotaBuild","requestId":"job-<時刻>-<乱数>","args":{…}}
+     {"op":"quotaBuild","requestId":"job-<時刻>-<乱数>","args":{…, "_rk":"<鍵のSHA-256>"}}
+     ★公開するのはハッシュ（_rk）だけ。Worker が別の列に移し、GAS に渡す args からは外す
+     ★_rk が無い・形が違う依頼は登録で断る（400 NO_READ_KEY・Actions が赤くなる）
      ★requestId は 24〜64文字の [A-Za-z0-9_-]
      ★op は許可一覧にあるものだけ（.github/workflows/edge-job.yml の case 行）
 2. GitHub Actions が Worker へ登録する（★登録するだけ。結果は読まない）
 3. GAS の edgeJobPoll が**1分ごと**に拾って実行し、結果を Worker へ返す
-4. 読む： curl -sS "<EDGE_URL>/jobs/<requestId>"
-     ★合言葉は要らない（jobs.js：「IDを知っていることが鍵」）
+4. 読む： curl -sS -H "X-Job-Read-Key: <KEY>" "<EDGE_URL>/jobs/<requestId>"
+     ★鍵が無い・違う・鍵の無い（古い）依頼は、状態だけ返して結果は返さない（withheld）
      ★EDGE_URL は liff/index.html に平文＝顧客のブラウザが叩く公開情報
      ★15秒ごとに最大10分ポーリングする（foreground の sleep は禁止なので背景で）
 ```

@@ -4,8 +4,11 @@
 //   GASが1分ごとに「やることある？」と聞きに来る。こちらからGASは呼ばない。
 //
 //   登録・受け取り・報告 … 合言葉が要る（GASとGitHub Actionsだけ）
-//   結果を読む            … request_id を知っていることが鍵
-//   ★結果に個人情報を入れない。読み取りに合言葉が要らないため。
+//   結果を読む            … ★読み取りの鍵（ヘッダ X-Job-Read-Key）が要る（2026-10-16）
+//     それまでは「request_id を知っていること」が鍵だった。だが request_id を書く ops/job.json は
+//     **一般公開のリポジトリ**にあり、誰でも番号が分かる。日次点検の結果には顧客の氏名が入る回があった。
+//     いまは依頼のたびに CEO が手元で鍵を作り、公開するのは SHA-256（args._rk）だけ。
+//     鍵の無い依頼の結果は返さない（状態だけ返す）。
 
 const OPS = new Set(['audit', 'verify', 'previewMerge', 'testConnection', 'pushAll', 'remaining', 'remainingAt', 'nudgePreview', 'quotaBuild']);
 // 写しを書き換える作業は点検と分ける（Codexの指摘）。二重起動も防ぐ。
@@ -32,14 +35,28 @@ const json = (b, s = 200) => new Response(JSON.stringify(b), {
 const authed = (request, env) =>
   !!env.SHARED_SECRET && safeEqual(request.headers.get('X-Ingest-Secret') || '', env.SHARED_SECRET);
 
-/** GET /jobs/<request_id> … 結果を読む。合言葉は不要（IDを知っていることが鍵） */
+async function sha256hex(text) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(text)));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** GET /jobs/<request_id>（ヘッダ X-Job-Read-Key: <読み取りの鍵>）… 結果を読む
+ *   ★鍵は URL に載せない（アクセスの記録・シェルの履歴に残る）。鍵は乱数24バイトの16進＝48桁だけ受け付ける */
 export async function handleJobRead(request, env, requestId) {
   if (!/^[A-Za-z0-9_-]{24,64}$/.test(requestId)) return json({ success: false, code: 'BAD_ID' }, 400);
   const row = await env.DB.prepare(
-    'SELECT request_id, op, status, enqueued_at, claimed_at, finished_at, result, error FROM jobs WHERE request_id = ?'
+    'SELECT request_id, op, status, enqueued_at, claimed_at, finished_at, result, error, read_key_hash FROM jobs WHERE request_id = ?'
   ).bind(requestId).first();
   if (!row) return json({ success: false, code: 'NOT_FOUND' }, 404);
-  return json({ success: true, job: row });
+  //   ★鍵が合うときだけ結果を返す。鍵の無い依頼（古い形）・鍵が違う・鍵が無いは、状態だけ（結果と理由は返さない）
+  const k = request.headers.get('X-Job-Read-Key') || '';
+  const okKey = !!row.read_key_hash && /^[0-9a-f]{64}$/.test(row.read_key_hash) && /^[0-9a-f]{48}$/.test(k)
+    && safeEqual(await sha256hex(k), row.read_key_hash);
+  const job = { request_id: row.request_id, op: row.op, status: row.status, enqueued_at: row.enqueued_at,
+                claimed_at: row.claimed_at, finished_at: row.finished_at,
+                result: okKey ? row.result : null, error: okKey ? row.error : null };
+  if (!okKey) job.withheld = row.read_key_hash ? 'BAD_KEY' : 'NO_READ_KEY';
+  return json({ success: true, job });
 }
 
 /** POST /jobs … 合言葉が要る。登録・受け取り・報告 */
@@ -58,7 +75,15 @@ export async function handleJobs(request, env) {
       if (!/^[A-Za-z0-9_-]{24,64}$/.test(id)) return json({ success: false, code: 'BAD_ID' }, 400);
       const op = String(body.op || '');
       if (!OPS.has(op)) return json({ success: false, code: 'UNKNOWN_OP' }, 400);
-      const args = body.args == null ? null : JSON.stringify(body.args).slice(0, 2000);
+      //   ★読み取りの鍵のハッシュ（args._rk）を取り出して別の列に置き、GAS に渡す args からは外す
+      //   ★鍵の無い依頼は受け付けない（関門②・Codex）。受け付けると実行はされるのに結果を誰も読めず、
+      //     依頼した側は「結果は読めます」の表示のまま待つ＝黙って失敗する。断れば Actions が赤くなる
+      let a0 = body.args;
+      const rk = (a0 && typeof a0 === 'object' && !Array.isArray(a0) && typeof a0._rk === 'string'
+                  && /^[0-9a-f]{64}$/.test(a0._rk)) ? a0._rk : null;
+      if (!rk) return json({ success: false, code: 'NO_READ_KEY' }, 400);
+      a0 = Object.assign({}, a0); delete a0._rk;
+      const args = a0 == null ? null : JSON.stringify(a0).slice(0, 2000);
 
       // 同じ作業が待機中なら増やさない（押し過ぎで詰まらせない）
       const pending = await env.DB.prepare(
@@ -67,9 +92,9 @@ export async function handleJobs(request, env) {
       if (pending && pending.n >= 2) return json({ success: false, code: 'TOO_MANY_PENDING' }, 429);
 
       await env.DB.prepare(
-        `INSERT INTO jobs (request_id, op, args, status, enqueued_at) VALUES (?, ?, ?, 'pending', ?)
+        `INSERT INTO jobs (request_id, op, args, status, enqueued_at, read_key_hash) VALUES (?, ?, ?, 'pending', ?, ?)
          ON CONFLICT(request_id) DO NOTHING`
-      ).bind(id, op, args, Date.now()).run();
+      ).bind(id, op, args, Date.now(), rk).run();
       return json({ success: true, requestId: id, op });
     }
 
