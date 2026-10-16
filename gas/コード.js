@@ -29,6 +29,8 @@ var SETTINGS = {
   TIMEZONE:         'Asia/Tokyo',
   GYM_NAME:         'パーソナルジムTOKOWAKA 吉祥寺',
   GYM_ADDRESS:      '東京都武蔵野市吉祥寺東町2丁目17-7 VILLA BUONAMICO 103',
+  /* 公式LINE。2026-10-16 に旧 @448ftsdc から差し替え（オーナー確認済み） */
+  LINE_URL:         'https://lin.ee/U8oLJPT',
   GYM_PHONE:        '070-3549-8168',
   CACHE_KEY:        'available_slots_v1',
   CACHE_SECONDS:    660,
@@ -829,10 +831,106 @@ function recordReservation(params, trainer, start, end) {
 }
 
 // ── お客様への確認メール ──
+/** モニター経由の予約か。台帳・通知・文面の分岐はすべてこの1箇所で決める */
+function isMonitor_(medium) {
+  return String(medium || '') === 'monitor';
+}
+
+/** 道案内。モニター用と通常用で同じものを使う（住所を変えたとき片方だけ古くなるのを防ぐ） */
+function placeText_() {
+  return '吉祥寺駅からサンロード商店街を通り抜け、住宅街をまっすぐお進みください。' +
+         '後藤歯科医院の左横道に入り、右手に出てくる白いガラス張りの建物の奥にございます。' +
+         '（吉祥寺駅より徒歩約10分）';
+}
+
+/**
+ * モニター経由の予約完了メール。
+ * 「無料体験」ではなく「適正・条件を確認する場」として伝える。
+ * 当日の60分を分単位で示し、**最後の10分に費用の話をすることを先に書く**。
+ * 何が起きるか分からない時間に向かうとき、人は最悪を想像するため。
+ */
+function monitorCustomerBody_(name, s, e, mapUrl) {
+  return name + ' 様\n\n' +
+    'モニターの体験予約を承りました。\n' +
+    '当日は適正・条件等が合うか確認させていただきます。\n' +
+    'お会いできるのを楽しみにしております。\n\n' +
+    '--------------------------------\n' +
+    '■ 日時\n' +
+    '　' + s + ' 〜 ' + e + '\n' +
+    '　お時間ちょうど〜5分前頃にお越しください。\n\n' +
+    '■ 場所\n' +
+    '　' + SETTINGS.GYM_ADDRESS + '\n' +
+    '　' + placeText_() + '\n' +
+    '　' + mapUrl + '\n\n' +
+    '--------------------------------\n' +
+    '■ 当日の60分\n\n' +
+    '　はじめの20分　いまのお身体と、これまでの経緯を伺います\n' +
+    '　つぎの30分　　実際に動きを確認させていただきます\n' +
+    '　最後の10分　　目指せる変化と、そこまでの道筋をご説明します\n' +
+    '　　　　　　　　モニターとしてお進みいただける場合の進め方と\n' +
+    '　　　　　　　　費用も、このときにお伝えします\n\n' +
+    '--------------------------------\n' +
+    '■ 当日までにご用意ください\n\n' +
+    '　直近3日ぶんのお食事の記録\n\n' +
+    '　写真でも、メモでも構いません。\n' +
+    '　思い出せる範囲で結構です。\n\n' +
+    '　バルクアップは、トレーニングだけでは進みません。\n' +
+    '　いま何をどれだけ食べているかが分かって、はじめて設計ができます。\n\n' +
+    '--------------------------------\n' +
+    '■ 持ち物\n\n' +
+    '　ウェア・シューズ・お水はご用意しています。\n' +
+    '　そのままお越しください。\n' +
+    '　ご自身のものをお持ちいただいても構いません。\n\n' +
+    '--------------------------------\n\n' +
+    'ご都合が変わった場合は、このメールにご返信いただくか、\n' +
+    '公式LINEへご連絡ください。\n\n' +
+    '　' + SETTINGS.LINE_URL + '\n\n' +
+    '--------------------------------\n' +
+    'パーソナルジム TOKOWAKA 吉祥寺\n' +
+    '店主　中野\n' +
+    SETTINGS.GYM_ADDRESS + '\n' +
+    'https://tokowaka-gym.com/\n';
+}
+
+/** モニター経由の前日メール。完了メールの再送にしない。新しい情報だけを置く */
+function monitorReminderBody_(name, s, trainer) {
+  return name + ' 様\n\n' +
+    '明日、' + s + ' にお待ちしております。\n\n' +
+    '担当は ' + (trainer || '当店トレーナー') + ' です。\n\n' +
+    '--------------------------------\n' +
+    '■ お食事の記録\n\n' +
+    '　完璧でなくて大丈夫です。\n' +
+    '　思い出せる範囲のメモでも、写真が数枚でも構いません。\n' +
+    '　「記録が取れなかった」という場合も、正直にお伝えください。\n\n' +
+    '--------------------------------\n' +
+    '■ 場所\n\n' +
+    '　' + SETTINGS.GYM_ADDRESS + '\n' +
+    '　' + placeText_() + '\n\n' +
+    '　迷われた場合は、公式LINEへご連絡ください。\n' +
+    '　' + SETTINGS.LINE_URL + '\n\n' +
+    '--------------------------------\n\n' +
+    '明日お会いしましょう。\n\n' +
+    'パーソナルジム TOKOWAKA 吉祥寺\n' +
+    (trainer || '') + '\n';
+}
+
 function sendCustomerMail(params, trainer, start, end) {
   var s      = Utilities.formatDate(start, SETTINGS.TIMEZONE, 'yyyy年MM月dd日（E）HH:mm');
   var e      = Utilities.formatDate(end,   SETTINGS.TIMEZONE, 'HH:mm');
   var mapUrl = 'https://share.google/WT75kEhN0OnW3SFd9';
+
+  /* モニター経由（/monitor/ から取られた予約）だけ、専用の文面を送る。
+     ★印が無い・違うときは、必ず下の通常の文面に落ちる。
+       間違える向きを、害の小さい側（通常のお客様に通常の文面）に固定している。 */
+  if (isMonitor_(params.utmMedium)) {
+    GmailApp.sendEmail(
+      params.customerEmail,
+      '【ご予約を承りました】バルクアッププログラム モニター 体験予約',
+      monitorCustomerBody_(params.customerName, s, e, mapUrl),
+      { name: SETTINGS.GYM_NAME }
+    );
+    return;
+  }
 
   var body =
     params.customerName + ' 様\n\n' +
@@ -904,6 +1002,7 @@ function sendReminderMails() {
       var customerName  = row[1] || '';
       var customerEmail = row[2] || '';
       var trainerName   = row[4] || '';
+      var utmMedium     = row[8] || '';   // 9列目＝utm_medium。モニター判別はこれだけ
 
       if (!customerEmail) continue;
 
@@ -960,10 +1059,13 @@ function sendReminderMails() {
         SETTINGS.GYM_ADDRESS + '\n' +
         '━━━━━━━━━━━━━━━';
 
+      /* モニター経由だけ差し替える。印が無ければ通常の文面のまま */
+      var isM = isMonitor_(utmMedium);
       GmailApp.sendEmail(
         customerEmail,
-        '【明日のご予約確認】体験トレーニングのご予約について | ' + SETTINGS.GYM_NAME,
-        body,
+        isM ? ('【明日】バルクアッププログラム モニター 体験予約')
+            : ('【明日のご予約確認】体験トレーニングのご予約について | ' + SETTINGS.GYM_NAME),
+        isM ? monitorReminderBody_(customerName, dateLabel, trainerName) : body,
         { name: SETTINGS.GYM_NAME }
       );
       sent++;
