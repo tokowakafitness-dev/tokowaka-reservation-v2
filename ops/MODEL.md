@@ -106,6 +106,10 @@ trg_alloc_return_pack       同
 | I23 | 顧客にだけ絞る。トレーナー・オーナーには全部の枠。写しへ送る処理は絞らない `_lbTrainerSlotsAll` だけを使う | `consec-gas-entry.test.js` 1・`consec-worker.test.js` 1-3, 3-8 |
 | I24 | 写しのモードは「作った枠」と「いまのスイッチ」の表で決める。on なのに印の無い枠は顧客に出さない（Worker は _fallback、GAS は作り直し→だめなら失敗で答える） | `consec-worker.test.js` 1-5〜1-8, 3 |
 | I25 | 連続ルールは顧客が自分で取る予約だけ（`consecRule`）。代行・自動予約・トレーナーが他人の予約を変える、には効かない | `consec-gas-entry.test.js` 3 |
+| I26 | **shadow の配線の確認に使う入口は、LIFF から実際に届く入口と完全に一致する**（`CUSTOMER_ENTRIES`）。表の CHECK との照合は `ALL_CUSTOMER_SIDE_ENTRIES` で別に持つ。GAS は一覧を複製せず Worker の wiring の鍵を使う | `shadow-entry-check.test.js` 7a〜7d |
+| I27 | 二重書きの溢れの「確かめ済み」を進めるのは、照合が `_edgeQuotaAllGood`（表示の全員一致と同じ関数）のときだけ。累計は照合の前に読む。dry では書かない | `gas-1017.test.js` ② |
+| I28 | 作業依頼の結果と例外文は、報告の直前に必ず `_ejScrub` を通す（氏名＋様／名簿・台帳・契約の氏名／電話・メール・LINE ID） | `gas-1017.test.js` ① |
+| I29 | カレンダーと台帳の突合は、進行中の予定を台帳の **confirmed** で救う（changed・cancelled・consumed は救わない＝残骸として出す）。カレンダー側で「開始済みを飛ばす」をしない | `gas-1017.test.js` ④ |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。
@@ -259,8 +263,8 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 
 | 経路 | いつ呼ばれるか | shadow の対象 |
 |---|---|---|
-| `routeBoot` | 会員が起動したとき1回 | ✅ |
-| `compatMemberStatus` | 同（互換の経路） | ✅ |
+| `routeBoot`（入口 boot） | ★**どの画面からも呼ばれない**（2026-10-17 に確定。LIFF の EDGE_MAP に `boot` が無い） | ✅（だが0回） |
+| `compatMemberStatus`（入口 compat_member） | 会員が起動したとき1回（LIFF `line_boot` → `c_boot` → `compatBoot` → ここ）＋`getMemberStatus` | ✅ |
 | `compatCustomerHome` | トレーナーが顧客カードを開くたび | ✅ |
 | `compatBookingOptions` / `routeBookingOptions` | ★**候補を選び直すたび** | ❌ 確定を遅くしない |
 | `customerDetail` | 上から連鎖 | ❌ |

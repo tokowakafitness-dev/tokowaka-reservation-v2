@@ -211,7 +211,7 @@ ok('⑩★全体の合否を示す名前を返さない',
   !/\bout\.ok\b/.test(V) && /pageOk: true/.test(V),
   'ok という名前が残っていると、このページだけの結果を全体の合否と読んでしまう');
 ok('⑩★呼ぶ側が全ページを集計して判断する',
-  /var allGood = v\.done && v\.checked > 0 && v\.differ === 0 && v\.skipped === 0/.test(GAS),
+  /var allGood = _edgeQuotaAllGood\(v\);/.test(GAS) && /v\.done === true && v\.checked > 0 && v\.differ === 0 && v\.skipped === 0/.test(GAS),   // 2026-10-17 共通関数へ
   'ページごとの pageOk を見て決めると、前のページの食い違いを見落とす');
 ok('⑩★使いすぎも条件に入れる', /&& v\.overUsedPacks === 0/.test(GAS),
   '書き込みを止める前に入った壊れた値は残る。読み取りをD1へ向ける前に必ず見つける');

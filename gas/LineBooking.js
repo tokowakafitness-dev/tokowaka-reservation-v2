@@ -1273,17 +1273,30 @@ function debugOrphanEvents(daysAhead) {
   out.push('対象期間：' + Utilities.formatDate(now, tz, 'yyyy/MM/dd') + ' 〜 ' + Utilities.formatDate(endD, tz, 'yyyy/MM/dd'));
 
   // ---- 台帳（未来の confirmed）----
+  //   ★getEvents(now, …) は「いま進行中」の予定も返す。台帳を開始 now 以降だけにすると、
+  //     点検を日中に回すたびに進行中の正しいセッションを「台帳に無い」と誤報する
+  //     （10/16 12:09 小倉様 12:00・10/17 13:05 中垣様 13:00）。
+  //     だから**開始済みの予約も照合の相手（ledger）には入れる**。②④の「台帳にあるのにカレンダーに無い」の
+  //     対象（ledgerList）には入れない（開始済みは [消化] に変わることがある＝無いのが正常）。
+  //   ★カレンダー側を「開始済みは飛ばす」で直さない（関門②）。朝の点検の後に変更・取消され、
+  //     旧予定の削除だけ失敗した残骸が、開始した瞬間から永久に見えなくなる。
+  //     開始済みでも台帳が changed / cancelled / consumed なら、ここに入らない＝①③に出る
   var ledger = {}, ledgerList = [];
+  var startedFloor = new Date(now.getTime() - 24 * 3600000);
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
   if (sh && sh.getLastRow() > 1) {
     var v = sh.getRange(2, 1, sh.getLastRow() - 1, 11).getValues();
     for (var i = 0; i < v.length; i++) {
-      if (String(v[i][6]) !== 'confirmed') continue;
+      var st6 = String(v[i][6]);
       var dt = _lbParseResvDate(v[i][0]);
-      if (!dt || dt < now || dt > endD) continue;
+      if (!dt || dt > endD || dt < startedFloor) continue;
+      var started = dt < now;
+      //   ★開始済みでも confirmed だけ（関門②）。consumed（当日キャンセル）は施設calが [消化] に改名・担当calの✅は削除が正常で、
+      //     照合の相手に入れると、改名・削除に失敗して残った予定を「一致」と隠してしまう
+      if (st6 !== 'confirmed') continue;
       var k = key(dt, v[i][1]);
       ledger[k] = { dt: dt, name: String(v[i][1]), trainerId: String(v[i][4]), trainerName: String(v[i][5]), channel: String(v[i][9] || '') };
-      ledgerList.push(k);
+      if (!started) ledgerList.push(k);
     }
   }
   out.push('台帳の確定予約：' + ledgerList.length + '件');
@@ -2375,7 +2388,7 @@ function dailyHealthCheck(dryRunArg) {
   //   「14日連続で食い違い0件」を待つ代わりに、**毎日照合して食い違いを見つける。**
   //   放置すると積み上がる（2026-10-08 朝、一晩で1名ズレた）。
   try {
-    var dw = lbDwDailyCheck();
+    var dw = lbDwDailyCheck(dryRun);
     for (var dwi = 0; dwi < dw.length; dwi++) {
       add(dw[dwi].key, '二重書き', dw[dwi].severity, dw[dwi].count, dw[dwi].detail);
     }
@@ -3695,7 +3708,36 @@ function _lbConsecDryRecord(body, channel) {
   var t0 = Date.now();
   var cv = _lbConsecCheckAt(trainer, st, en, ex);
   _lbLogOutcome('CONSEC_DRY_' + (cv.unknown ? 'UNKNOWN' : (cv.ok ? 'OK' : 'REJECT')), channel,
-                (cv.unknown ? 'read_fail' : ('len=' + cv.lengthMin + ' side=' + cv.side)) + ' ms=' + (Date.now() - t0));
+                (cv.unknown ? 'read_fail' : ('len=' + cv.lengthMin + ' side=' + cv.side)) + ' ms=' + (Date.now() - t0)
+                + _lbConsecWhere(trainer, st));
+}
+
+// ★記録に「どのトレーナーの、何時の予約か」を足す（2026-10-17）。
+//   長さと向きだけでは、弾いた判定が規則どおりだったかを確かめられなかった（10/16 の dry で2件）。
+//   顧客は書かない（トレーナーの姓と予約の開始時刻だけ）。ms= の読み取り（_lbConsecPerf）は前にあるので壊れない
+function _lbConsecWhere(trainer, start) {
+  try {
+    return ' tr=' + String((trainer && trainer.name) || '?').split(' ')[0]
+         + ' at=' + Utilities.formatDate(start, SETTINGS.TIMEZONE, 'yyyy-MM-dd HH:mm');
+  } catch (e) { return ' tr=? at=?'; }
+}
+
+// 連続ルールの記録を読む（作業依頼の args.consecLog=日数）。読み取りだけ。顧客の情報は入っていない
+function consecLogText(days) {
+  var d = Number(days); if (!(d > 0 && d <= 31)) d = 3;
+  var out = ['===== 連続ルールの記録（直近' + d + '日・読み取りだけ）=====', '版: ' + LB_AUDIT_BUILD, 'モード: ' + _lbConsecMode()];
+  var sh = _lbSheet(LB_METRICS_SHEET);
+  if (!sh || sh.getLastRow() < 2) { out.push('記録がありません'); return out.join('\n'); }
+  var cutoff = Utilities.formatDate(new Date(Date.now() - d * 86400000), SETTINGS.TIMEZONE, 'yyyy-MM-dd');
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(5, sh.getLastColumn())).getValues(), n = 0;
+  for (var i = 0; i < v.length; i++) {
+    if (_lbDateKey(v[i][1]) < cutoff) continue;
+    if (String(v[i][2] || '').indexOf('CONSEC_') !== 0) continue;
+    n++;
+    out.push(String(v[i][0]) + '  ' + String(v[i][2]).replace('CONSEC_', '') + '  ' + String(v[i][3] || '') + '  ' + String(v[i][4] || ''));
+  }
+  out.push('（' + n + '件。tr/at が無い行は 2026-10-17 の反映より前の記録）');
+  return out.join('\n');
 }
 
 // 判定にかかった時間（点検用）。直近 days 日の CONSEC_ 行の ms= から中央値・最大を出す
@@ -5176,7 +5218,8 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
         if (!_cv.ok) {
           //   記録は CONSEC_ で始める（予約の成否の集計に混ぜない）
           try { _lbLogOutcome('CONSEC_' + (_cv.unknown ? 'UNKNOWN' : 'REJECT'), channel,
-                              (_cv.unknown ? 'read_fail' : ('len=' + _cv.lengthMin + ' side=' + _cv.side)) + ' ms=' + (Date.now() - _cvT0)); } catch (eCl) {}
+                              (_cv.unknown ? 'read_fail' : ('len=' + _cv.lengthMin + ' side=' + _cv.side)) + ' ms=' + (Date.now() - _cvT0)
+                              + _lbConsecWhere(trainer, start)); } catch (eCl) {}
           {
             //   ★_skipOutcome：CONSEC_ で記録済み。外側（_lbReserveCore）で SLOT_TAKEN をもう一度記録すると、
             //     「他の方が先に取った」の集計に連続ルールの分が混ざる（関門②）

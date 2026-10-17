@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CUSTOMER_ENTRIES } from '../src/lib/shadow-status.js';
+import { CUSTOMER_ENTRIES, ALL_CUSTOMER_SIDE_ENTRIES } from '../src/lib/shadow-status.js';
 import { SWEEP_ENTRY } from '../src/lib/shadow-sweep.js';
 import { SLOT_TABLE } from '../src/lib/remain-shadow.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -34,7 +34,7 @@ for (const f of files) {
   }
 }
 ok('1 枠の表（' + SLOT_TABLE + '）の定義が migrations にある', lastFile != null);
-const used = CUSTOMER_ENTRIES.concat([SWEEP_ENTRY]);
+const used = ALL_CUSTOMER_SIDE_ENTRIES.concat([SWEEP_ENTRY]);
 ok('2 ★コードが使う入口と表の CHECK が完全に一致する（CHECK が無いのも不合格）',
    Array.isArray(lastCheck) && lastCheck.length === used.length && used.every((e) => lastCheck.includes(e)),
    `最後の定義 ${lastFile} の CHECK=${JSON.stringify(lastCheck)} / コード=${JSON.stringify(used)}`);
@@ -46,6 +46,29 @@ const ST = readFileSync(join(ROOT, 'src/lib/shadow-status.js'), 'utf8');
 const shTables = [...SH.matchAll(/(?:INSERT INTO|FROM)\s+(remain_shadow_slot\w*)/g)].map((m) => m[1]);
 ok('4 枠を取る SQL は全部 SLOT_TABLE を見る', shTables.length >= 5 && shTables.every((t) => t === SLOT_TABLE), JSON.stringify(shTables));
 ok('5 集計も SLOT_TABLE を見る（古い表を見ない）', !/FROM remain_shadow_slot\b(?!2)/.test(ST) && /\$\{SLOT_TABLE\}/.test(ST));
+
+// ★配線の確認に使う入口は、LIFF から本当に届くものと一致する（2026-10-17）。
+//   入口 'boot' を条件に入れていたが、LIFF は起動を c_boot（compat_member）で取っていて、
+//   'boot' はどの画面からも呼ばれていなかった＝②が永久に通らなかった。
+//   逆に、届く入口を条件から落とすと、顧客の画面の配線を確かめないまま合格になる。両方向を止める。
+{
+  const LIFF = readFileSync(join(ROOT, '../liff/index.html'), 'utf8');
+  const mapSrc = (LIFF.match(/var EDGE_MAP = \{([\s\S]*?)\};/) || [])[1] || '';
+  const liffActions = new Set([...mapSrc.matchAll(/:\s*'([a-zA-Z_]+)'/g)].map((m) => m[1]));
+  //   Worker の窓口 → そこで shadow を起動する入口（routes/compat.js・routes/boot.js の entry:）
+  const REACH = { c_boot: 'compat_member', c_memberStatus: 'compat_member', c_customerHome: 'compat_home', boot: 'boot' };
+  const CP = readFileSync(join(ROOT, 'src/routes/compat.js'), 'utf8');
+  const BT = readFileSync(join(ROOT, 'src/routes/boot.js'), 'utf8');
+  ok('7a 窓口と入口の対応がコードにある（compat_member／compat_home／boot）',
+     /entry: 'compat_member'/.test(CP) && /entry: 'compat_home'/.test(CP) && /entry: 'boot'/.test(BT)
+     && /const ms = await compatMemberStatus\(arg\)/.test(CP));
+  ok('7b LIFF の EDGE_MAP が読めた', liffActions.size >= 5, JSON.stringify([...liffActions]));
+  const reached = new Set([...liffActions].map((a) => REACH[a]).filter(Boolean));
+  ok('7c ★配線の条件の入口は全部 LIFF から届く', CUSTOMER_ENTRIES.every((e) => reached.has(e)),
+     `条件=${JSON.stringify(CUSTOMER_ENTRIES)} / 届く=${JSON.stringify([...reached])}`);
+  ok('7d ★LIFF から届く入口は全部 配線の条件に入っている', [...reached].every((e) => CUSTOMER_ENTRIES.includes(e)),
+     `条件=${JSON.stringify(CUSTOMER_ENTRIES)} / 届く=${JSON.stringify([...reached])}`);
+}
 
 // ★本物の SQLite で migration を流す（D1 の身代わりが制約を再現しなかったのが事故の原因）
 {

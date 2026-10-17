@@ -168,7 +168,7 @@ console.log('=== 7. 枠を作り直す範囲 ===');
 console.log('=== 8. 日次の点検（14日待つ代わり） ===');
 {
   ok('⑧日次点検に相乗りしている（新しいトリガーを作らない）',
-    /lbDwDailyCheck\(\)/.test(LB) && /'二重書き'/.test(LB));
+    /lbDwDailyCheck\(dryRun\)/.test(LB) && /'二重書き'/.test(LB));
   ok('⑧点検そのものが失敗しても気づける',
     /dualwrite_check_fail/.test(LB),
     '黙って通ると「問題なし」と出てしまう');

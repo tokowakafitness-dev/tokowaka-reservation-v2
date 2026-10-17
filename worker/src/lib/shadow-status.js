@@ -11,10 +11,17 @@
 
 import { SLOT_TABLE } from './remain-shadow.js';
 
+//   コードにある顧客側の入口すべて（表示と、表の CHECK との突き合わせに使う）
 const ENTRIES = ['boot', 'compat_member', 'compat_home'];
-//   ★顧客の入口（配線の確認に使う）。sweep（設計19）は値の確認には数えるが、配線の確認には数えない。
+export const ALL_CUSTOMER_SIDE_ENTRIES = ENTRIES;
+//   ★配線の確認に使うのは、**顧客の画面から実際に届く入口だけ**（2026-10-17）。
+//     LIFF は起動を c_boot（→ compatBoot → compatMemberStatus＝入口 compat_member）で取る。
+//     入口 'boot'（routes/boot.js の routeBoot）はどの画面からも呼ばれていない。
+//     それを条件に入れていたため、②は何日待っても通らない形だった（10/13〜10/17 ずっと 0回）。
+//     どの入口が届くかは worker/test/shadow-entry-check.test.js が LIFF の EDGE_MAP と突き合わせる。
+//   ★sweep（設計19）は値の確認には数えるが、配線の確認には数えない。
 //     sweep だけで回数・人数の線を越えても、顧客の画面からの読み取りを確かめたことにはならない
-export const CUSTOMER_ENTRIES = ENTRIES;
+export const CUSTOMER_ENTRIES = ['compat_member', 'compat_home'];
 
 /** 表があるか（無くても落とさない） */
 async function tableOk(env, name) {

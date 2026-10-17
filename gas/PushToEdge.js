@@ -2558,6 +2558,17 @@ function _edgeQuotaStatus(query) {
 //   ★「D1を正本にしてよいか」はここが一致するかで決まる。
 //     正本にするとは、残数を計算で出すのをやめて**行から読む**こと。
 //     行から読んだ値が計算と違えば、顧客の残数が変わる。
+// ★照合の結果が「全員一致」と言えるか。表示（verifyEdgeRemainingText）と溢れの確かめ済み（lbDwDailyCheck）の
+//   **両方がこれを使う**（2026-10-17・関門②：確かめ済みの側だけ条件が少なく、引当の残りや主キーの食い違いがあっても進めていた）。
+//   === 0 で比べる＝値が無い（返ってこなかった）ときは一致と言わない
+function _edgeQuotaAllGood(v) {
+  return !!(v && v.done === true && v.checked > 0 && v.differ === 0 && v.skipped === 0
+         && v.overUsedPacks === 0 && v.overUsedMonths === 0 && v.coverageMissing === 0
+         && v.staleCoverage === 0 && v.quotaInvariantBroken === 0
+         && v.keyMismatch === 0 && v.keyRangeMissing === 0 && v.keyChecked > 0
+         && v.orphans && !v.orphans.quotaRows && !v.orphans.packRows && !v.orphans.allocRows);
+}
+
 function _edgeQuotaVerify(opts) {
   var o = opts || {};
   var url = _edgeProp('EDGE_URL');
@@ -2653,11 +2664,7 @@ function quotaBuildText(args) {
     //   ★主キーの集合も条件に入れる（2026-10-09・設計13・関門②）。
     //     残数が一致しても、別の月・別のパックに入れ替わっていれば一致しない。
     //   ★keyChecked > 0 も条件。**照合が1人も走っていない状態を「一致」と読ませない。**
-    var allGood = v.done && v.checked > 0 && v.differ === 0 && v.skipped === 0
-                  && v.overUsedPacks === 0 && v.overUsedMonths === 0 && v.coverageMissing === 0
-                  && v.staleCoverage === 0 && v.quotaInvariantBroken === 0
-                  && v.keyMismatch === 0 && v.keyRangeMissing === 0 && v.keyChecked > 0
-                  && v.orphans && !v.orphans.quotaRows && !v.orphans.packRows && !v.orphans.allocRows;
+    var allGood = _edgeQuotaAllGood(v);
 
     if (v.orphans) {
       vo.push('D1にだけ残った行: 枠 ' + v.orphans.quotaRows + ' ／ チケット ' + v.orphans.packRows
@@ -2908,6 +2915,7 @@ function quotaBuildText(args) {
 var LB_DW = {
   QUEUE_PROP:    'LB_DUALWRITE_QUEUE',      // { "C123": { version, queuedAt }, … }
   OVERFLOW_PROP: 'LB_DUALWRITE_OVERFLOW',   // 溢れて捨てた件数（累計）
+  OVERFLOW_ACK_PROP: 'LB_DUALWRITE_OVERFLOW_ACK',   // そのうち「全員の照合が一致して、追いついたと確かめた」件数（2026-10-17）
   LAST_PROP:     'LB_DUALWRITE_LAST',       // 最後に処理した時刻と結果（点検用）
   // ★待ち行列の人数の上限（2026-10-08・Codex関門②で計算して決めた）。
   //   Script Properties は1つの値が9KBまで。実測（顧客IDは 'C'+14桁＝15文字）：
@@ -3635,7 +3643,9 @@ function lbDualWriteClearQueue() {
 //   返すもの：[{ key, severity, count, detail }] — dailyHealthCheck の add() にそのまま渡す
 // ------------------------------------------------------------
 
-function lbDwDailyCheck() {
+function lbDwDailyCheck(dryRunArg) {
+  //   ★dryRun は真偽値の true のときだけ（トリガーから呼ばれるとイベントが入る：env_gas_trigger_passes_event_arg）
+  var dryRun = (dryRunArg === true);
   var out = [];
   var p = PropertiesService.getScriptProperties();
 
@@ -3671,12 +3681,22 @@ function lbDwDailyCheck() {
 
   // ② 溢れた／積めなかったことがないか
   //   ここが0でなければ、**その会員の変更はD1に伝わっていない**（照合で食い違いとして出る）
+  //   ★累計だけを見ると、追いついた後も毎朝「至急」が出続ける（2026-10-16〜：1回の溢れが残り続けた）。
+  //     毎朝の照合（下の③）が**最後まで・食い違い0・比べられない会員0**なら、それまでの溢れは
+  //     D1 に追いついたと確かめられる。その時点の累計を「確かめ済み」として残し、超えた分だけ知らせる。
+  //   ★確かめ済みの値が読めない・累計より大きい（数え直した等）ときは 0 とみなす＝知らせる側へ倒す
   var over = Number(p.getProperty(LB_DW.OVERFLOW_PROP) || 0);
-  if (over) {
+  if (!(over >= 0)) over = 0;
+  var ack = Number(p.getProperty(LB_DW.OVERFLOW_ACK_PROP) || 0);
+  if (!(ack >= 0) || ack > over) ack = 0;
+  var fresh = over - ack;
+  var overIdx = -1;
+  if (fresh > 0) {
+    overIdx = out.length;
     out.push({
-      key: 'dualwrite_overflow', severity: 'high', count: over,
-      detail: '待ち行列から捨てた／積めなかった回数が累計' + over + '回あります。'
-            + 'その会員の変更はD1に伝わっていません。全員の作り直しが必要です。',
+      key: 'dualwrite_overflow', severity: 'high', count: fresh,
+      detail: '待ち行列から捨てた／積めなかった回数が新たに' + fresh + '回あります（累計' + over + '回・確かめ済み' + ack + '回）。'
+            + 'その会員の変更はD1に伝わっていない可能性があります。下の照合が全員一致なら、追いついています。',
     });
   }
 
@@ -3730,6 +3750,19 @@ function lbDwDailyCheck() {
                count: v.orphans.quotaRows + v.orphans.packRows + v.orphans.allocRows,
                detail: '契約が無い会員の行がD1に残っています（枠 ' + v.orphans.quotaRows
                      + ' / チケット ' + v.orphans.packRows + ' / 引当 ' + v.orphans.allocRows + '）。' });
+  }
+
+  //   ★溢れの「確かめ済み」を進める。照合が「全員一致」（_edgeQuotaAllGood・表示と同じ条件）のときだけ。
+  //     累計は照合の**前**に読んだ値を使う（照合の最中に溢れた分は確かめていない＝翌朝また知らせる）。
+  //     dry（作業依頼からの点検）では書かない（点検は記録を残さない約束）
+  if (fresh > 0 && _edgeQuotaAllGood(v)) {
+    var note = '（照合' + v.checked + '名が全員一致＝追いついたと確かめました'
+             + (dryRun ? '・dry のため記録はしていません' : '') + '）';
+    if (!dryRun) { try { p.setProperty(LB_DW.OVERFLOW_ACK_PROP, String(over)); } catch (eAck) { note = '（確かめ済みの記録に失敗: ' + eAck.message + '）'; } }
+    if (overIdx >= 0 && !/失敗/.test(note)) {
+      out[overIdx].severity = 'info';
+      out[overIdx].detail += note;
+    }
   }
 
   return out;

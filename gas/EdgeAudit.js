@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-14a shadow の合格を値と配線に分ける・期間で集計';
+var LB_AUDIT_BUILD = '2026-10-17a 配線の入口は Worker の一覧・溢れの確かめ済み・連続ルールの記録にトレーナーと時刻';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2506,7 +2506,10 @@ function shadowStatusText(args) {
   var _valOk = (tot.completed || 0) >= 100 && _tm > 0 && _cm >= Math.ceil(_tm * 0.875)
                && !(tot.diffFields || 0) && !(tot.incomplete || 0);
   var _wr = r.wiring || {}, _wz = [];
-  var _custEntries = ['boot', 'compat_member', 'compat_home'];
+  //   ★入口の一覧は Worker が決める（wiring の鍵＝顧客の画面から届く入口・2026-10-17）。
+  //     ここに一覧を複製すると、片方だけ直して食い違う（入口 'boot' は画面から届かず、②が永久に通らなかった）
+  var _custEntries = Object.keys(_wr);
+  if (!_custEntries.length) _wz.push('（Worker が入口の一覧を返していません）');
   for (var _wi = 0; _wi < _custEntries.length; _wi++) if (!(Number(_wr[_custEntries[_wi]]) >= 1)) _wz.push(_custEntries[_wi]);
   var _wireOk = (r.wiringOk === true) && !_wz.length;
   var _ok = _valOk && _wireOk;

@@ -9,6 +9,7 @@
 // ★結果に個人情報を入れない。
 //   作業番号は公開リポジトリに載る。2026-10-16 から結果を読むには読み取りの鍵が要る
 //   （Worker 側で確かめる）が、二重の守りとして氏名・電話・LINE IDを出さない。会員は「会員#下4桁」で表す。
+//   ★結果は全部 _ejScrub を通す（「〇〇様」への置き換えもここ）。通さない return を足さない
 //
 // 使い方：setupEdgeJobTrigger() で1分ごとの見回りを設定する。
 
@@ -44,7 +45,59 @@ function _ejScrub(text) {
   s = s.replace(/(^|[^0-9])(0\d{1}\d{8})(?![0-9])/g, '$1（電話）');                    // 0312345678
   // メールアドレス
   s = s.replace(/[\w.+-]+@[\w.-]+\.\w+/g, '（メール）');
+  // 顧客の氏名（2026-10-17・決定0089 の二重の守り）。予定のタイトル・点検の文は「氏名＋様」で出る。
+  //   ★空白をはさむ書き方（中垣 宏章様）も1つにまとめて伏せる。直前の区切り（：/ 、（ 等）までを氏名とみなす
+  //   トレーナーの名前は「様」を付けないので残る（誰の枠かは分かる）
+  //   「・」「-」「'」をはさむ氏名（カトウ・マリア様）も1つにまとめる（関門②）
+  var W = "[一-龯々〆ヵヶぁ-んァ-ヴーｦ-ﾟA-Za-z]+";
+  s = s.replace(new RegExp(W + "(?:[ 　・･'’-]" + W + ")*様", 'g'), '〇〇様');
+  //   ★「様」を付けずに出す窓口がある（統合の下見・移行前の点検・名前で引く残数：関門②）。
+  //     名簿と台帳にある氏名を、表記の揺れ（空白の有無）ごと伏せる。読めなければ様の置き換えだけで続ける
+  //     （結果は読み取りの鍵でも守られている＝二重の守りの片方）
+  var names = [];
+  try { names = _ejNameList(); } catch (eN) { names = []; }
+  for (var i = 0; i < names.length; i++) s = s.split(names[i]).join('〇〇');
   return s;
+}
+
+// 伏せる氏名の一覧（名簿・台帳）。1回の実行で1度だけ読む。
+//   ★姓だけは伏せない（トレーナーの姓と同じことがある＝誰の枠かが読めなくなる）。2文字以上の氏名全体だけ
+var _EJ_NAMES = null;
+function _ejNameList() {
+  if (_EJ_NAMES) return _EJ_NAMES;
+  var seen = {}, list = [];
+  function addName(raw) {
+    var n = String(raw || '').replace(/様+$/, '').trim();
+    //   ★文字（かな・漢字・英字）を含まない値は名前とみなさない（氏名列に 2026 や 1234 が入ると、日付や会員#を壊す・関門②）
+    if (!n || !/[一-龯々〆ヵヶぁ-んァ-ヴーｦ-ﾟA-Za-z]/.test(n)) return;   // 氏名＋様の正規表現と同じ文字の集合
+    var forms = [n, n.replace(/[ 　]+/g, ''), n.replace(/[ 　]+/g, ' '), n.replace(/[ 　]+/g, '　')];
+    for (var f = 0; f < forms.length; f++) {
+      if (forms[f].length < 2 || seen[forms[f]]) continue;
+      seen[forms[f]] = 1; list.push(forms[f]);
+    }
+  }
+  var sheets = [[LINE_BOOKING.MAP_SHEET, MAP_COL.NAME], [LINE_BOOKING.RESV_SHEET, 2]];
+  for (var k = 0; k < sheets.length; k++) {
+    var sh = _lbSheet(sheets[k][0]);
+    if (!sh || sh.getLastRow() < 2) continue;
+    var v = sh.getRange(2, sheets[k][1], sh.getLastRow() - 1, 1).getValues();
+    for (var r = 0; r < v.length; r++) addName(v[r][0]);
+  }
+  //   契約シート（名簿に無い会員・移行前の点検が出す「紐付かない契約行の氏名」）
+  try {
+    var cs = _lbContractSheet();
+    if (cs && cs.getLastRow() >= 2) {
+      var cc = _lbContractCols(cs.getRange(1, 1, 1, cs.getLastColumn()).getValues()[0]);
+      if (cc && cc.name >= 0) {
+        var cv = cs.getRange(2, cc.name + 1, cs.getLastRow() - 1, 1).getValues();
+        for (var c = 0; c < cv.length; c++) addName(cv[c][0]);
+      }
+    }
+  } catch (eC) {}
+  //   長い順に置き換える（「山田 太郎」より先に「山田」で切らない）
+  list.sort(function (a, b) { return b.length - a.length; });
+  _EJ_NAMES = list;
+  return list;
 }
 
 // 会員の呼び名。氏名は出さず、顧客IDの下4桁で表す。
@@ -69,7 +122,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-10-13a 届かなかった通知の候補を読む窓口を足した';
+var LB_JOB_BUILD = '2026-10-17a 結果から顧客の氏名を伏せる・連続ルールの記録を読む窓口';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);
@@ -119,6 +172,8 @@ function _ejRunInner(op, args) {
       // 届かなかったLINE通知が「誰のどの予約か」の候補（args.notifyFails=日数）。氏名・本文は出さない
       if (args && args.notifyFails) return _ejScrub(notifyFailsText(Number(args.notifyFails)));
       // トレーナーの連続セッションの実測（読み取りだけ・制限は入れない）。args.days/args.gap で条件を変える
+      // 連続ルールの判定の記録（args.consecLog=日数）。弾いた判定が規則どおりかを、トレーナーと時刻で確かめる
+      if (args && args.consecLog) return _ejScrub(consecLogText(Number(args.consecLog)));
       if (args && args.consec) return _ejScrub(consecutiveSessionsText(args));
       // LINEの用途別の送信通数（args.usage='2026-09'）。当月は予約が入りきっていないので
       //   見込みを立てるには実績が揃った前月を見る（2026-10-02 オーナー指示）。
@@ -214,7 +269,7 @@ function edgeJobPoll() {
     ok = true;
   } catch (e) {
     // 生の例外文は内部構造が漏れるので、種類と短い説明だけにする
-    err = String((e && e.message) || e).slice(0, 300);
+    err = _ejScrub(String((e && e.message) || e)).slice(0, 300);   // ★例外文にも氏名が入りうる
     ok = false;
   } finally {
     if (lock) { try { lock.releaseLock(); } catch (e3) {} }
@@ -222,7 +277,8 @@ function edgeJobPoll() {
 
   try {
     _ejPost({ action: 'report', requestId: claimed.requestId, ok: ok,
-              result: '[' + claimed.op + '] ' + Math.round((Date.now() - t0) / 1000) + '秒\n' + text,
+              //   ★最後にもう一度通す（窓口ごとの _ejScrub の付け忘れを、ここで必ず拾う・2026-10-17）
+              result: '[' + claimed.op + '] ' + Math.round((Date.now() - t0) / 1000) + '秒\n' + _ejScrub(text),
               error: err });
   } catch (e4) { Logger.log('[job] 報告に失敗: ' + (e4 && e4.message)); }
 }
