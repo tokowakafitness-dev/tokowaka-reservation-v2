@@ -1874,7 +1874,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-14c shadow のまとめた比較の心拍・状態の破損を点検に';
+var LB_HEALTH_BUILD = '2026-10-20a 書き込みに追いついていない会員・大きすぎる会員・重複パックを点検に';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2249,6 +2249,22 @@ function dailyHealthCheck(dryRunArg) {
               + '回っていないか、同じ会員が何度やっても作り直せていない可能性があります。');
         }
       }
+      //   ★書き込みに追いついていない会員（設計20 §2-3・決定0091）。dirty_since（追いついていた状態から
+      //     初めて外れた時刻）で見る。30分を超えたら warn（後追い処理は1秒〜15分で追いつくはず）
+      var _wb = Number(_sv.writeBehind || 0);
+      var _wbSince = (_sv.writeBehindOldestSince == null) ? null : Number(_sv.writeBehindOldestSince);
+      if (_wb && _wbSince != null) {
+        var _wbMin = Math.floor((Date.now() - _wbSince) / 60000);
+        if (_wbMin >= 30) {
+          add('gen_write_behind', 'D1', 'warn', _wb,
+              '書き込みの後、作り直しが ' + _wbMin + '分 追いついていない会員がいます（D1 は古いので答えません＝写しを出すだけ）。'
+              + '後追い処理が止まっているか、同じ会員が何度やっても作り直せていない可能性があります。');
+        }
+      }
+      if (Number(_sv.writeBehindSinceMissing || 0)) {
+        add('gen_write_behind_no_time', 'D1', 'warn', Number(_sv.writeBehindSinceMissing),
+            '書き込みに追いついていない会員のうち、いつから遅れたかの記録が無い会員がいます（滞留を判定できません）。');
+      }
       var _noAt = Number(_sv.behindSourceAtMissing || 0);
       if (_noAt) {
         add('gen_behind_no_time', 'D1', 'warn', _noAt,
@@ -2260,6 +2276,23 @@ function dailyHealthCheck(dryRunArg) {
 
   //   ★容量で積めなかった回数（増え続けていたら修復が永久に回っていない）
   try {
+    //   ★大きすぎて作り直せない会員（設計20 §7-3 の10）。再試行の輪にせず待ち行列から外している＝人が見る
+    var _tl = [];
+    try { _tl = JSON.parse(_lbProp('LB_DW_TOO_LARGE') || '[]'); } catch (eTl) { _tl = []; }
+    if (Object.prototype.toString.call(_tl) === '[object Array]' && _tl.length) {
+      add('dualwrite_too_large', 'D1', 'high', _tl.length,
+          '作り直せない（大きすぎる）会員: ' + _tl.slice(0, 5).map(function (x) { return String(x.who) + '（' + String(x.why || '') + '）'; }).join(' / ')
+          + '。D1 はこの会員で答えません。上限（worker/src/routes/quota-rebuild.js の REBUILD_LIMITS）を見直します。');
+    }
+    //   ★重複パック（設計20 §2-5・切り替えの合格条件）
+    try {
+      var _dp = (_svSt && _svSt.dupPackPrefix) || null;
+      if (_dp && _dp.table === 'ok' && Number(_dp.groups || 0) > 0) {
+        add('dup_pack_prefix', 'D1', 'warn', Number(_dp.groups),
+            '同じ開始日・終了日のチケット行が複数ある会員: ' + (_dp.customers || []).join(' / ')
+            + '（棚卸しの付け替えが一意に決まらない＝切り替えの前に契約表を直す）');
+      }
+    } catch (eDp) {}
     var _capSkip = Number(_lbProp('LB_DW_BEHIND_SKIPPED_CAPACITY') || 0);
     if (_capSkip) {
       add('gen_behind_capacity', 'D1', 'warn', _capSkip,
@@ -5820,7 +5853,9 @@ function syncExistingReservations(dryRun) {
           var _dwCid = String(appendRows[_dw][2] || '');
           if (!_dwCid || _dwSeen[_dwCid]) continue;
           _dwSeen[_dwCid] = 1;
-          lbDwEnqueue(_dwCid);
+          //   ★積んだ番号を写しと一緒に D1 へ伝える（設計20）。中央出口を通らない書き込みもここで印を付ける
+          var _dwSeq = lbDwEnqueue(_dwCid);
+          _lbDwMarkDirty(_dwCid, _dwSeq);
         }
       } catch (e) { Logger.log('[dw] カレンダー取込ぶんを積めませんでした: ' + (e && e.message)); }
       // line_unlinked は毎回clearContentsで再構築（削除→作成の消失窓を回避・Codex#11）
@@ -8070,7 +8105,7 @@ function autoBookRecurringPatterns() {
     //   この処理は _lbReserveCore を直接呼び、中央出口を通らない。
     //   ★1件でも予約できた会員だけ積む。order には予約できなかった会員も入る。
     if (agg.booked.length) {
-      try { lbDwEnqueue(c2); } catch (e) { Logger.log('[dw] 固定枠ぶんを積めませんでした: ' + (e && e.message)); }
+      try { _lbDwMarkDirty(c2, lbDwEnqueue(c2)); } catch (e) { Logger.log('[dw] 固定枠ぶんを積めませんでした: ' + (e && e.message)); }
     }
     try { _lbNotifyAutoBook(c2, agg.booked, agg.skipped); } catch (e) { Logger.log('自動予約通知失敗(' + c2 + '): ' + e.message); }
   }

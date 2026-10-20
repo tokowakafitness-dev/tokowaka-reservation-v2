@@ -45,17 +45,18 @@ console.log('=== ② 二重書きの失敗した会員と理由を残す ===');
     String, Number, JSON, Object, Array, Math, Date,
     Logger: { log: () => {} },
     _lbMemberOpeningWithFloor: () => null,
-    _lbDwMonthKeyAhead: () => '2026-12', _lbDwMaxResvMonth: () => null,
+    _lbDwMonthKeyAhead: () => '2026-12', _lbDwMaxResvMonth: () => null, _edgeNameByCustomerId: () => 'x',
     _edgeProp: () => 'https://x',
     LB_DW: { MONTHS_AHEAD: 2 },
     UrlFetchApp: { fetch: () => { throw new Error('should not fetch'); } },
   };
   vm.createContext(ctx);
-  vm.runInContext("var _LB_DW_WHY = '';\n" + pluckFn(PE, '_edgeQuotaBuildOne'), ctx);
-  const r = ctx._edgeQuotaBuildOne('CVERIFY0000001', []);
-  ok('②-1 ★記録開始月が無ければ、理由 NO_RECORDS_FROM を残して失敗', r === false && /^NO_RECORDS_FROM/.test(ctx._LB_DW_WHY), ctx._LB_DW_WHY);
+  //   2026-10-20 設計20：_edgeQuotaBuildOne は消した。_edgeRebuildOne が同じ理由を残す
+  vm.runInContext("var _LB_DW_WHY = '';\n" + pluckFn(PE, '_edgeRebuildOne'), ctx);
+  const r = ctx._edgeRebuildOne('CVERIFY0000001', [], 5);
+  ok('②-1 ★記録開始月が無ければ、理由 NO_RECORDS_FROM を残して失敗', r === 'FAIL' && /^NO_RECORDS_FROM/.test(ctx._LB_DW_WHY), ctx._LB_DW_WHY);
   const d = pluckFn(PE, 'lbDualWriteDrain');
-  ok('②-2 会員ごとに理由を空にしてから処理する（前の会員の理由を引き継がない）', /var okResv = false, okQuota = false;\s*_LB_DW_WHY = '';/.test(d));
+  ok('②-2 会員ごとに理由を空にしてから処理する（前の会員の理由を引き継がない）', /_LB_DW_WHY = '';\s*var rb = 'ERROR';/.test(d));
   ok('②-3 ★失敗した会員と理由を記録に残す（最大5名）', /if \(failedWho\.length < 5\) failedWho\.push\(cid \+ ':' \+ \(_LB_DW_WHY \|\| '\?'\)\);/.test(d)
      && /failed: failed, failedWho: failedWho,/.test(d));
   ok('②-4 状態表示に出る', /失敗した会員と理由: ' \+ last\.failedWho\.join/.test(pluckFn(PE, 'lbDualWriteStatusText')));

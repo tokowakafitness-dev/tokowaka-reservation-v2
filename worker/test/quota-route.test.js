@@ -62,13 +62,15 @@ ok('④-b★合言葉が要る',
   /export async function quotaBehind\(request, env\) \{\s*\n\s*const deny = requireSecret\(request, env\);/.test(ROUTE),
   '顧客IDを返すため、お客様のブラウザからは呼ばせない');
 ok('④-b★遅れている会員だけ返す',
-  /source_version > built_version AND customer_id > \?/.test(ROUTE));
+  /WHERE \$\{NOT_FRESH_SQL\} AND source_version > 0 AND customer_id > \?/.test(ROUTE));   // 2026-10-20 設計20
 ok('④-b★customer_id 順（巡回できる）', /ORDER BY customer_id LIMIT \?/.test(ROUTE));
 ok('④-b limit に上下限がある',
   /Math\.min\(50, Math\.max\(1, Math\.trunc\(rawLimit\)\)\)/.test(ROUTE),
   '渡し間違いで全員を引かせない');
 ok('④-b★ここでは作り直さない',
-  !/buildQuotaForCustomer/.test(ROUTE.slice(ROUTE.indexOf('export async function quotaBehind'))),
+  //   ★quotaBehind の本体だけを見る（2026-10-20：後ろに computeCustomerBuild を足したので、ファイルの末尾までを見ると誤る）
+  !/buildQuotaForCustomer|computeCustomerBuild/.test((() => { const i = ROUTE.indexOf('export async function quotaBehind');
+     const j = ROUTE.indexOf('\nexport ', i + 10); return ROUTE.slice(i, j < 0 ? undefined : j); })()),
   '古い入力に「最新」の印を付ける窓を作らないため、積むだけにする');
 ok('④-b 読めなければ ok:false を返す（落とさない）',
   /code: 'READ_FAILED'/.test(ROUTE));
@@ -181,7 +183,7 @@ ok('⑨あふれた予約は行にしない',
 ok('⑨★あふれた件数を月ごとにも数える',
   /out\.overageByMonth\[mk\] = \(out\.overageByMonth\[mk\] \|\| 0\) \+ 1;/.test(ALLOC),
   '顧客の画面に出す「支払い待ち」は、引当の行が無いので枠の行に持たせるしかない');
-ok('⑨あふれた件数を返す', /summary\.overflow \+= al\.skippedUnallocated;/.test(ROUTE));
+ok('⑨あふれた件数を返す', /summary\.overflow \+= cb\.al\.skippedUnallocated;/.test(ROUTE));   // 2026-10-20 computeCustomerBuild に切り出し
 ok('⑨計算が要確認なら引当を作らない', /code: 'REMAINING_NOT_OK'/.test(ALLOC));
 ok('⑨★割り当て方を決め直していない',
   !/used\s*[<>+]/.test(ALLOC) && /_lbComputeRemaining/.test(ALLOC),

@@ -247,6 +247,8 @@ const D = '2026-10-09';
   //   0016 の customer_sync_version への ALTER も当てる（migration から読む）
   sql(readFileSync(join(ROOT, 'worker/migrations/0016_row_generation.sql'), 'utf8')
     .split('\n').filter((l) => /^ALTER TABLE customer_sync_version/.test(l)).join('\n'));
+  //   0020 の通し番号の列も当てる（2026-10-20・設計20。読み取りが dirty_seq / built_covers_seq を読む）
+  sql(readFileSync(join(ROOT, 'worker/migrations/0020_write_seq.sql'), 'utf8'));
   //   ★0016 で足した built_version も持たせる（読む側が世代で絞るため）
   sql(`CREATE TABLE IF NOT EXISTS monthly_quota (customer_id TEXT, month_key TEXT, quota INT, used INT,
         coverage TEXT, base_freq INT, overage INT DEFAULT 0, built_version INT,
@@ -651,7 +653,7 @@ ok('⑪-e★post の上限＝枠の上限', POST_SKIP_COUNT_MAX === MAXT,
   ok('⑪-h★点検そのものを落とさない',
      /catch \(e2\) \{ \/\* 窓口が読めないだけ＝点検そのものは続ける \*\/ \}/.test(LB2),
      'shadow の窓口が読めなくても、他の検査は続ける');
-  ok('⑪-h 版の印を上げている', /LB_HEALTH_BUILD = '2026-10-1\d[a-z]/.test(LB2),
+  ok('⑪-h 版の印を上げている', /LB_HEALTH_BUILD = '20\d\d-\d\d-\d\d[a-z]/.test(LB2),
      '日付が変わるたびに書き換えないよう、日付の形で見る');
 }
 

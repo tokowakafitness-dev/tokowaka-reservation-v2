@@ -10,6 +10,7 @@
 //     だから「比べた回数」と「結末を記録できなかった回数」を**入口ごとに**出す。
 
 import { SLOT_TABLE } from './remain-shadow.js';
+import { FRESH_SQL } from './fresh.js';   // ★新しさの定義は1か所（設計20）
 
 //   コードにある顧客側の入口すべて（表示と、表の CHECK との突き合わせに使う）
 const ENTRIES = ['boot', 'compat_member', 'compat_home'];
@@ -54,8 +55,7 @@ export async function buildShadowStatus(env, opts) {
   };
   if (verOk) {
     const f = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM customer_sync_version
-        WHERE source_version = built_version AND built_version > 0`
+      `SELECT COUNT(*) AS n FROM customer_sync_version WHERE ${FRESH_SQL}`
     ).first();
     preflight.freshCustomers = Number((f && f.n) || 0);
     //   ★0名なら、shadow は全部 'not_built' になる。先に作り直しが要る

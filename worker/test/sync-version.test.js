@@ -36,6 +36,8 @@ const MIG = readFileSync(join(ROOT, 'worker/migrations/0014_customer_sync_versio
 //   （テストの中に列を書き写すと、本物とずれても気づけない）。
 const MIG16 = readFileSync(join(ROOT, 'worker/migrations/0016_row_generation.sql'), 'utf8')
   .split('\n').filter((l) => /^ALTER TABLE customer_sync_version/.test(l)).join('\n');
+//   0020 の通し番号の列（2026-10-20・設計20。markBuilt / dirtyStatement が書く）
+const MIG20 = readFileSync(join(ROOT, 'worker/migrations/0020_write_seq.sql'), 'utf8');
 
 function sql(text) {
   return execFileSync('sqlite3', [DB], { input: text, encoding: 'utf8' });
@@ -58,6 +60,7 @@ function reset() {
   sql('DROP TABLE IF EXISTS customer_sync_version;');
   sql(MIG);
   sql(MIG16);
+  sql(MIG20);
 }
 
 reset();
@@ -247,7 +250,10 @@ ok('⑥-b★古い作り直しで built_at が動かない',
      /written = rowStmtCount;/.test(IG) && !/written = stmts\.length;/.test(IG),
      '世代の文と削除の文が混ざるので、報告が行数とずれる');
   ok('⑧削除はいちばん最後に積む（removed の読み取りが狂わない）',
-     IG.indexOf('bumpSourceStatement(cid, nowMs)') < IG.indexOf('DELETE FROM ${conf.table}'));
+     //   ★ingest の本体の中で見る（2026-10-20：ファイルの前の方に /quota/rebuild 用の customerReplaceStatements を足した）
+     (() => { const F = IG.slice(IG.indexOf('async function ingest(')); 
+              return F.indexOf('bumpSourceStatement(cid, nowMs)') < F.indexOf('DELETE FROM ${conf.table}')
+                && F.indexOf('dirtyStatement(cid, dirtySeq, nowMs)') < F.indexOf('DELETE FROM ${conf.table}'); })());
   ok('⑧件数を報告に出す', /bumped, bumpedStale, mode: full/.test(IG));
 }
 

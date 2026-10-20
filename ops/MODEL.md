@@ -110,6 +110,11 @@ trg_alloc_return_pack       同
 | I27 | 二重書きの溢れの「確かめ済み」を進めるのは、照合が `_edgeQuotaAllGood`（表示の全員一致と同じ関数）のときだけ。累計は照合の前に読む。dry では書かない | `gas-1017.test.js` ② |
 | I28 | 作業依頼の結果と例外文は、報告の直前に必ず `_ejScrub` を通す（氏名＋様／名簿・台帳・契約の氏名／電話・メール・LINE ID） | `gas-1017.test.js` ① |
 | I29 | カレンダーと台帳の突合は、進行中の予定を台帳の **confirmed** で救う（changed・cancelled・consumed は救わない＝残骸として出す）。カレンダー側で「開始済みを飛ばす」をしない | `gas-1017.test.js` ④ |
+| I30 | 後追い処理は1名につき `/quota/rebuild` を1回。入力の入れ替え・作り直し・記録は1つの batch（設計20） | `rebuild-one.test.js` 2・4 |
+| I31 | **新しいと名乗るのは `source===built && built>0 && built_covers_seq>=dirty_seq` のときだけ。定義は `worker/src/lib/fresh.js` の1か所**（読み取り・状態・修復の巡回・shadow が全部これを使う） | `rebuild-one.test.js` 3・6、`quota-behind-run.test.js` ③、`quota-verify.test.js` ①-c |
+| I32 | 書き込みの通し番号（LB_DW_SEQ）は台帳を読む**前**に読み、取り置いたときの番号を rebuild に送る | GAS 側の検査（設計20 実装の後半） |
+| I33 | `built_covers_seq` を上げるのは `/quota/rebuild` だけ。source の比較に通ったときだけ MAX で進める。通常の作り直しは変えない | `rebuild-one.test.js` 3-8・7 |
+| I34 | 写しの送信の印（dirty_seq）は写しと同じ batch・MAX 更新。home・partial 以外では断る | `rebuild-one.test.js` 5 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。
@@ -243,7 +248,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 　「Worker が `home.XXX` として読む鍵が全部そろっているか」を機械で確かめる。
 
 ### `readRemainDiag`（D1から作る・`worker/src/lib/remain-from-d1.js`）
-答えない理由：`no_customer` / `out_of_range` / `no_version_row` / `not_built` / `behind` /
+答えない理由：`no_customer` / `out_of_range` / `no_version_row` / `not_built` / `behind` / `behind_write`（書き込みの通し番号より前の台帳で作り直している・設計20） /
 `read_failed` / `version_changed` / `row_count_missing` / `row_count_mismatch` /
 `coverage_missing` / `base_freq_missing`
 ★`{ type: null }`（契約が無い会員）は**正常な答え**。`null`（答えない）とは別物。

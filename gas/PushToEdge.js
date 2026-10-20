@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-14c shadow を毎日まとめて取る（sweep・関門②）';
+var LB_EDGE_BUILD = '2026-10-20a 書き込みの通し番号・後追い処理を rebuild 1回に（設計20）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -122,6 +122,8 @@ function _edgePushRows(kind, rows, batchId, opts) {
   //   空配列を final 付きで送ると、取り込み側が全行を消してしまう。
   if (rows == null) throw new Error(kind + ' の元データが読めませんでした（送信を中止）');
   rows = _edgeDedupe(kind, rows);
+  //   ★書き込みの通し番号は本文に**明示的に**載せる（任意の opts は転送しない作り・関門①の指摘）。home だけ
+  var dirtySeq = (kind === 'home' && typeof _o.dirtySeq === 'number' && _o.dirtySeq > 0) ? _o.dirtySeq : null;
   if (!rows.length) {
     _edgePost({ kind: kind, batchId: batchId, rows: [], final: true, deleteStale: full, scope: scope, allowEmpty: allowEmpty });
     return '0件';
@@ -129,7 +131,9 @@ function _edgePushRows(kind, rows, batchId, opts) {
   for (i = 0; i < rows.length; i += EDGE.CHUNK) {
     var chunk = rows.slice(i, i + EDGE.CHUNK);
     var last = (i + EDGE.CHUNK) >= rows.length;
-    var res = _edgePost({ kind: kind, batchId: batchId, rows: chunk, final: last, deleteStale: full, scope: scope });
+    var _body = { kind: kind, batchId: batchId, rows: chunk, final: last, deleteStale: full, scope: scope };
+    if (dirtySeq != null) _body.dirtySeq = dirtySeq;
+    var res = _edgePost(_body);
     sent += chunk.length;
     wrote += Number((res && res.written) || 0);
     skip  += Number((res && res.skipped) || 0);
@@ -816,12 +820,16 @@ function _edgePushHome(customers, batchId, t0, log, full) {
 //   ★成否を返す（2026-10-03）。画面は書き込みの直後、残数と枠をGASに直接聞く作りで、
 //     その期間をここの結果で決める。失敗を黙って握りつぶすと、画面は
 //     「写しが新しい」と信じて古い残数を出してしまう。
-function pushToEdgeHomeFor(customerId, customerName) {
+//   ★dirtySeq（2026-10-20・設計20）：書き込みの通し番号。渡すと、写しと同じ batch で D1 に
+//     「この会員はこの番号まで書かれた」と記録する＝写しが新しくなった瞬間に D1 は自分が古いと知る。
+//     edgeAfterWrite だけが渡す。正の整数でなければ載せない（定期の写しと同じ）
+function pushToEdgeHomeFor(customerId, customerName, dirtySeq) {
   if (!_edgeEnabled()) return false;
   try {
     var rows = _edgeHomeRows([{ id: String(customerId), name: String(customerName || '') }], 0);
     if (!rows.length) return false;                 // 作れなかった＝写しは直っていない
-    _edgePushRows('home', rows, Date.now(), { scope: 'partial' });
+    var _ds = (typeof dirtySeq === 'number' && dirtySeq > 0 && Math.floor(dirtySeq) === dirtySeq) ? dirtySeq : null;
+    _edgePushRows('home', rows, Date.now(), { scope: 'partial', dirtySeq: _ds });
     return true;
   } catch (e) { Logger.log('[edge] 残数の即時更新に失敗: ' + (e && e.message)); return false; }
 }
@@ -896,6 +904,17 @@ function _edgePushReservationsFor(customerId) {
 //
 //   ★関数は残さない。残すと「あるのに呼んでいない」状態になり、また呼ばれる。
 
+// 中央出口（edgeAfterWrite）を通らない書き込み（カレンダー取込・固定枠の自動予約）の印（設計20）。
+//   積んだ通し番号を、その会員の写しの送信に載せて D1 に伝える。番号が無ければ何もしない（今と同じ窓）。
+//   ★例外を外に出さない（書き込みそのものは成功している）
+function _lbDwMarkDirty(customerId, seq) {
+  try {
+    if (!(typeof seq === 'number' && seq > 0)) return false;
+    var nm = _edgeNameByCustomerId(customerId);
+    return pushToEdgeHomeFor(customerId, nm, seq);
+  } catch (e) { Logger.log('[dw] 書き込みの印を送れませんでした: ' + (e && e.message)); return false; }
+}
+
 // 振り分けの出口から呼ぶ。書き込みが成功したときだけ働く。
 function edgeAfterWrite(action, params, res, lineUserId) {
   try {
@@ -937,9 +956,12 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     // ★二重書き（2026-10-08・段階3-a）。
     //   計算入力と枠・引当の作り直しは**ここでやらない**（予約確定の応答を待たせない）。
     //   待ち行列に積み、速い道（1秒後）か心拍（15分ごと）が処理する。設計第4節。
-    try { lbDwEnqueue(cid); } catch (e) { Logger.log('[dw] 積めませんでした: ' + (e && e.message)); }
+    //   ★積んだ通し番号を写しの送信に載せる（設計20 §2-2）。順番は「積む → 写し」のまま
+    //     （§4③：積んだ直後に後追いが先に作り直しても、番号は届いているので名乗ってよい）
+    var _seq = false;
+    try { _seq = lbDwEnqueue(cid); } catch (e) { Logger.log('[dw] 積めませんでした: ' + (e && e.message)); }
 
-    var _syncedHome = pushToEdgeHomeFor(cid, nm);                   // 残数
+    var _syncedHome = pushToEdgeHomeFor(cid, nm, (typeof _seq === 'number') ? _seq : null);   // 残数
     var _syncedResv = (_edgePushReservationsFor(cid) !== false);    // その人の予約
 
     //   ★枠はここから送らない（上の理由）。
@@ -2785,7 +2807,17 @@ function quotaBuildText(args) {
       o.push('   まだ作り直していない: ' + (sv.noBuilt || 0) + '名'
              + ((sv.ahead) ? '  ／  ★あってはならない向き: ' + sv.ahead + '名' : ''));
       if (sv.staleIds && sv.staleIds.length) o.push('   遅れている会員: ' + sv.staleIds.join(' / '));
+      //   ★書き込みの通し番号（設計20・決定0091）
+      o.push('   ✍️ 書き込みに追いついていない: ' + (sv.writeBehind || 0) + '名'
+             + ((sv.writeBehindOldestSince != null) ? '（最も古いもの ' + Math.floor((Date.now() - Number(sv.writeBehindOldestSince)) / 60000) + '分前から）' : ''));
     }
+    var dp = st.dupPackPrefix || {};
+    o.push('── 同じ開始日・終了日のチケット行が複数ある組（切り替えの合格条件・0であるべき）: '
+           + (dp.table === 'ok' ? (dp.groups || 0) + '組' + ((dp.customers && dp.customers.length) ? '（' + dp.customers.join(' / ') + '）' : '') : '読めません'));
+    try {
+      var _rbm = JSON.parse(PropertiesService.getScriptProperties().getProperty('LB_DW_REBUILD_MS') || '{}');
+      if (_rbm && _rbm.max != null) o.push('── 1名の作り直し（rebuild）: 直近 ' + _rbm.last + 'ms・' + _rbm.lastStatements + '文 ／ 最大 ' + _rbm.max + 'ms・' + _rbm.maxStatements + '文');
+    } catch (eR) {}
 
     var gen = st.generation || {};
     o.push('');
@@ -3197,7 +3229,7 @@ function _lbDwEnsureQueuedInLock(ids) {
     //   ② バイト数：足したあとの大きさを**書く前に**測る
     var probe = {};
     for (var a in q) probe[a] = q[a];
-    for (var b = 0; b < missing.length; b++) probe[missing[b]] = { version: 1, queuedAt: Date.now() };
+    for (var b = 0; b < missing.length; b++) probe[missing[b]] = { version: 1, queuedAt: Date.now(), seq: 9999999 };   // 番号の分も測る
     if (_lbDwBytes(JSON.stringify(probe)) > LB_DW_QUEUE_BYTES_LIMIT) {
       return { status: 'CAPACITY', added: 0, missing: missing.length, why: 'bytes' };
     }
@@ -3205,13 +3237,42 @@ function _lbDwEnsureQueuedInLock(ids) {
     //   ★新規の形は固定する。leaseUntil は付けない（取り置きは _lbDwClaim の役目）。
     //     version は 1 から。あとで実データの変更が来れば 1→2 になり、
     //     処理中なら確実に「やり直し」になる＝実データの変更が修復に埋もれない。
-    for (var c = 0; c < missing.length; c++) q[missing[c]] = { version: 1, queuedAt: Date.now() };
+    //   ★新しく足すときだけ番号を発行する（§7-7 の2）。既にいる会員の番号は書き換えない
+    for (var c = 0; c < missing.length; c++) {
+      var ns;
+      try { ns = _lbDwNextSeqInLock(); } catch (eNs) { ns = null; }
+      if (ns == null) return { status: 'SEQ_FAILED', added: 0, missing: missing.length };
+      q[missing[c]] = { version: 1, queuedAt: Date.now(), seq: ns };
+    }
     try { _lbDwWriteQueue(q); }
     catch (e) { return { status: 'WRITE_FAILED', added: 0, missing: missing.length, detail: (e && e.message) }; }
     return { status: 'ADDED', added: missing.length, missing: missing.length };
   }
 }
 
+// ★書き込みの通し番号（設計20 §2-2・決定0091）。全体で1本・減らない。**_lbDwLocked の中でだけ呼ぶ。**
+//   ★番号を**先に保存**してから待ち行列を保存する（§7-5 の16）。逆順だと「番号の保存だけ失敗」で、
+//     D1 に立てた番号に後追い処理がいつまでも届かない。番号が飛ぶのは害が無い（比較は >=）。
+//   ★壊れた値（数でない）を 0 に戻さない（戻すと番号が減り、追いついたと誤って名乗れる）。null を返して積まない
+var LB_DW_SEQ_PROP = 'LB_DW_SEQ';
+function _lbDwNextSeqInLock() {
+  var p = PropertiesService.getScriptProperties();
+  var raw = p.getProperty(LB_DW_SEQ_PROP);
+  var cur = (raw == null || raw === '') ? 0 : Number(raw);
+  if (!(cur >= 0) || !isFinite(cur) || Math.floor(cur) !== cur) return null;
+  var next = cur + 1;
+  p.setProperty(LB_DW_SEQ_PROP, String(next));   // 失敗すれば例外＝呼ぶ側で積まない
+  return next;
+}
+// いまの番号を読むだけ（進めない）。後追い処理が、番号を持たない古い行を取り置くときに使う
+function _lbDwCurrentSeqInLock() {
+  var raw = PropertiesService.getScriptProperties().getProperty(LB_DW_SEQ_PROP);
+  var cur = (raw == null || raw === '') ? 0 : Number(raw);
+  return (cur >= 0 && isFinite(cur) && Math.floor(cur) === cur) ? cur : null;
+}
+
+//   ★戻り値：積めたら通し番号（正の整数）、積めなかったら false（2026-10-20 設計20。以前は true/false）。
+//     呼ぶ側の `if (lbDwEnqueue(x))` はそのまま真偽で使える
 function lbDwEnqueue(customerId) {
   var cid = String(customerId || '').replace(/^\s+|\s+$/g, '');
   if (!cid) return false;
@@ -3226,7 +3287,10 @@ function lbDwEnqueue(customerId) {
     //     Aが version 1 を処理中 → 予約が入り version 2 かつ取り置きが消える
     //     → Bが version 2 を取る → AとBが並んで書き、古いAが最後に残り得る
     //   version が変わったことは _lbDwDone が見て、そこで取り置きを外す。
-    var next = { version: (cur && Number(cur.version) || 0) + 1, queuedAt: Date.now() };
+    var seq;
+    try { seq = _lbDwNextSeqInLock(); } catch (eSeq) { seq = null; }
+    if (seq == null) return 'SEQ_FAILED';   // 番号が出せない＝積まない（溢れとして数える）
+    var next = { version: (cur && Number(cur.version) || 0) + 1, queuedAt: Date.now(), seq: seq };
     if (cur && Number(cur.leaseUntil || 0) > Date.now()) next.leaseUntil = cur.leaseUntil;
     q[cid] = next;
 
@@ -3242,9 +3306,10 @@ function lbDwEnqueue(customerId) {
       Logger.log('[dw] 待ち行列が上限を超えました。古い ' + drop.length + '件を捨てました（累計 ' + over + '）');
     }
     _lbDwWriteQueue(q);
-    return true;
+    return seq;
   });
-  if (r === 'BROKEN') {
+  if (r === 'BROKEN' || r === 'SEQ_FAILED') {
+    if (r === 'SEQ_FAILED') Logger.log('[dw] 通し番号が出せず積めませんでした: 会員#' + String(cid).slice(-4));
     //   壊れた待ち行列を上書きしない。積めていないので記録して気づけるようにする
     var p3 = PropertiesService.getScriptProperties();
     p3.setProperty(LB_DW.OVERFLOW_PROP,
@@ -3260,7 +3325,7 @@ function lbDwEnqueue(customerId) {
       String(Number(p2.getProperty(LB_DW.OVERFLOW_PROP) || 0) + 1));
     return false;
   }
-  return true;
+  return r;   // 通し番号
 }
 
 // 待ち行列から処理対象を**取り置く**（消さない。成功してから外す）
@@ -3287,12 +3352,25 @@ function _lbDwClaim(limit) {
     var keys = Object.keys(q);
     keys.sort(function (a, b) { return (q[a].queuedAt || 0) - (q[b].queuedAt || 0); });   // 古い順
     var out = [];
+    //   ★取り置いたときの通し番号を固定する（§7-7 の1）。処理の途中で読み直さない。
+    //     番号を持たない行（反映前に積まれた行）は、いまの番号を使う＝取り置いた後に台帳を読むので、
+    //     それまでの書き込みは全部含まれる。いまの番号が0なら1つ発行する（rebuild は正の番号しか受けない）
+    var curSeq = null;
     for (var i = 0; i < keys.length && out.length < limit; i++) {
       var e = q[keys[i]];
       var lease = Number(e.leaseUntil || 0);
       if (lease > now) continue;                 // 他の実行が処理中（期限内）＝飛ばす
+      var s = Number(e.seq || 0);
+      if (!(s > 0)) {
+        if (curSeq == null) {
+          curSeq = _lbDwCurrentSeqInLock();
+          if (curSeq === 0) { try { curSeq = _lbDwNextSeqInLock(); } catch (eS) { curSeq = null; } }
+        }
+        s = curSeq;
+      }
+      if (!(s > 0)) continue;                    // 番号が出せない＝今回は取らない（次の実行で）
       e.leaseUntil = now + LB_DW.LEASE_MS;
-      out.push({ customerId: keys[i], version: Number(e.version || 0) });
+      out.push({ customerId: keys[i], version: Number(e.version || 0), seq: s });
     }
     if (out.length) {
       //   ★取り置いた会員を守りながら書く。それでも容量で落ちたぶんは
@@ -3360,29 +3438,15 @@ function _lbDwReleaseMany(customerIds) {
 }
 
 // ------------------------------------------------------------
-// その会員の計算入力をD1へ送る
+// その会員の計算入力をD1へ送る ― ★_edgePushCalcResvFor と _edgeQuotaBuildOne は 2026-10-20 に消した（設計20）。
+//   予約だけ送って作り直すと、契約（チケット追加）が古いまま「新しい」と名乗った。いまは _edgeRebuildOne が1回で送る。
+//   ★関数を残さない（残すと「あるのに呼んでいない」状態になり、また呼ばれる）
 // ------------------------------------------------------------
 
 // ★「読めなかった（null）」と「0件（[]）」を取り違えない（2026-10-08・Codex関門①）。
 //   `(_edgeCalcReservations() || []).filter(...)` と書いてはいけない。
 //   読めなかった null が正常な空配列に化け、その会員の生きている予約を全部消す。
-function _edgePushCalcResvFor(customerId, all) {
-  if (all == null) return false;                 // 読めなかった＝送らない（D1は前のまま）
-  var mine = [];
-  for (var i = 0; i < all.length; i++) {
-    if (String(all[i].customer_id || '') === String(customerId)) mine.push(all[i]);
-  }
-  // mine が0件でも送る＝その会員の予約が全部取り消された状態は**正常**。
-  //   送らないと、最後の1件の取消がD1へ伝わらない。
-  var r = _edgePost({
-    kind: 'calcReservations',
-    scope: 'customer',            // その会員ぶんを世代で入れ替える
-    customerId: String(customerId),
-    batchId: Date.now(),
-    rows: mine,
-  });
-  return !!(r && r.success);
-}
+//   （_edgeRebuildOne の冒頭で all == null を断っているのはこのため）
 
 // その会員の予約の、最も先の月。枠を作る範囲の上端に使う。
 //   「当月+2」と決め打つと、それより先の予約の引当が作れず NO_QUOTA_ROW で止まる。
@@ -3411,58 +3475,86 @@ function _lbDwMonthKeyAhead(n) {
   return y + '-' + ('0' + m).slice(-2);
 }
 
-// 枠と引当を、その会員ぶんだけ作り直す
-function _edgeQuotaBuildOne(customerId, all) {
-  // from … その会員の記録開始月。これより前は完全な予約履歴として扱わない領域
+// ------------------------------------------------------------
+// 1名を作り直す（設計20・決定0091）：契約・予約・棚卸しを1回で送る
+// ------------------------------------------------------------
+//   戻り値：'OK' / 'TOO_LARGE' / 'FAIL'（理由は _LB_DW_WHY）
+//   ★読めなかった（null・例外）入力は**送らない**。送ると D1 は「無い」として行を消す
+//     （とくに棚卸し：消えると移行前に使ったチケットが復活する）
+//   ★応答の本文をログに出さない（契約行の中身＝氏名・電話が返ることは無いが、念のため code だけ）
+function _edgeRebuildOne(customerId, all, seq) {
+  if (!(seq > 0)) { _LB_DW_WHY = 'NO_SEQ'; return 'FAIL'; }
+  if (all == null) { _LB_DW_WHY = 'LEDGER_NULL'; return 'FAIL'; }
   var from = null;
   try {
-    var op = _lbMemberOpeningWithFloor(customerId);
-    if (op && op.recordsFrom) from = String(op.recordsFrom);
-  } catch (e) {}
-  if (!from) {
-    // 記録開始月が分からなければ作り直さない。範囲が決まらないのに書くほうが危険
-    Logger.log('[dw] 記録開始月が分からないので枠は作り直しません: ' + customerId);
-    _LB_DW_WHY = 'NO_RECORDS_FROM（名簿の登録日時も棚卸しも無い）';
-    return false;
-  }
+    var op0 = _lbMemberOpeningWithFloor(customerId);
+    if (op0 && op0.recordsFrom) from = String(op0.recordsFrom);
+  } catch (e) { _LB_DW_WHY = 'OPENING_UNREADABLE'; return 'FAIL'; }
+  if (!from) { _LB_DW_WHY = 'NO_RECORDS_FROM（名簿の登録日時も棚卸しも無い）'; return 'FAIL'; }
   var to = _lbDwMonthKeyAhead(LB_DW.MONTHS_AHEAD);
   var maxMk = _lbDwMaxResvMonth(customerId, all);
-  if (maxMk && maxMk > to) to = maxMk;          // 予約が更に先ならそこまで
+  if (maxMk && maxMk > to) to = maxMk;
   if (from > to) to = from;
 
+  //   予約（台帳は呼ぶ側で1回だけ読んだもの）
+  var resv = [];
+  for (var i = 0; i < all.length; i++) if (String(all[i].customer_id || '') === String(customerId)) resv.push(all[i]);
+  //   契約（その会員1名ぶん。シートは呼ぶ側のキャッシュで1回だけ読む）
+  var nm = _edgeNameByCustomerId(customerId);
+  if (!nm) { _LB_DW_WHY = 'NO_NAME'; return 'FAIL'; }
+  var contracts;
+  try { contracts = _edgeCalcContracts([{ customer_id: String(customerId), name: nm }]); }
+  catch (e) { _LB_DW_WHY = 'CONTRACT_UNRESOLVED'; return 'FAIL'; }
+  if (contracts == null) { _LB_DW_WHY = 'CONTRACT_UNREADABLE'; return 'FAIL'; }
+  //   棚卸し：例外は送らない／null は「無い」として送る
+  //   ★記録開始月を決めるときに読んだもの（op0）をそのまま送る（同じものを2回読まない・関門②）。
+  //     op0 が無ければ上で NO_RECORDS_FROM として戻っている
+  var opening = op0 ? { customer_id: String(customerId), payload: JSON.stringify(op0) } : null;
+
   var url = _edgeProp('EDGE_URL');
-  if (!url) { _LB_DW_WHY = 'NO_EDGE_URL'; return false; }
-  var q = '/quota/build?dry=0&alloc=1&customer=' + encodeURIComponent(customerId)
-        + '&from=' + from + '&to=' + to;
-  try {
-    var res = UrlFetchApp.fetch(url + q, {
-      method: 'get',
-      headers: { 'X-Ingest-Secret': _edgeProp('EDGE_SECRET') },
-      muteHttpExceptions: true,
-    });
-    var code = res.getResponseCode();
-    var body = {};
-    try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) {}
-    if (code !== 200 || body.ok !== true) {
-      Logger.log('[dw] 枠の作り直しが失敗（HTTP ' + code + '）: ' + customerId
-                 + ' ' + String(res.getContentText() || '').slice(0, 200));
-      _LB_DW_WHY = 'HTTP_' + code;
-      return false;
-    }
-    // ★問題が記録されていたら成功としない。この会員は書かれていない（Workerが止めている）
-    if ((body.issues && body.issues.length) || (body.skipped && body.skipped.length)) {
-      Logger.log('[dw] 枠を作れませんでした: ' + customerId
-                 + ' issues=' + JSON.stringify(body.issues || []).slice(0, 300)
-                 + ' skipped=' + JSON.stringify(body.skipped || []).slice(0, 200));
-      _LB_DW_WHY = 'ISSUES ' + JSON.stringify((body.issues || []).concat(body.skipped || []).map(function (x) { return (x && (x.code || x.reason)) || '?'; })).slice(0, 80);
-      return false;
-    }
-    return true;
-  } catch (e) {
-    Logger.log('[dw] 枠の作り直しで例外: ' + customerId + ' ' + (e && e.message));
-    _LB_DW_WHY = 'EXCEPTION ' + String((e && e.message) || '').slice(0, 60);
-    return false;
+  if (!url) { _LB_DW_WHY = 'NO_EDGE_URL'; return 'FAIL'; }
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/quota/rebuild', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'X-Ingest-Secret': _edgeProp('EDGE_SECRET') },
+    payload: JSON.stringify({ customerId: String(customerId), seq: seq, from: from, to: to,
+                              contracts: contracts, reservations: resv, opening: opening }),
+  });
+  var code = res.getResponseCode();
+  var body = {};
+  try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) { body = {}; }
+  if (code === 413) { _LB_DW_WHY = 'TOO_LARGE ' + String(body.kind || '') + ' ' + String(body.count || ''); return 'TOO_LARGE'; }
+  if (code !== 200 || body.ok !== true) { _LB_DW_WHY = 'HTTP_' + code + ' ' + String(body.code || ''); return 'FAIL'; }
+  //   ★問題があれば成功としない（Worker は入力だけ入れ替え、作り直しの記録はしていない＝名乗らない）
+  if (body.blocked) {
+    _LB_DW_WHY = 'ISSUES ' + JSON.stringify((body.issues || []).map(function (x) { return (x && x.code) || '?'; })).slice(0, 80);
+    return 'FAIL';
   }
+  _lbDwNoteRebuildMs(Number(body.ms || 0), Number(body.statements || 0));
+  return 'OK';
+}
+
+// 大きすぎて作り直せない会員を残す（点検に出す・会員は下4桁）
+function _lbDwNoteTooLarge(customerId, why) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var arr = [];
+    try { arr = JSON.parse(p.getProperty('LB_DW_TOO_LARGE') || '[]'); } catch (e) { arr = []; }
+    if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
+    arr.unshift({ at: Date.now(), who: '会員#' + String(customerId).slice(-4), why: String(why || '').slice(0, 60) });
+    p.setProperty('LB_DW_TOO_LARGE', JSON.stringify(arr.slice(0, 10)));
+  } catch (e) {}
+}
+// rebuild 1回の所要時間（最大・直近）を残す（§7-3 の11：本番の最大の会員で測ってから人数を決める）
+function _lbDwNoteRebuildMs(ms, statements) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var cur = {};
+    try { cur = JSON.parse(p.getProperty('LB_DW_REBUILD_MS') || '{}'); } catch (e) { cur = {}; }
+    var mx = Number(cur.max || 0);
+    p.setProperty('LB_DW_REBUILD_MS', JSON.stringify({
+      last: ms, lastStatements: statements, max: Math.max(mx, ms),
+      maxStatements: Math.max(Number(cur.maxStatements || 0), statements), at: Date.now() }));
+  } catch (e) {}
 }
 
 // ------------------------------------------------------------
@@ -3519,6 +3611,8 @@ function lbDualWriteDrain(limit) {
   }
 
   var done = 0, failed = 0, requeued = 0, overBudget = 0, anomaly = 0, failedWho = [];
+  //   ★契約表は1回の実行で1回だけ読む（_edgeWithSheetCache・設計20 §5 の②）
+  _edgeWithSheetCache(function () {
   for (var i = 0; i < todo.length; i++) {
     // ★人数だけでなく時間でも縛る。1名が重いと人数の上限内でも6分に届く
     if (Date.now() - t0 > LB_DW.BUDGET_MS) {
@@ -3529,22 +3623,26 @@ function lbDualWriteDrain(limit) {
       Logger.log('[dw] 時間の上限に達したので ' + overBudget + '名を次回に回しました');
       break;
     }
-    var cid = todo[i].customerId, ver = todo[i].version;
-    // ★順序が要点：計算入力を先に入れ替え、そのあと枠・引当を作り直す。
-    //   逆にすると、古い予約で引当を作ってしまう。
-    var okResv = false, okQuota = false;
+    var cid = todo[i].customerId, ver = todo[i].version, seq = todo[i].seq;
+    // ★1名につき /quota/rebuild を1回（設計20・決定0091）。
+    //   以前は「予約の入力だけ送る → 作り直す」の2回で、契約（チケット追加）は送っていなかった。
+    //   そのため古い契約のまま作り直し、D1 が「新しい」と名乗っていた（10/18 の食い違い）。
+    //   契約・予約・棚卸しを1回で送り、D1 が入れ替え・作り直し・記録を1つの batch で行う。
+    //   ★seq は**取り置いたときの番号**（処理の途中で読み直さない・§7-7 の1）
     _LB_DW_WHY = '';
-    try { okResv = _edgePushCalcResvFor(cid, all); } catch (e) {
-      Logger.log('[dw] 計算入力の送信で例外: ' + cid + ' ' + (e && e.message));
-      _LB_DW_WHY = 'RESV_EXCEPTION ' + String((e && e.message) || '').slice(0, 60);
+    var rb = 'ERROR';
+    try { rb = _edgeRebuildOne(cid, all, seq); } catch (e) {
+      _LB_DW_WHY = 'EXCEPTION';   // ★例外文に行の中身が入りうるので残さない
     }
-    if (!okResv && !_LB_DW_WHY) _LB_DW_WHY = 'RESV_NOT_SENT';
-    if (okResv) {
-      try { okQuota = _edgeQuotaBuildOne(cid, all); } catch (e) {
-        Logger.log('[dw] 枠の作り直しで例外: ' + cid + ' ' + (e && e.message));
-      }
+    if (rb === 'TOO_LARGE') {
+      //   ★大きすぎる会員は再試行の輪にしない（§7-3 の10）。待ち行列から外し、点検に出す
+      _lbDwDone(cid, ver);
+      _lbDwNoteTooLarge(cid, _LB_DW_WHY);
+      failed++;
+      if (failedWho.length < 5) failedWho.push(cid + ':TOO_LARGE');
+      continue;
     }
-    if (okResv && okQuota) {
+    if (rb === 'OK') {
       var r = _lbDwDone(cid, ver);
       if (r === 'REQUEUED') requeued++;
       else if (r === 'DONE') done++;
@@ -3562,6 +3660,7 @@ function lbDualWriteDrain(limit) {
       if (failedWho.length < 5) failedWho.push(cid + ':' + (_LB_DW_WHY || '?'));
     }
   }
+  });
 
   var leftQ = _lbDwReadQueue();
   var left = (leftQ === null) ? -1 : Object.keys(leftQ).length;

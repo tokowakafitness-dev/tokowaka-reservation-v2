@@ -181,7 +181,7 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 }
 {
   const RF = rd('worker/src/lib/remain-from-d1.js');
-  const want = ['no_customer', 'out_of_range', 'no_version_row', 'not_built', 'behind',
+  const want = ['no_customer', 'out_of_range', 'no_version_row', 'not_built', 'behind', 'behind_write',
                 'read_failed', 'version_changed', 'row_count_missing', 'row_count_mismatch',
                 'coverage_missing', 'base_freq_missing'];
   for (const w of want) {

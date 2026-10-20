@@ -18,6 +18,8 @@ import { loadCalcInput } from '../calc.js';
 import { buildQuotaForCustomer, quotaUpsertStatements, clearGenerationStatements } from '../lib/quota-build.js';
 import { buildAllocationsForCustomer, allocationInsertStatements } from '../lib/alloc-build.js';
 import { readSyncVersion, markBuiltStatement } from '../lib/sync-version.js';
+import { FRESH_SQL, NOT_FRESH_SQL, freshSqlFor } from '../lib/fresh.js';   // ★新しさの定義は1か所（設計20）
+import { _lbPackPrefix } from '../allocate.js';
 
 /** 'YYYY-MM' を1つ進める */
 function nextMonthKey(monthKey) {
@@ -139,61 +141,19 @@ export async function buildQuota(request, env) {
       continue;
     }
 
-    const built = buildQuotaForCustomer(cid, input.rows, input.sessions, input.opening, {
-      fromMonth: from, toMonth: to, nowKey: nowMonthKeyJst(now), carryRate,
-    });
-
+    //   ★1名分の計算は computeCustomerBuild に切り出した（2026-10-20・設計20）。
+    //     /quota/rebuild も同じ関数を通る＝同じ入力なら同じ答え・同じ文になる。
+    const cb = computeCustomerBuild(cid, input, { from, to, now, carryRate, withAlloc });
+    const built = cb.built;
+    const allocStmts = cb.allocStmts;
+    const allocIssues = cb.allocIssues;
     summary.monthlyRows += built.monthly.length;
     summary.packRows += built.packs.length;
     for (const is of built.issues) summary.issues.push({ ...is, customerId: mask(is.customerId) });
-
-    // ★引当も同じ呼び出しで作る（withAlloc=1 のときだけ）。
-    //   枠だけ作って引当を作らないと、used が0のまま＝「誰も使っていない」ことになる。
-    //   枠と引当は対で意味を持つので、作る順序を間違えないよう同じ場所で扱う。
-    //   （枠が先・引当が後。引当のINSERTは枠の行を親として見る）
-    let allocStmts = [];
-    let allocIssues = [];
-    if (withAlloc) {
-      const al = buildAllocationsForCustomer(cid, input.rows, input.sessions, input.opening, {
-        fromMonth: from, toMonth: to, nowKey: nowMonthKeyJst(now),
-        targetDateMs: now, carryRate,
-      });
-      // ★引当の親（枠）が揃っているかを、書く前に確かめる（2026-10-07）。
-      //   枠を作る条件と引当を作る条件がずれていると、親の無い引当ができて
-      //   外部キー違反でバッチごと落ちる。本番で実際に起きた。
-      //   落ちてから原因を探すより、**ここで名指しで止める**。
-      const haveMonths = new Set(built.monthly.map((m) => m.monthKey));
-      const havePacks = new Set(built.packs.map((p) => p.packId));
-      for (const r of al.rows) {
-        if (r.source === 'monthly' && !haveMonths.has(r.monthKey)) {
-          al.issues.push({ customerId: cid, code: 'NO_QUOTA_ROW', detail: `${r.monthKey} の枠が無いのに月額の引当` });
-        }
-        if ((r.source === 'ticket' || r.source === 'pair') && !havePacks.has(r.packId)) {
-          al.issues.push({ customerId: cid, code: 'NO_PACK_ROW', detail: `${r.packId} が無いのにチケットの引当` });
-        }
-      }
-      //   1つでも親が無ければ、この会員は書かない（中途半端に入れない）
-      if (al.issues.some((x) => x.code === 'NO_QUOTA_ROW' || x.code === 'NO_PACK_ROW')) {
-        al.rows = [];
-        al.computed = false;   // 消しもしない
-      }
-
-      summary.allocRows += al.rows.length;
-      summary.overflow += al.skippedUnallocated;
-      for (const is of al.issues) summary.issues.push({ ...is, customerId: mask(is.customerId), at: 'alloc' });
-      allocIssues = al.issues;
-      //   ★引当の結果（月ごとの支払い待ち件数）を枠の行へ移す（2026-10-09・設計10）。
-      //     未割当の予約は引当の行が作られないので、D1の3表に現れない。
-      //     顧客の画面に出す「支払い待ち」は、枠の行に持たせるしかない。
-      //   ★順序が要点：枠の文を組み立てる**前**に入れる。
-      //     あとから UPDATE にすると、引当を作らなかった会員（問題があって止めた人）の
-      //     枠だけが更新される経路ができる。
-      for (const m of built.monthly) {
-        m.overage = Number((al.overageByMonth || {})[m.monthKey] || 0);
-      }
-      // ★「消してから入れる」。流し直したとき、消化先が変わっていれば古い引当を落とす。
-      //   INSERT OR IGNORE だけだと壊れはしないが正しくもならない（枠は新しく used は古い）。
-      allocStmts = allocationInsertStatements(al, now, { customerId: cid, fromMonth: from, toMonth: to });
+    if (cb.al) {
+      summary.allocRows += cb.al.rows.length;
+      summary.overflow += cb.al.skippedUnallocated;
+      for (const is of cb.al.issues) summary.issues.push({ ...is, customerId: mask(is.customerId), at: 'alloc' });
     }
 
     // ★問題が1件でもあれば、この会員は何も書かない（2026-10-07・Codex関門②）。
@@ -346,7 +306,7 @@ export async function quotaStatus(request, env) {
   try {
     const sv = await env.DB.prepare(
       `SELECT COUNT(*) AS n,
-              SUM(CASE WHEN source_version = built_version AND built_version > 0 THEN 1 ELSE 0 END) AS fresh,
+              SUM(CASE WHEN ${FRESH_SQL} THEN 1 ELSE 0 END) AS fresh,
               SUM(CASE WHEN source_version > built_version THEN 1 ELSE 0 END) AS stale,
               SUM(CASE WHEN built_version > source_version THEN 1 ELSE 0 END) AS ahead,
               SUM(CASE WHEN built_version = 0 THEN 1 ELSE 0 END) AS noBuilt
@@ -360,12 +320,25 @@ export async function quotaStatus(request, env) {
       ahead: Number(sv?.ahead || 0),
       noBuilt: Number(sv?.noBuilt || 0),
     };
+    //   ★書き込みに追いついていない会員の滞留（設計20 §2-3）。
+    //     source_at ではなく dirty_since（追いついていた状態から初めて外れた時刻）で見る。
+    //     source_at は追加の書き込みのたびに新しくなり、居座りを見逃す（関門①の指摘）。
+    //     ★dirty_since が無いのに追いついていない行は「判定できない」として別に数える（警告側へ倒す）
+    const dw = await env.DB.prepare(
+      `SELECT COUNT(*) AS n, MIN(dirty_since) AS oldest,
+              SUM(CASE WHEN dirty_since IS NULL THEN 1 ELSE 0 END) AS noSince
+         FROM customer_sync_version WHERE built_covers_seq < dirty_seq`
+    ).first();
+    syncVersion.writeBehind = Number(dw?.n || 0);
+    syncVersion.writeBehindOldestSince = dw?.oldest == null ? null : Number(dw.oldest);
+    syncVersion.writeBehindSinceMissing = Number(dw?.noSince || 0);
     if (syncVersion.stale) {
       const r = await env.DB.prepare(
         `SELECT customer_id, source_version, built_version FROM customer_sync_version
           WHERE source_version > built_version ORDER BY customer_id LIMIT 20`
       ).all();
-      syncVersion.staleIds = (r.results || []).map((x) => `${x.customer_id} ${x.source_version}>${x.built_version}`);
+      //   ★会員 ID は下4桁にして返す（2026-10-20・設計20 §2-3・関門①の指摘：フルの ID が出ていた）
+      syncVersion.staleIds = (r.results || []).map((x) => `${mask(x.customer_id)} ${x.source_version}>${x.built_version}`);
     }
 
     //   ★「何件あるか」だけでは居座りを見つけられない（2026-10-11・設計16）。
@@ -417,10 +390,10 @@ export async function quotaStatus(request, env) {
         `SELECT
            (SELECT COUNT(*) FROM monthly_quota q JOIN customer_sync_version v
               ON v.customer_id = q.customer_id AND q.built_version = v.built_version
-            WHERE v.built_version > 0 AND v.source_version = v.built_version) AS curQuota,
+            WHERE ${freshSqlFor('v')}) AS curQuota,
            (SELECT COUNT(*) FROM ticket_packs p JOIN customer_sync_version v
               ON v.customer_id = p.customer_id AND p.built_version = v.built_version
-            WHERE v.built_version > 0 AND v.source_version = v.built_version) AS curPacks`
+            WHERE ${freshSqlFor('v')}) AS curPacks`
       ).first(),
     ]);
     generation = {
@@ -434,6 +407,34 @@ export async function quotaStatus(request, env) {
     generation.packs.stale = generation.packs.rows - generation.packs.current - generation.packs.noMark;
   } catch (e) {
     generation = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
+  }
+
+  //   ★重複パック（設計20 §2-5・切り替えの合格条件 MODEL §4-2「同じ CT<開始>_<終了> の pack が複数ない」）
+  //     合成 ID（CT<開始>_<終了>_<行番号>）は、末尾の行番号を除くと同じになる組があると、
+  //     棚卸しの付け替えが一意に決まらない。数えるのは**いまの世代の行だけ**（古い世代の行は読まれない）。
+  //     prefix の作り方は割当器と同じ関数（_lbPackPrefix）。PK・strict の明示 ID は対象外。
+  //     ★返すのは組の数と会員の下4桁だけ。生の pack_id は返さない（個人情報ではないが、行番号から契約表の位置が分かる）
+  let dupPackPrefix = { table: 'missing' };
+  try {
+    const r = await env.DB.prepare(
+      `SELECT p.customer_id AS cid, p.pack_id AS pid
+         FROM ticket_packs p JOIN customer_sync_version v
+           ON v.customer_id = p.customer_id AND p.built_version = v.built_version
+        WHERE ${freshSqlFor('v')} AND p.pack_id LIKE 'CT%'`   // ★顧客に答える会員の、いまの世代の行だけ（関門②）
+    ).all();
+    const groups = {};
+    for (const x of (r.results || [])) {
+      const pid = String(x.pid || '');
+      if (!/^CT\d+_\d+_\d+$/.test(pid)) continue;
+      const k = String(x.cid) + '|' + _lbPackPrefix(pid);
+      groups[k] = (groups[k] || 0) + 1;
+    }
+    const dupKeys = Object.keys(groups).filter((k) => groups[k] >= 2);
+    const who = {};
+    for (const k of dupKeys) who[mask(k.split('|')[0])] = 1;
+    dupPackPrefix = { table: 'ok', groups: dupKeys.length, customers: Object.keys(who).sort() };
+  } catch (e) {
+    dupPackPrefix = { table: 'missing', detail: 'READ_FAILED' };
   }
 
   //   ★shadow の表が入っているかも、ここで一緒に返す（2026-10-09）。
@@ -476,6 +477,7 @@ export async function quotaStatus(request, env) {
     stage3b,   // 3-bで足した2列の入り具合（base_freq の抜け・支払い待ちの件数）
     syncVersion,   // 会員ごとの世代（fresh/stale/ahead・3-bの鮮度の判定に使う）
     generation,    // 行ごとの世代（いまの世代／古い行／印の無い行・設計13）
+    dupPackPrefix, // 同じ CT<開始>_<終了> のパックが複数ある組（設計20 §2-5）
     shadowTables,  // shadow の3表が入っているか（1回の依頼で確かめる量を増やすため）
   });
 }
@@ -483,7 +485,7 @@ export async function quotaStatus(request, env) {
 // ★合言葉で守る（ingest と同じ鍵・同じヘッダ）。
 //   お客様のブラウザからは呼ばせない。枠はすべての残数の土台なので、
 //   作り直しが外から叩けると、残数そのものを壊せてしまう。
-function requireSecret(request, env) {
+export function requireSecret(request, env) {
   const secret = env.SHARED_SECRET || '';
   if (!secret) return json({ ok: false, reason: 'SECRET_NOT_SET' }, 503);
   const given = request.headers.get('X-Ingest-Secret') || '';
@@ -496,7 +498,7 @@ function requireSecret(request, env) {
   return null;
 }
 
-function mask(id) {
+export function mask(id) {
   const s = String(id || '');
   return s ? '*' + s.slice(-4) : '';
 }
@@ -536,9 +538,12 @@ export async function quotaBehind(request, env) {
 
   try {
     const r = await env.DB.prepare(
+      //   ★条件は「新しいと名乗れない」（fresh.js の否定）。2026-10-20 まで source > built だけで、
+      //     世代は一致しているが書き込みに追いついていない会員（covers < dirty）を永久に拾わなかった（設計20 §7-5）。
+      //     source_version > 0：一度も計算入力が来ていない会員（書き込みの印だけの 0/0 行）は拾わない
       `SELECT customer_id, source_version, built_version, source_at
          FROM customer_sync_version
-        WHERE source_version > built_version AND customer_id > ?
+        WHERE ${NOT_FRESH_SQL} AND source_version > 0 AND customer_id > ?
         ORDER BY customer_id LIMIT ?`
     ).bind(after, limit).all();
     const rows = r.results || [];
@@ -563,4 +568,66 @@ export async function quotaBehind(request, env) {
     //   ★呼ぶ側は栞を進めない（進めると、その区間が1周するまで飛ばされる）。
     return json({ ok: false, code: 'READ_FAILED', detail: String((e && e.message) || e).slice(0, 200) });
   }
+}
+
+/**
+ * 1名分の枠・パック・引当を、計算入力から組み立てる（書き込みはしない）。
+ *   ★/quota/build（D1 の入力から）と /quota/rebuild（本文の入力から・設計20）の両方がこれを通る。
+ *   返す：built（枠とパック）・allocStmts（引当の文）・allocIssues・al（引当の結果。withAlloc のときだけ）
+ */
+export function computeCustomerBuild(cid, input, o) {
+  const { from, to, now, carryRate, withAlloc } = o;
+  const built = buildQuotaForCustomer(cid, input.rows, input.sessions, input.opening, {
+    fromMonth: from, toMonth: to, nowKey: nowMonthKeyJst(now), carryRate,
+  });
+
+
+  // ★引当も同じ呼び出しで作る（withAlloc=1 のときだけ）。
+  //   枠だけ作って引当を作らないと、used が0のまま＝「誰も使っていない」ことになる。
+  //   枠と引当は対で意味を持つので、作る順序を間違えないよう同じ場所で扱う。
+  //   （枠が先・引当が後。引当のINSERTは枠の行を親として見る）
+  let allocStmts = [];
+  let allocIssues = [];
+  let alOut = null;
+  if (withAlloc) {
+    const al = buildAllocationsForCustomer(cid, input.rows, input.sessions, input.opening, {
+      fromMonth: from, toMonth: to, nowKey: nowMonthKeyJst(now),
+      targetDateMs: now, carryRate,
+    });
+    // ★引当の親（枠）が揃っているかを、書く前に確かめる（2026-10-07）。
+    //   枠を作る条件と引当を作る条件がずれていると、親の無い引当ができて
+    //   外部キー違反でバッチごと落ちる。本番で実際に起きた。
+    //   落ちてから原因を探すより、**ここで名指しで止める**。
+    const haveMonths = new Set(built.monthly.map((m) => m.monthKey));
+    const havePacks = new Set(built.packs.map((p) => p.packId));
+    for (const r of al.rows) {
+      if (r.source === 'monthly' && !haveMonths.has(r.monthKey)) {
+        al.issues.push({ customerId: cid, code: 'NO_QUOTA_ROW', detail: `${r.monthKey} の枠が無いのに月額の引当` });
+      }
+      if ((r.source === 'ticket' || r.source === 'pair') && !havePacks.has(r.packId)) {
+        al.issues.push({ customerId: cid, code: 'NO_PACK_ROW', detail: `${r.packId} が無いのにチケットの引当` });
+      }
+    }
+    //   1つでも親が無ければ、この会員は書かない（中途半端に入れない）
+    if (al.issues.some((x) => x.code === 'NO_QUOTA_ROW' || x.code === 'NO_PACK_ROW')) {
+      al.rows = [];
+      al.computed = false;   // 消しもしない
+    }
+
+    allocIssues = al.issues;
+    alOut = al;
+    //   ★引当の結果（月ごとの支払い待ち件数）を枠の行へ移す（2026-10-09・設計10）。
+    //     未割当の予約は引当の行が作られないので、D1の3表に現れない。
+    //     顧客の画面に出す「支払い待ち」は、枠の行に持たせるしかない。
+    //   ★順序が要点：枠の文を組み立てる**前**に入れる。
+    //     あとから UPDATE にすると、引当を作らなかった会員（問題があって止めた人）の
+    //     枠だけが更新される経路ができる。
+    for (const m of built.monthly) {
+      m.overage = Number((al.overageByMonth || {})[m.monthKey] || 0);
+    }
+    // ★「消してから入れる」。流し直したとき、消化先が変わっていれば古い引当を落とす。
+    //   INSERT OR IGNORE だけだと壊れはしないが正しくもならない（枠は新しく used は古い）。
+    allocStmts = allocationInsertStatements(al, now, { customerId: cid, fromMonth: from, toMonth: to });
+  }
+  return { built, allocStmts, allocIssues, al: alOut };
 }

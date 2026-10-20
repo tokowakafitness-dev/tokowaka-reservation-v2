@@ -89,7 +89,9 @@ const req = (qs = '', { secret = SECRET, method = 'GET' } = {}) => new Request(
   const env = { SHARED_SECRET: SECRET, DB: fakeDB([]) };
   await quotaBehind(req('?limit=3&after=C002'), env);
   ok('③★遅れている会員だけを引く',
-     /source_version > built_version/.test(env.DB.seen.sql));
+     //   2026-10-20 設計20：条件は「新しいと名乗れない」（fresh.js の否定）＋一度は入力が来た会員
+     env.DB.seen.sql.indexOf('(NOT (source_version = built_version AND built_version > 0 AND built_covers_seq >= dirty_seq))') >= 0
+     && /AND source_version > 0 AND customer_id > \?/.test(env.DB.seen.sql));
   ok('③★栞より後ろから引く（飢えない）',
      /customer_id > \?/.test(env.DB.seen.sql) && env.DB.seen.args[0] === 'C002');
   ok('③customer_id 順', /ORDER BY customer_id/.test(env.DB.seen.sql));

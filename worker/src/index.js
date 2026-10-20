@@ -17,6 +17,7 @@ import { handleMailClick, handleMailClickList, handleMailClickLookup } from './r
 import { handleCalSync } from './routes/calsync.js';
 import { handleCalCompare } from './routes/calcompare.js';
 import { buildQuota, quotaStatus, quotaBehind } from './routes/quota.js';
+import { quotaRebuild } from './routes/quota-rebuild.js';
 import { verifyQuota } from './routes/quota-verify.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
@@ -151,6 +152,12 @@ export default {
     //   既定は dry＝書かない。dry=0 のときだけ D1 へ書く。
     //   合言葉で守る。お客様のブラウザからは呼ばせない（CORSも許さない）。
     if (url.pathname === '/quota/build') return buildQuota(request, env);
+    //   ★1名の計算入力を受け取り、入れ替え・作り直し・記録を1つの batch で行う（設計20・決定0091）。
+    //     二重書きの後追い処理だけが呼ぶ。合言葉で守る。書き込みなので POST に限る
+    if (url.pathname === '/quota/rebuild') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return quotaRebuild(request, env);
+    }
     if (url.pathname === '/quota/status') return quotaStatus(request, env);
     //   作り直しが追いついていない会員のID（読み取りだけ・設計16）。
     //   呼ぶ側は積むだけ。ここでは作り直さない（古い入力に印を付ける窓を作らないため）。

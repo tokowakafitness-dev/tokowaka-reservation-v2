@@ -17,6 +17,8 @@
 //     shadow の食い違いが「GASの癖」と「こちらの間違い」の2種類混ざって読めなくなる。
 //     直すなら写しを読む経路を畳んだあと、別の変更として行う。
 
+import { freshStatus } from './fresh.js';   // ★新しさの定義は1か所（設計20）
+
 /** 月のキー（JST） */
 export function monthKeyJst(ms) {
   const d = new Date(ms + 9 * 3600 * 1000);
@@ -342,7 +344,8 @@ async function readSyncVersionForRemain(env, customerId) {
   const none = { sourceVersion: 0, builtVersion: 0, quotaRows: null, packRows: null };
   try {
     const r = await env.DB.prepare(
-      `SELECT source_version, built_version, built_quota_rows, built_pack_rows
+      `SELECT source_version, built_version, built_quota_rows, built_pack_rows,
+              dirty_seq, built_covers_seq
          FROM customer_sync_version WHERE customer_id = ?`
     ).bind(String(customerId)).first();
     if (!r) return { ok: false, status: 'no_version_row', version: none };
@@ -351,9 +354,12 @@ async function readSyncVersionForRemain(env, customerId) {
       sourceVersion: s, builtVersion: b,
       quotaRows: r.built_quota_rows == null ? null : Number(r.built_quota_rows),
       packRows: r.built_pack_rows == null ? null : Number(r.built_pack_rows),
+      dirtySeq: Number(r.dirty_seq || 0), coversSeq: Number(r.built_covers_seq || 0),
     };
-    if (!(b > 0)) return { ok: false, status: 'not_built', version };
-    if (s !== b) return { ok: false, status: 'behind', version };
+    //   ★判定は fresh.js の1か所だけ（設計20 §7-7 の3）。
+    //     'behind_write' ＝ 書き込み（通し番号）より前の台帳で作り直している＝答えない
+    const st = freshStatus(version);
+    if (st !== 'ok') return { ok: false, status: st, version };
     return { ok: true, status: 'ok', version };
   } catch (_) {
     //   ★表が無い／読めない＝答えない（写しへ落とす）

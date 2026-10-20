@@ -13,7 +13,7 @@
 
 import {
   affectsQuotaInput, affectsQuotaInputGlobally,
-  bumpSourceStatement, bumpAllSourceStatement,
+  bumpSourceStatement, bumpAllSourceStatement, dirtyStatement,
 } from '../lib/sync-version.js';
 
 const TABLES = {
@@ -119,6 +119,45 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
+// 行を書く文（主キーが同じなら入れ替える・古い内容で新しい行を上書きしない）。
+//   ★/quota/rebuild（設計20）も**この関数で**文を作る＝定期送信と同じ形で書く（same() の比較が一致する）
+function upsertSqlFor(conf) {
+  const cols = conf.cols.concat(['synced_at']);
+  const placeholders = cols.map(() => '?').join(', ');
+  // 主キーが同じなら中身を入れ替える（同じ押し出しを2回流しても結果が変わらない）
+  const updates = cols.filter((c) => c !== conf.key).map((c) => `${c} = excluded.${c}`).join(', ');
+  // 行ごとにも世代を見る。古い内容で新しい行を上書きしない。
+  return `INSERT INTO ${conf.table} (${cols.join(', ')}) VALUES (${placeholders})
+               ON CONFLICT(${conf.key}) DO UPDATE SET ${updates}
+               WHERE ${conf.table}.synced_at IS NULL OR excluded.synced_at >= ${conf.table}.synced_at`;
+}
+
+/**
+ * その会員の計算入力を「丸ごと入れ替える」文（scope:'customer' と同じ意味・設計20 の /quota/rebuild 用）。
+ *   行は batchId で書き、その会員の batchId より古い行を消す。**実行はしない**（呼ぶ側が1つの batch に入れる）。
+ *   ★会員の検査は呼ぶ側で済ませておく（全行の customer_id が一致すること）。
+ */
+export function customerReplaceStatements(env, kind, customerId, rows, batchId) {
+  const conf = TABLES[kind];
+  if (!conf || !conf.cols.includes('customer_id')) throw new Error('UNSUPPORTED_KIND');
+  const sql = upsertSqlFor(conf);
+  const out = [];
+  for (const r of rows) {
+    const vals = conf.cols.map((c) => (r[c] === undefined ? null : r[c])).concat([batchId]);
+    out.push(env.DB.prepare(sql).bind(...vals));
+  }
+  out.push(env.DB.prepare(
+    `DELETE FROM ${conf.table} WHERE customer_id = ? AND (synced_at IS NULL OR synced_at < ?)`
+  ).bind(String(customerId), batchId));
+  return out;
+}
+
+export const CALC_INPUT_COLS = {
+  calcContracts: TABLES.calcContracts.cols,
+  calcReservations: TABLES.calcReservations.cols,
+  opening: TABLES.opening.cols,
+};
+
 function jsonRes(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -219,14 +258,22 @@ async function ingest(request, env) {
   const rows = Array.isArray(body.rows) ? body.rows : [];
   if (rows.length > MAX_ROWS) return jsonRes({ success: false, code: 'TOO_MANY' }, 413);
 
-  const cols = conf.cols.concat(['synced_at']);
-  const placeholders = cols.map(() => '?').join(', ');
-  // 主キーが同じなら中身を入れ替える（同じ押し出しを2回流しても結果が変わらない）
-  const updates = cols.filter((c) => c !== conf.key).map((c) => `${c} = excluded.${c}`).join(', ');
-  // 行ごとにも世代を見る。古い内容で新しい行を上書きしない。
-  const sql = `INSERT INTO ${conf.table} (${cols.join(', ')}) VALUES (${placeholders})
-               ON CONFLICT(${conf.key}) DO UPDATE SET ${updates}
-               WHERE ${conf.table}.synced_at IS NULL OR excluded.synced_at >= ${conf.table}.synced_at`;
+  // ★書き込みの通し番号（設計20 §2-2・決定0091）。書き込み直後の写し（home）の送信だけが載せる。
+  //   写しが新しくなった瞬間に、D1 に「この会員はこの番号まで書かれた」と記録する（同じ batch）。
+  //   ★home 以外・scope:'partial' 以外で送られたら断る（黙って無視しない＝送り手の取り違えに気づける）
+  //   ★正の安全な整数だけ。0・負・小数・文字列は断る
+  let dirtySeq = null;
+  if (body.dirtySeq !== undefined && body.dirtySeq !== null) {
+    if (kind !== 'home' || scope !== 'partial') {
+      return jsonRes({ success: false, code: 'DIRTY_SEQ_NOT_SUPPORTED' }, 400);
+    }
+    if (!Number.isSafeInteger(body.dirtySeq) || body.dirtySeq <= 0) {
+      return jsonRes({ success: false, code: 'BAD_DIRTY_SEQ' }, 400);
+    }
+    dirtySeq = body.dirtySeq;
+  }
+
+  const sql = upsertSqlFor(conf);
 
   // 古いバッチが遅れて届いても、新しい内容を巻き戻さない。
   //   押し出しが重なったとき、先に走った古い方が後から完了すると、
@@ -344,6 +391,21 @@ async function ingest(request, env) {
     const st = bumpAllSourceStatement(nowMs);
     stmts.push(env.DB.prepare(st.sql).bind(...st.args));
     bumped = -1;   // 全員（件数は数えない）
+  }
+
+  // ★書き込みの印（上の dirtySeq）。行の書き込みと同じ batch に積む
+  let dirtied = 0;
+  if (dirtySeq != null) {
+    const ids = {};
+    for (const r of rows) {
+      const cid = String((r && r.customer_id) || '').trim();
+      if (cid) ids[cid] = 1;
+    }
+    for (const cid of Object.keys(ids)) {
+      const st = dirtyStatement(cid, dirtySeq, nowMs);
+      stmts.push(env.DB.prepare(st.sql).bind(...st.args));
+      dirtied++;
+    }
   }
 
   let removed = 0;
@@ -479,7 +541,7 @@ async function ingest(request, env) {
     await stampSync(env, kind, batchId, null);
   }
 
-  return jsonRes({ success: true, written, skipped, removed, bumped, bumpedStale, mode: full ? 'full' : 'diff' });
+  return jsonRes({ success: true, written, skipped, removed, bumped, bumpedStale, mode: full ? 'full' : 'diff', dirtied });
 }
 
 async function stampSync(env, key, batchId, rows) {

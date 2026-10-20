@@ -103,7 +103,7 @@ ok('①-b 氏名を出さない', /customerId: mask\(cid\)/.test(V));
 {
   const Q2 = readFileSync(join(ROOT, 'worker/src/routes/quota.js'), 'utf8');
   ok('①-c★追いついている会員の行だけを「いまの世代」と数える',
-     (Q2.match(/v\.built_version > 0 AND v\.source_version = v\.built_version/g) || []).length === 2,
+     (Q2.match(/WHERE \$\{freshSqlFor\('v'\)\}\) AS cur(Quota|Packs)/g) || []).length === 2,   // 2026-10-20 設計20：定義は fresh.js
      'source > built の会員は、世代が一致していても読み取りの対象外（isFresh が false）');
 }
 ok('①月額は 枠−使った数', /Number\(mq\.quota\) - Number\(mq\.used\)/.test(V));

@@ -1,3 +1,4 @@
+import { isFreshVersion } from './fresh.js';
 // 会員ごとの世代（段階3-b 手順1・2026-10-09）
 //
 //   「このD1の行は、いまの入力から作り直したものか」を判定する土台。
@@ -84,7 +85,11 @@ export function bumpAllSourceStatement(nowMs) {
  *
  *   ★MAX は同じ世代から同時に作り直した2本のためだけに残す（巻き戻し防止）。
  */
-export function markBuiltStatement(customerId, version, nowMs, rows) {
+export function markBuiltStatement(customerId, version, nowMs, rows, opts) {
+  //   ★通し番号（設計20・決定0091）。/quota/rebuild だけが coversSeq を渡す。
+  //     ほかの作り直し（/quota/build・深夜・作業依頼）は渡さない＝built_covers_seq を**変えない**（§7-1 の4）。
+  //     渡したときも、source の比較に通ったときだけ MAX で進める（競合で built=0 に倒すときは動かさない）。
+  const cs = (opts && Number.isSafeInteger(opts.coversSeq) && opts.coversSeq > 0) ? opts.coversSeq : null;
   //   ★書いた行数も一緒に入れる（2026-10-09・設計13）。
   //     枠とパックを**別々に**数える。1つの合計にすると
   //     「枠が1行足りず、パックが1行多い」が打ち消し合って通る。
@@ -100,9 +105,22 @@ export function markBuiltStatement(customerId, version, nowMs, rows) {
   return {
     sql: `INSERT INTO customer_sync_version
             (customer_id, source_version, built_version, built_at, updated_at,
-             built_quota_rows, built_pack_rows, built_from_month, built_to_month)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             built_quota_rows, built_pack_rows, built_from_month, built_to_month, built_covers_seq)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(customer_id) DO UPDATE SET
+            --   ★built_covers_seq と dirty_since は built_version より**前**に書く（SQLite の UPDATE SET は
+            --     右辺に更新前の値を使うので順番は結果に影響しないが、読み手のために判定の元を先に置く）
+            built_covers_seq = CASE
+              WHEN ? IS NOT NULL AND customer_sync_version.source_version = excluded.built_version
+                THEN MAX(customer_sync_version.built_covers_seq, ?)
+              ELSE customer_sync_version.built_covers_seq
+            END,
+            dirty_since = CASE
+              WHEN ? IS NOT NULL AND customer_sync_version.source_version = excluded.built_version
+                   AND MAX(customer_sync_version.built_covers_seq, ?) >= customer_sync_version.dirty_seq
+                THEN NULL
+              ELSE customer_sync_version.dirty_since
+            END,
             built_version = CASE
               WHEN customer_sync_version.source_version = excluded.built_version
                 THEN MAX(customer_sync_version.built_version, excluded.built_version)
@@ -128,7 +146,8 @@ export function markBuiltStatement(customerId, version, nowMs, rows) {
                 THEN excluded.built_to_month ELSE NULL END,
             updated_at = excluded.updated_at`,
     args: [String(customerId), Number(version), Number(version), Number(nowMs), Number(nowMs),
-           qr, pr, fm, tm],
+           qr, pr, fm, tm, cs == null ? 0 : cs,
+           cs, cs, cs, cs],
   };
 }
 
@@ -136,12 +155,17 @@ export function markBuiltStatement(customerId, version, nowMs, rows) {
 export async function readSyncVersion(env, customerId) {
   const r = await env.DB.prepare(
     `SELECT source_version, built_version, source_at, built_at,
-            built_quota_rows, built_pack_rows, built_from_month, built_to_month
+            built_quota_rows, built_pack_rows, built_from_month, built_to_month,
+            dirty_seq, built_covers_seq, dirty_since
        FROM customer_sync_version WHERE customer_id = ?`
   ).bind(String(customerId)).first();
   if (!r) return { sourceVersion: 0, builtVersion: 0, sourceAt: null, builtAt: null,
-                   quotaRows: null, packRows: null, fromMonth: null, toMonth: null, exists: false };
+                   quotaRows: null, packRows: null, fromMonth: null, toMonth: null,
+                   dirtySeq: 0, coversSeq: 0, dirtySince: null, exists: false };
   return {
+    dirtySeq: Number(r.dirty_seq || 0),
+    coversSeq: Number(r.built_covers_seq || 0),
+    dirtySince: r.dirty_since == null ? null : Number(r.dirty_since),
     sourceVersion: Number(r.source_version || 0),
     builtVersion: Number(r.built_version || 0),
     sourceAt: r.source_at == null ? null : Number(r.source_at),
@@ -162,8 +186,34 @@ export async function readSyncVersion(env, customerId) {
  */
 export function isFresh(v) {
   if (!v || !v.exists) return false;
-  if (!(v.builtVersion > 0)) return false;
-  return v.sourceVersion === v.builtVersion;
+  return isFreshVersion(v);   // ★定義は fresh.js の1か所だけ（設計20 §7-7 の3）
+}
+
+/**
+ * 書き込みがあったことを記録する文（設計20 §2-2・決定0091）。写し（home）の送信と**同じ batch** に入れる。
+ *   dirty_seq は MAX で更新する＝同じ写しを再送しても変わらない（+1 にすると再送で二重に進む・関門①）。
+ *   dirty_since は「追いついていた状態から初めて外れた」ときだけ今の時刻。追加の書き込みでは動かさない。
+ *   ★行が無い会員にも 0/0 の行を作る。作らないと、新しい会員の最初の作り直しが古い台帳で行を作ったとき
+ *     （書き込みの印が「行が無い」で落ちた後）に、古いのに新しいと名乗れる。
+ *     0/0 の行は not_built＝答えない。修復の巡回（/quota/behind）は source_version > 0 の会員だけを拾う
+ *     （一度も計算入力が来ていない会員＝契約の無い会員を15分ごとに積み続けないため）。
+ */
+export function dirtyStatement(customerId, seq, nowMs) {
+  return {
+    sql: `INSERT INTO customer_sync_version
+            (customer_id, source_version, built_version, updated_at, dirty_seq, built_covers_seq, dirty_since)
+          VALUES (?, 0, 0, ?, ?, 0, ?)
+          ON CONFLICT(customer_id) DO UPDATE SET
+            dirty_since = CASE
+              WHEN customer_sync_version.dirty_since IS NOT NULL THEN customer_sync_version.dirty_since
+              WHEN MAX(customer_sync_version.dirty_seq, excluded.dirty_seq) > customer_sync_version.built_covers_seq
+                THEN excluded.updated_at
+              ELSE NULL
+            END,
+            dirty_seq = MAX(customer_sync_version.dirty_seq, excluded.dirty_seq),
+            updated_at = excluded.updated_at`,
+    args: [String(customerId), Number(nowMs), Number(seq), Number(nowMs)],
+  };
 }
 
 /* 2026-10-09：forceStaleStatement（書いたあとに倒す文）は捨てた。

@@ -62,7 +62,7 @@ ok("③★書き込み直後は枠を送らない",
   !/_edgePushRows\('slots'/.test(SRC) && !/_edgePushSlotsFor/.test(SRC),
   '代わりに _syncedSlots=false と名乗り、画面は枠だけGASへ落ちる（遅いが新しい）');
 ok("③1人ぶんの残数も partial",
-  /_edgePushRows\('home', rows, Date\.now\(\), \{ scope: 'partial' \}\)/.test(SRC));
+  /_edgePushRows\('home', rows, Date\.now\(\), \{ scope: 'partial', dirtySeq: _ds \}\)/.test(SRC));   // 2026-10-20 設計20：通し番号を載せる
 ok("③15分ごとの全件同期は all", /_edgePushRowsF\('reservations', _edgeReservations\(\), batchId, \{ scope: 'all'/.test(SRC));
 //   ★2026-10-11：枠を送る経路を _edgeSendSlots の1本にまとめた（設計：巻き戻し防止）。
 //     scope は送信関数の中で 'all' に固定してある。

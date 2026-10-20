@@ -53,6 +53,23 @@ export async function loadCalcInput(env, customerId) {
     if (now - bykey[k] > 2 * 3600000) return { ok: false, reason: 'STALE:' + k };   // 2時間以上古い
   }
 
+  const asm = assembleCalcInput(customerId, cols, contractRows.results || [], resvRows.results || [],
+                                opening ? opening.payload : null);
+  if (!asm.ok) return asm;
+  return { ...asm, syncedAt: Math.min(...Object.values(bykey)) };
+}
+
+/**
+ * 計算入力の行（calc_contract_rows / calc_reservation_rows / member_opening の形）から、
+ * 計算本体に渡す形を組み立てる。★D1 から読む（loadCalcInput）と、本文で受け取る（/quota/rebuild・設計20）の
+ * **両方がこれを通る**＝同じ入力なら同じ答えになる。
+ *   contractRows  [{ idx, row_json, start_ms, end_ms }]  ★idx の順に並べ直す（行順が束の見分けに効く）
+ *   resvRows      [{ row_json }]
+ *   openingPayload  文字列（JSON）か null
+ */
+export function assembleCalcInput(customerId, cols, contractRowsIn, resvRowsIn, openingPayload) {
+  const contractRows = { results: contractRowsIn.slice().sort((x, y) => Number(x.idx) - Number(y.idx)) };
+  const resvRows = { results: resvRowsIn };
   const rows = [];
   for (const r of (contractRows.results || [])) {
     let vals;
@@ -75,9 +92,9 @@ export async function loadCalcInput(env, customerId) {
   const sessions = _lbResvValsToSessions(vals, customerId, (v) => (v == null ? null : new Date(Number(v))));
 
   let openingObj = null;
-  if (opening) { try { openingObj = JSON.parse(opening.payload); } catch (_) { openingObj = null; } }
+  if (openingPayload != null) { try { openingObj = JSON.parse(openingPayload); } catch (_) { openingObj = null; } }
 
-  return { ok: true, rows, sessions, opening: openingObj, syncedAt: Math.min(...Object.values(bykey)) };
+  return { ok: true, rows, sessions, opening: openingObj };
 }
 
 /**

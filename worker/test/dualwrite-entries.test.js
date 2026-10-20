@@ -137,32 +137,33 @@ console.log('=== 5. 待ち行列の作り（設計の不変条件） ===');
 console.log('=== 6. 計算入力の送り方（取り違えると予約が消える） ===');
 {
   //   台帳は処理本体で1回だけ読み、読めなければ何も送らずに戻す（⑪でも固定）
+  //   2026-10-20 設計20：1名につき /quota/rebuild を1回（入れ替え・作り直し・記録は Worker の1つの batch）。
+  //   入れ替えの意味（0件でも入れ替える・会員で閉じる）は Worker 側の検査（rebuild-one.test.js 2-11・1-3）で固定
   ok('⑥★読めなかった（null）ら送らない',
-    /function _edgePushCalcResvFor\(customerId, all\) \{\s*\n\s*if \(all == null\) return false;/.test(DW),
+    /function _edgeRebuildOne\(customerId, all, seq\) \{[\s\S]{0,120}?if \(all == null\) \{ _LB_DW_WHY = 'LEDGER_NULL'; return 'FAIL'; \}/.test(DW),
     '`(… || []).filter()` と書くと、読めなかった null が空配列に化けて全部消える');
-  ok('⑥0件でも送る（最後の1件の取消が伝わる）',
-    /mine が0件でも送る/.test(DW));
-  ok('⑥会員ぶんの入れ替えとして送る',
-    /scope: 'customer'/.test(DW) && /customerId: String\(customerId\)/.test(DW));
-  ok('⑥★計算入力を先に入れ替え、そのあと枠を作り直す',
-    /okResv = _edgePushCalcResvFor\(cid, all\)[\s\S]{0,400}?if \(okResv\)[\s\S]{0,200}?_edgeQuotaBuildOne\(cid, all\)/.test(DW),
-    '逆にすると古い予約で引当を作る');
-  ok('⑥両方成功しなければ待ち行列から外さない',
-    /if \(okResv && okQuota\)/.test(DW));
+  ok('⑥予約が0件でも送る（最後の1件の取消が伝わる）',
+    /reservations: resv/.test(DW) && !/if \(!resv\.length\)/.test(DW));
+  ok('⑥★棚卸しが読めない（例外）ときは送らない（送ると棚卸しが消え、使ったチケットが復活する）',
+    /catch \(e\) \{ _LB_DW_WHY = 'OPENING_UNREADABLE'; return 'FAIL'; \}/.test(DW));
+  ok('⑥★1名につき1回だけ送る（契約・予約・棚卸しを一緒に）',
+    /rb = _edgeRebuildOne\(cid, all, seq\)/.test(DW)
+    && /contracts: contracts, reservations: resv, opening: opening/.test(DW));
+  ok('⑥成功しなければ待ち行列から外さない', /if \(rb === 'OK'\) \{/.test(DW));
 }
 
 console.log('=== 7. 枠を作り直す範囲 ===');
 {
-  ok('⑦記録開始月から作る', /op\.recordsFrom/.test(DW));
+  ok('⑦記録開始月から作る', /op0\.recordsFrom/.test(DW));   // 2026-10-20 _edgeRebuildOne
   ok('⑦★記録開始月が分からなければ作り直さない',
-    /記録開始月が分からないので枠は作り直しません/.test(DW),
+    /if \(!from\) \{ _LB_DW_WHY = 'NO_RECORDS_FROM/.test(DW),
     '範囲が決まらないのに書くほうが危険');
   ok('⑦★予約が先にあればそこまで広げる',
     /if \(maxMk && maxMk > to\) to = maxMk;/.test(DW),
     '当月+2と決め打つと、それより先の予約の引当が作れず NO_QUOTA_ROW で止まる');
   ok('⑦問題が記録されていたら成功としない',
-    /body\.issues && body\.issues\.length/.test(DW) && /body\.skipped && body\.skipped\.length/.test(DW),
-    'Workerは問題があればその会員を書かない。成功扱いにすると外してしまう');
+    /if \(body\.blocked\) \{[\s\S]{0,200}?return 'FAIL';/.test(DW),
+    'Workerは問題があればその会員の作り直しを記録しない。成功扱いにすると外してしまう');
 }
 
 console.log('=== 8. 日次の点検（14日待つ代わり） ===');
@@ -240,7 +241,7 @@ console.log('=== 10. ★待ち行列が壊れたとき（Codex関門②）===');
   ok('⑩壊れていたら null を返す（空と区別する）',
     /Logger\.log\('\[dw\] 待ち行列が読めませんでした（中止します）/.test(DW),
     '{} を返すと、次の enqueue がその空を保存し、待っていた会員が全部消える');
-  ok('⑩積むのを中止して記録する', /return 'BROKEN'/.test(DW) && /if \(r === 'BROKEN'\)/.test(DW));
+  ok('⑩積むのを中止して記録する', /return 'BROKEN'/.test(DW) && /if \(r === 'BROKEN' \|\| r === 'SEQ_FAILED'\)/.test(DW));   // 2026-10-20 番号が出せないときも同じ
   ok('⑩日次点検で気づける', /dualwrite_queue_broken/.test(DW));
   ok('⑩状態表示でも分かる', /待ち行列が壊れています/.test(DW));
   //   ★容量（2026-10-08・Codex関門②で計算した）
@@ -272,8 +273,7 @@ console.log('=== 11. ★1回の実行が長くなりすぎないこと（Codex�
 {
   ok('⑪台帳は1回だけ読む',
     /all = _edgeCalcReservations\(\);/.test(DW)
-    && /_edgePushCalcResvFor\(cid, all\)/.test(DW)
-    && /_edgeQuotaBuildOne\(cid, all\)/.test(DW),
+    && /_edgeRebuildOne\(cid, all, seq\)/.test(DW),
     '会員ごとに読み直すと5名で10回。読んだ時点が会員ごとにずれる');
   ok('⑪読めなかったら何も送らず戻す',
     /LEDGER_UNREADABLE/.test(DW) && /台帳が読めないので今回は見送ります/.test(DW));

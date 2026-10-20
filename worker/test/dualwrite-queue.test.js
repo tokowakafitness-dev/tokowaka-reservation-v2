@@ -90,7 +90,11 @@ const NOW = () => Date.now();
 console.log('=== 1. 積む・取り置く・外す ===');
 {
   const t = makeGas();
-  ok('①積める', t.lbDwEnqueue('C1') === true);
+  //   2026-10-20 設計20：積めたら通し番号（正の整数）を返す。番号は全体で1本・増えるだけ
+  const s1 = t.lbDwEnqueue('C1');
+  ok('①積める（通し番号を返す）', typeof s1 === 'number' && s1 > 0, String(s1));
+  ok('①★番号は Script Properties に保存され、待ち行列の行にも載る',
+     Number(t.props.get('LB_DW_SEQ')) === s1 && JSON.parse(t.raw()).C1.seq === s1, t.raw());
   const c1 = t._lbDwClaim(5);
   eq('①1名取り置けた', c1.items.map((x) => x.customerId), ['C1']);
   eq('①待っている人数も返る', c1.total, 1);

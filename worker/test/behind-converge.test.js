@@ -53,10 +53,11 @@ ok('②★既存項目の version を触らない',
    !/version:\s*\(cur/.test(ensure) && /if \(!q\[ids\[k\]\]\) missing\.push/.test(ensure),
    '既にいる会員の version を +1 すると、処理中の会員の成功した仕事が捨てられる');
 ok('②★既存項目の queuedAt を触らない',
-   !/queuedAt = Date\.now\(\);\s*$/m.test(ensure.replace(/q\[missing\[c\]\] = \{ version: 1, queuedAt: Date\.now\(\) \};/g, '')),
+   !/queuedAt = Date\.now\(\);\s*$/m.test(ensure.replace(/q\[missing\[c\]\] = \{ version: 1, queuedAt: Date\.now\(\), seq: ns \};/g, '')),
    '取り出しは queuedAt の古い順。押し直すと列の後ろへ送られる');
 ok('②新規の形は version:1・leaseUntil なし',
-   /q\[missing\[c\]\] = \{ version: 1, queuedAt: Date\.now\(\) \};/.test(ensure),
+   /q\[missing\[c\]\] = \{ version: 1, queuedAt: Date\.now\(\), seq: ns \};/.test(ensure)   // 2026-10-20 設計20：新しく足すときだけ番号を発行
+   && /ns = _lbDwNextSeqInLock\(\)/.test(ensure),
    '取り置きは _lbDwClaim の役目。1から始めれば実データの変更が修復に埋もれない');
 
 // ---------- 3. 容量（人数とバイト数の両方・壊さない） ----------
