@@ -17,7 +17,9 @@ LINE_CHANNEL_ID = "2010827953"
 #
 #   ★厳密に "shadow" のときだけ比べる。書き忘れ・打ち間違いは off 側に倒れる。
 #   設計：ops/design/12-shadow-compare.md
-LB_D1_REMAIN_MODE = "shadow"
+#   2026-10-22 段階0（設計21・決定0092）："on"。D1 から読むのは許可表の会員と検証用の会員だけ（許可表は空）。
+#     比較（shadow・sweep）は "on" でも続く。止めるときは "shadow" に戻して push（全員が写しに戻る）
+LB_D1_REMAIN_MODE = "on"
 
 # ---- ★読み取りの肩代わりを全部止めるための一行（2026-10-03）-----------------
 #   EDGE_READS = "off"  … 画面が呼ぶ窓口（c_ で始まるもの）をすべてGASへ戻す。
