@@ -8,6 +8,7 @@
 //   未実装の操作は NOT_IMPLEMENTED を返し、フロントはGASへ落とす。
 
 import { verifyIdToken, resolveRole } from './auth.js';
+import { handlePageHit, handlePageHitList } from './routes/pagehits.js';
 import { isAllowed, redact, canActOnOther } from './perms.js';
 import { routeBoot } from './routes/boot.js';
 import { routeCustomerDetail, routeContractList } from './routes/customer.js';
@@ -30,6 +31,10 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
 const ALLOWED_ORIGINS = [
   'https://reservation.tokowaka-gym.com',
   'https://tokowakafitness-dev.github.io',
+  /* ★tokowaka-gym.com（LP）はここに足さない（2026-10-22）。
+     足すと予約APIの全経路がLPドメインからのCORSを受け入れることになる。
+     計測のために予約の口を緩めるのは逆。/h は自分で許可オリジンを持ち、
+     自分で CORS ヘッダを返すので、この一覧に入れる必要がない。 */
 ];
 
 // 読み取り操作 → 実装
@@ -108,7 +113,19 @@ export default {
       return handleMailClick(request, env, origin);
     }
     if (url.pathname === '/r/list') return handleMailClickList(request, env);
-    /* 台帳が「この印は踏まれたか」を引く口。印を知っていることが条件で、合言葉は要らない */
+
+    /* LP到達とCTAクリックの件数（2026-10-22）。
+       ★完全一致で見る。startsWith('/h') にすると /health を飲み込む。
+       ★一般のPOST処理より前に置く（あちらは body.action を読む別の口）。 */
+    if (url.pathname === '/h') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      return handlePageHit(request, env, origin);
+    }
+    if (url.pathname === '/h/list') return handlePageHitList(request, env);
+    /* 台帳が「この印は踏まれたか」を引く口。**合言葉が要る**（2026-10-16 関門②）。
+       当初は「印を知っていることが条件」で公開する設計だったが、
+       印は16進8桁で総当たりが現実的なうえ、認証なしだと予約系と同じD1を
+       無制限に読ませることになるため、合言葉で閉じた。 */
     if (url.pathname === '/r/lookup') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
       return handleMailClickLookup(request, env);
