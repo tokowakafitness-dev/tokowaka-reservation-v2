@@ -50,7 +50,7 @@ return out
 
 ### 2-2 選ぶ会員は「許可表」で決める（★公開リポジトリに会員 ID を書かない・1名を保証する）
 ```
-D1 の表 remain_d1_allow(customer_id PRIMARY KEY, added_at)        （migration 0021）
+D1 の表 remain_d1_allow(customer_id PRIMARY KEY, added_at)        （migration 0022）
 Worker  POST /quota/remain-allow   合言葉・本文 { action: 'add'|'remove'|'list', customerId? }
            list は下4桁と件数だけ返す
 GAS     作業依頼 quotaBuild { d1Allow: '*4526' } / { d1Remove: '*4526' } / { d1AllowList: true }
@@ -79,7 +79,7 @@ GAS     作業依頼 quotaBuild { d1Allow: '*4526' } / { d1Remove: '*4526' } / {
 - 例外の文に ID を入れない（応答は code だけ）
 
 ### 2-4 数える（倒れたままを隠さない・書き込みに上限）
-- 表 `remain_source_daily(day, entry, source, n)`（migration 0021）。**値の CHECK は付けない**（2026-10-15 の事故）。値の集合はコードの定数1か所＋検査
+- 表 `remain_source_daily(day, entry, source, n)`（migration 0022）。**値の CHECK は付けない**（2026-10-15 の事故）。値の集合はコードの定数1か所＋検査
 - **数えるのは選ばれた会員の読み取りだけ**（選ばれていない会員は数えない＝書き込みが増えない）
 - 上限：**1日・入口ごとの合計で 500回まで**（関門①：理由ごとの行に `n < 500` を付けると、理由の種類数×500 になる）。1文で原子的に：
   ```
@@ -115,7 +115,7 @@ GAS     作業依頼 quotaBuild { d1Allow: '*4526' } / { d1Remove: '*4526' } / {
 ### 2-6 段階と止め方（push＝公開）
 | 段 | 手順 | 承認 |
 |---|---|---|
-| 準備 | mode 'shadow' のまま push（migration 0021・新しい窓口・分岐。挙動は変わらない）→ 公開の成功と表の存在を status で確認 | 不要 |
+| 準備 | mode 'shadow' のまま push（migration 0022・新しい窓口・分岐。挙動は変わらない）→ 公開の成功と表の存在を status で確認 | 不要 |
 | 0 | mode 'on'（許可表は空）を push → 公開を確認 → probe で検証用の会員が `d1` で答えること・書き込み直後に `copy:behind_write` になることを確かめる | 不要（実在の顧客に効かない） |
 | 1 | 前提：オンボーディングが無効（`LB_ONBOARDING_MODE === "true" && LB_FACILITY_LIVE !== "true"` でない）ことを作業依頼で確かめる。有効なら進まない。→ 関門③ → **オーナー承認** → 作業依頼 d1Allow で**実在の会員1名**を足す | **要** |
 | 2 | 数日見て問題が無ければ、関門③ → **オーナー承認** → `LB_D1_REMAIN_ALL=1` を push | **要** |
@@ -154,7 +154,7 @@ GAS     作業依頼 quotaBuild { d1Allow: '*4526' } / { d1Remove: '*4526' } / {
 
 ## 6. 実装の順序
 1. 検査を先に（read-on.test.js：6入口×状態の表・I37 の1文字比較・壊して落ちることを確かめる）
-2. Worker：readHome の分岐・許可表と窓口（migration 0021）・probe・数える表・status（coverageDetail の下4桁も）
+2. Worker：readHome の分岐・許可表と窓口（migration 0022）・probe・数える表・status（coverageDetail の下4桁も）
 3. GAS：作業依頼の d1Allow/d1Remove/d1AllowList（下4桁→ちょうど1名）・_lbDwMarkDirty に予約一覧・点検の表示
 4. 関門②→push（mode 'shadow' のまま）→ GAS 反映（オーナー）
 5. 段階0 → 段階1（関門③・**承認**）
