@@ -9,7 +9,7 @@
 //       書き込み直後35分の迂回でWorkerに来ていない
 //     だから「比べた回数」と「結末を記録できなかった回数」を**入口ごとに**出す。
 
-import { SLOT_TABLE } from './remain-shadow.js';
+import { SLOT_TABLE, shadowActive } from './remain-shadow.js';
 import { FRESH_SQL } from './fresh.js';   // ★新しさの定義は1か所（設計20）
 
 //   コードにある顧客側の入口すべて（表示と、表の CHECK との突き合わせに使う）
@@ -51,7 +51,7 @@ export async function buildShadowStatus(env, opts) {
     mode,
     tables: { remain_shadow_slot: slotOk, remain_shadow: aggOk, remain_shadow_sample: sampleOk,
               customer_sync_version: verOk },
-    ready: slotOk && aggOk && sampleOk && verOk && mode === 'shadow',
+    ready: slotOk && aggOk && sampleOk && verOk && shadowActive(mode),   // 'on' でも比べ続ける（設計21）
   };
   if (verOk) {
     const f = await env.DB.prepare(

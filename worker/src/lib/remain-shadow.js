@@ -9,6 +9,13 @@
 import { readRemainDiag, monthKeyJst, monthRangeJst } from './remain-from-d1.js';
 
 export const SHADOW_MODE_ON = 'shadow';
+//   ★比べる（shadow・sweep）のは mode が 'shadow' か 'on' のとき（2026-10-22・設計21）。
+//     'on'（D1 から顧客に出す段）でも比べ続ける。止めると、D1 で答えている会員の食い違いに気づけない。
+//     文字は厳密に一致（打ち間違いは比べない側＝off に倒れる）
+export function shadowActive(mode) {
+  const m = String(mode || '');
+  return m === SHADOW_MODE_ON || m === 'on';
+}
 
 //   ★枠の表（2026-10-15）。0015 の remain_shadow_slot は CHECK で入口を3つに限っていて
 //     'sweep' が入らなかった。消して作り直さず、0018 で足した新しい表に替えた（古い表は残す）
@@ -359,7 +366,7 @@ async function safeWrite(env, items, day, cid, entry, nowMs) {
 export function scheduleShadow(env, opts) {
   try {
     const mode = String((env && env.LB_D1_REMAIN_MODE) || 'off');
-    if (mode !== SHADOW_MODE_ON) return false;          // ★厳密に 'shadow' のときだけ
+    if (!shadowActive(mode)) return false;              // ★厳密に 'shadow' か 'on' のときだけ（設計21）
     if (!opts || opts.shadow !== true) return false;    // ★入口の意思
     const ctx = opts.ctx;
     if (!ctx || typeof ctx.waitUntil !== 'function') return false;   // ★応答のあとに走らせる手段

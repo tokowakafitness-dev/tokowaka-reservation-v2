@@ -5,7 +5,7 @@
 //   ★顧客に返す値は変えない（観測だけ）。何があっても例外を外へ出さない（会員ごとに try）。
 //   ★1回は最大4名（1名で D1 の文が約10）。
 
-import { runShadow, SHADOW_MODE_ON } from './remain-shadow.js';
+import { runShadow, shadowActive } from './remain-shadow.js';
 import { readHomeDiag } from '../routes/boot.js';
 
 export const SWEEP_ENTRY = 'sweep';
@@ -28,7 +28,7 @@ export function classifySweep(r) {
 export async function runSweep(env, opts) {
   const o = opts || {};
   const mode = String((env && env.LB_D1_REMAIN_MODE) || 'off');
-  if (mode !== SHADOW_MODE_ON) return { ok: true, skipped: 'MODE_OFF' };
+  if (!shadowActive(mode)) return { ok: true, skipped: 'MODE_OFF' };   // 'on' でも比べ続ける（設計21）
   const nowMs = Number(o.nowMs || Date.now());
   const limit = Math.max(1, Math.min(Number(o.limit || SWEEP_MAX) || SWEEP_MAX, SWEEP_MAX));
   const only = idList(o.only, SWEEP_MAX);

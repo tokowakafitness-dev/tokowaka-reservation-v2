@@ -37,6 +37,10 @@ console.log('=== 1. Worker：結末の分け方と窓口 ===');
   ok('1-5 1ページの上限は4名', SWEEP_MAX === 4);
   const off = await runSweep({ LB_D1_REMAIN_MODE: 'off' }, {});
   ok('1-6 shadow モードでなければ何もしない', off.skipped === 'MODE_OFF');
+  //   ★2026-10-22 設計21：mode 'on'（D1 から出す段）でも比べ続ける。'ON'・'true' などは比べない
+  const { shadowActive } = await import('../src/lib/remain-shadow.js');
+  ok('1-6b ★on でも比べ続ける・打ち間違いは比べない', shadowActive('on') && shadowActive('shadow') && !shadowActive('ON')
+     && !shadowActive('true') && !shadowActive('') && !shadowActive('off'));
   // D1 が落ちる env：readHomeDiag が投げる → 会員ごとに try で再試行へ
   const ids = ['C001', 'C002', 'C003', 'C004'];
   const env = { LB_D1_REMAIN_MODE: 'shadow', DB: { prepare: (q) => ({ bind() { return this; },

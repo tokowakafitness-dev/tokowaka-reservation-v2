@@ -167,6 +167,21 @@ const counts = (env) => env._db.prepare('SELECT entry, source, n FROM remain_sou
   ok('①-14 LB_D1_REMAIN_ALL="1" なら全員', (await readHome(env7, CID)).remainSource === 'd1');
 }
 
+// ---------- ①-s mode 'on' でも shadow（写しと D1 の比較）は起動する ----------
+{
+  const { runDeferred } = await import('../src/routes/boot.js');
+  for (const [mode, want] of [['on', true], ['shadow', true], ['off', false]]) {
+    const env = makeEnv({ LB_D1_REMAIN_MODE: mode }); await seed(env, CID);
+    const defer = [], ctx = ctxOf();
+    let registered = 0; const wu = ctx.waitUntil; ctx.waitUntil = (x) => { registered++; return wu(x); };
+    await readHome(env, CID, undefined, { shadow: true, ctx, entry: 'compat_member', defer, readEntry: 'compat_member' });
+    runDeferred(defer);
+    await ctx._wait();
+    const n = env._db.prepare('SELECT COUNT(*) AS n FROM remain_shadow_slot2').get().n;
+    ok(`①-s ★mode '${mode}' で比較が${want ? '起動する' : '起動しない'}（非選択の会員でも）`, want ? (registered >= 1 && n >= 1) : (registered === 0 && n === 0), `registered=${registered} slot=${n}`);
+  }
+}
+
 // ---------- ① 6つの入口を通す ----------
 {
   const env = makeEnv({ LB_D1_REMAIN_MODE: 'on' }); await seed(env, CID); allow(env, CID);
@@ -280,7 +295,8 @@ async function ingest(env, b) { const r = await handleIngest(new Request('https:
 {
   const toml = readFileSync(join(W, 'wrangler.toml'), 'utf8');
   ok('⑦-1 ★wrangler.toml に会員 ID（C+数字）が無い', !/\bC\d{8,}\b/.test(toml));
-  ok('⑦-2 LB_D1_REMAIN_MODE は on 以外（準備の段では shadow のまま）', /LB_D1_REMAIN_MODE\s*=\s*"shadow"/.test(toml));
+  ok('⑦-2 LB_D1_REMAIN_MODE は shadow か on だけ（段階0から on）', /LB_D1_REMAIN_MODE\s*=\s*"(shadow|on)"/.test(toml));
+  ok('⑦-3 全員（LB_D1_REMAIN_ALL）はまだ入れていない（段階2はオーナー承認）', !/LB_D1_REMAIN_ALL\s*=\s*"1"/.test(toml));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} D1 から出す（設計21） 検証: ${pass} passed / ${fail} failed`);
