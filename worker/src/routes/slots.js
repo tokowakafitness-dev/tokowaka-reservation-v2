@@ -329,14 +329,14 @@ export function flag1fOf(env) {
  *   残数は予約する日の月で決まるため、その月の写しから組み立てる。
  *   持っていない月なら null を返し、画面はGASに聞き直す（間違った選択肢を出さない）。
  */
-export async function routeBookingOptions({ body, env, who }) {
+export async function routeBookingOptions({ body, env, who, ctx }) {
   const customerId = String(body.customerId || who.customerId || '');
   if (!customerId) return { code: 'BAD_REQUEST', options: null };
 
   const startMs = Number(body.startMs || 0);
   if (!startMs) return { code: 'BAD_REQUEST', options: null };
 
-  const home = await readHome(env, customerId, startMs);
+  const home = await readHome(env, customerId, startMs, { ctx, readEntry: 'route_booking_options' });
   if (!home) return { options: null, fallback: true };   // その月を持っていない＝GASに聞いて
 
   const monthlyLeft = home.monthlyRemaining != null ? home.monthlyRemaining : 0;

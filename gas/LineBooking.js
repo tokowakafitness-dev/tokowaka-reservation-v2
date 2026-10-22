@@ -1874,7 +1874,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-20a 書き込みに追いついていない会員・大きすぎる会員・重複パックを点検に';
+var LB_HEALTH_BUILD = '2026-10-22a D1 から出した回数・写しも予約一覧も送れなかった会員を点検に（設計21）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2284,6 +2284,43 @@ function dailyHealthCheck(dryRunArg) {
           '作り直せない（大きすぎる）会員: ' + _tl.slice(0, 5).map(function (x) { return String(x.who) + '（' + String(x.why || '') + '）'; }).join(' / ')
           + '。D1 はこの会員で答えません。上限（worker/src/routes/quota-rebuild.js の REBUILD_LIMITS）を見直します。');
     }
+    //   ★D1 から出す仕組み（設計21 I38・I39）
+    try {
+      var _rr = (_svSt && _svSt.remainRead) || null;
+      if (_rr) {
+        if (!_rr.allow || _rr.allow.table !== 'ok') {
+          add('d1_allow_unreadable', 'D1', 'warn', 1, 'D1 から読ませる会員の許可表が読めません（読み取りは写しに倒れています）');
+        } else if (_rr.mode === 'on' && Number(_rr.allow.count || 0) > 0) {
+          var _yd = ((_rr.sources && _rr.sources.yesterday && _rr.sources.yesterday.rows) || []);
+          var _d1n = 0, _cp = [];
+          for (var _yi = 0; _yi < _yd.length; _yi++) {
+            if (_yd[_yi].source === 'd1') _d1n += Number(_yd[_yi].n || 0);
+            else _cp.push(_yd[_yi].entry + ':' + _yd[_yi].source + '=' + _yd[_yi].n);
+          }
+          add('d1_read_served', 'D1', 'info', _d1n, '昨日 D1 から答えた回数（許可表 ' + _rr.allow.count + '名）'
+              + (_cp.length ? '／写しに落ちた: ' + _cp.join(' / ') : ''));
+          if (!_d1n && !_cp.length) {
+            add('d1_read_none', 'D1', 'warn', 1, '許可表に会員がいるのに、昨日は D1 から一度も答えていません（開かれなかったか、配線の故障）');
+          }
+        }
+      }
+    } catch (eRr) {}
+    //   ★写しも予約一覧も送れなかった会員（設計21 §2-5）
+    try {
+      var _bfRaw = _lbProp('LB_EDGE_AFTER_WRITE_BOTH_FAIL');
+      var _bfBroken = _lbProp('LB_EDGE_AFTER_WRITE_BOTH_FAIL_BROKEN');
+      if (_bfBroken) add('both_fail_broken', 'D1', 'warn', 1, '「写しも予約一覧も送れなかった」記録が壊れていました（' + _bfBroken + '）。記録は保全して、更新を止めています（中身を確かめて直す）');
+      if (_bfRaw) {
+        var _bf = JSON.parse(_bfRaw), _bfl = [];
+        for (var _bk in (_bf.items || {})) if (_bf.items.hasOwnProperty(_bk)) {
+          var _it = _bf.items[_bk];
+          if (Number(_it.last || 0) >= Date.now() - 86400000) _bfl.push('会員#' + String(_bk).slice(-4) + ' ' + _it.n + '回');
+        }
+        if (_bfl.length) add('both_fail', 'D1', 'warn', _bfl.length, '書き込みの直後に写しも予約一覧も送れなかった会員（24時間以内）: ' + _bfl.join(' / ')
+                            + '。D1 から読ませている会員なら、残数だけ新しい状態になりえます');
+        if (Number(_bf.overflow || 0) > 0) add('both_fail_overflow', 'D1', 'warn', Number(_bf.overflow), '上の記録が満杯で古い会員を入れ替えた回数（累計）');
+      }
+    } catch (eBf) { add('both_fail_broken', 'D1', 'warn', 1, '「写しも予約一覧も送れなかった」記録が読めません'); }
     //   ★重複パック（設計20 §2-5・切り替えの合格条件）
     try {
       var _dp = (_svSt && _svSt.dupPackPrefix) || null;

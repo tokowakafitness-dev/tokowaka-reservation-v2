@@ -75,7 +75,7 @@ export async function compatMemberStatus({ env, who, ctx }) {
       `SELECT customer_id, name, contract_status, contract_type, default_trainer_id
          FROM customers WHERE customer_id = ?`
     ).bind(who.customerId).first(),
-    readHomeSafe(env, who.customerId, undefined, { shadow: true, ctx, entry: 'compat_member', defer }),
+    readHomeSafe(env, who.customerId, undefined, { shadow: true, ctx, entry: 'compat_member', defer, readEntry: 'compat_member' }),
   ]);
   //   ★早期 return でも比較を起動する（2026-10-09・関門③の2周目）。
   //     !home は「写しが無い／壊れた／古すぎる」＝**D1なら答えられるか、
@@ -230,7 +230,7 @@ export async function compatCustomerHome({ env, body, who, ctx }) {
   if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
   const [cust, home] = await Promise.all([
     env.DB.prepare('SELECT name FROM customers WHERE customer_id = ?').bind(customerId).first(),
-    readHomeSafe(env, customerId, undefined, { shadow: true, ctx, entry: 'compat_home', defer }),
+    readHomeSafe(env, customerId, undefined, { shadow: true, ctx, entry: 'compat_home', defer, readEntry: 'compat_home' }),
   ]);
   if (!cust || !home) { runDeferred(defer); return { _fallback: true }; }
   runDeferred(defer);
@@ -266,7 +266,7 @@ export async function compatRecurringList({ env, body, who }) {
 // ---------------------------------------------------------------
 // getBookingOptions と同じ形（予約する日時の消化先）
 // ---------------------------------------------------------------
-export async function compatBookingOptions({ env, who, body }) {
+export async function compatBookingOptions({ env, who, body, ctx }) {
   const customerId = String(body.customerId || who.customerId || '');
   const startISO = String(body.startISO || '');
   const startMs = startISO ? new Date(startISO).getTime() : Number(body.startMs || 0);
@@ -275,7 +275,7 @@ export async function compatBookingOptions({ env, who, body }) {
   //   担当外の顧客のチケット残数・期限・ペア残数を取得できた（2026-09-29）。
   if (!(await canSeeCustomer(env, who, customerId))) return { _forbidden: true };
 
-  const home = await readHomeSafe(env, customerId, startMs);
+  const home = await readHomeSafe(env, customerId, startMs, { ctx, readEntry: 'booking_options' });
   if (!home) return { _fallback: true };          // その月を持っていない＝GASに聞き直す
 
   // 対象日に有効なペアpackのうち、いちばん早く切れるものの期限

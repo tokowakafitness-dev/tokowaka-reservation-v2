@@ -78,7 +78,11 @@ ok('②読んでいる鍵を集められた', used.size >= 10, `${used.size}個:
 
 //   ★どれにも属さない鍵があれば、undefined を顧客に返している
 {
-  const known = new Set(copyKeys.concat(EXTRA).concat(TOP));
+  //   ★設計21：D1 から出したときだけ readHome が足す鍵（写しには無い・mode 'on' かつ選ばれた会員だけ）
+  const ADDED_BY_D1_MODE = ['remainSource', 'remainBuiltAt'];
+  const known = new Set(copyKeys.concat(EXTRA).concat(TOP).concat(ADDED_BY_D1_MODE));
+  ok('③-b D1 のときに足す鍵は remain-read-on.js だけが作る',
+     /out\.remainSource = 'd1';/.test(rd('worker/src/lib/remain-read-on.js')));
   const orphan = [...used].filter((k) => !known.has(k));
   ok('③★顧客に返す鍵が全部そろっている', orphan.length === 0,
      `写しに無い鍵: ${orphan.map((k) => `${k}（${(where[k] || []).join(',')}）`).join(' / ')}`);

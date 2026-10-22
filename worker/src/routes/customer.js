@@ -4,7 +4,7 @@
 import { readHome } from './boot.js';
 import { canSeeCustomer, redactContractForViewer } from '../perms.js';
 
-export async function routeCustomerDetail({ body, env, who }) {
+export async function routeCustomerDetail({ body, env, who, ctx }) {
   const customerId = String(body.customerId || (who.role === 'customer' ? who.customerId : ''));
   if (!customerId) return { code: 'BAD_REQUEST', customer: null };
   // 担当の顧客と、担当が決まっていない顧客だけ（オーナーは全員）
@@ -16,7 +16,7 @@ export async function routeCustomerDetail({ body, env, who }) {
               contract_status, lang, goal, note
          FROM customers WHERE customer_id = ?`
     ).bind(customerId).first(),
-    readHome(env, customerId),
+    readHome(env, customerId, undefined, { ctx, readEntry: 'customer_detail' }),
     env.DB.prepare(
       `SELECT record_id, measured_at, weight_kg, body_fat_pct, muscle_kg, note
          FROM body_records WHERE customer_id = ?

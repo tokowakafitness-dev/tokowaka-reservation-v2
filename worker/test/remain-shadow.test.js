@@ -407,7 +407,7 @@ const D = '2026-10-09';
 {
   //   ★defer に積む方式（関門③）。readHome の中では起動しない
   ok('⑪boot から渡している',
-     /readHome\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'boot', defer \}\)/.test(BOOT));
+     /readHome\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'boot', defer, readEntry: 'boot' \}\)/.test(BOOT));   // 2026-10-20 設計21：数えるときの入口名も渡す
   //   ★動的 import にしない（関門③の2周目）。
   //     import() の Promise は waitUntil に登録されないため、応答後に
   //     解決する前に isolate が終わりうる＝**静かに一度も動かない**。
@@ -427,9 +427,9 @@ const D = '2026-10-09';
      'readHome の中で起動すると、handler の Promise.all がまだ終わっておらず本体と競合する');
   ok('⑪routeBoot が ctx を受け取っている', /export async function routeBoot\(\{ env, who, ctx \}\)/.test(BOOT));
   ok('⑪会員の起動（互換）から渡している',
-     /readHomeSafe\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'compat_member', defer \}\)/.test(COMPAT));
+     /readHomeSafe\(env, who\.customerId, undefined, \{ shadow: true, ctx, entry: 'compat_member', defer, readEntry: 'compat_member' \}\)/.test(COMPAT));
   ok('⑪顧客カードから渡している',
-     /readHomeSafe\(env, customerId, undefined, \{ shadow: true, ctx, entry: 'compat_home', defer \}\)/.test(COMPAT));
+     /readHomeSafe\(env, customerId, undefined, \{ shadow: true, ctx, entry: 'compat_home', defer, readEntry: 'compat_home' \}\)/.test(COMPAT));
   ok('⑪★互換の2入口も本体のあとで起動する',
      (COMPAT.match(/runDeferred\(defer\)/g) || []).length >= 3,
      'compatMemberStatus と compatCustomerHome（_fallback の経路も）');

@@ -53,7 +53,7 @@ ok('①送信に scope を載せている', (SRC.match(/scope:\s*scope/g) || [])
 //   ここを取り違えると「全件のつもりで一部しか送っていない」まま同期時刻が押され、
 //   古い行が新しいものとして残る。1人ぶんの押し出しで起きていた事故と同じ形。
 ok("③予約直後の1人ぶんは partial",
-  /_edgePushRows\('reservations', mine, Date\.now\(\), \{ scope: 'partial' \}\)/.test(SRC));
+  /_edgePushRows\('reservations', mine, Date\.now\(\), \{ scope: 'partial', dirtySeq: ds, customerId: String\(customerId\) \}\)/.test(SRC));   // 2026-10-22 設計21
 //   ★2026-10-11：書き込み直後の枠の押し出しは**やめた**（関門②の指摘）。
 //     確定フローは空き枠を作り直さない（warmupCacheに委ねている）ので、
 //     古いキャッシュを新しい batchId で押し出し直すだけだった。

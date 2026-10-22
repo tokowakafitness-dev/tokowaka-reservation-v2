@@ -459,14 +459,14 @@ export async function quotaStatus(request, env) {
       `SELECT customer_id, month_key FROM monthly_quota
         WHERE coverage = 'unlimited' ORDER BY customer_id, month_key LIMIT 20`
     ).all();
-    detail.unlimited = (r.results || []).map((x) => `${x.customer_id} ${x.month_key}`);
+    detail.unlimited = (r.results || []).map((x) => `${mask(x.customer_id)} ${x.month_key}`);   // 2026-10-22 下4桁に（関門①）
   }
   if (coverage['(未設定)']) {
     const r = await env.DB.prepare(
       `SELECT customer_id, month_key FROM monthly_quota
         WHERE coverage IS NULL ORDER BY customer_id, month_key LIMIT 20`
     ).all();
-    detail.notSet = (r.results || []).map((x) => `${x.customer_id} ${x.month_key}`);
+    detail.notSet = (r.results || []).map((x) => `${mask(x.customer_id)} ${x.month_key}`);
   }
   return json({
     ok: true,
@@ -478,6 +478,7 @@ export async function quotaStatus(request, env) {
     syncVersion,   // 会員ごとの世代（fresh/stale/ahead・3-bの鮮度の判定に使う）
     generation,    // 行ごとの世代（いまの世代／古い行／印の無い行・設計13）
     dupPackPrefix, // 同じ CT<開始>_<終了> のパックが複数ある組（設計20 §2-5）
+    remainRead: await readRemainReadStatus(env),   // D1 から出す仕組みの状態（設計21）
     shadowTables,  // shadow の3表が入っているか（1回の依頼で確かめる量を増やすため）
   });
 }
@@ -630,4 +631,28 @@ export function computeCustomerBuild(cid, input, o) {
     allocStmts = allocationInsertStatements(al, now, { customerId: cid, fromMonth: from, toMonth: to });
   }
   return { built, allocStmts, allocIssues, al: alOut };
+}
+
+/**
+ * D1 から出す仕組みの状態（設計21・I39）。mode・許可表（下4桁と人数）・今日と昨日の出どころの回数。
+ *   ★許可表が読めなければ read_failed と出す（読み取りの経路では「選ばれていない」に倒れて隠れるため）
+ */
+async function readRemainReadStatus(env) {
+  const out = { mode: String((env && env.LB_D1_REMAIN_MODE) || 'off'), all: String((env && env.LB_D1_REMAIN_ALL) || '') === '1' };
+  try {
+    const r = await env.DB.prepare('SELECT customer_id FROM remain_d1_allow ORDER BY customer_id').all();
+    const ids = (r.results || []).map((x) => mask(x.customer_id));
+    out.allow = { table: 'ok', count: ids.length, customers: ids };
+  } catch (_) { out.allow = { table: 'read_failed' }; }
+  try {
+    const now = Date.now();
+    const day = (ms) => { const d = new Date(ms + 9 * 3600000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'); };
+    const today = day(now), yesterday = day(now - 86400000);
+    const r = await env.DB.prepare(
+      'SELECT day, entry, source, n FROM remain_source_daily WHERE day IN (?, ?) ORDER BY day, entry, source'
+    ).bind(today, yesterday).all();
+    const pick = (d) => (r.results || []).filter((x) => x.day === d).map((x) => ({ entry: x.entry, source: x.source, n: Number(x.n || 0) }));
+    out.sources = { today: { day: today, rows: pick(today) }, yesterday: { day: yesterday, rows: pick(yesterday) } };
+  } catch (_) { out.sources = { table: 'read_failed' }; }
+  return out;
 }

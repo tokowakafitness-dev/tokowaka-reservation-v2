@@ -262,15 +262,26 @@ async function ingest(request, env) {
   //   写しが新しくなった瞬間に、D1 に「この会員はこの番号まで書かれた」と記録する（同じ batch）。
   //   ★home 以外・scope:'partial' 以外で送られたら断る（黙って無視しない＝送り手の取り違えに気づける）
   //   ★正の安全な整数だけ。0・負・小数・文字列は断る
-  let dirtySeq = null;
+  //   ★予約一覧（reservations）の送信にも載せる（2026-10-22・設計21 §2-5）。写しの送信が失敗しても、
+  //     予約一覧が届けば D1 は自分が古いと知る。予約0件の会員でも送れるよう、会員は本文の customerId で決める
+  let dirtySeq = null, dirtyCustomer = '';
   if (body.dirtySeq !== undefined && body.dirtySeq !== null) {
-    if (kind !== 'home' || scope !== 'partial') {
+    if (scope !== 'partial' || (kind !== 'home' && kind !== 'reservations')) {
       return jsonRes({ success: false, code: 'DIRTY_SEQ_NOT_SUPPORTED' }, 400);
     }
     if (!Number.isSafeInteger(body.dirtySeq) || body.dirtySeq <= 0) {
       return jsonRes({ success: false, code: 'BAD_DIRTY_SEQ' }, 400);
     }
     dirtySeq = body.dirtySeq;
+    if (kind === 'reservations') {
+      dirtyCustomer = String(body.customerId || '').trim();
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(dirtyCustomer)) return jsonRes({ success: false, code: 'CUSTOMER_REQUIRED' }, 400);
+      for (const r of rows) {
+        if (String(r && r.customer_id) !== dirtyCustomer) return jsonRes({ success: false, code: 'CUSTOMER_MISMATCH' }, 400);
+      }
+      const c = await env.DB.prepare('SELECT 1 AS x FROM customers WHERE customer_id = ?').bind(dirtyCustomer).first();
+      if (!c) return jsonRes({ success: false, code: 'NO_CUSTOMER' }, 404);
+    }
   }
 
   const sql = upsertSqlFor(conf);
@@ -397,7 +408,8 @@ async function ingest(request, env) {
   let dirtied = 0;
   if (dirtySeq != null) {
     const ids = {};
-    for (const r of rows) {
+    if (kind === 'reservations') ids[dirtyCustomer] = 1;   // 予約0件でも本文の会員に立てる
+    else for (const r of rows) {
       const cid = String((r && r.customer_id) || '').trim();
       if (cid) ids[cid] = 1;
     }

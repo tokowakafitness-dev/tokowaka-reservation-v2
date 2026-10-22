@@ -8,6 +8,7 @@
 //   Allocate.js をWorkerへ移してD1から直接計算する。
 //   stale（鮮度）を必ず返し、古ければ画面側が「更新中」を出せるようにする。
 
+import { modeOn, decideHome, countSource } from '../lib/remain-read-on.js';   // 設計21
 import { customerScopeSql } from '../perms.js';
 //   ★静的 import（動的だと waitUntil に登録される前に isolate が終わりうる）
 import { scheduleShadow } from '../lib/remain-shadow.js';
@@ -100,7 +101,31 @@ export async function readHome(env, customerId, targetMs, opts) {
       } catch (_) {}
     });
   }
-  return d.value;
+  //   ★D1 から出す（設計21・決定0092）。mode 'on' でない・選ばれていない会員は d.value をそのまま返す
+  //     ＝変更前と1文字も同じ（I37）。例外を外に出さない（どこかで落ちたら写し）
+  if (!modeOn(env)) return d.value;
+  let r;
+  try { r = await decideHome(env, customerId, targetMs, d); }
+  catch (_) { return d.value; }
+  if (opts && opts.diag && typeof opts.diag === 'object') {
+    //   ★固定の形だけ（顧客のデータは入れない）。probe が受け取る
+    opts.diag.result = { selected: !!r.selected, source: String(r.source), status: String(r.status),
+                         monthMatch: r.status !== 'month_mismatch' };
+  }
+  if (r.selected && !(opts && opts.noCount === true)) {
+    const entry = (opts && opts.readEntry) || 'unknown';
+    const run = () => countSource(env, entry, r.source, Date.now());
+    try {
+      if (opts && Array.isArray(opts.defer) && opts.ctx && typeof opts.ctx.waitUntil === 'function') {
+        opts.defer.push(() => { try { opts.ctx.waitUntil(run()); } catch (_) {} });   // 本体の読み取りの後
+      } else if (opts && opts.ctx && typeof opts.ctx.waitUntil === 'function') {
+        opts.ctx.waitUntil(run());
+      } else {
+        await run();   // ctx が無い呼び出し（選ばれた会員だけ・例外は出ない）
+      }
+    } catch (_) {}
+  }
+  return r.value;
 }
 
 /**
@@ -191,7 +216,7 @@ export async function routeBoot({ env, who, ctx }) {
       //     ctx は index.js が全部の handler に渡しているので、
       //     「ctx があるから比べる」にはしない。**入口の意思を明示する。**
       //   ★defer に積むだけ。実行は return の直前（本体のD1処理と競合させない）。
-      readHome(env, who.customerId, undefined, { shadow: true, ctx, entry: 'boot', defer }),
+      readHome(env, who.customerId, undefined, { shadow: true, ctx, entry: 'boot', defer, readEntry: 'boot' }),
       env.DB.prepare(
         `SELECT reservation_id, trainer_id, start_at, end_at, kind, attendee_count, status
            FROM reservations

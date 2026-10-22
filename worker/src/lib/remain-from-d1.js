@@ -345,7 +345,7 @@ async function readSyncVersionForRemain(env, customerId) {
   try {
     const r = await env.DB.prepare(
       `SELECT source_version, built_version, built_quota_rows, built_pack_rows,
-              dirty_seq, built_covers_seq
+              dirty_seq, built_covers_seq, built_at
          FROM customer_sync_version WHERE customer_id = ?`
     ).bind(String(customerId)).first();
     if (!r) return { ok: false, status: 'no_version_row', version: none };
@@ -355,6 +355,7 @@ async function readSyncVersionForRemain(env, customerId) {
       quotaRows: r.built_quota_rows == null ? null : Number(r.built_quota_rows),
       packRows: r.built_pack_rows == null ? null : Number(r.built_pack_rows),
       dirtySeq: Number(r.dirty_seq || 0), coversSeq: Number(r.built_covers_seq || 0),
+      builtAt: r.built_at == null ? null : Number(r.built_at),   // 設計21：D1 で答えたときの調査用（remainBuiltAt）
     };
     //   ★判定は fresh.js の1か所だけ（設計20 §7-7 の3）。
     //     'behind_write' ＝ 書き込み（通し番号）より前の台帳で作り直している＝答えない

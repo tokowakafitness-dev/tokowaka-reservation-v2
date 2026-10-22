@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-20a 書き込みの通し番号・後追い処理を rebuild 1回に（設計20）';
+var LB_EDGE_BUILD = '2026-10-22a D1 から出す仕組み・予約一覧にも番号・許可表の作業依頼（設計21）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -123,7 +123,10 @@ function _edgePushRows(kind, rows, batchId, opts) {
   if (rows == null) throw new Error(kind + ' の元データが読めませんでした（送信を中止）');
   rows = _edgeDedupe(kind, rows);
   //   ★書き込みの通し番号は本文に**明示的に**載せる（任意の opts は転送しない作り・関門①の指摘）。home だけ
-  var dirtySeq = (kind === 'home' && typeof _o.dirtySeq === 'number' && _o.dirtySeq > 0) ? _o.dirtySeq : null;
+  var dirtySeq = ((kind === 'home' || kind === 'reservations') && typeof _o.dirtySeq === 'number' && _o.dirtySeq > 0) ? _o.dirtySeq : null;
+  //   予約一覧は会員を本文で示す（Worker が全行の会員一致と、0件でも印を立てる相手を確かめる）
+  var dirtyCustomer = (dirtySeq != null && kind === 'reservations') ? String(_o.customerId || '') : '';
+  if (dirtySeq != null && kind === 'reservations' && !dirtyCustomer) dirtySeq = null;
   if (!rows.length) {
     _edgePost({ kind: kind, batchId: batchId, rows: [], final: true, deleteStale: full, scope: scope, allowEmpty: allowEmpty });
     return '0件';
@@ -132,7 +135,7 @@ function _edgePushRows(kind, rows, batchId, opts) {
     var chunk = rows.slice(i, i + EDGE.CHUNK);
     var last = (i + EDGE.CHUNK) >= rows.length;
     var _body = { kind: kind, batchId: batchId, rows: chunk, final: last, deleteStale: full, scope: scope };
-    if (dirtySeq != null) _body.dirtySeq = dirtySeq;
+    if (dirtySeq != null) { _body.dirtySeq = dirtySeq; if (dirtyCustomer) _body.customerId = dirtyCustomer; }
     var res = _edgePost(_body);
     sent += chunk.length;
     wrote += Number((res && res.written) || 0);
@@ -875,15 +878,96 @@ function _edgeNameByCustomerId(customerId) {
 }
 
 // その会員の予約だけを送り直す。含まれない行は消えない（削除は1日1回の完全同期だけ）。
-function _edgePushReservationsFor(customerId) {
+//   ★dirtySeq（2026-10-22・設計21 §2-5）：書き込みの通し番号を予約一覧の送信にも載せる。
+//     写しの送信が失敗しても、こちらが届けば D1 は自分が古いと知る。
+//     ★予約が0件の会員でも、番号があれば必ず送る（rows:[]・会員は customerId で示す）。
+//       以前は0件なら送らずに「成功」と答えていた＝チケット追加・自己登録の直後に番号が届かなかった（関門①）
+//   戻り値：送れた＝true／送れなかった＝false（番号が無く0件で送る必要が無いときは true）
+function _edgePushReservationsFor(customerId, dirtySeq) {
   var all = _edgeReservations();
   if (all == null) return false;                  // 読めなかった＝送らない（写しは直っていない）
   var mine = [];
   for (var i = 0; i < all.length; i++) {
     if (String(all[i].customer_id || '') === String(customerId)) mine.push(all[i]);
   }
-  if (!mine.length) return 0;
-  return _edgePushRows('reservations', mine, Date.now(), { scope: 'partial' });
+  var ds = (typeof dirtySeq === 'number' && dirtySeq > 0 && Math.floor(dirtySeq) === dirtySeq) ? dirtySeq : null;
+  if (!mine.length) {
+    if (ds == null) return true;
+    try {
+      var r0 = _edgePost({ kind: 'reservations', batchId: Date.now(), rows: [], final: true, scope: 'partial',
+                           customerId: String(customerId), dirtySeq: ds });
+      return !!(r0 && r0.success);
+    } catch (e) { return false; }
+  }
+  try {
+    _edgePushRows('reservations', mine, Date.now(), { scope: 'partial', dirtySeq: ds, customerId: String(customerId) });
+    return true;
+  } catch (e) { return false; }
+}
+
+// 書き込みの直後に、その会員の写し（残数）と予約一覧の写しを送る（設計21 §2-5）。
+//   edgeAfterWrite（中央出口）と _lbDwMarkDirty（中央出口を通らない書き込み）の**両方**が使う。
+//   返り値 { home, reservations, bothFailed }。両方失敗したら会員ごとに記録する（点検に出す）
+function _edgeSendAfterWrite(customerId, customerName, seq) {
+  var home = false, resv = false;
+  try { home = !!pushToEdgeHomeFor(customerId, customerName, seq); } catch (e) { home = false; }
+  try { resv = (_edgePushReservationsFor(customerId, seq) === true); } catch (e) { resv = false; }
+  var both = !home && !resv;
+  if (both) _lbNoteBothFail(customerId);
+  return { home: home, reservations: resv, bothFailed: both };
+}
+
+// 写しも予約一覧も送れなかった会員の記録（設計21 §2-5・最大20名）。
+//   ①24時間より古い項目を除く ②既にいる会員は満杯でも更新 ③新しい会員で満杯なら最後の時刻が最も古い項目と入れ替え overflow+1
+//   ④壊れた値は「0件」とみなさず BROKEN を残す ⑤内部の鍵はフル ID（同じ下4桁の別人を合算しない）・出力は下4桁
+//   ★ScriptLock を既に持っている経路がある（中央出口）。持っていなければ短く取る。取れなければ書き換えずに BROKEN（LOCK_MISS）
+var LB_BOTH_FAIL_PROP = 'LB_EDGE_AFTER_WRITE_BOTH_FAIL';
+var LB_BOTH_FAIL_MAX = 20;
+function _lbNoteBothFail(customerId, nowMs) {
+  var p = PropertiesService.getScriptProperties();
+  var now = Number(nowMs || Date.now());
+  var broken = function (why) { try { p.setProperty(LB_BOTH_FAIL_PROP + '_BROKEN', String(now) + ' ' + why); } catch (e) {} return false; };
+  //   ★ロック：既に持っていればそのまま。持っていなければ取れたときだけ読み書きする。
+  //     取れないまま読み書きすると、並んだ2つの実行が同じ古い値を読んで後勝ちで上書きし、記録を黙って落とす（関門②）
+  var lock = null, got = false;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
+  if (!lock) return broken('NO_LOCK_SERVICE');
+  var held = false;
+  try { held = lock.hasLock(); } catch (e) { held = false; }
+  if (!held) {
+    try { got = lock.tryLock(3000); } catch (e) { got = false; }
+    if (!got) return broken('LOCK_MISS');   // 書き換えない。点検で warn
+  }
+  try {
+    var raw = p.getProperty(LB_BOTH_FAIL_PROP);
+    var o = { items: {}, overflow: 0 };
+    if (raw) {
+      //   ★形まで確かめる。壊れていたら書き換えずに BROKEN を立てる（中身は調べるために残す）
+      try { o = JSON.parse(raw); } catch (eP) { return broken('BAD_JSON'); }
+      if (!o || typeof o !== 'object' || Array.isArray(o)) return broken('BAD_SHAPE');
+      if (!o.items || typeof o.items !== 'object' || Array.isArray(o.items)) return broken('BAD_ITEMS');
+      if (o.overflow == null) o.overflow = 0;
+      if (typeof o.overflow !== 'number' || !isFinite(o.overflow) || o.overflow < 0 || Math.floor(o.overflow) !== o.overflow) return broken('BAD_OVERFLOW');
+    }
+    var cid = String(customerId);
+    for (var k in o.items) if (o.items.hasOwnProperty(k) && Number(o.items[k].last || 0) < now - 86400000) delete o.items[k];
+    if (o.items[cid]) { o.items[cid].last = now; o.items[cid].n = Number(o.items[cid].n || 0) + 1; }
+    else {
+      var keys = Object.keys(o.items);
+      if (keys.length >= LB_BOTH_FAIL_MAX) {
+        keys.sort(function (a, b) { return Number(o.items[a].last || 0) - Number(o.items[b].last || 0); });
+        delete o.items[keys[0]];
+        o.overflow = o.overflow + 1;
+      }
+      o.items[cid] = { first: now, last: now, n: 1 };
+    }
+    p.setProperty(LB_BOTH_FAIL_PROP, JSON.stringify(o));
+    return true;
+  } catch (e) {
+    return broken('WRITE_FAILED');
+  } finally {
+    if (got) { try { lock.releaseLock(); } catch (e3) {} }
+  }
 }
 
 // そのトレーナーの枠だけを送り直す ――★やめた（2026-10-11・関門②の指摘）。
@@ -911,7 +995,7 @@ function _lbDwMarkDirty(customerId, seq) {
   try {
     if (!(typeof seq === 'number' && seq > 0)) return false;
     var nm = _edgeNameByCustomerId(customerId);
-    return pushToEdgeHomeFor(customerId, nm, seq);
+    return _edgeSendAfterWrite(customerId, nm, seq);   // 写しと予約一覧の両方（設計21 §2-5）
   } catch (e) { Logger.log('[dw] 書き込みの印を送れませんでした: ' + (e && e.message)); return false; }
 }
 
@@ -961,8 +1045,10 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     var _seq = false;
     try { _seq = lbDwEnqueue(cid); } catch (e) { Logger.log('[dw] 積めませんでした: ' + (e && e.message)); }
 
-    var _syncedHome = pushToEdgeHomeFor(cid, nm, (typeof _seq === 'number') ? _seq : null);   // 残数
-    var _syncedResv = (_edgePushReservationsFor(cid) !== false);    // その人の予約
+    //   ★写し（残数）と予約一覧は共通の関数で送る（設計21 §2-5）。どちらにも番号を載せる
+    var _sent = _edgeSendAfterWrite(cid, nm, (typeof _seq === 'number') ? _seq : null);
+    var _syncedHome = _sent.home;          // 残数
+    var _syncedResv = _sent.reservations;  // その人の予約
 
     //   ★枠はここから送らない（上の理由）。
     //     「同期できていない」と名乗るので、画面はGASへ落ちる（遅いが新しい）。
@@ -2650,8 +2736,82 @@ function _edgeQuotaVerify(opts) {
 }
 
 /** 作業依頼から呼ぶ：枠を作れるか試す／実際に作る／いま入っている数を見る／突き合わせる。氏名は出さない。 */
+// ★D1 から読ませる会員の許可表（設計21 §2-2）。作業依頼の本文（公開の job.json）には下4桁だけ書く。
+//   下4桁 → 名簿で**ちょうど1名**のときだけフル ID にして、合言葉つきの本文で Worker に送る。
+//   結果・失敗・ログは固定の形（ok / action / *下4桁 / changed）だけ。氏名・フル ID を出さない
+function _edgeRemainAllowCall(body) {
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return { ok: false, code: 'NO_EDGE_SETTING' };
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/quota/remain-allow', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'X-Ingest-Secret': secret }, payload: JSON.stringify(body),
+  });
+  var o = {};
+  try { o = JSON.parse(res.getContentText() || '{}'); } catch (e) { o = {}; }
+  o.http = res.getResponseCode();
+  return o;
+}
+function _edgeD1AllowText(a0) {
+  var out = ['=== D1 から読ませる会員（許可表・設計21）==='];
+  var line = function (o) {
+    return 'ok=' + (o.ok === true) + ' / action=' + String(o.action || '') + ' / 会員=' + String(o.customer || '-')
+         + ' / changed=' + String(o.changed == null ? '-' : o.changed) + (o.ok === true ? '' : ' / code=' + String(o.code || '') + ' / http=' + String(o.http || ''));
+  };
+  var SFX = /^\*[A-Za-z0-9]{4}$/;
+  if (a0.d1AllowList === true) {
+    var l = _edgeRemainAllowCall({ action: 'list' });
+    out.push(l.ok === true ? ('人数: ' + l.count + ' / ' + (l.customers || []).join(' ')) : ('読めません: code=' + String(l.code || '') + ' http=' + String(l.http || '')));
+    return out.join('\n');
+  }
+  if (a0.d1Remove != null) {
+    var r = String(a0.d1Remove);
+    if (!SFX.test(r)) return out.concat(['形が違います（*と下4桁）']).join('\n');
+    var o = _edgeRemainAllowCall({ action: 'remove', customer: r });
+    o.action = 'remove'; o.customer = r;
+    out.push(line(o));
+    return out.join('\n');
+  }
+  if (a0.d1Allow != null) {
+    var sfx = String(a0.d1Allow);
+    if (!SFX.test(sfx)) return out.concat(['形が違います（*と下4桁）']).join('\n');
+    var cs = _edgeCustomers();
+    if (cs == null) return out.concat(['名簿が読めません（何もしていません）']).join('\n');
+    var hit = [];
+    for (var i = 0; i < cs.length; i++) {
+      var id = String(cs[i].customer_id || '');
+      if (id && id.slice(-4) === sfx.slice(1)) hit.push(id);
+    }
+    if (hit.length !== 1) return out.concat(['名簿で ' + sfx + ' に当たる会員が ' + hit.length + '名（ちょうど1名のときだけ足します。何もしていません）']).join('\n');
+    var o2 = _edgeRemainAllowCall({ action: 'add', customerId: hit[0] });
+    o2.action = 'add'; o2.customer = sfx;
+    out.push(line(o2));
+    return out.join('\n');
+  }
+  return out.concat(['引数がありません（d1Allow / d1Remove / d1AllowList）']).join('\n');
+}
+// 検証用の会員の試し読み（設計21 §2-3）。ID は検証用で固定（公開の job.json に実在の会員を書かない）
+function _edgeD1ProbeText() {
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return '設定がありません';
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/quota/remain-probe', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'X-Ingest-Secret': secret }, payload: JSON.stringify({ customerId: 'CVERIFY0000001' }),
+  });
+  return '=== 試し読み（検証用の会員・設計21）===\nhttp=' + res.getResponseCode() + '\n' + String(res.getContentText() || '').slice(0, 600);
+}
+// 段階1の前提：オンボーディングの分岐が無効か（設計21 F9）
+function _edgeOnboardingText() {
+  var a = String(_lbProp('LB_ONBOARDING_MODE')), b = String(_lbProp('LB_FACILITY_LIVE'));
+  var on = (a === 'true' && b !== 'true');
+  return '=== オンボーディングの分岐（設計21 F9）===\nLB_ONBOARDING_MODE=' + a + ' / LB_FACILITY_LIVE=' + b
+       + '\n' + (on ? '🚨 有効です（段階1へ進まない）' : '✅ 無効です（段階1の前提を満たす）');
+}
+
 function quotaBuildText(args) {
   var a0 = args || {};
+  if (a0.d1Allow != null || a0.d1Remove != null || a0.d1AllowList === true) return _edgeD1AllowText(a0);
+  if (a0.d1Probe === true) return _edgeD1ProbeText();
+  if (a0.onboardingCheck === true) return _edgeOnboardingText();
   // args.verify を付けたら、D1の行と計算を突き合わせる
   if (a0.verify === true || a0.verify === '1') {
     var v = _edgeQuotaVerify({ month: a0.month, limit: a0.limit, after: a0.after, maxPages: a0.maxPages });
@@ -2810,6 +2970,14 @@ function quotaBuildText(args) {
       //   ★書き込みの通し番号（設計20・決定0091）
       o.push('   ✍️ 書き込みに追いついていない: ' + (sv.writeBehind || 0) + '名'
              + ((sv.writeBehindOldestSince != null) ? '（最も古いもの ' + Math.floor((Date.now() - Number(sv.writeBehindOldestSince)) / 60000) + '分前から）' : ''));
+    }
+    //   ★D1 から出す仕組み（設計21）
+    var rr = st.remainRead || {};
+    o.push('── D1 から出す仕組み: mode=' + String(rr.mode || '-') + (rr.all ? '（全員）' : '')
+           + ' ／ 許可表: ' + ((rr.allow && rr.allow.table === 'ok') ? rr.allow.count + '名' + (rr.allow.count ? '（' + rr.allow.customers.join(' ') + '）' : '') : '★読めません'));
+    if (rr.sources && rr.sources.yesterday) {
+      var _fmt = function (x) { return (x.rows || []).map(function (y) { return y.entry + ':' + y.source + '=' + y.n; }).join(' / ') || 'なし'; };
+      o.push('   出どころ 今日 ' + _fmt(rr.sources.today) + ' ／ 昨日 ' + _fmt(rr.sources.yesterday));
     }
     var dp = st.dupPackPrefix || {};
     o.push('── 同じ開始日・終了日のチケット行が複数ある組（切り替えの合格条件・0であるべき）: '

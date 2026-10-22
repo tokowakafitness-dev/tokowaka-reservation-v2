@@ -115,6 +115,13 @@ trg_alloc_return_pack       同
 | I32 | 書き込みの通し番号（LB_DW_SEQ）は台帳を読む**前**に読み、取り置いたときの番号を rebuild に送る | GAS 側の検査（設計20 実装の後半） |
 | I33 | `built_covers_seq` を上げるのは `/quota/rebuild` だけ。source の比較に通ったときだけ MAX で進める。通常の作り直しは変えない | `rebuild-one.test.js` 3-8・7 |
 | I34 | 写しの送信の印（dirty_seq）は写しと同じ batch・MAX 更新。home・partial 以外では断る | `rebuild-one.test.js` 5 |
+| I35 | D1 で上書きするのは mode 'on'・選ばれた会員（許可表が読めた）・写しがある・reviewRequired でない・D1 が ok・月が一致、の全部のときだけ（設計21） | `read-on.test.js` ①・②-4 |
+| I36 | 上書きするのは D1_OVERRIDE_FIELDS（= COMPARE_FIELDS）だけ。写しの他の鍵（transferCredits 等）は残る。`_src`・`_packOverUse` は出ない | `read-on.test.js` ③、`home-fields.test.js` ③-b |
+| I37 | mode が 'on' でない・選ばれていない会員の応答は変更前と1文字も同じ（remainSource も付けない） | `read-on.test.js` ② |
+| I38 | 会員の選び方に ID を公開の場所へ書かない（許可表は D1・作業依頼は下4桁・検証用は完全一致） | `read-on.test.js` ⑦・①-13、`gas-1022.test.js` ④ |
+| I39 | 出どころは選ばれた会員だけ数え、日×入口の**合計**で500まで（_dropped は日×入口で1回）。6つの入口は名前で数える | `read-on.test.js` ④ |
+| I40 | 許可表の窓口は入力を厳しく検査し、実在の会員だけ足す。remove は判定と削除を1文で。応答・ログは下4桁だけ | `read-on.test.js` ⑤ |
+| I41 | 書き込みの直後は写しと予約一覧の**両方**に通し番号を載せる（予約0件でも送る）。両方失敗した会員は記録して点検に出す | `read-on.test.js` ⑥、`gas-1022.test.js` ①〜③ |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。
