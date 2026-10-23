@@ -533,6 +533,12 @@ function _lbNormPhone(s) { return String(s == null ? '' : s).replace(/[^0-9]/g, 
 // PIIは空欄補完のみ（既存の値を無条件上書きしない・段階4）
 function _lbSetIfBlank(sh, row, col, value) { var cur = sh.getRange(row, col).getValue(); if (cur === '' || cur == null) sh.getRange(row, col).setValue(sanitizeCell(value)); }
 
+// 会員登録の失敗を記録する（2026-10-23）。いままで失敗はどこにも残らず、お客様がトレーナーに連絡しない限り気づけなかった。
+//   ★氏名・電話は残さない（理由のコードだけ）。予約の成否の集計（getBookingMetrics）とは別勘定
+function _lbRegFail(code, message) {
+  try { _lbLogOutcome('REGISTER_' + code, 'selfRegister', ''); } catch (e) {}
+  return { success: false, code: code, message: message };
+}
 function selfRegister(lineUserId, body) {
   var name = String(body.name || '').trim();
   var phone = _lbNormPhone(body.phone);   // 数字のみ＋先頭0除去（数値型セル対策）
@@ -543,16 +549,19 @@ function selfRegister(lineUserId, body) {
     return { success: false, code: 'BAD_REQUEST', message: 'すべての項目をご入力ください。' };
   }
   // 契約フォーム（顧客マスタ）と「お名前＋電話番号」で照合
-  var c = _lbFindContract(name);
+  //   ★開始日がこれから先の契約も対象にする（2026-10-23）。新しいお客様は初回の前に LINE 登録するのが普通で、
+  //     契約期間の中だけを探すと、開始日まで「契約情報が見つかりません」になっていた（終わった契約は対象外のまま）。
+  //   ★電話番号も渡す：同じ名前の行があれば、電話が一致する行を優先する
+  var c = _lbFindContract(name, phone, { allowFuture: true });
   if (!c) {
     // 記憶を捨てる：トレーナーが契約フォームに追加した直後に会員が再試行すれば、その場で通るようにする。
     //   （TTLを1時間に延ばしたため、これが無いと「追加したのに登録できない」時間が最大1時間続く）
     try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e) {}
-    return { success: false, code: 'NOT_FOUND', message: '契約情報が見つかりません。お名前をご確認のうえ、担当トレーナーへご連絡ください。' };
+    return _lbRegFail('NOT_FOUND', '契約情報が見つかりません。お名前をご確認のうえ、担当トレーナーへご連絡ください。');
   }
   var cPhone = _lbNormPhone(c.cols.phone >= 0 ? c.row[c.cols.phone] : '');
-  if (!cPhone) return { success: false, code: 'NO_CONTRACT_PHONE', message: 'ご登録には電話番号の照合が必要です。担当トレーナーへご連絡ください。' };
-  if (cPhone !== phone) return { success: false, code: 'PHONE_MISMATCH', message: '電話番号が契約情報と一致しません。ご確認のうえ担当トレーナーへご連絡ください。' };
+  if (!cPhone) return _lbRegFail('NO_CONTRACT_PHONE', 'ご登録には電話番号の照合が必要です。担当トレーナーへご連絡ください。');
+  if (cPhone !== phone) return _lbRegFail('PHONE_MISMATCH', '電話番号が契約情報と一致しません。ご確認のうえ担当トレーナーへご連絡ください。');
 
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh) return { success: false, code: 'NO_SHEET', message: 'customer_line_map未作成' };
@@ -575,8 +584,8 @@ function selfRegister(lineUserId, body) {
     }
     var decision = _lbResolveRegistration(entries, lineUserId, _lbNormName(name), phone);   // phoneは上で正規化済み
     if (decision.action === 'idempotent') return { success: true, verified: true, customerId: decision.customerId };
-    if (decision.action === 'ambiguous') return { success: false, code: 'AMBIGUOUS_MEMBER', message: 'ご登録情報の確認が必要です。担当トレーナーへご連絡ください。' };
-    if (decision.action === 'rebind_required') return { success: false, code: 'VERIFY_REQUIRED', message: '機種変更などの再登録には認証番号が必要です。担当トレーナーへご連絡ください。' };
+    if (decision.action === 'ambiguous') return _lbRegFail('AMBIGUOUS_MEMBER', 'ご登録情報の確認が必要です。担当トレーナーへご連絡ください。');
+    if (decision.action === 'rebind_required') return _lbRegFail('VERIFY_REQUIRED', '機種変更などの再登録には認証番号が必要です。担当トレーナーへご連絡ください。');
 
     var kind = (c.cols.type >= 0) ? String(c.row[c.cols.type] || '') : '';   // 契約の種別をmapにも記録（自己予約のタイトル種別の土台）
     var trName = (c.cols.trainer >= 0) ? String(c.row[c.cols.trainer] || '') : '';
@@ -1874,7 +1883,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-22a D1 から出した回数・写しも予約一覧も送れなかった会員を点検に（設計21）';
+var LB_HEALTH_BUILD = '2026-10-23a 会員登録の失敗を点検に・開始日が先の契約でも登録できる';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2020,6 +2029,11 @@ function dailyHealthCheck(dryRunArg) {
       add('consec_display_miss', '予約', 'high', (_cmode === 'on' && (_sent[0] !== 'on' || _sentAge == null || _sentAge > 20)) ? 1 : 0,
           '連続ルールが on なのに、on の写しが届いていない（最後に送った写し: ' + (_sent[0] || '記録なし')
           + (_sentAge == null ? '' : '・' + _sentAge + '分前') + '）。顧客に禁止の枠が出ている可能性');
+      //   ★会員登録の失敗（2026-10-23）。お客様が止まっても連絡が無ければ気づけないため、点検に出す
+      var _rg = bm.register || {}, _rgl = [], _rgn = 0;
+      for (var _rk in _rg) if (_rg.hasOwnProperty(_rk)) { _rgl.push(_rk.replace('REGISTER_', '') + ':' + _rg[_rk]); _rgn += Number(_rg[_rk]); }
+      if (_rgn) add('register_fail', '会員', 'warn', _rgn, '昨日、会員登録に失敗した回数（理由別）: ' + _rgl.join(' / ')
+                    + '。NOT_FOUND＝契約表に名前が無い・表記違い／NO_CONTRACT_PHONE＝契約表の電話が空／PHONE_MISMATCH＝電話が違う');
       var _cc = bm.consec || {}, _cl = [];
       for (var _ck in _cc) _cl.push(_ck.replace('CONSEC_', '') + ':' + _cc[_ck]);
       var _cp = _lbConsecPerf(1);
@@ -2351,7 +2365,7 @@ function dailyHealthCheck(dryRunArg) {
     try {
       var _shSt = _edgeQuotaStatus('?shadow=1');
       _shMode = String((_shSt && _shSt.preflight && _shSt.preflight.mode) || '');
-      if (_shMode === 'shadow') {
+      if (_shMode === 'shadow' || _shMode === 'on') {   // 'on'（D1 から出す段）でも比べ続ける＝心拍も見る（設計21）
         var _shTot = (_shSt && _shSt.total) || {};
         var _shDone = Number(_shTot.completed || 0);
         var _shInc = Number(_shTot.incomplete || 0);
@@ -4020,7 +4034,9 @@ function _lbWithSama(name) { return _lbStripSama(name) + '様'; }
 function _lbCollapseSama(title) { return String(title || '').replace(/様{2,}/g, '様'); }
 function _lbNormName(s) { return String(s || '').replace(/\s+/g, '').replace(/様+$/, ''); }   // 「様様」も除去（2026-09-16）
 // 顧客名で契約行を返す { row, cols, start, end } / 無ければ null（契約期間内・開始が最新の行）
-function _lbFindContract(customerName, phone) {
+//   opts.allowFuture === true のときだけ、開始日がこれから先の契約も対象にする（会員登録の照合だけが使う・2026-10-23）。
+//   ★既定は今までどおり（12か所から呼ばれる。残数や予約の判定を変えない）
+function _lbFindContract(customerName, phone, opts) {
   var cols, vals;
   var cache = CacheService.getScriptCache();
   var cached = cache.get('lb_contract_all');
@@ -4051,7 +4067,7 @@ function _lbFindContract(customerName, phone) {
     if (_lbNormName(r[cols.name]) !== target) continue;
     var start = cols.start >= 0 ? _lbParseResvDate(r[cols.start]) : null;
     var end = cols.end >= 0 ? _lbParseResvDate(r[cols.end]) : null;
-    if (start && start.getTime() > now) continue;   // 契約開始前
+    if (start && start.getTime() > now && !(opts && opts.allowFuture === true)) continue;   // 契約開始前（登録の照合では対象にする）
     if (end && end.getTime() < now) continue;        // 契約終了後
     var st = start ? start.getTime() : 0;
     if (st >= bestStart) { bestStart = st; best = { row: r, cols: cols, start: start, end: end }; }
@@ -8385,7 +8401,7 @@ function getBookingMetrics(sinceDays) {
   var sh = _lbSheet(LB_METRICS_SHEET); if (!sh || sh.getLastRow() < 2) return { total: 0, byOutcome: {}, byChannel: {}, notifyFail: { total: 0, byReason: {}, byPurpose: {} }, days: days };
   var cutoff = Utilities.formatDate(new Date(new Date().getTime() - days * 86400000), SETTINGS.TIMEZONE, 'yyyy-MM-dd');
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
-  var byOutcome = {}, byChannel = {}, total = 0, nfTotal = 0, nfByReason = {}, nfByPurpose = {}, consec = {};
+  var byOutcome = {}, byChannel = {}, total = 0, nfTotal = 0, nfByReason = {}, nfByPurpose = {}, consec = {}, register = {};
   for (var i = 0; i < v.length; i++) {
     if (_lbDateKey(v[i][1]) < cutoff) continue;   // yyyy-MM-dd の辞書比較＝時系列比較（★日付型のセルはそろえてから）
     var oc = String(v[i][2] || '?'), ch = String(v[i][3] || '?');
@@ -8394,9 +8410,10 @@ function getBookingMetrics(sinceDays) {
       nfByReason[rs] = (nfByReason[rs] || 0) + 1; nfByPurpose[ch] = (nfByPurpose[ch] || 0) + 1; nfTotal++; continue;
     }
     if (oc.indexOf('CONSEC_') === 0) { consec[oc] = (consec[oc] || 0) + 1; continue; }   // 連続ルール（設計18）も別勘定
+    if (oc.indexOf('REGISTER_') === 0) { register[oc] = (register[oc] || 0) + 1; continue; }   // 会員登録の失敗（2026-10-23）も別勘定
     byOutcome[oc] = (byOutcome[oc] || 0) + 1; byChannel[ch] = (byChannel[ch] || 0) + 1; total++;
   }
-  return { total: total, byOutcome: byOutcome, byChannel: byChannel, notifyFail: { total: nfTotal, byReason: nfByReason, byPurpose: nfByPurpose }, consec: consec, days: days };
+  return { total: total, byOutcome: byOutcome, byChannel: byChannel, notifyFail: { total: nfTotal, byReason: nfByReason, byPurpose: nfByPurpose }, consec: consec, register: register, days: days };
 }
 
 // 直近7日の成否レポート（GASエディタから実行、または週次トリガーで）。数字で失敗率を把握。

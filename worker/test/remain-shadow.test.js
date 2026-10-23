@@ -647,8 +647,8 @@ ok('⑪-e★post の上限＝枠の上限', POST_SKIP_COUNT_MAX === MAXT,
   ok('⑪-h★結末を残せなかった回も知らせる',
      /add\('shadow_incomplete'/.test(LB2) && /_shInc > 0/.test(LB2));
   ok('⑪-h 食い違いの鍵の種類も知らせる', /add\('shadow_diff'/.test(LB2));
-  ok('⑪-h★モードが shadow のときだけ見る',
-     /if \(_shMode === 'shadow'\) \{/.test(LB2),
+  ok('⑪-h★モードが shadow か on のときだけ見る（off では見ない・2026-10-23 設計21）',
+     /if \(_shMode === 'shadow' \|\| _shMode === 'on'\) \{/.test(LB2),
      'off のときに「動いていない」と知らせても意味がない');
   ok('⑪-h★点検そのものを落とさない',
      /catch \(e2\) \{ \/\* 窓口が読めないだけ＝点検そのものは続ける \*\/ \}/.test(LB2),
