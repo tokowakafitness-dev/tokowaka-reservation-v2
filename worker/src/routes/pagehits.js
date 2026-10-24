@@ -52,10 +52,13 @@ export function jstHourKey(ms) {
   return new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 13);
 }
 
-/** 広告キャンペーン。運用で増えたらここに足す。未知は 'other' にまとめる */
-const CAMPAIGNS = new Set([
-  'monitor_bulkup', 'monitor_bulkup_202610', 'monitor', 'bulkup', 'none'
-]);
+/* ★キャンペーン名は運用で増える（meta_20261020_cr4 など）。
+   固定の一覧にすると、新しい広告が黙って 'other' に落ち、
+   **台帳側の生の値と突き合わない**（2026-10-24 実データで判明）。
+   決まった頭文字で始まる形だけを通す。これなら
+   電話番号（数字始まり）も氏名（頭文字が一致しない）も入らない。 */
+const CAMPAIGN_RE =
+  /^((meta|google|line|ig|tr|mail|monitor|bulkup)[a-z0-9_]{0,30}|none)$/;
 
 /** 獲得元。紹介は tr_<トレーナー>。運用で増えたらここに足す */
 const SOURCE_RE = /^(tr_[a-z]{2,12}|instagram|facebook|google|line|mail|direct|none)$/;
@@ -75,7 +78,7 @@ const CONTENT_RE = /^(cr\d{1,3}|profile|story|post|highlight|bio|ig_bio|ig_story
 export function normCampaign(v) {
   const s = String(v == null ? '' : v).trim().toLowerCase();
   if (!s) return 'none';
-  return CAMPAIGNS.has(s) ? s : 'other';
+  return CAMPAIGN_RE.test(s) ? s : 'other';
 }
 export function normContent(v) {
   const s = String(v == null ? '' : v).trim().toLowerCase();
