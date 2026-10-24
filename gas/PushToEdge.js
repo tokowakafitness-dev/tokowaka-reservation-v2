@@ -305,7 +305,7 @@ function _edgeRecurring() {
       customer_id: _edgeIdOrNull(v[i][RP_COL.CUSTOMER_ID - 1]),
       trainer_id: _edgeIdOrNull(v[i][RP_COL.TRAINER_ID - 1]),
       weekday: Number(v[i][RP_COL.WEEKDAY - 1]),
-      time: String(v[i][RP_COL.TIME - 1] || ''),
+      time: _lbRecurTime(v[i][RP_COL.TIME - 1]),
       active: 1,
       created_at: (ca instanceof Date) ? ca.getTime() : Date.now()
     });

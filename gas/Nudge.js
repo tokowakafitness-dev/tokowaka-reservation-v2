@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-11a リマインドの引数は数値だけ受け付ける（イベントで Invalid Date になっていた）';
+var LB_NUDGE_BUILD = '2026-10-24a 改行をLINEの幅に合わせる・固定枠の時刻が日付型でも崩れない';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -95,13 +95,13 @@ var _LB_NUDGE_MSG = {
   // 残り日数は「月末が近いとき」だけ添える（下の LB_NUDGE_DAYS_SHOW_DAYS）。
   //   月初に「残り31日」と言うと、急ぐ理由にならず逆に先延ばしを促す（2026-10-02 オーナー判断）。
   facts_remain: {
-    ja:        '今月はあと {remain}回 ご利用いただけます。',
+    ja:        '今月はあと {remain}回\nご利用いただけます。',
     en:        'You have {remain} session(s) left this month.',
     zh:        '本月还可使用 {remain}次。',
     'zh-Hant': '本月還可使用 {remain}次。'
   },
   facts_remain_days: {
-    ja:        '今月はあと {remain}回 ご利用いただけます。（残り{days}日）',
+    ja:        '今月はあと {remain}回（残り{days}日）\nご利用いただけます。',
     en:        'You have {remain} session(s) left this month ({days} days remaining).',
     zh:        '本月还可使用 {remain}次（剩余{days}天）。',
     'zh-Hant': '本月還可使用 {remain}次（剩餘{days}天）。'
@@ -110,20 +110,20 @@ var _LB_NUDGE_MSG = {
   //   「あと○回」ではなく「すでにいただいているご予約の他、○回」と言う方が正確で、
   //   押しつけがましくない（2026-10-02 オーナー指示）。
   facts_remain_booked: {
-    ja:        '今月はすでにいただいているご予約の他、{remain}回 ご利用いただけます。',
+    ja:        '今月はすでにいただいている\nご予約の他、{remain}回\nご利用いただけます。',
     en:        'In addition to the session(s) you have booked, you have {remain} more available this month.',
     zh:        '除已预约的课程外，本月还可使用 {remain}次。',
     'zh-Hant': '除已預約的課程外，本月還可使用 {remain}次。'
   },
   facts_remain_booked_days: {
-    ja:        '今月はすでにいただいているご予約の他、{remain}回 ご利用いただけます。（残り{days}日）',
+    ja:        '今月はすでにいただいている\nご予約の他、{remain}回（残り{days}日）\nご利用いただけます。',
     en:        'In addition to the session(s) you have booked, you have {remain} more available this month ({days} days remaining).',
     zh:        '除已预约的课程外，本月还可使用 {remain}次（剩余{days}天）。',
     'zh-Hant': '除已預約的課程外，本月還可使用 {remain}次（剩餘{days}天）。'
   },
   // 「先月から○回繰り越しました」（その月に初めて送るとき・15日までだけ）
   facts_carried_in: {
-    ja:        '先月分から {carried}回 繰り越しました。',
+    ja:        '先月分から {carried}回\n繰り越しました。',
     en:        '{carried} session(s) were carried over from last month.',
     zh:        '上月结转了 {carried}次。',
     'zh-Hant': '上月結轉了 {carried}次。'
@@ -139,8 +139,12 @@ var _LB_NUDGE_MSG = {
   transfer: {
     ja: '振替が1回ご利用いただけます。\n' +
         '\n' +
-        '昨日のご予約は当日のお取り消しのため、1回分の消化となりました。\n' +
-        'かわりに振替を1回、{expire}まで ご利用いただけます。\n' +
+        '昨日のご予約は\n' +
+        '当日のお取り消しのため、\n' +
+        '1回分の消化となりました。\n' +
+        'かわりに振替を1回、\n' +
+        '{expire}まで\n' +
+        'ご利用いただけます。\n' +
         '\n' +
         '▼ ご予約\n' +
         '{url}',
@@ -168,10 +172,14 @@ var _LB_NUDGE_MSG = {
   },
   // ② 翌月の解放（固定枠あり）— 25日に autoBookRecurringPatterns が翌月分を自動予約済み
   month_open_fixed: {
-    ja: '{month}分のご予約が可能になりました。\n' +
+    ja: '{month}分のご予約が\n' +
+        '可能になりました。\n' +
         '\n' +
-        'ご登録の固定枠（{pattern}）は、{month}分を自動でお取りしました。\n' +
-        'ご変更が必要でしたら、下記よりお願いいたします。\n' +
+        'ご登録の固定枠\n' +
+        '（{pattern}）は、\n' +
+        '{month}分を自動でお取りしました。\n' +
+        'ご変更が必要でしたら、\n' +
+        '下記よりお願いいたします。\n' +
         '\n' +
         '{facts}\n' +
         '\n' +
@@ -207,11 +215,15 @@ var _LB_NUDGE_MSG = {
   },
   // ②' 翌月の解放（固定枠なし）— 先着順であることを伝え、まとめて押さえていただく
   month_open_free: {
-    ja: '{month}分のご予約が可能になりました。\n' +
+    ja: '{month}分のご予約が\n' +
+        '可能になりました。\n' +
         '\n' +
         'ご希望のお時間は先着順です。\n' +
-        '徐々にご予約可能な枠が少なくなってまいりますので、\n' +
-        'まずはなるべくお早めに{quota}回分お押さえいただくことをおすすめいたします。\n' +
+        '徐々にご予約可能な枠が\n' +
+        '少なくなってまいりますので、\n' +
+        'まずはなるべくお早めに\n' +
+        '{quota}回分お押さえいただく\n' +
+        'ことをおすすめいたします。\n' +
         '\n' +
         '{facts}\n' +
         '\n' +
@@ -254,7 +266,9 @@ var _LB_NUDGE_MSG = {
         '\n' +
         '{facts}\n' +
         '\n' +
-        '次回のご予約がお決まりでなければ、下記よりお待ちしております。\n' +
+        '次回のご予約が\n' +
+        'お決まりでなければ、\n' +
+        '下記よりお待ちしております。\n' +
         '\n' +
         '▼ ご予約\n' +
         '{url}',
@@ -291,10 +305,14 @@ var _LB_NUDGE_MSG = {
         '\n' +
         '{facts}\n' +
         '\n' +
-        '次のご予約は {next} に承っております。\n' +
+        '次のご予約は\n' +
+        '{next} に\n' +
+        '承っております。\n' +
         '他日程でもいかがでしょうか。\n' +
         '\n' +
-        'もし予約可能枠が合わなければ、担当宛にご希望の日時をご相談ください！\n' +
+        'もし予約可能枠が合わなければ、\n' +
+        '担当宛にご希望の日時を\n' +
+        'ご相談ください！\n' +
         '\n' +
         '▼ ご予約\n' +
         '{url}',
@@ -339,7 +357,9 @@ var _LB_NUDGE_MSG = {
         '\n' +
         '{facts}\n' +
         '\n' +
-        '次回のご予約がお決まりでなければ、下記よりお待ちしております。\n' +
+        '次回のご予約が\n' +
+        'お決まりでなければ、\n' +
+        '下記よりお待ちしております。\n' +
         '\n' +
         '▼ ご予約\n' +
         '{url}',
@@ -376,10 +396,14 @@ var _LB_NUDGE_MSG = {
         '\n' +
         '{facts}\n' +
         '\n' +
-        '次のご予約は {next} に承っております。\n' +
+        '次のご予約は\n' +
+        '{next} に\n' +
+        '承っております。\n' +
         '他日程でもいかがでしょうか。\n' +
         '\n' +
-        'もし予約可能枠が合わなければ、担当宛にご希望の日時をご相談ください！\n' +
+        'もし予約可能枠が合わなければ、\n' +
+        '担当宛にご希望の日時を\n' +
+        'ご相談ください！\n' +
         '\n' +
         '▼ ご予約\n' +
         '{url}',
@@ -699,20 +723,10 @@ function _lbNudgeTcreditIndex() {
   return idx;
 }
 
-// 固定枠（recurring_patterns）。無ければ「固定枠なし」として扱う（fail-closed の対象ではない）。
-function _lbNudgeRecurIndex() {
-  var idx = {};
-  try {
-    var sh = _lbSheet(LB_RECUR_SHEET);
-    if (!sh || sh.getLastRow() < 2) return idx;
-    var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
-    for (var i = 0; i < v.length; i++) {
-      if (!_lbTruthy(v[i][RP_COL.ACTIVE - 1])) continue;
-      var cid = String(v[i][RP_COL.CUSTOMER_ID - 1] || ''); if (!cid) continue;
-      (idx[cid] || (idx[cid] = [])).push({ weekday: Number(v[i][RP_COL.WEEKDAY - 1]), time: String(v[i][RP_COL.TIME - 1]) });
-    }
-  } catch (e) { Logger.log('recurring_patterns 読み取り失敗（固定枠なしとして続行）: ' + e.message); }
-  return idx;
+// 25日6時の自動予約の結果（会員ごと {b:取れた, s:取れなかった, p:処理した固定枠}。autoBookRecurringPatterns が残す）。読めなければ空＝誰にも「お取りしました」と言わない
+function _lbNudgeAutoBookedIndex(monthKey) {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_AUTOBOOK_RESULT_PREFIX + monthKey) || "{}") || {}; }
+  catch (e) { Logger.log("自動予約の件数が読めません（固定枠なしの文面で送ります）: " + e.message); return {}; }
 }
 
 // 名簿の行が「そもそも発信していい相手か」。ここを緩めない（未認証・契約切れへは送らない）。
@@ -955,7 +969,7 @@ function lbNudgePlanAll(nowMs, range) {
   if (resv === null) { plan.code = 'NO_RESV_SHEET'; return plan; }      // 台帳が無い＝来店も未来も分からない → 送らない
   var tc = _lbNudgeTcreditIndex();
   if (tc === null) { plan.code = 'NO_TCREDIT_SHEET'; return plan; }     // 振替権が無い＝当日キャンセルと来店を区別できない → 送らない
-  var recur = _lbNudgeRecurIndex();
+  var autoBooked = _lbNudgeAutoBookedIndex(plan.monthKey);   // 25日6時の自動予約の結果（会員ごと {b,s,p}）
   var log = _lbNudgeLogReadAll();
   // ★送信記録が読めなければ1通も出さない（2026-10-05）。
   //   記録は「もう送った人」を知る唯一の手がかり。読めない状態で送ると、
@@ -1012,8 +1026,13 @@ function lbNudgePlanAll(nowMs, range) {
           else if (nextRem === null) reasons.push('nextMonthNoPlan');     // 翌月を覆う契約が無い
           else if (!(nextRem > 0)) reasons.push('nextMonthNoQuota');      // 翌月に押さえる枠が無い
           else {
-            var pats = recur[m.customerId] || [];
-            var label = pats.map(function (p) { return _lbRecurLabel(p.weekday, p.time, m.lang); }).join('／');
+            // ★「自動でお取りしました」は、6時の自動予約で**全部**取れた会員にだけ言う（2026-10-24・Codex関門②）。
+            //   1件でも取れなかった・動かなかった・記録が読めない会員は、固定枠なしの文面（何回分お押さえください）になる。
+            //   取れなかった日は6時の通知（_lbNotifyAutoBook）で個別にお伝えしている。
+            //   ラベルは6時に実際に処理した固定枠（ab.p）から作る＝その後に足された固定枠を含めない。
+            var ab = autoBooked[m.customerId];
+            var pats = (ab && typeof ab === 'object' && Number(ab.b || 0) > 0 && Number(ab.s || 0) === 0 && Array.isArray(ab.p)) ? ab.p : [];
+            var label = pats.map(function (p) { return _lbRecurLabel(Number(p.w), String(p.t || ''), m.lang); }).join('／');
             cand.push({ kind: LB_NUDGE_KIND.MONTH_OPEN, key: plan.monthKey, pattern: label,
                         quota: label ? 0 : nextRem });   // 固定枠ありの文面に {quota} は出ない
           }

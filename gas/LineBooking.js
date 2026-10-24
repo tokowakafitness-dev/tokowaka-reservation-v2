@@ -7897,11 +7897,29 @@ function testReservePerf() {
 //   1顧客が複数パターン可。冪等＝last_booked_month（翌月キー）で二重予約を防止。
 // ============================================================
 var LB_RECUR_SHEET = 'recurring_patterns';
+var LB_AUTOBOOK_RESULT_PREFIX = 'LB_AUTOBOOK_RESULT_';   // + 'yyyy-MM' → {customerId: {b,s,p}}（25日のお知らせが読む）
 var RP_COL = { PATTERN_ID:1, CUSTOMER_ID:2, WEEKDAY:3, TIME:4, TRAINER_ID:5, ACTIVE:6, SOURCE:7, CREATED_AT:8, LAST_MONTH:9, NOTE:10 };
 
 function _lbTruthy(v) { var s = String(v).toLowerCase(); return v === true || s === 'true' || s === '1' || s === '有効' || s === 'yes' || s === 'active'; }
 function _lbValidWeekday(w) { var n = Number(w); return _lbIsFiniteNum(n) && n >= 0 && n <= 6 && Math.floor(n) === n; }
 function _lbValidTimeHHmm(s) { return /^([01]?\d|2[0-3]):[0-5]\d$/.test(String(s == null ? '' : s)); }
+
+// 固定枠の時刻（D列）を "HH:mm" で返す（2026-10-24）。
+//   ★シートは "09:00" を時刻型に変える。getValues は Date（1899-12-30 09:00）を返し、
+//     String() すると "Sat Dec 30 1899 09:00:00 GMT+0900 ..." になる。
+//     文面に崩れた時刻が出て、自動予約は split(":") で0時0分になっていた。読む側は必ずここを通す。
+//   ★時刻型のセルはシートの時刻帯で作られる。スクリプトの時刻帯で読むと、両者が違うとき時差ぶんずれる（Codex関門②）
+var _LB_RECUR_TZ = null;
+function _lbRecurTz() {
+  if (_LB_RECUR_TZ) return _LB_RECUR_TZ;
+  try { _LB_RECUR_TZ = _lbSs().getSpreadsheetTimeZone() || SETTINGS.TIMEZONE; } catch (e) { _LB_RECUR_TZ = SETTINGS.TIMEZONE; }
+  return _LB_RECUR_TZ;
+}
+function _lbRecurTime(v) {
+  if (Object.prototype.toString.call(v) === "[object Date]") return isNaN(v.getTime()) ? "" : Utilities.formatDate(v, _lbRecurTz(), "HH:mm");
+  var s = String(v == null ? "" : v).trim(), m = s.match(/^(\d{1,2}):(\d{2})$/);
+  return m ? ("0" + m[1]).slice(-2) + ":" + m[2] : s;
+}
 
 // 同期用：**シートを作らずに**取るだけ（2026-10-03・Codexの4回目の判定）。
 //   _lbRecurSheet は無ければ新規作成する。押し出しがこれを使うと、
@@ -7997,6 +8015,7 @@ function _lbAddRecurPattern(customerId, body, source) {
   var weekday = Number(_wdRaw), time = String(body.time == null ? '' : body.time).trim(), trainerId = String(body.trainerId == null ? '' : body.trainerId).trim();
   if (!_lbValidWeekday(weekday)) return { success: false, code: 'BAD_REQUEST', message: '曜日の指定が不正です。' };
   if (!_lbValidTimeHHmm(time)) return { success: false, code: 'BAD_REQUEST', message: '時刻の指定が不正です。' };
+  time = _lbRecurTime(time);   // "9:00" と "09:00" を同じものとして扱う（重複判定が読む側と揃う）
   var hh = Number(time.split(':')[0]);
   if (hh < SETTINGS.BUSINESS_START || hh > SETTINGS.BUSINESS_END - 1) return { success: false, code: 'BAD_REQUEST', message: '営業時間内の時刻をお選びください。' };
   var _tr = _lbTrainerById(trainerId);
@@ -8011,13 +8030,15 @@ function _lbAddRecurPattern(customerId, body, source) {
       var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
       for (var i = 0; i < v.length; i++) {
         if (String(v[i][RP_COL.CUSTOMER_ID - 1]) === String(customerId) && Number(v[i][RP_COL.WEEKDAY - 1]) === weekday &&
-            String(v[i][RP_COL.TIME - 1]) === time && String(v[i][RP_COL.TRAINER_ID - 1]) === trainerId && _lbTruthy(v[i][RP_COL.ACTIVE - 1])) {
+            _lbRecurTime(v[i][RP_COL.TIME - 1]) === time && String(v[i][RP_COL.TRAINER_ID - 1]) === trainerId && _lbTruthy(v[i][RP_COL.ACTIVE - 1])) {
           return { success: true, patternId: String(v[i][RP_COL.PATTERN_ID - 1]), existing: true };
         }
       }
     }
     var pid = 'P-' + Utilities.getUuid();
     sh.appendRow([pid, String(customerId), weekday, time, trainerId, true, source, Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm'), '', '']);
+    // ★時刻は文字のまま残す（時刻型に変えられると読む側が崩れる）。読む側も _lbRecurTime で守っている
+    try { sh.getRange(sh.getLastRow(), RP_COL.TIME).setNumberFormat("@").setValue(time); } catch (eTf) { Logger.log("固定枠の時刻を文字にできませんでした: " + eTf.message); }
     return { success: true, patternId: pid };
   } finally { lock.releaseLock(); }
 }
@@ -8027,7 +8048,7 @@ function _lbListRecurFor(customerId, lang) {
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues(), out = [];
   for (var i = 0; i < v.length; i++) {
     if (String(v[i][RP_COL.CUSTOMER_ID - 1]) !== String(customerId)) continue;
-    var wd = Number(v[i][RP_COL.WEEKDAY - 1]), tm = String(v[i][RP_COL.TIME - 1]), trId = String(v[i][RP_COL.TRAINER_ID - 1]);
+    var wd = Number(v[i][RP_COL.WEEKDAY - 1]), tm = _lbRecurTime(v[i][RP_COL.TIME - 1]), trId = String(v[i][RP_COL.TRAINER_ID - 1]);
     out.push({ patternId: String(v[i][RP_COL.PATTERN_ID - 1]), weekday: wd, time: tm, trainerId: trId,
       active: _lbTruthy(v[i][RP_COL.ACTIVE - 1]), source: String(v[i][RP_COL.SOURCE - 1]), label: _lbRecurLabel(wd, tm, lang) });
   }
@@ -8131,9 +8152,10 @@ function autoBookRecurringPatterns() {
     if (!_lbTruthy(v[i][RP_COL.ACTIVE - 1])) continue;
     if (String(v[i][RP_COL.LAST_MONTH - 1]) === targetKey) continue;   // 当該月は予約済み（冪等・再実行安全）
     var cid = String(v[i][RP_COL.CUSTOMER_ID - 1]);
-    var weekday = Number(v[i][RP_COL.WEEKDAY - 1]), time = String(v[i][RP_COL.TIME - 1]), trainerId = String(v[i][RP_COL.TRAINER_ID - 1]);
-    if (!byCustomer[cid]) { byCustomer[cid] = { booked: [], skipped: [], rows: [] }; order.push(cid); }
+    var weekday = Number(v[i][RP_COL.WEEKDAY - 1]), time = _lbRecurTime(v[i][RP_COL.TIME - 1]), trainerId = String(v[i][RP_COL.TRAINER_ID - 1]);
+    if (!byCustomer[cid]) { byCustomer[cid] = { booked: [], skipped: [], rows: [], pats: [] }; order.push(cid); }
     byCustomer[cid].rows.push(i + 2);
+    byCustomer[cid].pats.push({ w: weekday, t: time });
     var dates = _lbDatesOfWeekdayInMonth(targetY, targetM, weekday, time);
     for (var d = 0; d < dates.length; d++) {
       var startDate = dates[d];
@@ -8162,6 +8184,23 @@ function autoBookRecurringPatterns() {
     }
     try { _lbNotifyAutoBook(c2, agg.booked, agg.skipped); } catch (e) { Logger.log('自動予約通知失敗(' + c2 + '): ' + e.message); }
   }
+  // ★何件取れたかを残す（2026-10-24・Codex関門②）。25日10時のお知らせは、これが1件以上の会員にだけ
+  //   「自動でお取りしました」と言う。残せなければお知らせは固定枠なしの文面になる（言い切らない側へ倒れる）。
+  //   同じ月に2回走ったとき（冪等マークで2回目は対象0）に1回目の結果を消さないよう、足し合わせる。
+  try {
+    var _abKey = LB_AUTOBOOK_RESULT_PREFIX + targetKey, _abProps = PropertiesService.getScriptProperties();
+    var _ab = {}; try { _ab = JSON.parse(_abProps.getProperty(_abKey) || '{}') || {}; } catch (eP) { _ab = {}; }
+    //   会員ごとに {b:取れた件数, s:取れなかった件数, p:[処理した固定枠 {w:曜日, t:時刻}]}。
+    //   ★お知らせは「s が0で b が1以上」の会員にだけ言い切る。一部でも取れなければ言い切らない（Codex関門②）。
+    //   ★ラベルは p（6時に実際に処理した固定枠）から作る。6時より後に足された固定枠を含めない。
+    for (var k3 = 0; k3 < order.length; k3++) {
+      var _c = order[k3], _g = byCustomer[_c], _e = (_ab[_c] && typeof _ab[_c] === 'object') ? _ab[_c] : { b: 0, s: 0, p: [] };
+      _e.b = Number(_e.b || 0) + _g.booked.length; _e.s = Number(_e.s || 0) + _g.skipped.length;
+      _e.p = (_e.p || []).concat(_g.pats || []);
+      _ab[_c] = _e;
+    }
+    _abProps.setProperty(_abKey, JSON.stringify(_ab));
+  } catch (eR) { Logger.log('自動予約の件数を残せませんでした: ' + eR.message); }
   Logger.log('autoBookRecurringPatterns 完了: ' + order.length + '顧客 / 対象月 ' + targetKey);
   return { customers: order.length, month: targetKey };
 }
@@ -8176,9 +8215,12 @@ function _lbNotifyAutoBook(customerId, booked, skipped) {
   function labels(arr) { return arr.map(function (x) { return '・' + _lbFmtResvLabel(x.start.toISOString(), lang); }); }
   // 会員へ
   if (lineUserId) {
-    var head = { ja: '来月分のご予約を自動でお取りしました。', en: 'We have auto-booked your sessions for next month.', zh: '已为您自动预约下月的课程。', 'zh-Hant': '已為您自動預約下月的課程。' }[_l];
+    //   ★1件も取れなかったときに「お取りしました」で始めない（2026-10-24・Codex関門②）
+    var head = booked.length
+      ? { ja: '来月分のご予約を\n自動でお取りしました。', en: 'We have auto-booked your sessions for next month.', zh: '已为您自动预约下月的课程。', 'zh-Hant': '已為您自動預約下月的課程。' }[_l]
+      : { ja: '来月分の固定枠のご予約を\nお取りできませんでした。', en: 'We could not auto-book your regular sessions for next month.', zh: '未能为您自动预约下月的固定时段。', 'zh-Hant': '未能為您自動預約下月的固定時段。' }[_l];
     var okH = { ja: '【ご予約】', en: '[Booked]', zh: '【已预约】', 'zh-Hant': '【已預約】' }[_l];
-    var ngH = { ja: '【お取りできませんでした】別の時間をお選びください：', en: '[Could not book] Please pick another time:', zh: '【无法预约】请另选时间：', 'zh-Hant': '【無法預約】請另選時間：' }[_l];
+    var ngH = { ja: '【お取りできませんでした】\n別の時間をお選びください：', en: '[Could not book] Please pick another time:', zh: '【无法预约】请另选时间：', 'zh-Hant': '【無法預約】請另選時間：' }[_l];
     var msg = head;
     if (booked.length) msg += '\n\n' + okH + '\n' + labels(booked).join('\n');
     if (skipped.length) msg += '\n\n' + ngH + '\n' + labels(skipped).join('\n');
