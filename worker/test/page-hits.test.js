@@ -1,7 +1,7 @@
 /* 到達の計測が、予約を止めず・個人情報を入れず・行を増やしすぎないこと
  *   node test/page-hits.test.js
  */
-import { jstHourKey, normCampaign, normContent } from '../src/routes/pagehits.js';
+import { jstHourKey, normCampaign, normContent, normSource } from '../src/routes/pagehits.js';
 let ng = 0;
 const ok = (c, m) => { console.log((c ? '  ok   ' : '  ★NG ') + m); if (!c) ng++; };
 
@@ -37,6 +37,19 @@ for (const v of ['monitor_bulkup', 'monitor', 'bulkup']) {
 }
 ok(normCampaign('new_campaign_2026') === 'other',
    '★未知のキャンペーンは other にまとめる（other が増えたら一覧に足す合図）');
+
+/* ── 獲得元（2026-10-24）。紹介はトレーナーを識別する ── */
+for (const v of ['tr_suzuki', 'instagram', 'facebook', 'google', 'line', 'mail', 'direct']) {
+  ok(normSource(v) === v, '獲得元 "' + v + '" は通る：' + normSource(v));
+}
+ok(normSource('TR_Suzuki') === 'tr_suzuki', '大文字は小文字にそろえる');
+ok(normSource('') === 'none', '空は none');
+for (const v of ['090-1234-5678', 'taro-yamada', 'a@b.com', 'tr_', 'tr_'+'x'.repeat(13)]) {
+  ok(normSource(v) === 'other', '★"' + v + '" は other に落ちる（個人が入らない）');
+}
+/* 新しいキャンペーンと貼り先（2026-10-24 オーナーのUTM設計） */
+ok(normCampaign('monitor_bulkup_202610') === 'monitor_bulkup_202610', '新しいキャンペーンが通る');
+ok(normContent('ig_bio') === 'ig_bio', 'ig_bio が通る');
 
 console.log('');
 console.log(ng === 0 ? '✅ すべて通過' : '🔴 ' + ng + '件');

@@ -29,6 +29,9 @@ const MAX_BODY = 256;
 /** 許可するページ名。これ以外は数えない */
 const PAGES = new Set([
   'lp',
+  /* ★応募フォームに着いた数（2026-10-24）。CTAのクリック数とは別物。
+     押しても着かない（戻る・読み込み失敗）ぶんがあるので、こちらが実数に近い。 */
+  'apply',
   'cta:hero', 'cta:hope', 'cta:trainer', 'cta:flow',
   'cta:faq', 'cta:footer', 'cta:sticky', 'cta:trainer_modal', 'cta:other'
 ]);
@@ -51,11 +54,14 @@ export function jstHourKey(ms) {
 
 /** 広告キャンペーン。運用で増えたらここに足す。未知は 'other' にまとめる */
 const CAMPAIGNS = new Set([
-  'monitor_bulkup', 'monitor', 'bulkup', 'none'
+  'monitor_bulkup', 'monitor_bulkup_202610', 'monitor', 'bulkup', 'none'
 ]);
 
+/** 獲得元。紹介は tr_<トレーナー>。運用で増えたらここに足す */
+const SOURCE_RE = /^(tr_[a-z]{2,12}|instagram|facebook|google|line|mail|direct|none)$/;
+
 /** 広告CR・貼り先。cr1〜cr999 と、こちらで決めた名前だけ通す */
-const CONTENT_RE = /^(cr\d{1,3}|profile|story|post|highlight|bio|mail|none)$/;
+const CONTENT_RE = /^(cr\d{1,3}|profile|story|post|highlight|bio|ig_bio|ig_story|ig_post|mail|none)$/;
 
 /**
  * ★電話番号・氏名がD1に入らないようにする（関門② 2026-10-22）。
@@ -75,6 +81,11 @@ export function normContent(v) {
   const s = String(v == null ? '' : v).trim().toLowerCase();
   if (!s) return 'none';
   return CONTENT_RE.test(s) ? s : 'other';
+}
+export function normSource(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  if (!s) return 'none';
+  return SOURCE_RE.test(s) ? s : 'other';
 }
 
 function noContent(origin) {
@@ -131,14 +142,14 @@ export async function handlePageHit(request, env, origin) {
     /* ② 内訳。行数の上限は「新しい組み合わせを作らない」だけ。
           既にある組み合わせの計測は止めない（関門② 指摘3） */
     await env.DB.prepare(
-      'INSERT INTO page_hits (hour_key, page, campaign, content, hits)\n' +
-      ' SELECT ?1, ?2, ?3, ?4, 1\n' +
-      '  WHERE EXISTS(SELECT 1 FROM page_hits\n' +
-      '                WHERE hour_key = ?1 AND page = ?2 AND campaign = ?3 AND content = ?4)\n' +
-      '     OR (SELECT COUNT(*) FROM page_hits WHERE hour_key = ?1) < ?5\n' +
-      ' ON CONFLICT(hour_key, page, campaign, content)\n' +
+      'INSERT INTO page_hits (hour_key, page, source, campaign, content, hits)\n' +
+      ' SELECT ?1, ?2, ?3, ?4, ?5, 1\n' +
+      '  WHERE EXISTS(SELECT 1 FROM page_hits WHERE hour_key = ?1 AND page = ?2\n' +
+      '                 AND source = ?3 AND campaign = ?4 AND content = ?5)\n' +
+      '     OR (SELECT COUNT(*) FROM page_hits WHERE hour_key = ?1) < ?6\n' +
+      ' ON CONFLICT(hour_key, page, source, campaign, content)\n' +
       '   DO UPDATE SET hits = hits + 1'
-    ).bind(hour, page, normCampaign(d.c), normContent(d.t), HOUR_NEW_ROWS).run();
+    ).bind(hour, page, normSource(d.s), normCampaign(d.c), normContent(d.t), HOUR_NEW_ROWS).run();
   } catch (_) {
     // 握りつぶす。計測は best-effort
   }
@@ -183,7 +194,7 @@ export async function handlePageHitList(request, env) {
   if (from > to) { const t = from; from = to; to = t; }
 
   const rows = await env.DB.prepare(
-    'SELECT hour_key, page, campaign, content, hits FROM page_hits' +
+    'SELECT hour_key, page, source, campaign, content, hits FROM page_hits' +
     ' WHERE hour_key >= ? AND hour_key <= ? ORDER BY hour_key LIMIT 20160'
   ).bind(from, to).all();
   const totals = await env.DB.prepare(
