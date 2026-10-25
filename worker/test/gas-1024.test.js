@@ -65,7 +65,7 @@ console.log('=== ③ 入口から：自動予約の時刻 ===');
     _lbReserveCore: (ci, body) => { booked.push(body.startISO); return { success: true }; },
     _lbSs, LB_AUTOBOOK_RESULT_PREFIX: 'LB_AUTOBOOK_RESULT_', JSON,
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
-    _lbDwMarkDirty: () => {}, lbDwEnqueue: () => 1,
+    _lbDwMarkDirty: () => {}, lbDwEnqueue: () => 1, _lbResvSessions: () => [],
     _lbNotifyAutoBook: () => {}, LockService: { getScriptLock: () => ({ waitLock: () => {}, tryLock: () => true, releaseLock: () => {} }) } };
   vm.createContext(ctx);
   vm.runInContext([RT, pluckFn(LB, '_lbDatesOfWeekdayInMonth'), pluckFn(LB, 'autoBookRecurringPatterns')].join('\n'), ctx);
@@ -83,7 +83,7 @@ console.log('=== ③b 自動予約の通知の見出し ===');
     _lbCustInfoById: () => ({ customerName: 'テスト', lineUserId: 'U1' }), _lbMemberLang: () => 'ja', _lbNormLang: (l) => l,
     _lbFmtResvLabel: () => '11月4日(火) 09:00', _lbPush: (to, msg, tag) => pushes.push([to, msg, tag]),
     getTrainerLineId: () => '', _lbCustTrainerId: () => '', _lbOwnerLineIds: () => [] };
-  vm.createContext(ctx); vm.runInContext(pluckFn(LB, '_lbNotifyAutoBook'), ctx);
+  vm.createContext(ctx); vm.runInContext((LB.match(/var _LB_AUTOBOOK_NO_REMAIN = [^\n]*/) || [''])[0] + '\n' + (LB.match(/var _LB_AUTOBOOK_NEED_REVIEW = [^\n]*/) || [''])[0] + '\n' + pluckFn(LB, '_lbNotifyAutoBook'), ctx);
   const d = { start: new Date(2026, 10, 4, 9) };
   ctx._lbNotifyAutoBook('C1', [], [d]);
   const allFail = pushes.find((p) => p[2] === 'autobook_customer')[1];

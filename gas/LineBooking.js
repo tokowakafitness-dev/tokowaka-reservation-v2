@@ -1883,7 +1883,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-23a 会員登録の失敗を点検に・開始日が先の契約でも登録できる';
+var LB_HEALTH_BUILD = '2026-10-25a 固定枠の自動予約を日付順・本人の予約は取れている扱い';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -8157,20 +8157,84 @@ function autoBookRecurringPatterns() {
     byCustomer[cid].rows.push(i + 2);
     byCustomer[cid].pats.push({ w: weekday, t: time });
     var dates = _lbDatesOfWeekdayInMonth(targetY, targetM, weekday, time);
-    for (var d = 0; d < dates.length; d++) {
-      var startDate = dates[d];
+    if (!byCustomer[cid].cands) byCustomer[cid].cands = [];
+    for (var d = 0; d < dates.length; d++) byCustomer[cid].cands.push({ start: dates[d], trainerId: trainerId });
+  }
+  // ★会員ごとに、その月の日付の早い順に取る（2026-10-25）。
+  //   以前は固定枠の行の順（例：火曜を全部→木曜を全部）だったため、回数が足りなくなると
+  //   月の途中の日が落ち、月末の日が取れることがあった。早い順なら落ちるのは月末側になる。
+  // ★本人の予約が同じ時刻に既にあれば「取れている」と数える（2026-10-25）。
+  //   トレーナーが先に手入力していると、自分の予約と競合して SLOT_TAKEN になり、
+  //   予約済みの日を「お取りできませんでした」と案内していた（10/25 に現実化しかけた）。
+  for (var oc = 0; oc < order.length; oc++) {
+    var cid = order[oc], agg0 = byCustomer[cid];
+    //   同じ日時の候補は1つにまとめる（担当だけ違う固定枠の行が2つあっても二重に数えない・Codex関門②）
+    var _seen = {}, cands = [];
+    (agg0.cands || []).slice().sort(function (a, b) { return a.start.getTime() - b.start.getTime(); })
+      .forEach(function (c) { var key = c.start.getTime(); if (_seen[key]) return; _seen[key] = true; cands.push(c); });
+    //   本人の予約の開始時刻。★完全一致ではなく「同じ1時間に重なる」で見る（9:15 の手入力・秒のずれも拾う・Codex関門②）
+    var mine = [];
+    try {
+      var _ss = _lbResvSessions(cid);
+      if (_ss === null) Logger.log('autoBookRecurring: 予約台帳が読めません（既存の予約を見分けずに進めます）');
+      else for (var si = 0; si < _ss.length; si++) if (isFinite(_ss[si].startAt)) mine.push(_ss[si].startAt);
+    } catch (eS) { Logger.log('autoBookRecurring: 本人の予約が読めません（既存の予約を見分けずに進めます）: ' + eS.message); }
+    //   ★1件の予約は1つの候補にしか使わない（Codex関門②）。同じ日に限る（前日 23:30 と当日 0:00 を同じ予約とみなさない）。
+    //     割り当ては日ごとに「割り当てる件数が最大 → 時刻差の合計が最小」を選ぶ。
+    //     近い組から順に決めると取りこぼす（固定枠 9:00・10:00／予約 8:10・9:20 で、9:00↔9:20 を先に取ると 10:00 が空く）。
+    //     ★時刻順に並べた両者を表で解く（動的計画法・候補数×予約数）。直線上の対応は交差させない形に最適解があるため、
+    //       全部の組み合わせを試すのと同じ答えになる。全部試すと異常データで指数的に重くなる（Codex関門②）。
+    //     未来の候補だけを対象にする。
+    var _span = SETTINGS.SESSION_MINUTES * 60000, _hitOf = {};
+    function _dayKey(ms) { var x = new Date(ms); return x.getFullYear() + '-' + x.getMonth() + '-' + x.getDate(); }
+    var _byDay = {};
+    for (var ci = 0; ci < cands.length; ci++) {
+      var _cs = cands[ci].start.getTime(); if (_cs <= now.getTime()) continue;
+      var _k = _dayKey(_cs); (_byDay[_k] || (_byDay[_k] = { c: [], m: [] })).c.push(ci);
+    }
+    for (var mj = 0; mj < mine.length; mj++) { var _mk = _dayKey(mine[mj]); if (_byDay[_mk]) _byDay[_mk].m.push(mj); }
+    Object.keys(_byDay).forEach(function (k) {
+      var g = _byDay[k]; if (!g.m.length) return;
+      var C = g.c.slice().sort(function (x, y) { return cands[x].start.getTime() - cands[y].start.getTime(); });
+      var M = g.m.slice().sort(function (x, y) { return mine[x] - mine[y]; });
+      var nc = C.length, nm = M.length, n = [], cost = [], how = [];
+      for (var i = nc; i >= 0; i--) {
+        n[i] = []; cost[i] = []; how[i] = [];
+        for (var j = nm; j >= 0; j--) {
+          if (i === nc || j === nm) { n[i][j] = 0; cost[i][j] = 0; how[i][j] = 0; continue; }
+          //   0=候補を割り当てない／1=予約を使わない／2=この組を割り当てる。件数が多い方、同じなら差が小さい方
+          var bn = n[i + 1][j], bc = cost[i + 1][j], bh = 0;
+          if (n[i][j + 1] > bn || (n[i][j + 1] === bn && cost[i][j + 1] < bc)) { bn = n[i][j + 1]; bc = cost[i][j + 1]; bh = 1; }
+          var df = Math.abs(mine[M[j]] - cands[C[i]].start.getTime());
+          if (df < _span) {
+            var tn = 1 + n[i + 1][j + 1], tc = df + cost[i + 1][j + 1];
+            if (tn > bn || (tn === bn && tc < bc)) { bn = tn; bc = tc; bh = 2; }
+          }
+          n[i][j] = bn; cost[i][j] = bc; how[i][j] = bh;
+        }
+      }
+      for (var ii = 0, jj = 0; ii < nc && jj < nm;) {
+        var h = how[ii][jj];
+        if (h === 2) { _hitOf[C[ii]] = mine[M[jj]]; ii++; jj++; } else if (h === 1) jj++; else ii++;
+      }
+    });
+    for (var d = 0; d < cands.length; d++) {
+      var startDate = cands[d].start, trainerId = cands[d].trainerId;
       if (startDate.getTime() <= now.getTime()) continue;   // 過去・当日以前はスキップ
+      var _hit = (_hitOf[d] != null) ? _hitOf[d] : null;
+      //   通知には**実際の予約の時刻**を出す（9:15 の予約を 9:00 と案内しない）
+      if (_hit !== null) { agg0.booked.push({ start: new Date(_hit), trainerId: trainerId, already: true }); continue; }
       var custInfo = _lbCustInfoById(cid);
-      if (!custInfo) { byCustomer[cid].skipped.push({ start: startDate, code: 'MEMBER_UNAVAILABLE' }); continue; }
+      if (!custInfo) { agg0.skipped.push({ start: startDate, code: 'MEMBER_UNAVAILABLE' }); continue; }
       var useTrainer = trainerId;
       if (!useTrainer) {   // 担当なし固定枠＝その日時にシフトインのトレーナーへ均等ランダムに割当
         useTrainer = _lbPickBalancedTrainer(startDate, assignCount);
-        if (!useTrainer) { byCustomer[cid].skipped.push({ start: startDate, code: 'NO_TRAINER_ON_SHIFT' }); continue; }
+        if (!useTrainer) { agg0.skipped.push({ start: startDate, code: 'NO_TRAINER_ON_SHIFT' }); continue; }
       }
       custInfo.suppressNotify = true;   // 個別通知を抑制→まとめて1通知
       var r = _lbReserveCore(custInfo, { trainerId: useTrainer, startISO: startDate.toISOString(), attendeeCount: 1, packKind: 'normal' }, 'line');
-      if (r && r.success) { byCustomer[cid].booked.push({ start: startDate, trainerId: useTrainer }); if (!trainerId) assignCount[useTrainer] = (assignCount[useTrainer] || 0) + 1; }
-      else byCustomer[cid].skipped.push({ start: startDate, code: (r && r.code) || 'ERROR', trainerId: useTrainer });
+      if (r && r.success) { agg0.booked.push({ start: startDate, trainerId: useTrainer }); if (!trainerId) assignCount[useTrainer] = (assignCount[useTrainer] || 0) + 1; }
+      else agg0.skipped.push({ start: startDate, code: (r && r.code) || 'ERROR', trainerId: useTrainer });
     }
   }
   for (var k = 0; k < order.length; k++) {
@@ -8179,7 +8243,8 @@ function autoBookRecurringPatterns() {
     // ★二重書き（2026-10-08・段階3-a・Codex関門①で判明した漏れ）。
     //   この処理は _lbReserveCore を直接呼び、中央出口を通らない。
     //   ★1件でも予約できた会員だけ積む。order には予約できなかった会員も入る。
-    if (agg.booked.length) {
+    //   ★既存の予約しか無い会員は積まない（何も書いていない）
+    if (agg.booked.some(function (x) { return !x.already; })) {
       try { _lbDwMarkDirty(c2, lbDwEnqueue(c2)); } catch (e) { Logger.log('[dw] 固定枠ぶんを積めませんでした: ' + (e && e.message)); }
     }
     try { _lbNotifyAutoBook(c2, agg.booked, agg.skipped); } catch (e) { Logger.log('自動予約通知失敗(' + c2 + '): ' + e.message); }
@@ -8205,6 +8270,11 @@ function autoBookRecurringPatterns() {
   return { customers: order.length, month: targetKey };
 }
 
+// 回数が足りずに取らなかった、を表す理由（_lbReserveCore / getBookableRemaining が返す）
+var _LB_AUTOBOOK_NO_REMAIN = { NO_REMAINING: true };
+// 契約の情報が確かめられずに取らなかった、を表す理由（回数の話ではない・Codex関門②）
+var _LB_AUTOBOOK_NEED_REVIEW = { NO_CONTRACT: true, REVIEW_REQUIRED: true };
+
 // 自動予約の結果を通知（会員＝本人言語／担当トレーナー＋オーナー＝集計）
 function _lbNotifyAutoBook(customerId, booked, skipped) {
   var ci = _lbCustInfoById(customerId);
@@ -8221,13 +8291,22 @@ function _lbNotifyAutoBook(customerId, booked, skipped) {
       : { ja: '来月分の固定枠のご予約を\nお取りできませんでした。', en: 'We could not auto-book your regular sessions for next month.', zh: '未能为您自动预约下月的固定时段。', 'zh-Hant': '未能為您自動預約下月的固定時段。' }[_l];
     var okH = { ja: '【ご予約】', en: '[Booked]', zh: '【已预约】', 'zh-Hant': '【已預約】' }[_l];
     var ngH = { ja: '【お取りできませんでした】\n別の時間をお選びください：', en: '[Could not book] Please pick another time:', zh: '【无法预约】请另选时间：', 'zh-Hant': '【無法預約】請另選時間：' }[_l];
+    //   ★回数が足りずに取らなかった日は「別の時間を」と言わない（別の時間でも取れないため）
+    var noRem = skipped.filter(function (x) { return _LB_AUTOBOOK_NO_REMAIN[x.code]; });
+    var review = skipped.filter(function (x) { return _LB_AUTOBOOK_NEED_REVIEW[x.code]; });
+    var ngOther = skipped.filter(function (x) { return !_LB_AUTOBOOK_NO_REMAIN[x.code] && !_LB_AUTOBOOK_NEED_REVIEW[x.code]; });
+    var remH = { ja: '【ご契約の回数を超えるため\nお取りしていません】', en: '[Not booked: beyond your plan for the month]', zh: '【超出合约次数，未预约】', 'zh-Hant': '【超出合約次數，未預約】' }[_l];
+    var revH = { ja: '【ご契約情報の確認が必要なため\nお取りしていません】\n担当よりご連絡いたします：', en: '[Not booked: we need to check your plan] Your trainer will contact you:', zh: '【需确认合约信息，未预约】教练将与您联系：', 'zh-Hant': '【需確認合約資訊，未預約】教練將與您聯繫：' }[_l];
     var msg = head;
     if (booked.length) msg += '\n\n' + okH + '\n' + labels(booked).join('\n');
-    if (skipped.length) msg += '\n\n' + ngH + '\n' + labels(skipped).join('\n');
+    if (ngOther.length) msg += '\n\n' + ngH + '\n' + labels(ngOther).join('\n');
+    if (noRem.length) msg += '\n\n' + remH + '\n' + labels(noRem).join('\n');
+    if (review.length) msg += '\n\n' + revH + '\n' + labels(review).join('\n');
     _lbPush(lineUserId, msg, 'autobook_customer');
   }
   // 担当トレーナー＋オーナーへ集計
-  var summary = '【自動予約】' + name + '様\n予約' + booked.length + '件 / 取れず' + skipped.length + '件';
+  var _already = booked.filter(function (x) { return x.already; }).length;
+  var summary = '【自動予約】' + name + '様\n予約' + booked.length + '件' + (_already ? '（うち既に予約済み' + _already + '件）' : '') + ' / 取れず' + skipped.length + '件';
   if (skipped.length) summary += '\n未予約：\n' + skipped.map(function (x) { return '・' + _lbFmtResvLabel(x.start.toISOString(), 'ja') + '（' + (x.code || '') + '）'; }).join('\n');
   var notified = {};
   var trId = getTrainerLineId(_lbCustTrainerId(customerId));   // 担当トレーナー

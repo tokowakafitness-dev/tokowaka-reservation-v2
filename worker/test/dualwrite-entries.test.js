@@ -93,8 +93,9 @@ console.log('=== 3. 中央出口を通らない書き込み経路が、待ち行
   ok('③-C カレンダー取込（dailySync）が取り込んだ会員を積む',
     /appendRows\[_dw\]\[2\]/.test(LB) && /lbDwEnqueue\(_dwCid\)/.test(LB),
     '6時間ごとに予約を台帳へ足す。積まないと翌日の完全同期まで引当に入らない');
-  ok('③-D 固定枠の自動予約が、予約できた会員だけ積む',
-    /if \(agg\.booked\.length\) \{[\s\S]{0,200}?lbDwEnqueue\(c2\)/.test(LB),
+  //   2026-10-25：「既に予約済み」だけの会員（何も書いていない）は積まない形に締めた
+  ok('③-D 固定枠の自動予約が、新しく予約できた会員だけ積む',
+    /if \(agg\.booked\.some\(function \(x\) \{ return !x\.already; \}\)\) \{[\s\S]{0,200}?lbDwEnqueue\(c2\)/.test(LB),
     'order には予約できなかった会員も入る。全員積むと無駄な作り直しが走る');
   ok('③中央出口そのものも積む', /lbDwEnqueue\(cid\)/.test(PE));
 }
