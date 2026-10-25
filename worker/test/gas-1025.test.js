@@ -28,23 +28,24 @@ const RT = 'var _LB_RECUR_TZ = null;\n' + pluckFn(LB, '_lbRecurTz') + '\n' + plu
 const noRemainSrc = (LB.match(/var _LB_AUTOBOOK_NO_REMAIN = [^\n]*/) || [''])[0] + '\n' + (LB.match(/var _LB_AUTOBOOK_NEED_REVIEW = [^\n]*/) || [''])[0];
 
 //   2026-10-25 06:00 に走らせて 11月を取る。quota＝予約できる回数（超えたら NO_REMAINING）
-function run({ rows, quota, mine = [], ledgerNull = false }) {
-  const calls = [], props = {}, notices = [], logs = [], enq = [];
+function run({ rows, quota, mine = [], ledgerNull = false, monthlyRem = null, monthlyQuota = null, coverage = 'limited', remThrows = false, transfer = [] }) {
+  const calls = [], props = {}, notices = [], logs = [], enq = [], bodies = [];
   let left = quota;
   const ctx = { Utilities, SETTINGS, String, Number, isNaN, isFinite, Math, JSON, Object, _lbSs, RP_COL, Logger: { log: (m) => logs.push(String(m)) },
     Date: class extends Date { constructor(...a) { if (a.length === 0) super(2026, 9, 25, 6, 0, 0); else super(...a); } static now() { return new Date(2026, 9, 25, 6).getTime(); } },
     _lbTruthy: (v) => v === true, LB_AUTOBOOK_RESULT_PREFIX: 'LB_AUTOBOOK_RESULT_',
     _lbRecurSheet: () => ({ getLastRow: () => rows.length + 1, getRange: () => ({ getValues: () => rows, setValue: () => {} }) }),
-    _lbResvSessions: () => ledgerNull ? null : mine.map((ms) => ({ startAt: ms })),
-    _lbCustInfoById: () => ({ customerId: 'C1' }), _lbPickBalancedTrainer: () => 'B',
-    _lbReserveCore: (ci, body) => { calls.push(body.startISO); if (left <= 0) return { success: false, code: 'NO_REMAINING' }; left--; return { success: true }; },
+    _lbResvSessions: () => ledgerNull ? null : mine.map((ms) => ({ startAt: ms, channel: 'line' })).concat(transfer.map((ms) => ({ startAt: ms, channel: 'transfer' }))),
+    _lbCustInfoById: () => ({ customerId: 'C1', customerName: 'テスト', contractType: '' }), _lbPickBalancedTrainer: () => 'B',
+    getBookableRemaining: () => { if (remThrows) throw new Error('x'); return { ok: true, monthlyRem, monthlyQuota: monthlyQuota != null ? monthlyQuota : monthlyRem, monthlyCoverage: coverage }; },
+    _lbReserveCore: (ci, body) => { calls.push(body.startISO); bodies.push(body); if (left <= 0) return { success: false, code: 'NO_REMAINING' }; left--; return { success: true }; },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
     _lbDwMarkDirty: () => {}, lbDwEnqueue: (c) => { enq.push(c); return 1; },
     _lbNotifyAutoBook: (c, b, s) => notices.push({ b, s }) };
   vm.createContext(ctx);
   vm.runInContext([RT, pluckFn(LB, '_lbDatesOfWeekdayInMonth'), pluckFn(LB, 'autoBookRecurringPatterns')].join('\n'), ctx);
   ctx.autoBookRecurringPatterns();
-  return { calls, props, notice: notices[0], logs, enq };
+  return { calls, props, notice: notices[0], logs, enq, bodies };
 }
 const day = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
 
@@ -134,6 +135,61 @@ console.log('=== ② 本人の予約が既にある日 ===');
   }
   const r6 = run({ rows, quota: 10, ledgerNull: true });
   ok('②-11 台帳が読めないことをログに残す（予約は従来どおり進む）', r6.logs.some((l) => /予約台帳が読めません/.test(l)) && r6.calls.length === 4);
+}
+
+console.log('=== ⑤ 方針A：その月の合計回数を「月額の回数＋繰越」まで ===');
+{
+  //   火・木で11月は8日。月額の回数＋繰越＝6回（チケットは別に十分ある＝予約の判定 quota は大きい）
+  const tt = [['P-T', 'C1', 4, '09:00', 'B', true, '', '', '', ''], ['P-U', 'C1', 2, '09:00', 'B', true, '', '', '', '']];
+  const r = run({ rows: tt, quota: 99, monthlyRem: 6, monthlyQuota: 6 });
+  ok('⑤-1 ★新しく取るのは6回まで（チケットがあっても7回目は取らない）', r.calls.length === 6 && r.notice.b.length === 6, r.calls.length + '');
+  ok('⑤-2 ★取らなかった月末の2日は「回数を超えるため」', JSON.stringify(r.notice.s.map((x) => day(x.start) + ':' + x.code)) === JSON.stringify(['11/24:NO_REMAINING', '11/26:NO_REMAINING']), JSON.stringify(r.notice.s.map((x) => day(x.start))));
+  //   ★既存の予約は消化先に関係なく合計に数える（チケットに割り当たった既存予約は monthlyRem から引かれていない＝Codex関門②）
+  const mine2 = [new Date(2026, 10, 3, 9).getTime(), new Date(2026, 10, 5, 9).getTime()];
+  const r2 = run({ rows: tt, quota: 99, monthlyRem: 6, monthlyQuota: 6, mine: mine2 });
+  ok('⑤-3 ★既存2回（チケット消化で monthlyRem は6のまま）でも合計6回＝新しく4回', r2.calls.length === 4 && r2.notice.b.length === 6 && r2.notice.s.length === 2, r2.calls.length + '');
+  //   ほかの日の本人の予約（固定枠以外）もその月の合計に入る
+  const r2b = run({ rows: tt, quota: 99, monthlyRem: 5, monthlyQuota: 6, mine: [new Date(2026, 10, 7, 15).getTime()] });
+  ok('⑤-3b 固定枠以外の本人の予約もその月の合計に数える（6−1＝5回）', r2b.calls.length === 5);
+  const r2c = run({ rows: tt, quota: 99, monthlyRem: 6, monthlyQuota: 6, mine: [new Date(2026, 9, 28, 9).getTime(), new Date(2026, 11, 1, 9).getTime()] });
+  ok('⑤-3c 他の月の予約は数えない', r2c.calls.length === 6);
+  const r3 = run({ rows: tt, quota: 99, monthlyRem: null });
+  ok('⑤-4 ★月額契約が無い会員（チケットだけ）は従来どおり全部取りに行く', r3.calls.length === 8);
+  const r4 = run({ rows: tt, quota: 99, monthlyRem: 0, monthlyQuota: 0 });
+  ok('⑤-5 月額の回数＋繰越が0回なら1件も取りに行かない', r4.calls.length === 0 && r4.notice.s.length === 8);
+  const r4b = run({ rows: tt, quota: 99, monthlyRem: 0, monthlyQuota: 4, coverage: 'uncovered' });
+  ok('⑤-5b 契約がその月を覆っていなければ0回（繰越が残っていても）', r4b.calls.length === 0);
+  const r5 = run({ rows: tt, quota: 3, remThrows: true });
+  ok('⑤-6 読めなければ上限を置かず、予約の判定に任せる（従来どおり）', r5.calls.length === 8 && r5.notice.b.length === 3 && r5.logs.some((l) => /月額の残りが読めません/.test(l)));
+  //   ★振替は月の回数を使わない別枠＝合計に数えない（Codex関門②）
+  const r6 = run({ rows: tt, quota: 99, monthlyRem: 6, monthlyQuota: 6, transfer: [new Date(2026, 10, 7, 15).getTime(), new Date(2026, 10, 8, 15).getTime()] });
+  ok('⑤-8 ★振替の予約は合計に数えない（6回とも取りに行く）', r6.calls.length === 6, r6.calls.length + '');
+  ok('⑤-9 ★予約の確定処理に上限（月の合計＝6）を渡す', r6.bodies.length > 0 && r6.bodies.every((b) => b.autoBookCap === 6));
+  const r7 = run({ rows: tt, quota: 99, monthlyRem: null });
+  ok('⑤-10 月額契約が無い会員には上限を渡さない', r7.bodies.every((b) => b.autoBookCap === undefined));
+  ok('⑤-7 判定関数は回数＋繰越と覆い方を返す', /monthlyQuota: disp\.avail, monthlyCoverage: disp\.coverage/.test(LB));
+}
+
+console.log('=== ⑥ 予約の確定処理：ロックの内側で月の合計を数え直す ===');
+{
+  const impl = pluckFn(LB, '_lbReserveCoreImpl');
+  const iLock = impl.indexOf('lock.waitLock('), iCap = impl.indexOf('body.autoBookCap != null');
+  ok('⑥-1 ★数え直しはロックを取った後（内側）', iLock > 0 && iCap > iLock, iLock + ' / ' + iCap);
+  const blk = impl.slice(iCap - 4, impl.indexOf("if (_capN >= Number(body.autoBookCap)) return { success: false, code: 'NO_REMAINING'"));
+  const tail = "if (_capN >= Number(body.autoBookCap)) return 'NO_REMAINING'; } return 'OK';";
+  const check = (sessions, cap, startMs) => {
+    const ctx = { Number, Date, _lbIsFiniteNum: (x) => typeof x === 'number' && isFinite(x), _lbResvSessions: () => sessions,
+      body: { autoBookCap: cap }, custInfo: { customerId: 'C1' }, start: new Date(startMs) };
+    vm.createContext(ctx);
+    return vm.runInContext('(function(){ ' + blk + tail + ' })()', ctx);
+  };
+  const nov = (d, h) => new Date(2026, 10, d, h).getTime();
+  const s4 = [nov(3, 9), nov(5, 9), nov(10, 9), nov(12, 9)].map((x) => ({ startAt: x, channel: 'line' }));
+  ok('⑥-2 ★その月に既に4件・上限4 → 取らない（途中で本人が予約した形）', check(s4, 4, nov(17, 9)) === 'NO_REMAINING');
+  ok('⑥-3 3件・上限4 → 取れる', check(s4.slice(0, 3), 4, nov(17, 9)) === 'OK');
+  ok('⑥-4 ★振替は数えない（通常3件＋振替2件・上限4 → 取れる）', check(s4.slice(0, 3).concat([{ startAt: nov(7, 15), channel: 'transfer' }, { startAt: nov(8, 15), channel: 'transfer' }]), 4, nov(17, 9)) === 'OK');
+  ok('⑥-5 他の月の予約は数えない', check([{ startAt: new Date(2026, 9, 30, 9).getTime(), channel: 'line' }].concat(s4.slice(0, 3)), 4, nov(17, 9)) === 'OK');
+  ok('⑥-6 上限を渡さない呼び出し（会員の予約・トレーナーの代行）は何もしない', check(s4, undefined, nov(17, 9)) === 'OK' && check(null, null, nov(17, 9)) === 'OK');
 }
 
 console.log('=== ③ 通知 ===');

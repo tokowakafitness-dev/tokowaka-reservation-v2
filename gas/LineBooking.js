@@ -1883,7 +1883,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-25a 固定枠の自動予約を日付順・本人の予約は取れている扱い';
+var LB_HEALTH_BUILD = '2026-10-25b 固定枠の自動予約は月額の残り（繰越込み）まで・チケットは使わない';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -4402,7 +4402,9 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
   return { ok: true, remaining: (disp.monthlyRem || 0) + (disp.ticketRem || 0),
            monthlyRem: disp.monthlyRem, ticketRem: disp.ticketRem,
            ticketRemPair: disp.ticketRemPair, ticketRemNormal: disp.ticketRemNormal,
-           packKind: wantKind, attendeeCount: wantAtt, consumeType: b.consumeType, monthlyType: _monthlyType };
+           packKind: wantKind, attendeeCount: wantAtt, consumeType: b.consumeType, monthlyType: _monthlyType,
+           //   ★固定枠の自動予約が「その月の合計回数」を抑えるのに使う（2026-10-25・方針A）。他の読み手は見ない
+           monthlyQuota: disp.avail, monthlyCoverage: disp.coverage };
 }
 
 // 予約確定画面の選択肢を「予約対象日時ベース」で返す（ホームの当日基準の内訳で未来予約を縛らないため）。
@@ -5259,6 +5261,19 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
       rem = getBookableRemaining(custInfo.customerId, custInfo.contractType, custInfo.customerName, start.getTime(), undefined, _att, body.packKind);
       if (!rem.ok) return { success: false, code: rem.code || 'NO_REMAINING', message: rem.message || '予約可能な残数がありません。' };
       _kind = rem.packKind || 'normal';   // 実際に消化する種別＝カレンダー種別・記録(book_type)と厳密に一致させる
+      //   ★固定枠の自動予約だけ：その月の合計回数の上限（2026-10-25・方針A）。**ロックの内側で**数え直す。
+      //     自動予約は1件ずつロックを取り直すので、途中で本人が予約すると外で数えた上限を超えうる（Codex関門②）。
+      //     数えるのは本人のその月の予約（confirmed/consumed）のうち振替以外（振替は月の回数を使わない別枠）。
+      if (body.autoBookCap != null && _lbIsFiniteNum(Number(body.autoBookCap))) {
+        var _capSs = _lbResvSessions(custInfo.customerId);
+        if (_capSs === null) return { success: false, code: 'REVIEW_REQUIRED', message: '予約情報の確認ができません。' };
+        var _capFrom = new Date(start.getFullYear(), start.getMonth(), 1).getTime(), _capTo = new Date(start.getFullYear(), start.getMonth() + 1, 1).getTime(), _capN = 0;
+        for (var _ci = 0; _ci < _capSs.length; _ci++) {
+          var _cx = _capSs[_ci];
+          if (_cx.channel !== 'transfer' && _cx.startAt >= _capFrom && _cx.startAt < _capTo) _capN++;
+        }
+        if (_capN >= Number(body.autoBookCap)) return { success: false, code: 'NO_REMAINING', message: 'ご契約の回数を超えるため、お取りしていません。' };
+      }
     }
     _lap('残数チェック');
     // 施設キャパシティ競合（★通常予約はB1=地下のみ使用。1Fは初回体験のみ。billingも[RESERVED]はB1のみ参照）
@@ -8173,11 +8188,11 @@ function autoBookRecurringPatterns() {
     (agg0.cands || []).slice().sort(function (a, b) { return a.start.getTime() - b.start.getTime(); })
       .forEach(function (c) { var key = c.start.getTime(); if (_seen[key]) return; _seen[key] = true; cands.push(c); });
     //   本人の予約の開始時刻。★完全一致ではなく「同じ1時間に重なる」で見る（9:15 の手入力・秒のずれも拾う・Codex関門②）
-    var mine = [];
+    var mine = [], mineCh = [];   // mineCh＝各予約のチャネル（振替は月の回数に数えない）
     try {
       var _ss = _lbResvSessions(cid);
       if (_ss === null) Logger.log('autoBookRecurring: 予約台帳が読めません（既存の予約を見分けずに進めます）');
-      else for (var si = 0; si < _ss.length; si++) if (isFinite(_ss[si].startAt)) mine.push(_ss[si].startAt);
+      else for (var si = 0; si < _ss.length; si++) if (isFinite(_ss[si].startAt)) { mine.push(_ss[si].startAt); mineCh.push(_ss[si].channel); }
     } catch (eS) { Logger.log('autoBookRecurring: 本人の予約が読めません（既存の予約を見分けずに進めます）: ' + eS.message); }
     //   ★1件の予約は1つの候補にしか使わない（Codex関門②）。同じ日に限る（前日 23:30 と当日 0:00 を同じ予約とみなさない）。
     //     割り当ては日ごとに「割り当てる件数が最大 → 時刻差の合計が最小」を選ぶ。
@@ -8218,6 +8233,15 @@ function autoBookRecurringPatterns() {
         if (h === 2) { _hitOf[C[ii]] = mine[M[jj]]; ii++; jj++; } else if (h === 1) jj++; else ii++;
       }
     });
+    //   ★月額契約の会員は、その月の予約の**合計回数**を「月額の回数＋繰越」までに抑える（2026-10-25 オーナー決定＝方針A）。
+    //     上限＝月額の回数＋繰越（monthlyQuota）−その月に既にある本人の予約（**消化先に関係なく全部**）。
+    //     ★月額の残り（monthlyRem）は使わない。チケットに割り当たった既存予約が引かれていないため、
+    //       合計が契約回数を超えてチケットで足されてしまう（Codex関門②）。
+    //     どの枠から消化するかは割り当ての仕組みに任せる。失効の近いチケットを先に使うのは全予約共通の規則で、
+    //     回数は契約内に収まり、失効するはずのチケットが無駄にならない（会員が自分で予約した場合と同じ）。
+    //     契約がその月を覆っていなければ0。月額契約が無い会員（チケットだけ）は、固定枠を登録した時点で
+    //     チケットで通う意思があるので従来どおり。読めないときは上限を置かず、予約の判定（_lbReserveCore）に任せる。
+    var _budget = null, _cap = null;   // _budget：null＝まだ求めていない／Infinity＝上限なし。_cap：予約の確定処理がロック内で数え直す上限（月の合計）
     for (var d = 0; d < cands.length; d++) {
       var startDate = cands[d].start, trainerId = cands[d].trainerId;
       if (startDate.getTime() <= now.getTime()) continue;   // 過去・当日以前はスキップ
@@ -8226,14 +8250,32 @@ function autoBookRecurringPatterns() {
       if (_hit !== null) { agg0.booked.push({ start: new Date(_hit), trainerId: trainerId, already: true }); continue; }
       var custInfo = _lbCustInfoById(cid);
       if (!custInfo) { agg0.skipped.push({ start: startDate, code: 'MEMBER_UNAVAILABLE' }); continue; }
+      if (_budget === null) {
+        _budget = Infinity;
+        try {
+          var _rb = getBookableRemaining(cid, custInfo.contractType, custInfo.customerName, startDate.getTime(), undefined, 1, 'normal');
+          if (_rb && _rb.ok && _rb.monthlyRem != null) {
+            if (_rb.monthlyCoverage === 'uncovered') { _budget = 0; _cap = 0; }
+            else if (isFinite(Number(_rb.monthlyQuota))) {
+              var _mFrom = new Date(targetY, targetM - 1, 1).getTime(), _mTo = new Date(targetY, targetM, 1).getTime(), _have = 0;
+              for (var hi = 0; hi < mine.length; hi++) if (mineCh[hi] !== 'transfer' && mine[hi] >= _mFrom && mine[hi] < _mTo) _have++;
+              _cap = Number(_rb.monthlyQuota);
+              _budget = Math.max(0, _cap - _have);
+            }
+          }
+        } catch (eB) { Logger.log('autoBookRecurring: 月額の残りが読めません（上限を置かずに進めます）: ' + eB.message); }
+      }
+      if (_budget <= 0) { agg0.skipped.push({ start: startDate, code: 'NO_REMAINING' }); continue; }
       var useTrainer = trainerId;
       if (!useTrainer) {   // 担当なし固定枠＝その日時にシフトインのトレーナーへ均等ランダムに割当
         useTrainer = _lbPickBalancedTrainer(startDate, assignCount);
         if (!useTrainer) { agg0.skipped.push({ start: startDate, code: 'NO_TRAINER_ON_SHIFT' }); continue; }
       }
       custInfo.suppressNotify = true;   // 個別通知を抑制→まとめて1通知
-      var r = _lbReserveCore(custInfo, { trainerId: useTrainer, startISO: startDate.toISOString(), attendeeCount: 1, packKind: 'normal' }, 'line');
-      if (r && r.success) { agg0.booked.push({ start: startDate, trainerId: useTrainer }); if (!trainerId) assignCount[useTrainer] = (assignCount[useTrainer] || 0) + 1; }
+      var _body = { trainerId: useTrainer, startISO: startDate.toISOString(), attendeeCount: 1, packKind: 'normal' };
+      if (_cap !== null) _body.autoBookCap = _cap;   // ★ロックの内側でもう一度数え直してもらう（途中で本人が予約しても超えない）
+      var r = _lbReserveCore(custInfo, _body, 'line');
+      if (r && r.success) { agg0.booked.push({ start: startDate, trainerId: useTrainer }); _budget--; if (!trainerId) assignCount[useTrainer] = (assignCount[useTrainer] || 0) + 1; }
       else agg0.skipped.push({ start: startDate, code: (r && r.code) || 'ERROR', trainerId: useTrainer });
     }
   }
