@@ -285,8 +285,9 @@ const starts = (r) => (r.slots || []).map((s) => Number(s.startMs)).sort((a, b) 
     const [, same] = await send(env, payload({ ownerWindow: { 1: 'all' } }));
     eq('設定も予定も同じなら世代を増やさない', same.mode, 'unchanged');
     const [, changed] = await send(env, payload({ ownerWindow: { 1: { from: 17, to: 24 } } }));
-    eq('★ownerWindow だけ変わったら公開し直す', changed.mode, 'published');
-    ok('★新しい世代になっている', Number(changed.generation) > Number(gen1));
+    //   2026-10-26：公開中の世代に差分として書く（calsync.test.js 13.）。設定が入ることが本題
+    eq('★ownerWindow だけ変わったら反映する（公開中の世代に書く）', changed.mode, 'patched');
+    ok('★同じ世代のまま設定が変わる', Number(changed.generation) === Number(gen1));
     eq('★新しい設定が入っている', stored(env), '{"1":{"from":17,"to":24}}');
   }
   {
@@ -294,7 +295,7 @@ const starts = (r) => (r.slots || []).map((s) => Number(s.startMs)).sort((a, b) 
     const env = makeEnv();
     await send(env, payload({ ownerWindow: { 1: 'all' } }));
     const [, r] = await send(env, payload({ ownerWindow: null }));
-    eq('★設定を外したら公開し直す', r.mode, 'published');
+    eq('★設定を外したら反映する', r.mode, 'patched');
     eq('★NULL に戻る', stored(env), null);
   }
 

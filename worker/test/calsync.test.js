@@ -252,8 +252,6 @@ const warns = (b) => (b.warnings || []).map((w) => w.code).sort();
 //     すると翌月の要求が永久にGASへ落ち続ける。
 {
   const cases = [
-    ['地平の始まりが変わった', { horizonStart: H_START - 86400000 }],
-    ['地平の終わりが伸びた', { horizonEnd: H_END + 86400000 * 31 }],
     ['規則の版が上がった', { ruleVersion: 2 }],
     ['1Fフラグが変わった', { flag1f: 'on' }],
     ['カレンダーが増えた', { calendars: CALS.concat([{ calendarId: 'd@x', role: 'trainer', trainerId: 'D' }]) }],
@@ -265,6 +263,8 @@ const warns = (b) => (b.warnings || []).map((w) => w.code).sort();
       events: baseEvents().map((e) => (e.calendarId === TC ? Object.assign({}, e, { trainerId: 'Z' }) : e)),
     }],
   ];
+  //   ★2026-10-26：地平・中身・固定枠の設定の変化は「公開中の世代に差分を書く」になった（下の 13.）。
+  //     ここに残すのは分類そのものが変わる構成の変化（規則の版・1Fフラグ・カレンダー）だけ。
   for (const [name, over] of cases) {
     const env = makeEnv();
     const [, first] = await send(env, payload());
@@ -282,11 +282,11 @@ const warns = (b) => (b.warnings || []).map((w) => w.code).sort();
   eq('★並び順だけの違いで世代を増やさない', b.mode, 'unchanged');
 }
 {
-  // 中身の印が変われば当然新しい世代
+  // 中身の印が変われば、公開中の世代に差分を書く（2026-10-26）
   const env = makeEnv();
   const [, first] = await send(env, payload());
   const [, b] = await send(env, payload({ contentHash: HASH2 }));
-  eq('中身の印が変われば新しい世代', [b.mode, b.generation > first.generation], ['published', true]);
+  eq('中身の印が変われば公開中の世代に書く', [b.mode, b.generation], ['patched', first.generation]);
 }
 
 // ============================================================
@@ -512,7 +512,7 @@ await rejectCase('全員の出勤が0件',
       db.prepare('UPDATE calendar_active SET generation = 999 WHERE id = 1').run();
     }
   };
-  const [s, b] = await send(env, payload({ contentHash: HASH2 }));
+  const [s, b] = await send(env, payload({ contentHash: HASH2, ruleVersion: 2 }));   // 新しい世代を作る経路
   eq('★公開中の世代が変わっていたら公開しない', [s, b.code], [409, 'PUBLISH_RACE']);
   eq('★古い結果で巻き戻さない', active(env).generation, 999);
   eq('★公開できなかった世代は building のまま残る',
@@ -541,7 +541,7 @@ await rejectCase('全員の出勤が0件',
   const gen0 = active(env).generation;
   const checked0 = active(env).checked_at;
 
-  const [s, b] = await send(env, payload({ contentHash: HASH2, events: big }));
+  const [s, b] = await send(env, payload({ contentHash: HASH2, events: big, ruleVersion: 2 }));   // 新しい世代を作る経路
   eq('★途中で失敗したら500を返す', [s, b.code], [500, 'INTERNAL']);
   eq('★公開中の世代は前のまま', active(env).generation, gen0);
   eq('★checked_at も動かない', active(env).checked_at, checked0);
@@ -734,6 +734,108 @@ function payload1F(over = {}) {
   eq('★1Fの予定が1件入る', f1rows.length, 1);
   eq('★担当つきで入る', [f1rows[0].role, f1rows[0].trainer_id, f1rows[0].effect],
      ['capacity_1f', 'C', 'busy']);
+}
+
+// ============================================================
+// 13. 公開中の世代に、変わった予定だけを書く（2026-10-26・D1の書き込み量）
+//   1件変わるたびに全部を入れ直すと、10/25 に1日8万行を超えた（無料枠の81%）
+// ============================================================
+const evsOf = (env, gen) => rows(env, 'SELECT calendar_id, event_id, effect, reason, start_at, end_at FROM calendar_events WHERE generation = ? ORDER BY calendar_id, event_id', gen);
+const snap1 = (env, gen) => one(env, 'SELECT horizon_start, horizon_end, content_hash, owner_window, built_at, status FROM calendar_snapshot WHERE generation = ?', gen);
+{
+  const env = makeEnv();
+  const [, first] = await send(env, payload());
+  const gen = first.generation, nSnap = snaps(env).length;
+  //   1件増える・1件の時刻が動く（＝ID が変わる）・1件の種類が変わる・1件消える
+  const evs = baseEvents().filter((e) => e.eventId !== 'room1')
+    .map((e) => (e.eventId === 'bB' ? Object.assign({}, e, { reason: 'block' }) : e))
+    .concat([ev({ calendarId: TC, eventId: 'rC', trainerId: 'C' })]);
+  const [s, b] = await send(env, payload({ contentHash: HASH2, events: evs }));
+  eq('★差分で書く（同じ世代）', [s, b.mode, b.generation], [200, 'patched', gen]);
+  eq('★増えた1・変わった1・消えた1', [b.inserted, b.updated, b.deleted], [1, 1, 1]);
+  eq('★世代は増えない（入れ直さない）', snaps(env).length, nSnap);
+  const got = evsOf(env, gen).map((r) => r.event_id + ':' + r.reason).sort();
+  const want = evs.map((e) => e.eventId + ':' + e.reason).sort();
+  eq('★結果の予定は送った内容と完全に一致', got, want);
+  eq('★中身の印が進む', snap1(env, gen).content_hash, HASH2);
+  ok('★確認時刻が進む', active(env).checked_at >= first.checkedAt);
+}
+{
+  //   ★書き込み量：変わらない予定は1行も書かない
+  const env = makeEnv();
+  const many = baseEvents().concat(Array.from({ length: 200 }, (_, i) => ev({ eventId: 'm' + i, startAt: H_START + i * 3600000, endAt: H_START + i * 3600000 + 1800000 })));
+  await send(env, payload({ events: many }));
+  const writes = [];
+  env._hook = (q) => { if (/^\s*(INSERT|UPDATE|DELETE)/i.test(q) && /calendar_events/.test(q)) writes.push(q); };
+  const more = many.concat([ev({ eventId: 'new1' })]);
+  const [, b] = await send(env, payload({ contentHash: HASH2, events: more }));
+  eq('★206件のうち1件増えただけなら、予定への書き込みは1文', [b.mode, b.inserted, writes.length], ['patched', 1, 1]);
+}
+{
+  //   地平が毎晩0時に動く／25日に翌月末まで伸びる → 差分（世代を作り直さない）。世代の地平も進む
+  const env = makeEnv();
+  const [, first] = await send(env, payload());
+  const [, b] = await send(env, payload({ horizonStart: H_START - 86400000, horizonEnd: H_END + 86400000 * 31 }));
+  eq('★地平が動いても差分（同じ世代）', [b.mode, b.generation], ['patched', first.generation]);
+  const sn = snap1(env, first.generation);
+  eq('★世代の地平が進む（読む側の地平の判定が正しく働く）', [sn.horizon_start, sn.horizon_end], [H_START - 86400000, H_END + 86400000 * 31]);
+}
+{
+  //   固定枠の設定だけ変わる → 差分。世代の設定も変わる（設定が永久に反映されない罠を作らない）
+  const env = makeEnv();
+  const [, first] = await send(env, payload());
+  const ow = { 1: { from: 17, to: 24 }, 6: 'all' };
+  const [, b] = await send(env, payload({ ownerWindow: ow }));
+  eq('★固定枠の設定だけでも差分で反映', [b.mode, b.generation], ['patched', first.generation]);
+  ok('★世代の固定枠の設定が変わる', snap1(env, first.generation).owner_window != null);
+  const [, c] = await send(env, payload({ ownerWindow: ow }));
+  eq('★同じ設定の2回目は何も書かない', c.mode, 'unchanged');
+}
+{
+  //   ★競合：差分を読んだあと、別の押し出しが先に書いた → こちらは何も書かない
+  const env = makeEnv();
+  const [, first] = await send(env, payload());
+  env._hook = (q, db) => {
+    if (/SELECT calendar_id, event_id, role, trainer_id/.test(q)) {
+      db.prepare('UPDATE calendar_snapshot SET built_at = built_at + 5 WHERE generation = ?').run(first.generation);
+    }
+  };
+  const before = evsOf(env, first.generation);
+  //   増える・変わる・消えるを全部含める（どの種類の文にも条件が付いていることを確かめる）
+  const evs = baseEvents().filter((e) => e.eventId !== 'room1')
+    .map((e) => (e.eventId === 'bB' ? Object.assign({}, e, { reason: 'block' }) : e))
+    .concat([ev({ eventId: 'x9' })]);
+  const [s, b] = await send(env, payload({ contentHash: HASH2, events: evs }));
+  eq('★先を越されたら 409', [s, b.code], [409, 'PUBLISH_RACE']);
+  eq('★予定は1行も変わらない（全部の文に条件）', evsOf(env, first.generation), before);
+  eq('★中身の印も変わらない', snap1(env, first.generation).content_hash, HASH);
+}
+{
+  //   ★途中で失敗しても半端な状態を残さない（1つの batch＝トランザクション）
+  const env = makeEnv({ failOn: /UPDATE calendar_snapshot\s+SET horizon_start/ });
+  const [, first] = await send(env, payload());
+  const before = evsOf(env, first.generation), checked0 = active(env).checked_at;
+  const evs = baseEvents().filter((e) => e.eventId !== 'sA').concat([ev({ eventId: 'y1' })]);
+  const [s] = await send(env, payload({ contentHash: HASH2, events: evs }));
+  eq('★失敗したら500', s, 500);
+  eq('★予定は前のまま（消した・足した文も巻き戻る）', evsOf(env, first.generation), before);
+  eq('★確認時刻も動かない', active(env).checked_at, checked0);
+}
+{
+  //   差分が大きすぎるときは従来どおり新しい世代を作る（1つの batch を大きくしすぎない）
+  const env = makeEnv();
+  const [, first] = await send(env, payload());
+  const big = baseEvents().concat(Array.from({ length: _forTest.PATCH_MAX + 1 }, (_, i) => ev({ eventId: 'z' + i, startAt: H_START + i * 60000, endAt: H_START + i * 60000 + 30000 })));
+  const [, b] = await send(env, payload({ contentHash: HASH2, events: big }));
+  eq('★差分が上限を超えたら新しい世代', [b.mode, b.generation > first.generation], ['published', true]);
+}
+{
+  //   差分を書いた世代を、読む側（calread）がそのまま使える
+  const env = makeEnv();
+  const [, first] = await send(env, payload());
+  await send(env, payload({ contentHash: HASH2, events: baseEvents().concat([ev({ eventId: 'w1' })]) }));
+  eq('★公開中の世代は同じまま', active(env).generation, first.generation);
+  eq('★予定の数は7件', evCount(env, first.generation), 7);
 }
 
 console.log(`\nカレンダー受け取り口 検証: ${pass} passed / ${fail} failed`);

@@ -351,7 +351,7 @@ async function calsync(request, env) {
             s.horizon_start AS horizon_start, s.horizon_end AS horizon_end,
             s.rule_version AS rule_version, s.flag_1f AS flag_1f,
             s.content_hash AS content_hash, s.calendars AS calendars,
-            s.owner_window AS owner_window
+            s.owner_window AS owner_window, s.built_at AS built_at
        FROM calendar_active a LEFT JOIN calendar_snapshot s ON s.generation = a.generation
       WHERE a.id = 1`
   ).first();
@@ -414,6 +414,30 @@ async function calsync(request, env) {
     return jsonRes({ success: false, code: 'REJECTED', generation: gen, reasons, warnings }, 422);
   }
 
+  // ---- 4.5 公開中の世代に、変わった予定だけを書く（2026-10-26）----
+  //   ★以前は予定が1件変わるたびに全部を新しい世代として入れ直し、古い世代を消していた。
+  //     calendar_events は本体＋索引2つで1行あたり約3〜4行の書き込みになり、入れ直しと削除で倍。
+  //     10/25（予約開始日）に1日8万行を超え、D1無料枠（10万行/日）の81%に達した（書き込みの約9割）。
+  //   ★1つの batch（D1のトランザクション）で差分と世代の情報を同時に書く。読む側は前か後のどちらかしか見ない。
+  //   ★すべての文に「公開中の世代・その built_at が始めに読んだまま」の条件を付ける。
+  //     同時に2つの押し出しが走っても、後から来た方は全部が0行になり、最後の世代更新の行数で検知できる。
+  //   ★差分が大きいとき・規則の版／1Fフラグ／カレンダーの構成が変わったとき・公開中の世代が無いときは、
+//     従来どおり新しい世代を作る。
+  //   ★規則の版・1Fフラグ・カレンダーの構成が変わったときは差分にしない（分類そのものが変わる・まれ）。
+  const sameShape = Number(cur.rule_version) === ruleVersion && String(cur.flag_1f) === flag1f
+    && String(cur.calendars) === calsJson;
+  if (prevGen != null && cur.status === 'ready' && cur.built_at != null && sameShape) {
+    const patched = await tryPatch(env, prevGen, Number(cur.built_at), p, calsJson, now, warnings);
+    if (patched.mode === 'patched') {
+      if (warnings.length) console.warn('calsync warnings', prevGen, JSON.stringify(warnings).slice(0, 500));
+      return jsonRes({ success: true, mode: 'patched', generation: prevGen, events: p.events.length,
+                       inserted: patched.inserted, updated: patched.updated, deleted: patched.deleted,
+                       warnings, checkedAt: now });
+    }
+    if (patched.mode === 'race') return jsonRes({ success: false, code: 'PUBLISH_RACE', generation: prevGen }, 409);
+    // 'too_big' は下の従来の経路へ
+  }
+
   // ---- 5. 新しい世代として書く（status=building）----
   const gen = await insertSnapshot(env, 'building', p, calsJson, now, null, warnings);
 
@@ -460,6 +484,92 @@ async function calsync(request, env) {
     success: true, mode: 'published', generation: gen, previous: prevGen,
     events: p.events.length, warnings, removed, checkedAt: now,
   });
+}
+
+// ---- 公開中の世代に差分だけを書く ------------------------------------------
+//   返り値 { mode: 'patched' | 'too_big' | 'race', inserted, updated, deleted }
+//   ★鍵は (calendar_id, event_id)。GAS の event_id は「予定ID#開始ms」なので、時刻が動いた予定は
+//     「消えて増えた」として扱われる（それで正しい）。
+const PATCH_MAX = 400;   // これを超える差分は新しい世代を作る（1つの batch を大きくしすぎない）
+const EV_CMP = ['role', 'trainer_id', 'effect', 'reason', 'start_at', 'end_at', 'all_day'];
+function evRow(e) {
+  return {
+    calendar_id: String(e.calendarId), event_id: String(e.eventId), role: String(e.role),
+    trainer_id: (e.trainerId == null || e.trainerId === '') ? null : String(e.trainerId),
+    effect: String(e.effect), reason: String(e.reason),
+    start_at: Number(e.startAt), end_at: Number(e.endAt), all_day: Number(e.allDay ? 1 : 0),
+  };
+}
+function sameEv(a, b) {
+  for (const k of EV_CMP) {
+    const x = a[k] == null ? null : (typeof b[k] === 'number' ? Number(a[k]) : String(a[k]));
+    if (x !== b[k]) return false;
+  }
+  return true;
+}
+async function tryPatch(env, gen, prevBuiltAt, p, calsJson, now, warnings) {
+  const cur = await env.DB.prepare(
+    `SELECT calendar_id, event_id, role, trainer_id, effect, reason, start_at, end_at, all_day
+       FROM calendar_events WHERE generation = ?`
+  ).bind(gen).all();
+  const have = new Map();
+  for (const r of (cur && cur.results) || []) have.set(r.calendar_id + '\u0000' + r.event_id, r);
+  const ins = [], upd = [], seen = new Set();
+  for (const e of p.events) {
+    const row = evRow(e), key = row.calendar_id + '\u0000' + row.event_id;
+    seen.add(key);
+    const old = have.get(key);
+    if (!old) ins.push(row);
+    else if (!sameEv(old, row)) upd.push(row);
+  }
+  const del = [];
+  for (const [key, r] of have) if (!seen.has(key)) del.push({ calendar_id: r.calendar_id, event_id: r.event_id });
+  if (ins.length + upd.length + del.length > PATCH_MAX) return { mode: 'too_big' };
+
+  //   公開中の世代が始めに読んだままであること（すべての文に付ける）
+  const builtAt = now > prevBuiltAt ? now : prevBuiltAt + 1;   // 同じミリ秒でも必ず進める（次の押し出しの条件になる）
+  const GUARD = `EXISTS (SELECT 1 FROM calendar_active a JOIN calendar_snapshot s ON s.generation = a.generation
+                          WHERE a.id = 1 AND a.generation = ? AND s.status = 'ready' AND s.built_at = ?)`;
+  const stmts = [];
+  for (const r of del) {
+    stmts.push(env.DB.prepare(
+      `DELETE FROM calendar_events WHERE generation = ? AND calendar_id = ? AND event_id = ? AND ${GUARD}`
+    ).bind(gen, r.calendar_id, r.event_id, gen, prevBuiltAt));
+  }
+  for (const r of upd) {
+    stmts.push(env.DB.prepare(
+      `UPDATE calendar_events SET role = ?, trainer_id = ?, effect = ?, reason = ?, start_at = ?, end_at = ?, all_day = ?
+         WHERE generation = ? AND calendar_id = ? AND event_id = ? AND ${GUARD}`
+    ).bind(r.role, r.trainer_id, r.effect, r.reason, r.start_at, r.end_at, r.all_day,
+           gen, r.calendar_id, r.event_id, gen, prevBuiltAt));
+  }
+  for (const r of ins) {
+    stmts.push(env.DB.prepare(
+      `INSERT INTO calendar_events (${EV_COLS.join(', ')})
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${GUARD}`
+    ).bind(gen, r.calendar_id, r.event_id, r.role, r.trainer_id, r.effect, r.reason, r.start_at, r.end_at, r.all_day,
+           gen, prevBuiltAt));
+  }
+  //   最後に世代の情報（地平・規則・構成・中身の印・固定枠の設定）と確認時刻を進める。行数で競合を検知する
+  stmts.push(env.DB.prepare(
+    `UPDATE calendar_snapshot
+        SET horizon_start = ?, horizon_end = ?, calendars = ?, rule_version = ?, flag_1f = ?, content_hash = ?,
+            owner_window = ?, warnings = ?, built_at = ?
+      WHERE generation = ? AND status = 'ready' AND built_at = ?
+        AND COALESCE((SELECT generation FROM calendar_active WHERE id = 1), -1) = ?`
+  ).bind(p.horizonStart, p.horizonEnd, calsJson, p.ruleVersion, p.flag1f, p.contentHash,
+         p.ownerWindow == null ? null : String(p.ownerWindow),
+         warnings && warnings.length ? JSON.stringify(warnings) : null, builtAt,
+         gen, prevBuiltAt, gen));
+  stmts.push(env.DB.prepare(
+    `UPDATE calendar_active SET checked_at = ?
+      WHERE id = 1 AND generation = ?
+        AND EXISTS (SELECT 1 FROM calendar_snapshot WHERE generation = ? AND built_at = ?)`
+  ).bind(now, gen, gen, builtAt));
+  const res = await env.DB.batch(stmts);
+  const nSnap = changes(res[res.length - 2]), nAct = changes(res[res.length - 1]);
+  if (nSnap !== 1 || nAct !== 1) return { mode: 'race' };
+  return { mode: 'patched', inserted: ins.length, updated: upd.length, deleted: del.length };
 }
 
 // ---- 世代の行を1つ作る。採番はD1（AUTOINCREMENT）に任せる（MAX+1は使わない）----
@@ -531,7 +641,7 @@ function sameNullableText(a, b) {
 
 export const _forTest = {
   safeEqual, inspect, normalizeCalendars, normalizeOwnerWindow, sameNullableText,
-  allowedEffects, cleanupGenerations,
+  allowedEffects, cleanupGenerations, tryPatch, PATCH_MAX,
   REQUIRED_TRAINER_CALENDARS, MAX_EVENTS_TOTAL, MAX_EVENTS_PER_CALENDAR,
   KEEP_READY, REJECTED_TTL_MS, BUILDING_STALE_MS, INSERT_CHUNK, MAX_PUSH_AGE_MS,
 };
