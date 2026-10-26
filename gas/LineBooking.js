@@ -1883,7 +1883,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-25b 固定枠の自動予約は月額の残り（繰越込み）まで・チケットは使わない';
+var LB_HEALTH_BUILD = '2026-10-26a 月額が終わった月はチケット会員として固定枠を取る';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -4404,7 +4404,21 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
            ticketRemPair: disp.ticketRemPair, ticketRemNormal: disp.ticketRemNormal,
            packKind: wantKind, attendeeCount: wantAtt, consumeType: b.consumeType, monthlyType: _monthlyType,
            //   ★固定枠の自動予約が「その月の合計回数」を抑えるのに使う（2026-10-25・方針A）。他の読み手は見ない
-           monthlyQuota: disp.avail, monthlyCoverage: disp.coverage };
+           monthlyQuota: disp.avail, monthlyCoverage: disp.coverage,
+           //   対象の月より後に始まる月額の行があるか（月額が一時的に途切れた「空白の月」と、チケットへ移った月を分ける）。
+           //   月額かどうかは _lbRowsToEntitlements と同じ判定（残数方式・種別のどちらにも「チケット」が無い行）
+           monthlyResumes: _lbMonthlyResumesAfter(rows, tMs) };
+}
+
+function _lbMonthlyResumesAfter(rows, tMs) {
+  var t = new Date(tMs), monthEnd = new Date(t.getFullYear(), t.getMonth() + 1, 1).getTime();
+  for (var i = 0; i < (rows || []).length; i++) {
+    var rr = rows[i], cc = rr.cols, r = rr.row;
+    var method = String((cc.method >= 0 ? r[cc.method] : '') || ''), type = String((cc.type >= 0 ? r[cc.type] : '') || '');
+    if (method.indexOf('チケット') >= 0 || type.indexOf('チケット') >= 0) continue;
+    if (rr.start && rr.start.getTime() >= monthEnd) return true;
+  }
+  return false;
 }
 
 // 予約確定画面の選択肢を「予約対象日時ベース」で返す（ホームの当日基準の内訳で未来予約を縛らないため）。
@@ -8239,8 +8253,8 @@ function autoBookRecurringPatterns() {
     //       合計が契約回数を超えてチケットで足されてしまう（Codex関門②）。
     //     どの枠から消化するかは割り当ての仕組みに任せる。失効の近いチケットを先に使うのは全予約共通の規則で、
     //     回数は契約内に収まり、失効するはずのチケットが無駄にならない（会員が自分で予約した場合と同じ）。
-    //     契約がその月を覆っていなければ0。月額契約が無い会員（チケットだけ）は、固定枠を登録した時点で
-    //     チケットで通う意思があるので従来どおり。読めないときは上限を置かず、予約の判定（_lbReserveCore）に任せる。
+    //     月額契約が無い会員（チケットだけ）と、その月を月額が覆っていない会員（月額が終わりチケットに移った等）は、
+    //     チケットで通う意思があるので従来どおり上限なし。読めないときは上限を置かず、予約の判定（_lbReserveCore）に任せる。
     var _budget = null, _cap = null;   // _budget：null＝まだ求めていない／Infinity＝上限なし。_cap：予約の確定処理がロック内で数え直す上限（月の合計）
     for (var d = 0; d < cands.length; d++) {
       var startDate = cands[d].start, trainerId = cands[d].trainerId;
@@ -8255,7 +8269,12 @@ function autoBookRecurringPatterns() {
         try {
           var _rb = getBookableRemaining(cid, custInfo.contractType, custInfo.customerName, startDate.getTime(), undefined, 1, 'normal');
           if (_rb && _rb.ok && _rb.monthlyRem != null) {
-            if (_rb.monthlyCoverage === 'uncovered') { _budget = 0; _cap = 0; }
+            //   ★月額の契約がその月を覆っていないとき：
+            //     ・後の月に月額の行がある＝月額が一時的に途切れた「空白の月」→ 自動では取らない（チケットを知らないうちに使わない）
+            //     ・後の月にも月額の行が無い＝チケットに移った → その月はチケット会員として上限なし
+            //     （2026-10-26：月額0回で繰越を使い切り以後チケットで続ける会員で、固定枠が1件も取られなくなっていた。
+            //       空白の月との区別は Codex 関門②の指摘）
+            if (_rb.monthlyCoverage === 'uncovered') { if (_rb.monthlyResumes === true) { _budget = 0; _cap = 0; } }
             else if (isFinite(Number(_rb.monthlyQuota))) {
               var _mFrom = new Date(targetY, targetM - 1, 1).getTime(), _mTo = new Date(targetY, targetM, 1).getTime(), _have = 0;
               for (var hi = 0; hi < mine.length; hi++) if (mineCh[hi] !== 'transfer' && mine[hi] >= _mFrom && mine[hi] < _mTo) _have++;

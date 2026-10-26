@@ -28,7 +28,7 @@ const RT = 'var _LB_RECUR_TZ = null;\n' + pluckFn(LB, '_lbRecurTz') + '\n' + plu
 const noRemainSrc = (LB.match(/var _LB_AUTOBOOK_NO_REMAIN = [^\n]*/) || [''])[0] + '\n' + (LB.match(/var _LB_AUTOBOOK_NEED_REVIEW = [^\n]*/) || [''])[0];
 
 //   2026-10-25 06:00 に走らせて 11月を取る。quota＝予約できる回数（超えたら NO_REMAINING）
-function run({ rows, quota, mine = [], ledgerNull = false, monthlyRem = null, monthlyQuota = null, coverage = 'limited', remThrows = false, transfer = [] }) {
+function run({ rows, quota, mine = [], ledgerNull = false, monthlyRem = null, monthlyQuota = null, coverage = 'limited', remThrows = false, transfer = [], resumes = false }) {
   const calls = [], props = {}, notices = [], logs = [], enq = [], bodies = [];
   let left = quota;
   const ctx = { Utilities, SETTINGS, String, Number, isNaN, isFinite, Math, JSON, Object, _lbSs, RP_COL, Logger: { log: (m) => logs.push(String(m)) },
@@ -37,7 +37,7 @@ function run({ rows, quota, mine = [], ledgerNull = false, monthlyRem = null, mo
     _lbRecurSheet: () => ({ getLastRow: () => rows.length + 1, getRange: () => ({ getValues: () => rows, setValue: () => {} }) }),
     _lbResvSessions: () => ledgerNull ? null : mine.map((ms) => ({ startAt: ms, channel: 'line' })).concat(transfer.map((ms) => ({ startAt: ms, channel: 'transfer' }))),
     _lbCustInfoById: () => ({ customerId: 'C1', customerName: 'テスト', contractType: '' }), _lbPickBalancedTrainer: () => 'B',
-    getBookableRemaining: () => { if (remThrows) throw new Error('x'); return { ok: true, monthlyRem, monthlyQuota: monthlyQuota != null ? monthlyQuota : monthlyRem, monthlyCoverage: coverage }; },
+    getBookableRemaining: () => { if (remThrows) throw new Error('x'); return { ok: true, monthlyRem, monthlyQuota: monthlyQuota != null ? monthlyQuota : monthlyRem, monthlyCoverage: coverage, monthlyResumes: resumes }; },
     _lbReserveCore: (ci, body) => { calls.push(body.startISO); bodies.push(body); if (left <= 0) return { success: false, code: 'NO_REMAINING' }; left--; return { success: true }; },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
     _lbDwMarkDirty: () => {}, lbDwEnqueue: (c) => { enq.push(c); return 1; },
@@ -157,8 +157,23 @@ console.log('=== ⑤ 方針A：その月の合計回数を「月額の回数＋�
   ok('⑤-4 ★月額契約が無い会員（チケットだけ）は従来どおり全部取りに行く', r3.calls.length === 8);
   const r4 = run({ rows: tt, quota: 99, monthlyRem: 0, monthlyQuota: 0 });
   ok('⑤-5 月額の回数＋繰越が0回なら1件も取りに行かない', r4.calls.length === 0 && r4.notice.s.length === 8);
-  const r4b = run({ rows: tt, quota: 99, monthlyRem: 0, monthlyQuota: 4, coverage: 'uncovered' });
-  ok('⑤-5b 契約がその月を覆っていなければ0回（繰越が残っていても）', r4b.calls.length === 0);
+  //   ★月額が終わりチケットに移った会員（その月を月額が覆っていない）は、チケット会員として上限なし（2026-10-26）
+  const r4b = run({ rows: tt, quota: 99, monthlyRem: 0, monthlyQuota: 0, coverage: 'uncovered' });
+  ok('⑤-5b ★月額が終わった月はチケット会員として全部取りに行く（上限を渡さない）', r4b.calls.length === 8 && r4b.bodies.every((b) => b.autoBookCap === undefined), r4b.calls.length + '');
+  const r4c = run({ rows: tt, quota: 99, monthlyRem: 0, monthlyQuota: 0, coverage: 'uncovered', resumes: true });
+  ok('⑤-5c ★後の月に月額が再開する「空白の月」は自動では取らない（チケットを知らないうちに使わない）', r4c.calls.length === 0 && r4c.notice.s.length === 8);
+  //   後の月に月額の行があるかの判定（本物の関数）
+  {
+    const ctx = { String, Date };
+    vm.createContext(ctx); vm.runInContext(pluckFn(LB, '_lbMonthlyResumesAfter'), ctx);
+    const cols = { method: 0, type: 1 };
+    const row = (m, t, start) => ({ cols, row: [m, t], start: start ? new Date(start) : null });
+    const nov = new Date(2026, 10, 15).getTime();
+    ok('⑤-5d 12月開始の月額行がある → 再開する', ctx._lbMonthlyResumesAfter([row('月額', '通常', '2026/12/01')], nov) === true);
+    ok('⑤-5e 後に始まるのがチケット行だけ → 再開しない', ctx._lbMonthlyResumesAfter([row('チケット', 'チケット', '2026/12/01'), row('月額', '通常', '2026/09/01')], nov) === false);
+    ok('⑤-5f 種別だけチケットの行も月額に数えない（判定は残数方式・種別のどちらか）', ctx._lbMonthlyResumesAfter([row('月額', 'チケット', '2026/12/01')], nov) === false);
+    ok('⑤-5g 対象月の途中から始まる月額行は「後」ではない', ctx._lbMonthlyResumesAfter([row('月額', '通常', '2026/11/20')], nov) === false);
+  }
   const r5 = run({ rows: tt, quota: 3, remThrows: true });
   ok('⑤-6 読めなければ上限を置かず、予約の判定に任せる（従来どおり）', r5.calls.length === 8 && r5.notice.b.length === 3 && r5.logs.some((l) => /月額の残りが読めません/.test(l)));
   //   ★振替は月の回数を使わない別枠＝合計に数えない（Codex関門②）
