@@ -87,10 +87,17 @@ function _lbCountTicketConsumption(sessions) {
 // 予約カレンダータイトルの種別プレフィックス決定（純粋・billingの計上種別を左右する）。
 //   channel(transfer優先)＞packKind(pair)＞レンタル(0円pack消化時＝月額消化はレンタルにしない・Codex#3)＞
 //   消化=ticket＞契約モニター/チケット＞通常。consumeType='monthly'/'ticket'/''。
-function _lbBookTypePrefix(channel, packKind, contractType, consumeType, monthlyType) {
+function _lbBookTypePrefix(channel, packKind, contractType, consumeType, monthlyType, rentalPack) {
   var ct = String(contractType || ''), cons = String(consumeType || ''), mct = String(monthlyType || '');
   if (channel === 'transfer') return '振替_';
   if (packKind === 'pair') return 'ペア_';
+  // ★チケット消化で「使ったpackがレンタルか」が分かっているときはそれで決める（2026-10-27）。
+  //   contractType は最新の契約行の種別なので、レンタル→月額へ移る月は月額行（通常）になる。
+  //   それで決めるとレンタル枠の消化が チケット_ になり、billing が月額単価で計上してレンタル料¥2,000が消える。
+  //   逆にレンタル会員が有料の追加チケットを使ったときは チケット_（従来は レンタル_ に化けて売上が消えていた）。
+  //   rentalPack が true/false 以外（旧経路・degraded）は従来の判定へ落ちる。
+  if (cons === 'ticket' && rentalPack === true) return 'レンタル_';
+  if (cons === 'ticket' && rentalPack === false) return 'チケット_';
   if (ct.indexOf('レンタル') >= 0 && cons !== 'monthly') return 'レンタル_';   // レンタル会員が0円pack(ticket)消化＝レンタル計上。月額消化はレンタルにしない
   if (cons === 'ticket') return 'チケット_';
   // ★月額枠を消化したときは月額として計上する（2026-10-05）。

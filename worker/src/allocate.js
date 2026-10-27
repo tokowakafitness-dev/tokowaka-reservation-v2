@@ -471,6 +471,9 @@ function _lbAllocateSessions(customerId, entitlements, sessions, options) {
 // 契約行（{row, cols, start:Date, end:Date}）→ entitlements＋issues。cols=_lbContractColsのindex。
 function _lbRowsToEntitlements(rows, carryRateDefault) {
   var monthlyRows = [], packs = [], hasMonthly = false, hasTicket = false, ticketTotal = 0, issues = [];
+  //   レンタルの0円pack（種別にレンタル）のpackId。予約タイトルを レンタル_ にするかを「実際に使ったpack」で決めるため（2026-10-27）。
+  //   entitlements の外に置く＝割当器・D1保存・照合の入力形は変えない。
+  var rentalPackIds = {};
   for (var i = 0; i < (rows || []).length; i++) {
     var rr = rows[i], cc = rr.cols, r = rr.row;
     var mv = (cc.method >= 0) ? r[cc.method] : ''; var method = (mv == null) ? '' : String(mv);
@@ -517,6 +520,7 @@ function _lbRowsToEntitlements(rows, carryRateDefault) {
         var _np = Number(r[cc.normalPrice]); normalUnitPrice = (isFinite(_np) && _np >= 0) ? _np : null;
       }
       packs.push({ packId: packId, qty: qty, availableAt: (startMs != null ? startMs : -8.64e15), expiresAt: expEnd, unitPrice: unitPrice, kind: pkKind, normalUnitPrice: normalUnitPrice });
+      if (type.indexOf('レンタル') >= 0) rentalPackIds[packId] = true;
     } else {
       hasMonthly = true;
       var freq = cc.freq >= 0 ? Number(r[cc.freq] || 0) : 0;
@@ -538,7 +542,7 @@ function _lbRowsToEntitlements(rows, carryRateDefault) {
       monthlyRows.push({ frequency: freq, carryRate: rate, carryCap: capOv, serviceFrom: startMs, serviceTo: endMs, unitPrice: mUp });
     }
   }
-  return { entitlements: { monthlyRows: monthlyRows, packs: packs }, hasMonthly: hasMonthly, hasTicket: hasTicket, ticketTotal: ticketTotal, issues: issues };
+  return { entitlements: { monthlyRows: monthlyRows, packs: packs }, hasMonthly: hasMonthly, hasTicket: hasTicket, ticketTotal: ticketTotal, issues: issues, rentalPackIds: rentalPackIds };
 }
 
 // line_reservations vals（A:K 2次元）＋ customerId → 割当器sessions（本人・confirmed/consumed）
@@ -729,8 +733,13 @@ function _lbBookability(customerId, rows, sessions, nowKey, targetDateMs, carryR
     canBook = !!(pp && pp.alloc === 'pack' && (pp.units == null ? 1 : pp.units) === wantUnits && (pp.packKind || 'normal') === 'pair');
   }
   var consumeType = canBook ? (after.probeAlloc === 'monthly' ? 'monthly' : (after.probeAlloc === 'pack' ? 'ticket' : '')) : '';
+  // ★チケットを使うとき、それがレンタルの0円packか（2026-10-27）。
+  //   タイトルの種別を「最新の契約行の種別」で決めると、レンタル→月額へ移る月に月額行が勝ち、
+  //   レンタル枠の消化が チケット_ になって billing が月額単価で計上する（店舗売上と報酬が立ち、レンタル料¥2,000が消える）。
+  //   チケット以外の消化では null（見ない）。
+  var consumeRental = (consumeType === 'ticket' && after.probe) ? !!(ent.rentalPackIds && ent.rentalPackIds[after.probe.packId]) : null;
   return { ok: after.ok && ent.issues.length === 0, issues: ent.issues,
-    canBook: canBook, consumeType: consumeType };
+    canBook: canBook, consumeType: consumeType, consumeRental: consumeRental };
 }
 
 // ═══ 段階5-2：会計projection（純粋・Node検証可・H-1境界）＝残数projectionと厳密に分ける ═══

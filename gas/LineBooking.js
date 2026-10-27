@@ -1883,7 +1883,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-26a 月額が終わった月はチケット会員として固定枠を取る';
+var LB_HEALTH_BUILD = '2026-10-27a レンタル枠の消化は契約行でなく使ったチケットで種別を決める';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -4403,6 +4403,7 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
            monthlyRem: disp.monthlyRem, ticketRem: disp.ticketRem,
            ticketRemPair: disp.ticketRemPair, ticketRemNormal: disp.ticketRemNormal,
            packKind: wantKind, attendeeCount: wantAtt, consumeType: b.consumeType, monthlyType: _monthlyType,
+           consumeRental: b.consumeRental,   // チケット消化のとき、使ったpackがレンタルか（予約タイトルの種別に使う・2026-10-27）
            //   ★固定枠の自動予約が「その月の合計回数」を抑えるのに使う（2026-10-25・方針A）。他の読み手は見ない
            monthlyQuota: disp.avail, monthlyCoverage: disp.coverage,
            //   対象の月より後に始まる月額の行があるか（月額が一時的に途切れた「空白の月」と、チケットへ移った月を分ける）。
@@ -5354,7 +5355,8 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     var ct = String(custInfo.contractType || '');
     var _consume = (typeof rem !== 'undefined' && rem && rem.consumeType) ? rem.consumeType : '';   // 併存会員の消化種別（月額優先→尽きたらチケット）
     var _mct = (typeof rem !== 'undefined' && rem && rem.monthlyType) ? rem.monthlyType : '';   // 月額契約の種別（追加チケット行に化けさせない）
-    var typePrefix = _lbBookTypePrefix(channel, _kind, ct, _consume, _mct);   // 純粋関数（Codex#3：消化連動・レンタルは月額消化時に計上しない）。テスト=booking-rules
+    var _rentalPack = (typeof rem !== 'undefined' && rem) ? rem.consumeRental : null;   // 使ったpackがレンタルか（true/false・不明はnull）
+    var typePrefix = _lbBookTypePrefix(channel, _kind, ct, _consume, _mct, _rentalPack);   // 純粋関数（Codex#3：消化連動・レンタルは月額消化時に計上しない）。テスト=booking-rules
     // F-6：staging中はカレンダーが本番共有のため、テストマーカー[TEST]を先頭に付す→billingが計上から除外
     //   （billingは[RESERVED]/[消化]===0で判定するため、[TEST]接頭辞は素通り＝集計対象外になる）。残数側はstaging SSで隔離済み。
     var _testPfx = _lbIsStaging() ? '[TEST] ' : '';
