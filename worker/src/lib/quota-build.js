@@ -136,7 +136,11 @@ export function buildQuotaForCustomer(customerId, rows, sessions, opening, opts)
     //     quota は「頻度＋繰越」。顧客の画面は繰越を別に出すので、
     //     **頻度が無いと繰越が作れない**（quota 全部を繰越として見せてしまう）。
     //     res.freq は「枠を決めた行の頻度」（2026-10-08 に揃えた）。
-    out.monthly.push({ customerId, monthKey: mk, quota, coverage, baseFreq: Number(res.freq || 0) });
+    //   ★前借りされた回数（lent）と、作った時点の月（asOfMonth）も持たせる（2026-10-27・設計22）。
+    //     lent：計算は当月の used に足すが D1 の used（引当）には入らない。読む側が quota − used − lent で引く。
+    //     asOfMonth：計算は「今の月」で消化順と前借りが変わる。読む側は今の月と違えば答えない。
+    out.monthly.push({ customerId, monthKey: mk, quota, coverage, baseFreq: Number(res.freq || 0),
+                       lent: Number(res.lent || 0), asOfMonth: String(nowKey) });
   }
 
   // ---- チケット（契約行から直接作る。買った単位がそのまま1行）----
@@ -224,15 +228,18 @@ export function quotaUpsertStatements(built, nowMs, builtVersion) {
       //   ★built_version（この行を作った世代）も書く（2026-10-09・設計13）。
       //     読む側は「いまの世代の行」だけを読む。計算から消えた行は世代が付かず、
       //     読まれない。消さないので used とトリガーと外部キーに触らない。
-      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+      //   ★lent・as_of_month も書く（2026-10-27・設計22）。used には触れない（不変条件のまま）。
+      sql: `INSERT INTO monthly_quota (customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version, lent, as_of_month)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
             ON CONFLICT(customer_id, month_key) DO UPDATE SET
               quota = excluded.quota, coverage = excluded.coverage,
               base_freq = excluded.base_freq, overage = excluded.overage,
-              updated_at = excluded.updated_at, built_version = excluded.built_version`,
+              updated_at = excluded.updated_at, built_version = excluded.built_version,
+              lent = excluded.lent, as_of_month = excluded.as_of_month`,
       args: [m.customerId, m.monthKey, m.quota, m.coverage,
              (m.baseFreq == null ? null : Number(m.baseFreq)),
-             Number(m.overage || 0), nowMs, ver],
+             Number(m.overage || 0), nowMs, ver,
+             (m.lent == null ? null : Number(m.lent)), (m.asOfMonth == null ? null : String(m.asOfMonth))],
     });
   }
   for (const p of built.packs) {

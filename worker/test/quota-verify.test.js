@@ -28,7 +28,7 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 // ---------- 1. 比べているものが正しい ----------
 ok('①計算の答えを出している', /_lbComputeRemaining\(cid, input\.rows, input\.sessions/.test(V));
 ok('①★D1の行から読んでいる（計算し直していない）',
-  /SELECT quota, coverage, used FROM monthly_quota\n\s*WHERE customer_id = \? AND month_key = \? AND built_version = \?/.test(V)
+  /SELECT quota, coverage, used, lent, as_of_month FROM monthly_quota\n\s*WHERE customer_id = \? AND month_key = \? AND built_version = \?/.test(V)
   && /SELECT total, used, opening_used FROM ticket_packs/.test(V),
   'ここで計算し直すと、同じコードの比較になり意味が無い');
 //   ★顧客に出るのと**同じ条件**で見る（2026-10-09・設計13）。
@@ -145,9 +145,13 @@ ok('①★使いすぎを0に丸めて隠さない',
 
 // ---------- 2. 「枠が無い」と「残り0」を取り違えない ----------
 ok('②★枠の行が無ければ null（月額契約が無いの意味）',
-  /let d1Monthly = null[\s\S]{0,400}?if \(mq\) \{/.test(V)
+  /let d1Monthly = null[\s\S]{0,1600}?if \(mq\) \{/.test(V)
   && /else if \(cov === 'unlimited'\) d1Monthly = null;/.test(V),
   '0 にすると「月額契約があって残り0」と区別できない');
+//   ★設計22（2026-10-27）：前借り（lent）と作った時点の月（as_of_month）を顧客の読み取りと同じ規則で見る
+ok('②★前借りを引く（quota − used − lent）', /if \(cov === 'limited'\) d1Monthly = Number\(mq\.quota\) - Number\(mq\.used\) - Number\(mq\.lent\);/.test(V));
+ok('②★前借りが未設定の行は一致と数えない', /mq\.coverage === 'limited' && mq\.lent == null[\s\S]{0,300}?LENT_NOT_SET[\s\S]{0,80}?continue;/.test(V));
+ok('②★今の月の時点で作られていない行は一致と数えない', /mq\.as_of_month == null \|\| String\(mq\.as_of_month\) !== String\(month\)[\s\S]{0,300}?AS_OF_STALE[\s\S]{0,80}?continue;/.test(V));
 ok('②計算側の null と突き合わせる',
   /\(d1Monthly === null && calcMonthly === null\) \|\| \(Number\(d1Monthly\) === Number\(calcMonthly\)\)/.test(V));
 

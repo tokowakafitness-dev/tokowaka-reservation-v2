@@ -650,6 +650,9 @@ function _lbComputeRemaining(customerId, rows, sessions, nowKey, targetDateMs, c
     monthlyRem: monthlyRem, ticketTotal: ent.ticketTotal, ticketRem: ticketRem, ticketPacks: ticketPacks,
     ticketRemPair: ticketRemPair, ticketRemNormal: ticketRemNormal, pairPackMax: pairPackMax,   // ペア=人数回残（表示用・可否判定は_lbBookability）
     freq: covFreq || 0, avail: pm ? pm.quota : 0,
+    // ★その月が翌月以降に前借りされた回数（2026-10-27・設計22）。計算は monthlyRem に含めて引いているが、
+    //   D1 の used は引当（その月の予約）だけを数えるので、D1 に別に持たせる。他の読み手は見ない。
+    lent: pm ? (pm.carryForward || 0) : 0,
     // ★契約の覆い方をそのまま返す（2026-10-07・Codex指摘／2026-10-08 に2状態へ）。
     //   上の `freq: covFreq || 0` は、覆っていない（null）と頻度0を同じ0に潰す。
     //   D1に枠の行を作るとき、その区別が無いと「覆っていない月」を「枠あり」と

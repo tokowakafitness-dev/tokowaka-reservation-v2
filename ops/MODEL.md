@@ -60,7 +60,7 @@ D1                      その写し ＋ D1で作った枠・引当
 ### 2-3. D1で作るもの（★Workerが書く）
 | 表 | 主キー | 書くのは | 読むのは | 親子 |
 |---|---|---|---|---|
-| `monthly_quota` | (customer_id, month_key) | `quotaBuild`（UPSERT）／**`used` はトリガーだけ** | 残数・照合 | 引当の親 |
+| `monthly_quota` | (customer_id, month_key) | `quotaBuild`（UPSERT・lent／as_of_month も＝設計22）／**`used` はトリガーだけ** | 残数・照合 | 引当の親 |
 | `ticket_packs` | pack_id | 同 | 同 | 引当の親 |
 | `reservation_allocations` | reservation_id | `quotaBuild`（**消してから入れる**） | 超過の件数 | ↑2つを外部キーで参照 |
 | `customer_sync_version` | customer_id | ingest（source）／quotaBuild（built） | 鮮度の判定 | — |
@@ -122,6 +122,8 @@ trg_alloc_return_pack       同
 | I39 | 出どころは選ばれた会員だけ数え、日×入口の**合計**で500まで（_dropped は日×入口で1回）。6つの入口は名前で数える | `read-on.test.js` ④ |
 | I40 | 許可表の窓口は入力を厳しく検査し、実在の会員だけ足す。remove は判定と削除を1文で。応答・ログは下4桁だけ | `read-on.test.js` ⑤ |
 | I41 | 書き込みの直後は写しと予約一覧の**両方**に通し番号を載せる（予約0件でも送る）。両方失敗した会員は記録して点検に出す | `read-on.test.js` ⑥、`gas-1022.test.js` ①〜③ |
+| I42 | **月額の残り＝quota − used − lent**（lent＝翌月以降に前借りされた回数＝計算の carryForward）。used は引当トリガーだけが動かすので前借りが入らない。lent が NULL の limited 行からは答えない（0で埋めない） | `remain-from-d1.test.js` ⑳、`quota-build.test.js` 設計22、`quota-verify.test.js` ② |
+| I43 | **D1 の月額行は「作った時点の月」（as_of_month）が今の月と同じときだけ答える**（計算は今の月で消化順と前借りが変わる）。翌月の行も同じ厳しさ。今の月でない会員は `/quota/behind` が返し巡回が作り直す | `remain-from-d1.test.js` ⑳、`quota-behind-run.test.js` ⑨ |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。

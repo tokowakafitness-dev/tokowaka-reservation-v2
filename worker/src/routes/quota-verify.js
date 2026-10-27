@@ -94,6 +94,8 @@ export async function verifyQuota(request, env) {
     overUsedPacks: 0,   // 買った枚数を超えて使っているチケット（0に丸めず数える）
     overUsedMonths: 0,  // 枠を超えて使っている月（表示では消えるので行そのものを見る）
     coverageMissing: 0, // coverage がまだ入っていない行（作り直していない＝比べられない）
+    lentMissing: 0,     // 前借りの数がまだ入っていない行（設計22）
+    asOfStale: 0,       // 今の月の時点で作られていない行（設計22）
     keyMismatch: 0,      // ★主キーの集合が計算と合わない会員（切り替えの合格条件）
     keyMismatchDetail: [],
     keyChecked: 0,       // ★集合の照合が走った会員の数（一致・不一致にかかわらず数える。
@@ -130,7 +132,7 @@ export async function verifyQuota(request, env) {
     const [mq, tp] = await Promise.all([
       //   ★いまの世代の行だけを見る（顧客に出るのと同じ条件）
       env.DB.prepare(
-        `SELECT quota, coverage, used FROM monthly_quota
+        `SELECT quota, coverage, used, lent, as_of_month FROM monthly_quota
           WHERE customer_id = ? AND month_key = ? AND built_version = ?`
       ).bind(cid, month, ver0.builtVersion).first(),
       env.DB.prepare(
@@ -152,9 +154,25 @@ export async function verifyQuota(request, env) {
     //     uncovered も unlimited も混ざっている可能性がある。既定値で埋めると、
     //     本当は0やnullを見せるべき行が数値を見せ、それが「一致」として通ってしまう。
     let d1Monthly = null, coverageMissing = false;
+    //   ★前借り（lent）と作った時点の月（as_of_month）も顧客の読み取りと同じ規則で見る（2026-10-27・設計22）。
+    //     NULL・今の月でない行は「作り直していない」＝一致と数えない。
+    if (mq && (mq.as_of_month == null || String(mq.as_of_month) !== String(month))) {
+      out.asOfStale = (out.asOfStale || 0) + 1;
+      out.pageOk = false;
+      out.skipped++;
+      out.skippedWhy.AS_OF_STALE = (out.skippedWhy.AS_OF_STALE || 0) + 1;
+      continue;
+    }
+    if (mq && mq.coverage === 'limited' && mq.lent == null) {
+      out.lentMissing = (out.lentMissing || 0) + 1;
+      out.pageOk = false;
+      out.skipped++;
+      out.skippedWhy.LENT_NOT_SET = (out.skippedWhy.LENT_NOT_SET || 0) + 1;
+      continue;
+    }
     if (mq) {
       const cov = mq.coverage;
-      if (cov === 'limited') d1Monthly = Number(mq.quota) - Number(mq.used);
+      if (cov === 'limited') d1Monthly = Number(mq.quota) - Number(mq.used) - Number(mq.lent);
       else if (cov === 'uncovered') d1Monthly = 0;
       else if (cov === 'unlimited') d1Monthly = null;
       else coverageMissing = true;   // NULL や想定外の値

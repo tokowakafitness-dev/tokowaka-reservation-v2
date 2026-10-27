@@ -61,8 +61,8 @@ ok('④読み込まれている', /import \{ buildQuota, quotaStatus, quotaBehin
 ok('④-b★合言葉が要る',
   /export async function quotaBehind\(request, env\) \{\s*\n\s*const deny = requireSecret\(request, env\);/.test(ROUTE),
   '顧客IDを返すため、お客様のブラウザからは呼ばせない');
-ok('④-b★遅れている会員だけ返す',
-  /WHERE \$\{NOT_FRESH_SQL\} AND source_version > 0 AND customer_id > \?/.test(ROUTE));   // 2026-10-20 設計20
+ok('④-b★遅れている会員だけ返す（設計22：今の月の時点で作られていない月額行も・OR は括弧の中）',
+  /WHERE source_version > 0 AND customer_id > \?\s*AND \( \$\{NOT_FRESH_SQL\}\s*OR EXISTS \(SELECT 1 FROM monthly_quota q[\s\S]{0,300}?q\.as_of_month IS NULL OR q\.as_of_month <> \?\)\) \)/.test(ROUTE));   // 2026-10-20 設計20
 ok('④-b★customer_id 順（巡回できる）', /ORDER BY customer_id LIMIT \?/.test(ROUTE));
 ok('④-b limit に上下限がある',
   /Math\.min\(50, Math\.max\(1, Math\.trunc\(rawLimit\)\)\)/.test(ROUTE),
@@ -84,8 +84,8 @@ ok('⑤★更新で used を書き換えない',
   'opening_used（移行前に使った枚数）は更新してよい。used（引当が動かす数）に触れてはいけない');
 //   列が増えても壊れないように、列の並びと「used の位置に 0 が直書き」をセットで見る
 ok('⑤新しく作るときだけ used=0',
-  /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version\)/.test(BUILD)
-  && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?, \?\)/.test(BUILD));
+  /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version, lent, as_of_month\)/.test(BUILD)
+  && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?, \?, \?, \?\)/.test(BUILD));
 
 //   ★不変条件：**枠の used をアプリ側のSQLが書き換えてはいけない**（0009）。
 //     2026-10-09 に「世代の印を外す」UPDATE を足したので、

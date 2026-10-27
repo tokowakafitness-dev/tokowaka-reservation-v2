@@ -43,11 +43,29 @@ export function fmtDateOnlyJst(ms, lang) {
 export function monthlyRemainOf(row) {
   if (!row) return { rem: null, ok: true, hasRow: false };   // 枠の行が無い＝月額の契約が無い
   const cov = row.coverage;
-  if (cov === 'limited') return { rem: Number(row.quota) - Number(row.used), ok: true, hasRow: true };
+  if (cov === 'limited') {
+    //   ★翌月に前借りされた回数（lent）も引く（2026-10-27・設計22）。
+    //     D1 の used は引当（その月に割り当たった予約）だけを数える。翌月の超過分が当月の未消化 base を借りると、
+    //     計算は当月の used に足すが D1 の used には入らない＝当月の残りが多く見えていた（*3105・*3922）。
+    //     NULL は「まだ作り直していない」。0 で埋めない（埋めると前借りが見えないまま一致して見える）。
+    if (row.lent == null) return { rem: null, ok: false, hasRow: true, why: 'lent_missing' };
+    return { rem: Number(row.quota) - Number(row.used) - Number(row.lent), ok: true, hasRow: true };
+  }
   if (cov === 'uncovered') return { rem: 0, ok: true, hasRow: true };
   if (cov === 'unlimited') return { rem: null, ok: true, hasRow: true };
   //   ★NULL は「まだ作り直していない」。既定値で埋めない（0012 に詳述）。
-  return { rem: null, ok: false, hasRow: true };
+  return { rem: null, ok: false, hasRow: true, why: 'coverage_missing' };
+}
+
+//   その行を「今の月」の時点で作ったか（設計22）。計算は今の月で消化順と前借りが変わるため、
+//   予約が無くても月が替われば値が変わる。行が無い月は「月額契約なし」の意味なので対象外。
+export function rowAsOfOk(row, nowKey) {
+  if (!row) return true;
+  return row.as_of_month != null && String(row.as_of_month) === String(nowKey);
+}
+function jstMonthKey(ms) {
+  const d = new Date(Number(ms) + 9 * 3600 * 1000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
 }
 
 /** そのパックの残り（買った枚数 − 移行前に使った枚数 − 引当で使った枚数） */
@@ -115,10 +133,15 @@ export function buildRemainDiag(input) {
   const packs = input.packs || [];
   const lang = input.lang;
 
+  //   ★別の月の時点で作った行からは答えない（設計22・月替わり）。翌月の行は25日以降に使うときだけ見る（下）
+  const nowKey = jstMonthKey(nowMs);
+  if (!rowAsOfOk(input.targetMonthRow, nowKey) || !rowAsOfOk(input.curMonthRow, nowKey)) {
+    return { value: null, status: 'as_of_stale' };
+  }
   const tm = monthlyRemainOf(input.targetMonthRow);
-  if (!tm.ok) return { value: null, status: 'coverage_missing' };
+  if (!tm.ok) return { value: null, status: tm.why || 'coverage_missing' };
   const cm = monthlyRemainOf(input.curMonthRow);
-  if (!cm.ok) return { value: null, status: 'coverage_missing' };
+  if (!cm.ok) return { value: null, status: cm.why || 'coverage_missing' };
 
   //   ★契約の有無は「行があるか」で決める。
   //     月額：対象月または当月に枠の行がある（覆っていない月も uncovered の行が作られる）
@@ -169,8 +192,12 @@ export function buildRemainDiag(input) {
   if (jstNow.getUTCDate() >= 25) {
     //   翌月の中旬＝確実にその月（GASと同じ取り方）
     const nm = Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth() + 1, 15, 3, 0, 0);
+    //   ★翌月の行も同じ厳しさで見る（設計22・関門①）。以前は ok:false を「翌月の案内なし」として続けていたため、
+    //     D1 の答えが写しの nextMonth を null で上書きしえた。分からなければ全体を写しへ。
+    if (!rowAsOfOk(input.nextMonthRow, nowKey)) return { value: null, status: 'as_of_stale' };
     const nmRem = monthlyRemainOf(input.nextMonthRow);
-    if (nmRem.ok) {
+    if (!nmRem.ok) return { value: null, status: nmRem.why || 'coverage_missing' };
+    {
       const nTk = ticketsAt(packs, nm);
       const total = (nmRem.rem == null ? 0 : Number(nmRem.rem)) + Number(nTk.rem || 0);
       if (total > 0) {
@@ -281,7 +308,7 @@ export async function readRemainDiag(env, customerId, targetMs, opts) {
     //     表示に使うのは当月と翌月の行だけ。数か月×40名なので全部読んでも軽い。
     [rows, packs, cnt] = await Promise.all([
       env.DB.prepare(
-        `SELECT month_key, quota, used, coverage, base_freq, overage
+        `SELECT month_key, quota, used, coverage, base_freq, overage, lent, as_of_month
            FROM monthly_quota WHERE customer_id = ? AND built_version = ?`
       ).bind(customerId, ver.version.builtVersion).all(),
       env.DB.prepare(

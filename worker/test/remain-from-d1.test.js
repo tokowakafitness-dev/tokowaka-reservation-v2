@@ -11,9 +11,27 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  buildRemainFromRows, monthlyRemainOf, ticketsAt,
+  buildRemainFromRows as _buildRemainFromRows, buildRemainDiag as _buildRemainDiag, monthlyRemainOf as _monthlyRemainOf, ticketsAt,
   fmtDateOnlyJst, monthKeyJst, monthRangeJst, readRemainFromD1, readRemainDiag,
 } from '../src/lib/remain-from-d1.js';
+
+//   ★2026-10-27（設計22）：月額の行に lent（前借りされた回数）と as_of_month（作った時点の月）が足された。
+//     ここより上の既存の検査はそれ以外のことを見ているので、行に「前借り0・今の月の時点」を補ってから渡す。
+//     NULL・別の月のときの振る舞いは、補わずに末尾の ⑳ で確かめる（補い役を通すと検査にならないため）。
+const _jstKey = (ms) => { const d = new Date(Number(ms) + 9 * 3600000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); };
+function _fillRow(row, key) {
+  if (!row) return row;
+  const r = Object.assign({}, row);
+  if (r.lent === undefined) r.lent = 0;
+  if (r.as_of_month === undefined) r.as_of_month = key;
+  return r;
+}
+function _fill(i) {
+  const key = _jstKey(i.nowMs);
+  return Object.assign({}, i, { targetMonthRow: _fillRow(i.targetMonthRow, key), curMonthRow: _fillRow(i.curMonthRow, key), nextMonthRow: _fillRow(i.nextMonthRow, key) });
+}
+const buildRemainFromRows = (i) => _buildRemainFromRows(_fill(i));
+const monthlyRemainOf = (row) => _monthlyRemainOf(row && row.lent === undefined ? Object.assign({}, row, { lent: 0 }) : row);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
@@ -301,7 +319,8 @@ function fakeEnv(spec) {
             return null;
           },
           async all() {
-            if (/FROM monthly_quota/.test(sql)) return { results: spec.quota || [] };
+            //   設計22：偽の D1 の月額行にも「前借り0・今の月の時点」を補う（指定があればそのまま）
+            if (/FROM monthly_quota/.test(sql)) return { results: (spec.quota || []).map((r) => _fillRow(r, spec.asOf || _jstKey(spec.nowMs || Date.now()))) };
             if (/FROM ticket_packs/.test(sql)) return { results: spec.packs || [] };
             return { results: [] };
           },
@@ -419,6 +438,48 @@ ok('⑫会員が分からなければ答えない', (await readRemainFromD1(fake
   const BOOT = readFileSync(join(ROOT, 'worker/src/routes/boot.js'), 'utf8');
   ok('⑬★まだ読み取りに繋いでいない', !/readRemainFromD1/.test(BOOT),
      '手順3（shadow）で食い違いを数えてから繋ぐ');
+}
+
+// ============================================================
+// ⑳ 翌月に前借りされた回数（lent）と作った時点の月（as_of_month）（2026-10-27・設計22）
+//   ★ここは補い役を通さない（_buildRemainDiag / _monthlyRemainOf を直接呼ぶ）
+// ============================================================
+{
+  const now = jst(2026, 10, 27);
+  const row = (o) => Object.assign({ month_key: '2026-10', quota: 4, used: 3, coverage: 'limited', base_freq: 4, overage: 0, lent: 1, as_of_month: '2026-10' }, o);
+  //   *3105 の形：10月 枠4・引当3・11月が1回前借り → 残り0（計算と同じ）
+  ok('⑳-1 ★前借り1回を引く（4−3−1＝0）', _monthlyRemainOf(row()).rem === 0);
+  ok('⑳-2 前借りが0なら従来どおり（4−3＝1）', _monthlyRemainOf(row({ lent: 0 })).rem === 1);
+  const m3 = _monthlyRemainOf(row({ lent: null }));
+  ok('⑳-3 ★前借りが未設定（NULL）なら答えない（0で埋めない）', m3.ok === false && m3.why === 'lent_missing');
+  ok('⑳-4 覆っていない月・上限なしの月は lent を見ない', _monthlyRemainOf(row({ coverage: 'uncovered', lent: null })).rem === 0 && _monthlyRemainOf(row({ coverage: 'unlimited', lent: null })).ok === true);
+  const base = { nowMs: now, targetMs: now, packs: [], thisMonthCount: 3 };
+  const d1 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row(), curMonthRow: row(), nextMonthRow: row({ month_key: '2026-11', quota: 5, used: 5, lent: 0 }) }));
+  ok('⑳-5 ★入口から：*3105 の形で10月の残りが0', d1.status === 'ok' && d1.value.monthlyRemaining === 0 && d1.value.remaining === 0, JSON.stringify(d1).slice(0, 200));
+  const d2 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row({ as_of_month: '2026-09' }), curMonthRow: row({ as_of_month: '2026-09' }) }));
+  ok('⑳-6 ★別の月の時点で作った行からは答えない（as_of_stale）', d2.value === null && d2.status === 'as_of_stale');
+  const d3 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row({ as_of_month: null }), curMonthRow: row({ as_of_month: null }) }));
+  ok('⑳-7 時点が未設定の行からも答えない', d3.value === null && d3.status === 'as_of_stale');
+  //   ★10月に作った行を11月1日に読む（月替わり）
+  const d4 = _buildRemainDiag({ nowMs: jst(2026, 11, 1), targetMs: jst(2026, 11, 1), packs: [], thisMonthCount: 0,
+    targetMonthRow: row({ month_key: '2026-11', quota: 5, used: 5, lent: 0 }), curMonthRow: row({ month_key: '2026-11', quota: 5, used: 5, lent: 0 }) });
+  ok('⑳-8 ★10月に作った行を11月に読むと答えない（月替わり）', d4.value === null && d4.status === 'as_of_stale');
+  //   ★翌月の行だけ前借りが未設定 → 全体を答えない（翌月の案内だけ消して続けない・関門①）
+  const d5 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row(), curMonthRow: row(), nextMonthRow: row({ month_key: '2026-11', lent: null }) }));
+  ok('⑳-9 ★25日以降、翌月の行の前借りが未設定なら全体を答えない', d5.value === null && d5.status === 'lent_missing');
+  const d6 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row(), curMonthRow: row(), nextMonthRow: row({ month_key: '2026-11', as_of_month: '2026-09' }) }));
+  ok('⑳-10 ★25日以降、翌月の行が別の月の時点なら全体を答えない', d6.value === null && d6.status === 'as_of_stale');
+  const d7 = _buildRemainDiag({ nowMs: jst(2026, 10, 10), targetMs: jst(2026, 10, 10), packs: [], thisMonthCount: 3,
+    targetMonthRow: row(), curMonthRow: row(), nextMonthRow: row({ month_key: '2026-11', lent: null }) });
+  ok('⑳-11 25日より前は翌月の行を見ない（従来どおり）', d7.status === 'ok');
+  //   チケットだけの会員（月額の行が無い）は時点の判定の対象外
+  const d8 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: null, curMonthRow: null, nextMonthRow: null,
+    packs: [{ pack_id: 'p', kind: 'normal', total: 5, used: 1, opening_used: 0, valid_from: jst(2026, 9, 1), valid_to: jst(2026, 12, 31) }] }));
+  ok('⑳-12 チケットだけの会員は時点の判定の対象外', d8.status === 'ok' && d8.value.type === 'ticket', JSON.stringify(d8).slice(0, 160));
+  //   ★本番の SELECT に2列が入っている（既存の入口検査は補い役を通すので、SQL から抜けても気づけない・関門②）
+  const SRC = readFileSync(join(HERE, '../src/lib/remain-from-d1.js'), 'utf8');
+  ok('⑳-13 ★D1 から読む SELECT に lent・as_of_month が入っている',
+     /SELECT month_key, quota, used, coverage, base_freq, overage, lent, as_of_month\s+FROM monthly_quota WHERE customer_id = \? AND built_version = \?/.test(SRC));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} D1から残数を作る 検証: ${pass} passed / ${fail} failed`);

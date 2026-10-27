@@ -16,6 +16,7 @@
 //   実行: node worker/test/quota-build.test.js
 
 import { buildQuotaForCustomer, quotaUpsertStatements, nextMonthKey, inRange } from '../src/lib/quota-build.js';
+import { _lbComputeRemaining } from '../src/allocate.js';   // 設計22：D1の式と計算の残りを突き合わせる
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
@@ -109,8 +110,8 @@ console.log('=== 4. ★used を書かない（枠を動かすのはトリガー�
   //   （2026-10-09 に base_freq と overage を足した）
   //   （2026-10-09 に built_version も足した）
   ok('④新しく作るときだけ used=0',
-    /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version\)/.test(monthlySql)
-    && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?, \?\)/.test(monthlySql), monthlySql);
+    /\(customer_id, month_key, quota, coverage, base_freq, overage, used, updated_at, built_version, lent, as_of_month\)/.test(monthlySql)
+    && /VALUES \(\?, \?, \?, \?, \?, \?, 0, \?, \?, \?, \?\)/.test(monthlySql), monthlySql);
   //   ★行にも「作った世代」を書く（設計13）。読む側はいまの世代の行だけを読む。
   ok('④★世代の印を書く（枠）', /built_version = excluded\.built_version/.test(monthlySql));
   ok('④★世代の印を書く（チケット）', /built_version = excluded\.built_version/.test(packSql));
@@ -262,5 +263,29 @@ console.log('=== 12. 棚卸しが買った枚数を超えていたら問題に�
 }
 
 console.log('');
+// ============================================================
+console.log('=== 設計22. 翌月に前借りされた回数（lent）と作った時点の月 ===');
+//   *3105 の形：月額4回。10月に3件、11月に5件（11月の枠4を1超え → 10月の未消化 base を1前借り）
+{
+  const C4 = [{ row: crow({ method: '月額', freq: 4 }), cols: COLS,
+                start: new Date(jst(2026, 10, 1)), end: new Date(jst(2026, 12, 31)), idx: 0 }];
+  const S = [ses('o1', jst(2026, 10, 3, 9)), ses('o2', jst(2026, 10, 10, 9)), ses('o3', jst(2026, 10, 17, 9))]
+    .concat([1, 7, 14, 21, 28].map((d) => ses('n' + d, jst(2026, 11, d, 9))));
+  const O = { fromMonth: '2026-10', toMonth: '2026-11', nowKey: '2026-10', carryRate: 0.5 };
+  const b = buildQuotaForCustomer('C1', C4, S, null, O);
+  const oct = b.monthly.find((m) => m.monthKey === '2026-10'), nov = b.monthly.find((m) => m.monthKey === '2026-11');
+  eq('設計22-1 ★10月の行に前借り1', oct && oct.lent, 1);
+  eq('設計22-2 11月の行は前借り0', nov && nov.lent, 0);
+  eq('設計22-3 ★作った時点の月（nowKey）を持つ', oct && oct.asOfMonth, '2026-10');
+  //   ★D1 の式（枠 − その月に割り当たった予約 − 前借り）が計算の残りと一致する
+  const calcOct = _lbComputeRemaining('C1', C4, S, '2026-10', jst(2026, 10, 15, 12), 0.5, null, false, true);
+  const calcNov = _lbComputeRemaining('C1', C4, S, '2026-10', jst(2026, 11, 15, 12), 0.5, null, false, true);
+  eq('設計22-4 ★10月：D1の式 4−3−1 が計算の残りと一致（0）', oct.quota - 3 - oct.lent, calcOct.monthlyRem);
+  eq('設計22-5 11月：D1の式 5−5−0 が計算の残りと一致（0）', nov.quota - 5 - nov.lent, calcNov.monthlyRem);
+  //   保存の文に lent と as_of_month が渡る
+  const st = quotaUpsertStatements(b, 1, 7).find((x) => /monthly_quota/.test(x.sql) && x.args[1] === '2026-10');
+  ok('設計22-6 保存の文に lent・as_of_month が入る', st && st.args[8] === 1 && st.args[9] === '2026-10', JSON.stringify(st && st.args));
+}
+
 console.log(`${fail ? '❌' : '✅'} 枠を作る処理 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

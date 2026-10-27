@@ -28,6 +28,18 @@ function nextMonthKey(monthKey) {
 }
 
 /** いまの月（JST） */
+//   ★前借り・作った時点の月の監視（設計22）。いまの世代かつ新しいと名乗れる会員の行だけを数える。
+//     invariantBroken：used + lent > quota（計算上は起きない＝carryForward ≤ base − baseUsed。実装の誤り・手作業の破損を拾う目）
+//     lent が NULL の行は lentMissing に入れ、算術の異常とは分ける。
+export const LENT_ASOF_SQL = `SELECT
+     SUM(CASE WHEN q.coverage = 'limited' AND q.lent IS NULL THEN 1 ELSE 0 END) AS lentMissing,
+     SUM(CASE WHEN q.as_of_month IS NULL OR q.as_of_month <> ? THEN 1 ELSE 0 END) AS asOfStale,
+     SUM(CASE WHEN q.lent IS NOT NULL AND q.used + q.lent > q.quota THEN 1 ELSE 0 END) AS invariantBroken,
+     COUNT(*) AS n
+     FROM monthly_quota q JOIN customer_sync_version v
+       ON v.customer_id = q.customer_id AND q.built_version = v.built_version
+    WHERE ${freshSqlFor('v')}`;
+
 function nowMonthKeyJst(ms) {
   const d = new Date(ms + 9 * 3600000);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -409,6 +421,18 @@ export async function quotaStatus(request, env) {
     generation = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
   }
 
+  //   ★前借り（lent）と作った時点の月（as_of_month）が入っていない行（2026-10-27・設計22）。
+  //     数えるのは**いまの世代かつ新しいと名乗れる会員の行だけ**（古い世代の行は読まれないので数えない・関門①）。
+  //     0 になるまで全員切り替えをしない。
+  let lentAsOf = { table: 'missing' };
+  try {
+    const r = await env.DB.prepare(LENT_ASOF_SQL).bind(nowMonthKeyJst(Date.now())).first();
+    lentAsOf = { table: 'ok', rows: Number(r?.n || 0), lentMissing: Number(r?.lentMissing || 0), asOfStale: Number(r?.asOfStale || 0),
+                 invariantBroken: Number(r?.invariantBroken || 0) };
+  } catch (e) {
+    lentAsOf = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
+  }
+
   //   ★重複パック（設計20 §2-5・切り替えの合格条件 MODEL §4-2「同じ CT<開始>_<終了> の pack が複数ない」）
   //     合成 ID（CT<開始>_<終了>_<行番号>）は、末尾の行番号を除くと同じになる組があると、
   //     棚卸しの付け替えが一意に決まらない。数えるのは**いまの世代の行だけ**（古い世代の行は読まれない）。
@@ -478,6 +502,7 @@ export async function quotaStatus(request, env) {
     syncVersion,   // 会員ごとの世代（fresh/stale/ahead・3-bの鮮度の判定に使う）
     generation,    // 行ごとの世代（いまの世代／古い行／印の無い行・設計13）
     dupPackPrefix, // 同じ CT<開始>_<終了> のパックが複数ある組（設計20 §2-5）
+    lentAsOf,      // 前借り・作った時点の月が入っていない行（いまの世代・設計22）
     remainRead: await readRemainReadStatus(env),   // D1 から出す仕組みの状態（設計21）
     shadowTables,  // shadow の3表が入っているか（1回の依頼で確かめる量を増やすため）
   });
@@ -542,11 +567,20 @@ export async function quotaBehind(request, env) {
       //   ★条件は「新しいと名乗れない」（fresh.js の否定）。2026-10-20 まで source > built だけで、
       //     世代は一致しているが書き込みに追いついていない会員（covers < dirty）を永久に拾わなかった（設計20 §7-5）。
       //     source_version > 0：一度も計算入力が来ていない会員（書き込みの印だけの 0/0 行）は拾わない
+      //   ★今の月の時点で作られていない月額行（as_of_month が今の月でない・NULL）を持つ会員も拾う（2026-10-27・設計22）。
+      //     計算は今の月で消化順と前借りが変わるので、予約が無くても月が替われば作り直しが要る。
+      //     月額行の無いチケットだけの会員は拾わない（チケットの残りは今の月に依らない）。
+      //     ★OR は括弧で囲む。囲まないと source_version > 0 と栞（customer_id > ?）を迂回して同じ会員を返し続ける（関門①）
       `SELECT customer_id, source_version, built_version, source_at
          FROM customer_sync_version
-        WHERE ${NOT_FRESH_SQL} AND source_version > 0 AND customer_id > ?
+        WHERE source_version > 0 AND customer_id > ?
+          AND ( ${NOT_FRESH_SQL}
+                OR EXISTS (SELECT 1 FROM monthly_quota q
+                            WHERE q.customer_id = customer_sync_version.customer_id
+                              AND q.built_version = customer_sync_version.built_version
+                              AND (q.as_of_month IS NULL OR q.as_of_month <> ?)) )
         ORDER BY customer_id LIMIT ?`
-    ).bind(after, limit).all();
+    ).bind(after, nowMonthKeyJst(Date.now()), limit).all();
     const rows = r.results || [];
     return json({
       ok: true,
