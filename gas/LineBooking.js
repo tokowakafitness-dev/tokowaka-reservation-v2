@@ -1883,7 +1883,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-27a レンタル枠の消化は契約行でなく使ったチケットで種別を決める';
+var LB_HEALTH_BUILD = '2026-10-29a 中野の月曜を終日開ける関数（他の曜日は本番の値のまま）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -8666,7 +8666,7 @@ function clearOwnerSlotWindow() { PropertiesService.getScriptProperties().delete
 function runSetOwnerSlotWindow() {
   var 設定 = {
     0: null,                 // 日：非表示
-    1: { from: 17, to: 24 }, // 月：17時〜
+    1: 'all',                // 月：カレンダー通り（終日）※2026-10-29 オーナー指示で17時〜から変更
     2: { from: 17, to: 24 }, // 火：17時〜
     3: null,                 // 水：非表示
     4: { from: 17, to: 24 }, // 木：17時〜
@@ -8675,6 +8675,49 @@ function runSetOwnerSlotWindow() {
   };
   setOwnerSlotWindow(設定);
 }
+
+// 1つの曜日だけを変える（2026-10-29）。他の曜日は本番に入っている値のまま残す。
+//   ★なぜ runSetOwnerSlotWindow を使わないのか
+//     あれは全曜日を上の既定で上書きする。本番で別の曜日を変えていたら、それが黙って巻き戻る。
+//     本番の値はリポジトリから読めない（Script Property にしか無い）ので、本番の値を読んでから1曜日だけ差し替える。
+//   ★未設定（＝全曜日制限なし）・読めない値のときは書かない
+//     未設定のまま1曜日だけ書くと、書かなかった曜日が全部「非表示」になる＝枠が一斉に消える。
+//   純関数：raw＝今の値（JSON文字列 or null）→ { ok, next, before, reason }
+// 1つのルールが Worker（calsync.js normalizeOwnerWindow）でも通るか。'all'/true/null/{from,to}（0〜24の整数）だけ。
+function _lbOwnerRuleOk(rule) {
+  if (rule === 'all' || rule === true || rule === null) return true;
+  if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return false;
+  var f = rule.from, t = rule.to;
+  return typeof f === 'number' && typeof t === 'number' && Math.floor(f) === f && Math.floor(t) === t &&   // Worker は整数だけ受ける（落ちると公開が止まる）
+    f >= 0 && f <= 24 && t >= 0 && t <= 24;
+}
+function _lbOwnerWindowWithDay(raw, day, rule) {
+  var d = Number(day);
+  if (!(d >= 0 && d <= 6 && Math.floor(d) === d)) return { ok: false, reason: 'BAD_DAY' };
+  if (rule === true || !_lbOwnerRuleOk(rule) || (rule && typeof rule === 'object' && !(rule.from < rule.to))) return { ok: false, reason: 'BAD_RULE' };
+  if (!raw) return { ok: false, reason: 'UNSET' };
+  var cur;
+  try { cur = JSON.parse(raw); } catch (e) { return { ok: false, reason: 'UNREADABLE' }; }
+  if (!cur || typeof cur !== 'object' || Array.isArray(cur)) return { ok: false, reason: 'UNREADABLE' };
+  //   ★既存の値も全体を検査する（Codex 関門②）。一部だけ壊れた値に書き足すと、壊れたまま公開を止める値を上書き保存してしまう
+  for (var k0 in cur) { if (!/^[0-6]$/.test(k0) || !_lbOwnerRuleOk(cur[k0])) return { ok: false, reason: 'UNREADABLE' }; }
+  var next = {};
+  for (var k in cur) { if (k !== String(d) && cur[k] !== null) next[k] = cur[k]; }
+  if (rule !== null) next[String(d)] = (rule === 'all') ? 'all' : { from: Number(rule.from), to: Number(rule.to) };
+  return { ok: true, before: cur, next: next };
+}
+function setOwnerSlotDay(day, rule) {
+  var r = _lbOwnerWindowWithDay(_lbProp('OWNER_SLOT_WINDOW'), day, rule);
+  if (!r.ok) {
+    Logger.log('⛔ 変更しませんでした（' + r.reason + '）。UNSET＝いまは全曜日が制限なし（月曜も既に全部出ています）／UNREADABLE＝値が壊れています');
+    return r;
+  }
+  PropertiesService.getScriptProperties().setProperty('OWNER_SLOT_WINDOW', JSON.stringify(r.next));
+  Logger.log('✅ 中野の固定客向け枠：変更前 ' + JSON.stringify(r.before) + ' → 変更後 ' + JSON.stringify(r.next) + '（記載の無い曜日＝非表示）');
+  return r;
+}
+// ★GASエディタから実行：月曜をカレンダー通り（終日）にする。他の曜日はそのまま。
+function runOpenOwnerMonday() { return setOwnerSlotDay(1, 'all'); }
 
 // 予約窓/同期の共通"地平"（25日ゲート）：当月末まで／毎月25日以降は翌月末まで。buildAvailableSlots と syncExistingReservations で共用。
 function _lbBookingHorizonEnd(now) {
