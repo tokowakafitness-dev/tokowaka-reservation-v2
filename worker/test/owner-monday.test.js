@@ -127,7 +127,7 @@ console.log('=== ④ 既定のランナー ===');
   const saved = JSON.parse(g.store.OWNER_SLOT_WINDOW);
   ok('④-1 runSetOwnerSlotWindow も月曜は終日（後で走らせても17時〜に戻らない）', saved['1'] === 'all', JSON.stringify(saved));
   ok('④-2 ★火曜も終日（2026-10-29）', saved['2'] === 'all', JSON.stringify(saved));
-  ok('④-3 他の既定は変えていない', JSON.stringify(saved['4']) === '{"from":17,"to":24}' && saved['6'] === 'all' && !('3' in saved) && !('0' in saved));
+  ok('④-3 他の既定（水曜は本番どおり終日・日曜は非表示）', JSON.stringify(saved['4']) === '{"from":17,"to":24}' && saved['6'] === 'all' && saved['3'] === 'all' && !('0' in saved));
 }
 
 console.log('=== ⑤ 火曜 ===');
