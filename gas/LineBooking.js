@@ -830,6 +830,23 @@ function _lbUpsertFollower(lineUserId) {
 //   退会・休会・失効を verified→アクセス制限へ降格（DESIGN §5.4）。
 //   Phase 4で請求マスタ（種別・開始/終了日）を読み G列 contract_status を更新する。
 // ============================================================
+// 契約の終了日を「その日のJST終端(23:59:59.999)」のミリ秒にする（割当器 Allocate.js の expEnd と同じ式）。null は期限なし。
+function _lbContractEndOfDayMs(end) {
+  if (!end) return null;
+  var ms = end.getTime(); if (isNaN(ms)) return null;
+  return (Math.floor((ms + 9 * 3600000) / 86400000) * 86400000 - 9 * 3600000) + 86399999;
+}
+// その日時がどれかの契約期間（開始日のJST始まり〜終了日のJST終端）に入っているか。振替の門番（2026-10-29 Codex 関門②）。
+function _lbInSomeContractPeriod(rows, ms) {
+  for (var i = 0; i < (rows || []).length; i++) {
+    var st = rows[i].start ? rows[i].start.getTime() : null;
+    if (st !== null && !isNaN(st)) st = Math.floor((st + 9 * 3600000) / 86400000) * 86400000 - 9 * 3600000;
+    var en = _lbContractEndOfDayMs(rows[i].end);
+    if ((st === null || isNaN(st) || st <= ms) && (en === null || ms <= en)) return true;
+  }
+  return false;
+}
+
 function syncContractStatus() {
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh || sh.getLastRow() < 2) { Logger.log('syncContractStatus: customer_line_map未作成/空'); return { success: true, updated: 0 }; }
@@ -842,13 +859,17 @@ function syncContractStatus() {
   for (var i = 0; i < vals.length; i++) {
     if (String(vals[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
     var name = String(vals[i][MAP_COL.NAME - 1] || ''), cid = String(vals[i][MAP_COL.CUSTOMER_ID - 1] || '');
-    // 氏名＋電話（＋顧客ID）で厳密に絞った契約行のうち、期間内が1つでもあれば active。
+    // 氏名＋電話（＋顧客ID）で厳密に絞った契約行のうち、まだ終わっていないものが1つでもあれば active。
     //   ※_lbFindContractは電話不一致時に同名別人の最新行へfallbackし誤active化しうるため使わない（Codex）。
+    //   ★開始日がこれから先の契約も active（2026-10-29）。登録は開始前でも通す（10/23）のに、ここで「期間外」と数えて
+    //     expired にしていた＝11/1開始の新規会員が10/25以降に11月分を予約しようとして CONTRACT_INACTIVE で止まった。
+    //     開始前の日付を予約させないのは割当器（契約期間の判定）が担う。この列は「退会・失効したか」だけを表す。
+    //   ★終了日は「その日のJST終端まで有効」（割当器 Allocate.js の expEnd と同じ）。0時で切ると最終日の3時に expired になり、最終日の予約が止まっていた。
     var rows = _lbContractRowsAll(name, _lbPhoneByCustomerId(cid), false, cid);
     var nowMs = new Date().getTime(), hasActive = false;
     for (var k = 0; k < rows.length; k++) {
-      var st = rows[k].start ? rows[k].start.getTime() : null, en = rows[k].end ? rows[k].end.getTime() : null;
-      if ((st === null || st <= nowMs) && (en === null || en >= nowMs)) { hasActive = true; break; }
+      var en = _lbContractEndOfDayMs(rows[k].end);
+      if (en === null || en >= nowMs) { hasActive = true; break; }
     }
     var want = (rows.migrationGap ? '' : (hasActive ? 'active' : 'expired'));   // 移行ギャップは判定保留（空＝変更しない）
     if (want === '') continue;
@@ -1883,7 +1904,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-29a 中野の月曜を終日開ける関数（他の曜日は本番の値のまま）';
+var LB_HEALTH_BUILD = '2026-10-29b 開始前の契約の会員を3時の同期で expired にしない（＋中野の月曜を開ける関数）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -5538,6 +5559,15 @@ function makeTransferReservationLine(lineUserId, body) {
   var _cn2 = String(rec.data[MAP_COL.NAME - 1] || '会員');
   var customerId = String(rec.data[MAP_COL.CUSTOMER_ID - 1]);
   if (String(rec.data[MAP_COL.CONTRACT_STAT - 1] || '') === 'expired') return { success: false, code: 'CONTRACT_INACTIVE', message: '現在のご契約では振替をお受けできません。担当トレーナーへご連絡ください。' };   // 退会会員は不可（Codex#6）
+  //   ★振替先の日付がどれかの契約期間に入っていること（2026-10-29 Codex 関門②）。振替は残数・契約期間の判定を通らない（_lbReserveCore の channel==='transfer'）。
+  //     G列は「終わっていない契約が1つでもあれば active」になった（開始前の契約も含む）ため、契約の切れ目（例：11月末で終わり1月から次）に
+  //     G列だけを見ると12月の振替が通ってしまう。権利を消費する前に止める。
+  //     移行ギャップ（契約行が揃っていない）のときは判定を保留する＝従来どおり（syncContractStatus と同じ扱い）。
+  var _tStart = new Date(body && body.startISO);
+  var _tRows = _lbContractRowsAll(_cn2, _lbPhoneByCustomerId(customerId), true, customerId);   // 確定処理＝最新の契約を読む（通常予約と同じ・Codex）
+  if (!isNaN(_tStart.getTime()) && !_tRows.migrationGap && !_lbInSomeContractPeriod(_tRows, _tStart.getTime())) {
+    return { success: false, code: 'OUT_OF_CONTRACT', message: 'ご契約期間外の日時は振替をお受けできません。担当トレーナーへご連絡ください。' };
+  }
   // #9：有効な振替権（当日キャンセルで付与・6日有効）がある時だけ振替可。ScriptLockで「消費→予約→失敗時復元」を原子化（Codex#1,2）。
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { success: false, code: 'BUSY', message: '混み合っています。少し時間をおいて再度お試しください。' };
