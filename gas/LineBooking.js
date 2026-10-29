@@ -8697,7 +8697,7 @@ function runSetOwnerSlotWindow() {
   var 設定 = {
     0: null,                 // 日：非表示
     1: 'all',                // 月：カレンダー通り（終日）※2026-10-29 オーナー指示で17時〜から変更
-    2: { from: 17, to: 24 }, // 火：17時〜
+    2: 'all',                // 火：カレンダー通り（終日）※2026-10-29 オーナー指示で17時〜から変更
     3: null,                 // 水：非表示
     4: { from: 17, to: 24 }, // 木：17時〜
     5: { from: 17, to: 24 }, // 金：17時〜
@@ -8748,6 +8748,8 @@ function setOwnerSlotDay(day, rule) {
 }
 // ★GASエディタから実行：月曜をカレンダー通り（終日）にする。他の曜日はそのまま。
 function runOpenOwnerMonday() { return setOwnerSlotDay(1, 'all'); }
+// ★GASエディタから実行：火曜をカレンダー通り（終日）にする。他の曜日はそのまま（2026-10-29）。
+function runOpenOwnerTuesday() { return setOwnerSlotDay(2, 'all'); }
 
 // 予約窓/同期の共通"地平"（25日ゲート）：当月末まで／毎月25日以降は翌月末まで。buildAvailableSlots と syncExistingReservations で共用。
 function _lbBookingHorizonEnd(now) {

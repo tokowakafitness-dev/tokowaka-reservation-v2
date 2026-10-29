@@ -44,7 +44,7 @@ function gas(initial) {
   };
   vm.createContext(ctx);
   const names = ['_lbProp', '_lbOwnerSlotWindow', '_lbInOwnerWindow', 'setOwnerSlotWindow', 'runSetOwnerSlotWindow',
-    '_lbOwnerRuleOk', '_lbOwnerWindowWithDay', 'setOwnerSlotDay', 'runOpenOwnerMonday'];
+    '_lbOwnerRuleOk', '_lbOwnerWindowWithDay', 'setOwnerSlotDay', 'runOpenOwnerMonday', 'runOpenOwnerTuesday'];
   vm.runInContext(names.map((n) => (n === '_lbProp' ? LB.match(/function _lbProp\(key\) \{[^\n]*\}/)[0] : pluckFn(LB, n))).join('\n'), ctx);
   return { ctx, store, writes: () => writes };
 }
@@ -126,7 +126,21 @@ console.log('=== ④ 既定のランナー ===');
   g.ctx.runSetOwnerSlotWindow();
   const saved = JSON.parse(g.store.OWNER_SLOT_WINDOW);
   ok('④-1 runSetOwnerSlotWindow も月曜は終日（後で走らせても17時〜に戻らない）', saved['1'] === 'all', JSON.stringify(saved));
-  ok('④-2 他の既定は変えていない', JSON.stringify(saved['2']) === '{"from":17,"to":24}' && saved['6'] === 'all' && !('3' in saved) && !('0' in saved));
+  ok('④-2 ★火曜も終日（2026-10-29）', saved['2'] === 'all', JSON.stringify(saved));
+  ok('④-3 他の既定は変えていない', JSON.stringify(saved['4']) === '{"from":17,"to":24}' && saved['6'] === 'all' && !('3' in saved) && !('0' in saved));
+}
+
+console.log('=== ⑤ 火曜 ===');
+{
+  const g = gas(LIVE);
+  g.ctx.runOpenOwnerMonday();
+  const r = g.ctx.runOpenOwnerTuesday();
+  const saved = JSON.parse(g.store.OWNER_SLOT_WINDOW);
+  ok('⑤-1 ★火曜は終日・月曜も終日のまま', r.ok && saved['2'] === 'all' && saved['1'] === 'all', JSON.stringify(saved));
+  ok('⑤-2 他の曜日は本番の値のまま', JSON.stringify(saved['3']) === '{"from":10,"to":12}' && JSON.stringify(saved['4']) === '{"from":17,"to":24}' && !('0' in saved));
+  const win = JSON.parse(normalizeOwnerWindow(JSON.parse(g.store.OWNER_SLOT_WINDOW)).json);
+  ok('⑤-3 ★Worker：火曜9時が出る', inOwnerWindow(jstMs(2026, 11, 3, 9), win) === true);
+  ok('⑤-4 Worker：木曜9時は出ない', inOwnerWindow(jstMs(2026, 11, 5, 9), win) === false);
 }
 
 console.log((fail === 0 ? '✅ ' : '⚠️ ') + `中野の月曜 検証: ${pass} passed / ${fail} failed`);
