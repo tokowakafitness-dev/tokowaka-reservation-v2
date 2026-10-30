@@ -70,7 +70,7 @@ console.log('=== 2. 予約台帳を書き換える操作が、許可リストに
     'line_makeReservationLine', 'line_makeReservationLineProxy',
     'line_makeRecurringReservation', 'line_makeBatchReservation',
     'line_makeBatchReservationProxy', 'line_makeTransferReservation',
-    'line_cancelReservation', 'line_changeReservation',
+    'line_cancelReservation', 'line_changeReservation', 'line_undoSameDayCancel',   // 当日キャンセルの訂正（設計24）
     'line_makeAdminBooking', 'line_makeBlock', 'line_deleteAdminSlot',
     'line_addTicketRefill', 'line_linkUnlinked', 'line_selfRegister',
     'line_addRecurringPatternByTrainer', 'line_deleteRecurringPattern',

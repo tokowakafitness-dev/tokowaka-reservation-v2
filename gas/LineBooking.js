@@ -283,6 +283,8 @@ function _lbDispatch(params, action, lineUserId, auth) {
     case 'line_getBookingOptions':  return getBookingOptions(lineUserId, params.startISO, params.customerId);   // 予約対象日時ベースの選択肢（ペア残・通常経路）
     case 'line_getMyReservations':  return getMyReservations(lineUserId);
     case 'line_cancelReservation':  return cancelReservationLine(lineUserId, params.reservationId);
+    case 'line_listSameDayCancels': return listSameDayCancels(lineUserId);                             // オーナーのみ（設計24）
+    case 'line_undoSameDayCancel':  return undoSameDayCancel(lineUserId, params.reservationId);        // オーナーのみ（設計24）
     case 'line_changeReservation':  return changeReservationLine(lineUserId, params.reservationId, params.newStartISO);
     case 'line_getTrainerReservations': return getTrainerReservations(lineUserId);
     case 'line_getPaceBoard':       return getPaceBoard(lineUserId);
@@ -1904,7 +1906,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-29b 開始前の契約の会員を3時の同期で expired にしない（＋中野の月曜を開ける関数）';
+var LB_HEALTH_BUILD = '2026-10-30a オーナーが間違えた当日キャンセルを無料キャンセルに直す（設計24）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -5482,7 +5484,7 @@ var LB_TCREDIT_SHEET = 'transfer_credits';
 var LB_TRANSFER_GRACE_DAYS = 6;
 function _lbTcreditSheet() {
   var ss = _lbSs(); var sh = ss.getSheetByName(LB_TCREDIT_SHEET);
-  if (!sh) { sh = ss.insertSheet(LB_TCREDIT_SHEET); sh.getRange(1, 1, 1, 5).setValues([['customer_id', 'granted_at', 'expires_at', 'used_at', 'source_reservation_id']]); }
+  if (!sh) { sh = ss.insertSheet(LB_TCREDIT_SHEET); sh.getRange(1, 1, 1, 6).setValues([['customer_id', 'granted_at', 'expires_at', 'used_at', 'source_reservation_id', 'note']]); }   // note＝無効化の履歴（設計24）
   return sh;
 }
 // 当日キャンセル時に振替権を1件付与（有効期限＝キャンセル日＋6日の終わり）。
@@ -7804,6 +7806,191 @@ function cancelReservationLine(lineUserId, reservationId) {
       return { success: true, penalty: !free, customerId: String(r[2] || '') };
     }
     return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============================================================
+// 間違えた当日キャンセルを、オーナーが無料キャンセルに直す（設計24・2026-10-30）
+//   当日キャンセルが書いた3か所を戻す：台帳（consumed→cancelled）／振替権（無効化）／B1の [消化] 予定（削除）。
+//   D1 は書き込みの入口（edgeAfterWrite → lbDwEnqueue）がこの会員を作り直す＝無料キャンセルと同じ後始末。
+//   ★戻さないもの：お客様・トレーナーへの LINE（送信済み）／トレーナーのカレンダー（同じ時間に受けるなら代行予約で取り直す）。
+//   ★倒れる向き：直してよいか判定できなければ何も書かない。
+// ============================================================
+var LB_SDC_TAG = '|当日消化取消';
+var LB_SDC_MSG = {
+  FORBIDDEN:       'オーナーのみ操作できます。',
+  NOT_FOUND:       '予約が見つかりません。',
+  AMBIGUOUS:       '同じ予約IDの行が複数あり、特定できません。台帳を確認してください。',
+  ALREADY:         'この予約はすでに無料キャンセルに直してあります。',
+  STATE_MISMATCH:  '当日キャンセル（消化）の状態ではないため直せません。',
+  BAD_DATE:        '予約日時を読めません。台帳を確認してください。',
+  PAST_MONTH:      '先月以前の予約は直せません（精算と食い違うため）。',
+  CLOSED_MONTH:    'この月は締め済みのため直せません。',
+  CREDIT_MISMATCH: '振替権の行が別の会員と食い違っています。transfer_credits を確認してください。',
+  TRANSFER_USED:   'この当日キャンセルで付いた振替権がすでに使われているため直せません。'
+};
+// 備考 'resId|…' の resId 部分
+function _lbResIdOfNote(note) {
+  var s = String(note == null ? '' : note), k = s.indexOf('|');
+  return k < 0 ? s : s.slice(0, k);
+}
+// 直してよいか（純関数）。r＝台帳の行（0始まり）。isClosed(monthKey)→締めの記録があるか。
+function _lbSdcVerdict(r, nowMs, isClosed) {
+  var note = String(r[8] == null ? '' : r[8]), st = String(r[6] || '');
+  var resId = _lbResIdOfNote(note);
+  if (st === 'cancelled' && note.indexOf(resId + LB_SDC_TAG + '→無料取消') === 0) return 'ALREADY';
+  if (!(st === 'consumed' && note === resId + LB_SDC_TAG)) return 'STATE_MISMATCH';
+  var d = _lbParseResvDate(r[0]);
+  if (!d) return 'BAD_DATE';
+  var tz = SETTINGS.TIMEZONE;
+  var mk = Utilities.formatDate(d, tz, 'yyyy-MM'), nowMk = Utilities.formatDate(new Date(nowMs), tz, 'yyyy-MM');
+  if (mk < nowMk) return 'PAST_MONTH';
+  if (isClosed(mk)) return 'CLOSED_MONTH';
+  return 'OK';
+}
+function _lbSdcCreditRows() {
+  var sh = _lbSheet(LB_TCREDIT_SHEET);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues(), out = [];
+  for (var i = 0; i < v.length; i++) {
+    out.push({ cid: String(v[i][0] == null ? '' : v[i][0]), src: String(v[i][4] == null ? '' : v[i][4]), used: !!v[i][3], exp: v[i][2], row: i + 2 });
+  }
+  return out;
+}
+// B1 の [消化] 予定を1件だけ消す。消せたら 1／見つからない・候補が複数なら 0（消さない）。
+//   13列目の B1 予定IDを優先（[消化] にしても ID は変わらない）。ID でも時刻・顧客名・[消化] を確かめる。
+function _lbSdcDeleteConsumedEvent(r) {
+  try {
+    var cal = CalendarApp.getCalendarById(CALENDAR_IDS.CAPACITY_B1);
+    var start = _lbParseResvDate(r[0]), name = String(r[1] || '');
+    if (!cal || !start || !name) return 0;
+    //   ★顧客名は完全一致（関門②）。部分一致だと「山田」の訂正で「山田太郎」の予定を消しうる。
+    //     タイトルの形は '[消化] 種別_姓_顧客名様_line'（_lbReserveCoreImpl の capTitle を [消化] に置き換えたもの）。
+    var want = _lbNormName(name);
+    var match = function (ev) {
+      var t = ev.getTitle();
+      if (t.indexOf('[消化]') !== 0 || ev.getStartTime().getTime() !== start.getTime()) return false;
+      var parts = t.replace(/^\[消化\]\s*/, '').split('_');
+      return parts.length >= 3 && _lbNormName(parts.slice(2).join('_').replace(/_line$/, '')) === want;   // 顧客名の '_' を保つ（BookingRules の解析と同じ）
+    };
+    var id = String(r[12] == null ? '' : r[12]);
+    if (id) {
+      var ev = null;
+      try { ev = cal.getEventById(id); } catch (e) { ev = null; }
+      if (ev && match(ev)) { ev.deleteEvent(); return 1; }
+    }
+    var end = new Date(start.getTime() + SETTINGS.SESSION_MINUTES * 60000);
+    var cands = cal.getEvents(start, end).filter(match);
+    if (cands.length === 1) { cands[0].deleteEvent(); return 1; }
+    return 0;
+  } catch (e) {
+    Logger.log('B1の[消化]予定を消せませんでした（台帳は訂正済み）: ' + e.message);
+    return 0;
+  }
+}
+// 一覧（オーナーのみ）：今月以降の当日キャンセル（消化）。顧客IDは返さない（画面に不要）。
+function listSameDayCancels(lineUserId) {
+  if (!_lbIsOwnerRole(getTrainerByLine(lineUserId))) return { success: false, code: 'FORBIDDEN', message: LB_SDC_MSG.FORBIDDEN };
+  var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+  if (!sh) return { success: false, code: 'NO_SHEET', message: '予約の台帳が読めません。' };
+  var last = sh.getLastRow();
+  if (last < 2) return { success: true, items: [] };
+  var v = sh.getRange(2, 1, last - 1, 11).getValues();
+  var credits = _lbSdcCreditRows();
+  var tz = SETTINGS.TIMEZONE, nowMk = Utilities.formatDate(new Date(), tz, 'yyyy-MM'), out = [];
+  for (var i = 0; i < v.length; i++) {
+    var r = v[i], note = String(r[8] == null ? '' : r[8]), resId = _lbResIdOfNote(note);
+    if (String(r[6]) !== 'consumed' || note !== resId + LB_SDC_TAG) continue;
+    var d = _lbParseResvDate(r[0]);
+    if (!d || Utilities.formatDate(d, tz, 'yyyy-MM') < nowMk) continue;
+    var cid = String(r[2] || ''), used = false;
+    for (var c = 0; c < credits.length; c++) if (credits[c].src === resId && credits[c].cid === cid && credits[c].used) used = true;
+    out.push({ reservationId: resId, dateLabel: _lbFmtResvLabel(r[0]), customerName: String(r[1] || ''),
+               trainerName: String(r[5] || ''), transferUsed: used, _s: d.getTime() });
+  }
+  out.sort(function (a, b) { return b._s - a._s; });   // 新しい順
+  out.forEach(function (o) { delete o._s; });
+  return { success: true, items: out };
+}
+// 取り消しの本体（オーナーのみ）
+function undoSameDayCancel(lineUserId, reservationId) {
+  var _tr = getTrainerByLine(lineUserId);
+  if (!_lbIsOwnerRole(_tr)) return { success: false, code: 'FORBIDDEN', message: LB_SDC_MSG.FORBIDDEN };
+  reservationId = String(reservationId || '').trim();
+  if (!reservationId || reservationId.indexOf('|') >= 0) return { success: false, code: 'BAD_REQUEST', message: '予約IDがありません。' };
+  var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+  if (!sh) return { success: false, code: 'NO_SHEET', message: '予約の台帳が読めません。' };
+  var fail = function (code) { return { success: false, code: code, message: LB_SDC_MSG[code] || code }; };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var last = sh.getLastRow();
+    if (last < 2) return fail('NOT_FOUND');
+    var v = sh.getRange(2, 1, last - 1, 13).getValues();
+    //   ★行は備考の resId 部分で探す（直した後も同じ行に当たる＝2回目は ALREADY になる）。重複は止める
+    var hits = [];
+    for (var i = 0; i < v.length; i++) if (_lbResIdOfNote(v[i][8]) === reservationId) hits.push(i);
+    if (!hits.length) return fail('NOT_FOUND');
+    if (hits.length > 1) return fail('AMBIGUOUS');
+    var r = v[hits[0]], row = hits[0] + 2, cid = String(r[2] || '');
+    //   認可の正本も通す（オーナーなら常に通る。顧客が名簿に見つからない＝判定できないときは止める）
+    if (!_lbTrainerMaySeeCustomer(_tr, _lbCustOwnerOf(cid))) return fail('FORBIDDEN');
+    var asheet = null;
+    var verdict = _lbSdcVerdict(r, new Date().getTime(), function (mk) {
+      if (!asheet) asheet = _lbAllocSheet();
+      return !!_lbFindClosedManifest(asheet, mk);
+    });
+    if (verdict !== 'OK') return fail(verdict);
+    //   振替権：同じ会員×同じ予約ID。同じIDで別の会員の行があれば止める。使われていたら止める
+    var credits = _lbSdcCreditRows(), mine = [];
+    for (var c = 0; c < credits.length; c++) {
+      if (credits[c].src !== reservationId) continue;
+      if (credits[c].cid !== cid) return fail('CREDIT_MISMATCH');
+      if (credits[c].used) return fail('TRANSFER_USED');
+      mine.push(credits[c]);
+    }
+    var tz = SETTINGS.TIMEZONE, now = new Date(), stamp = Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm');
+    //   ① 振替権を無効化（行は消さない）：C列（期限）を1分前に・F列に履歴。C〜F を1行1回で書く（D・E はそのまま）。
+    //     全ての読み手（予約の入口・残数の写し・声かけ）が「期限切れ＝使えない」と読む。
+    //   ② 台帳を最後に確定する。②で失敗したら①を元の期限に戻す＝「無料キャンセルなのに振替権も使える」を残さない（関門②）
+    var csh = mine.length ? _lbSheet(LB_TCREDIT_SHEET) : null, done = [];
+    var past = Utilities.formatDate(new Date(now.getTime() - 60000), tz, 'yyyy/MM/dd HH:mm');
+    var restore = function () {
+      var bad = 0;
+      for (var k = done.length - 1; k >= 0; k--) {
+        try { csh.getRange(done[k].row, 3, 1, 4).setValues([[done[k].exp, done[k].used, done[k].src, '']]); }
+        catch (e) { bad++; }
+      }
+      return bad;
+    };
+    try {
+      for (var m = 0; m < mine.length; m++) {
+        var cur = csh.getRange(mine[m].row, 3, 1, 4).getValues()[0];   // [expires, used, src, 履歴]
+        var ex = cur[0], exS = (ex instanceof Date) ? Utilities.formatDate(ex, tz, 'yyyy/MM/dd HH:mm') : String(ex || '');
+        csh.getRange(mine[m].row, 3, 1, 4).setValues([[past, cur[1], cur[2], '無効化 ' + stamp + '（オーナー訂正・元の期限 ' + exS + '）']]);
+        done.push({ row: mine[m].row, exp: ex, used: cur[1], src: cur[2] });
+      }
+    } catch (e1) {
+      var b1 = restore();
+      Logger.log((b1 ? '⛔' : '⚠️') + ' [undoSameDayCancel] 振替権の無効化に失敗→' + (b1 ? '元に戻せない行あり（transfer_credits を確認）' : '元に戻した') + ': ' + e1.message);
+      return { success: false, code: b1 ? 'PARTIAL' : 'WRITE_FAILED',
+               message: b1 ? '振替権の書き込みが途中で失敗し、元に戻せませんでした。transfer_credits を確認してください。' : '書き込みに失敗しました。何も変えていません。もう一度お試しください。' };
+    }
+    try {
+      //   payment_flag は当日キャンセルでも変えていないのでそのまま
+      sh.getRange(row, 7, 1, 3).setValues([['cancelled', r[7], reservationId + LB_SDC_TAG + '→無料取消（オーナー訂正 ' + stamp + '）']]);
+    } catch (e2) {
+      var b2 = restore();
+      Logger.log((b2 ? '⛔' : '⚠️') + ' [undoSameDayCancel] 台帳の書き込みに失敗→振替権を' + (b2 ? '元に戻せない行あり（transfer_credits を確認）' : '元に戻した') + ': ' + e2.message);
+      return { success: false, code: b2 ? 'PARTIAL' : 'WRITE_FAILED',
+               message: b2 ? '台帳の書き込みに失敗し、振替権を元に戻せませんでした。transfer_credits を確認してください。' : '書き込みに失敗しました。何も変えていません。もう一度お試しください。' };
+    }
+    //   ③ B1 の [消化] 予定（精算が読む）。消せなくても台帳は確定済み＝0を返して画面で知らせる
+    var calendarDeleted = _lbSdcDeleteConsumedEvent(r);
+    Logger.log('[undoSameDayCancel] 会員*' + cid.slice(-4) + ' 振替権無効化=' + done.length + ' カレンダー削除=' + calendarDeleted);
+    return { success: true, customerId: cid, creditsRevoked: done.length, calendarDeleted: calendarDeleted };
   } finally {
     lock.releaseLock();
   }

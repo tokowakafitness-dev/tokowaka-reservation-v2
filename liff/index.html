@@ -639,7 +639,7 @@
   var _NO_RETRY = [
     'makeReservationLine', 'makeReservationLineProxy', 'makeTransferReservation',
     'makeRecurringReservation', 'makeBatchReservation', 'makeBatchReservationProxy',
-    'changeReservation', 'cancelReservation', 'makeAdminBooking', 'makeBlock',
+    'changeReservation', 'cancelReservation', 'undoSameDayCancel', 'makeAdminBooking', 'makeBlock',
     'linkUnlinked', 'addTicketRefill', 'addRecurringPatternByTrainer', 'deleteRecurringPattern',
     'verifyMembership'
   ];
@@ -765,7 +765,7 @@
   //   書き込みをしたら、残数まわりはしばらくGASに直接聞く（正しさを優先）。
   //   ★期限は端末に残す。画面を閉じたり再読み込みすると変数は消えるが、
   //     写しが新しくなるわけではないので、古い残数がまた出てしまう。
-  var EDGE_WRITE_ACTIONS = /^(makeReservation|makeRecurring|makeBatch|makeTransfer|changeReservation|cancelReservation|makeAdminBooking|makeBlock|linkUnlinked|addTicketRefill|addRecurringPatternByTrainer|deleteRecurringPattern|deleteAdminSlot|selfRegister)/;
+  var EDGE_WRITE_ACTIONS = /^(makeReservation|makeRecurring|makeBatch|makeTransfer|changeReservation|cancelReservation|undoSameDayCancel|makeAdminBooking|makeBlock|linkUnlinked|addTicketRefill|addRecurringPatternByTrainer|deleteRecurringPattern|deleteAdminSlot|selfRegister)/;
   //   枠も対象にする。自分が取った枠が「まだ空いている」と見えるのを防ぐ。
   var EDGE_HOME_ACTIONS = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1,
                             getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1,
@@ -1348,10 +1348,72 @@
       var health = document.createElement('button'); health.className = 'btn btn-outline'; health.textContent = '🩺 システム状態を見る';
       health.onclick = function(){ loadHealthBoard(); };
       box.appendChild(health);
+      //   間違えた当日キャンセルを無料キャンセルに直す（設計24）。権限はGAS側でも止めている（ここは表示だけ）
+      var sdc = document.createElement('button'); sdc.className = 'btn btn-outline'; sdc.textContent = '↩️ 当日キャンセルを取り消す';
+      sdc.onclick = function(){ loadSameDayCancels(); };
+      box.appendChild(sdc);
     }
     var unlink = document.createElement('button'); unlink.className = 'btn btn-outline'; unlink.textContent = '未紐付け予約を紐付ける';
     unlink.onclick = function(){ loadUnlinked(); };
     box.appendChild(unlink);
+    show('s-tadmin');
+  }
+  // ===== 間違えた当日キャンセルを無料キャンセルに直す（オーナーのみ・設計24） =====
+  function loadSameDayCancels(){
+    show('s-loading'); dbg('当日キャンセルを取得中…');
+    api({ action:'line_listSameDayCancels' }).then(function(res){
+      if (!res || !res.success) { showError((res && res.message) || ('当日キャンセルの一覧を取得できませんでした（' + ((res&&res.code)||'不明') + '）。')); return; }
+      renderSameDayCancels(res.items || []);
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  function renderSameDayCancels(items){
+    var box = document.getElementById('tadminList'); box.innerHTML = '';
+    document.getElementById('tadminName').textContent = '全体｜当日キャンセルの取り消し';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    var note = document.createElement('div'); note.className='card';
+    note.innerHTML = '<p class="muted" style="font-size:13px;line-height:1.6;">間違えて当日キャンセル（1回消化）にした予約を、無料キャンセルに直します。<br>'
+      + '残数が1回戻り、付与済みの振替権があれば無効になり、カレンダーの [消化] を消します。<br>'
+      + 'お客様への連絡と、同じ時間に受ける場合の取り直し（代行予約）は別に行ってください。<br>今月以降の分だけ表示します。</p>';
+    box.appendChild(note);
+    if (!items.length) {
+      var none = document.createElement('div'); none.className='card'; none.innerHTML = '<p class="muted">今月以降の当日キャンセルはありません。</p>';
+      box.appendChild(none); show('s-tadmin'); return;
+    }
+    items.forEach(function(it){
+      var card = document.createElement('div'); card.className='card';
+      var head = document.createElement('div'); head.style.fontWeight='700';
+      head.textContent = it.dateLabel + '　' + it.customerName + ' 様';
+      var sub = document.createElement('div'); sub.className='muted'; sub.style.fontSize='13px'; sub.style.marginTop='4px';
+      sub.textContent = '担当：' + (it.trainerName || '—');
+      card.appendChild(head); card.appendChild(sub);
+      if (it.transferUsed) {
+        var w = document.createElement('p'); w.className='muted'; w.style.fontSize='13px'; w.style.marginTop='6px';
+        w.textContent = 'この当日キャンセルで付いた振替権がすでに使われているため、ここでは直せません。';
+        card.appendChild(w);
+      } else {
+        var btn = document.createElement('button'); btn.className='btn btn-outline'; btn.textContent='無料キャンセルに直す';
+        btn.onclick = function(){
+          var msg = it.dateLabel + ' ' + it.customerName + ' 様の当日キャンセルを、無料キャンセルに直します。\n\n'
+            + '・残数が1回戻ります\n・付与済みの振替権があれば無効になります\n・カレンダーの [消化] を消します\n\nよろしいですか？';
+          if (!window.confirm(msg)) return;
+          btn.disabled = true; btn.textContent = '処理中…';
+          api({ action:'line_undoSameDayCancel', reservationId: it.reservationId }).then(function(res){
+            if (!res || !res.success) {
+              btn.disabled = false; btn.textContent = '無料キャンセルに直す';
+              window.alert((res && res.message) || ('直せませんでした（' + ((res&&res.code)||'不明') + '）。'));
+              return;
+            }
+            var done = '無料キャンセルに直しました。残数が1回戻りました。';
+            if (!res.calendarDeleted) done += '\n\n⚠️ カレンダーの [消化] を見つけられませんでした。地下のカレンダーから手で消してください（精算に載るため）。';
+            window.alert(done);
+            loadSameDayCancels();
+          }).catch(function(e){ btn.disabled = false; btn.textContent = '無料キャンセルに直す'; showError('通信に失敗しました：'+e); });
+        };
+        card.appendChild(btn);
+      }
+      box.appendChild(card);
+    });
     show('s-tadmin');
   }
   // 日付(YYYY-MM-DD)＋時刻(HH:mm)→ISO。端末TZ(日本)でパースしUTC ISOへ。不正なら null。

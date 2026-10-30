@@ -857,7 +857,7 @@ var EDGE_AFTER_WRITE = {
   line_makeReservationLine: 1, line_makeReservationLineProxy: 1,
   line_makeRecurringReservation: 1, line_makeBatchReservation: 1,
   line_makeBatchReservationProxy: 1, line_makeTransferReservation: 1,
-  line_cancelReservation: 1, line_changeReservation: 1,
+  line_cancelReservation: 1, line_changeReservation: 1, line_undoSameDayCancel: 1,
   line_makeAdminBooking: 1, line_makeBlock: 1, line_deleteAdminSlot: 1,
   line_addTicketRefill: 1, line_linkUnlinked: 1, line_selfRegister: 1,
   line_addRecurringPatternByTrainer: 1, line_deleteRecurringPattern: 1
@@ -1971,7 +1971,7 @@ var EDGE_CALSYNC_AFTER = {
   line_makeReservationLine: 1, line_makeReservationLineProxy: 1,
   line_makeRecurringReservation: 1, line_makeBatchReservation: 1,
   line_makeBatchReservationProxy: 1, line_makeTransferReservation: 1,
-  line_cancelReservation: 1, line_changeReservation: 1,
+  line_cancelReservation: 1, line_changeReservation: 1, line_undoSameDayCancel: 1,
   line_makeAdminBooking: 1, line_makeBlock: 1, line_deleteAdminSlot: 1,
   line_addRecurringPatternByTrainer: 1, line_deleteRecurringPattern: 1
 };

@@ -61,6 +61,15 @@ for (const fn of trainerOperable) {
     '返さないと、トレーナーが操作したときにD1が更新されない');
 }
 
+console.log('=== 2-b. オーナーだけの操作（設計24・2026-10-30）===');
+//   undoSameDayCancel（間違えた当日キャンセルの訂正）はオーナーが操作する＝③では会員を引けない。res で返す
+{
+  const b = body('undoSameDayCancel');
+  ok('②-b undoSameDayCancel は台帳の行から会員IDを取る', /var r = v\[hits\[0\]\], row = hits\[0\] \+ 2, cid = String\(r\[2\] \|\| ''\);/.test(b));
+  ok('②-b ★undoSameDayCancel が成功時に customerId を返す', /return \{ success: true, customerId: cid,/.test(b),
+     '返さないと、オーナーのLINEから会員を引こうとして D1 が作り直されない');
+}
+
 console.log('=== 3. 呼び出しが会員を渡している入口 ===');
 //   res で返さなくても、params.customerId があれば②で特定できる
 for (const [action, fn] of [
@@ -85,11 +94,11 @@ ok('③-b ★固定枠の削除は res で会員IDを返す',
 ok('③-b 削除は引当を変えないと明記',
   /固定枠の削除そのものは引当を変えない/.test(LB),
   '何のために返すのかを書いておく（将来「不要では」と消されないため）');
-//   ★許可リストの16キーを全部、この検査で触っていること
+//   ★許可リストの17キーを全部、この検査で触っていること
 {
   const m = PE.match(/var EDGE_AFTER_WRITE = \{([\s\S]*?)\};/);
   const keys = m ? (m[1].match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g) || []).map((x) => x.replace(/\s*:$/, '')) : [];
-  eq('③-b 許可リストは16キー', keys.length, 16);
+  eq('③-b 許可リストは17キー', keys.length, 17);
   //   この検査ファイルが各キーに触れているか（名前の一部で照合）
   const notCovered = keys.filter((k) => {
     const fn = k.replace(/^line_/, '');
