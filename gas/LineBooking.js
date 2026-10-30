@@ -1906,7 +1906,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-30a オーナーが間違えた当日キャンセルを無料キャンセルに直す（設計24）';
+var LB_HEALTH_BUILD = '2026-10-31a 予約できる最終日より先は本人の操作なら作らない（設計25）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -5274,6 +5274,9 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     return { success: false, code: 'TOO_SOON',
       message: _lbBookingDeadlineText(start.getTime(), _lbBookingCfg(SETTINGS)) + '別の時間をお選びください。' };
   }
+  // 予約できる最終日（25日以降は翌月末・それ以前は当月末）より先は、本人の操作なら作らない（設計25）。
+  //   印 enforceHorizon はサーバーが組み立てる custInfo にだけ付く（body は見ない）。代行・固定枠の自動予約・繰り返しの2回目以降には付かない
+  if (custInfo.enforceHorizon === true) { var _hzNg = _lbHorizonGate(start.getTime()); if (_hzNg) return _hzNg; }
   // 体験契約の会員がLINEから予約した場合も実際は90分押さえる（表示・案内は60分）。
   var _sessMins = (String((custInfo && custInfo.contractType) || '').indexOf('体験') >= 0)
     ? (SETTINGS.TRIAL_SESSION_MINUTES || SETTINGS.SESSION_MINUTES) : SETTINGS.SESSION_MINUTES;
@@ -5441,7 +5444,8 @@ function makeReservationLine(lineUserId, body) {
     customerName: _cn,
     contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''),   // 契約から最新種別（総括C：自己予約のタイトル/計上を正す）・無ければmap値
     lineUserId: lineUserId,
-    consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+    consecRule: true,   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+    enforceHorizon: true   // ★本人の操作＝予約できる最終日より先は作らない（設計25）
   }, body, 'line');
 }
 
@@ -5461,6 +5465,10 @@ function makeRecurringReservationLine(lineUserId, body) {
   //   ペアpackを消化させない（契約種別の文字列で会員を弾くのではなく、消化先を固定して安全にする）。
   var start0 = new Date(body.startISO);
   if (isNaN(start0.getTime())) return { success: false, code: 'BAD_REQUEST', message: '予約時間が不正です。' };
+  //   ★1回目（画面で選んだ枠）が予約できる最終日より先なら、1件も作らずに止める（設計25・関門①）。
+  //     1回目が範囲内なら、2回目以降は今までどおり最終日より先も作る（印は付けない）
+  var _hzNg0 = _lbHorizonGate(start0.getTime());
+  if (_hzNg0) return _hzNg0;
   var occ = _lbRecurringStartMs(start0.getTime(), body.repeatCount, 7, 8);
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return { success: false, code: 'BUSY', message: '混み合っています。少し時間をおいて再度お試しください。' };
@@ -5574,6 +5582,8 @@ function makeTransferReservationLine(lineUserId, body) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { success: false, code: 'BUSY', message: '混み合っています。少し時間をおいて再度お試しください。' };
   try {
+    var _hzNgT = _lbHorizonGate(new Date(body.startISO).getTime());   // ★権利を使う前に止める（設計25）
+    if (_hzNgT) return _hzNgT;
     var use = _lbUseTransferCredit(customerId);   // 先に権利を確保（Lock内＝二重消費・二重予約を防止）
     if (!use.ok) return { success: false, code: 'NO_TRANSFER_ENTITLEMENT', message: '有効な振替権がありません。振替は当日キャンセルから6日以内にご利用いただけます。' };
     var res = _lbReserveCore({
@@ -5581,7 +5591,8 @@ function makeTransferReservationLine(lineUserId, body) {
       customerName: _cn2,
       contractType: _lbContractTypeOf(_cn2) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''),
       lineUserId: lineUserId,
-      consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+      consecRule: true,   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+      enforceHorizon: true   // ★本人の操作（設計25）
     }, body, 'transfer');   // 同一Lockを共有（_lbReserveCoreはhasLock時に再取得しない）
     if (!(res && res.success)) _lbRevertTransferCredit(use.rowIndex);   // 予約不成立→権利を未使用に戻す
     return res;
@@ -8056,7 +8067,8 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
         //     「変更しました」と合わせて**1回の変更で4通**届いていた。通知は下の「変更」2通だけにする
         { customerId: String(r[2]), customerName: customerName, lineUserId: String(r[3]), contractType: _chType, suppressNotify: true,
           //   ★連続ルールは「自分の予約を自分で変える」ときだけ（設計18 §3-6）。トレーナーが他人の予約を変えるときは当てない
-          consecRule: (String(r[3]) === String(lineUserId)) },
+          consecRule: (String(r[3]) === String(lineUserId)),
+          enforceHorizon: (String(r[3]) === String(lineUserId)) },   // ★本人が自分の予約を変えるときだけ（設計25）。トレーナーが他人の予約を変えるときは付けない
         { trainerId: String(r[4]), startISO: newStartISO, excludeStartISO: oldStart.toISOString(),
           // 変更は「日時だけ」が不変条件。会計属性（来店人数・消化先）は旧行から復元して持ち越す。
           //   packKindを渡さないと月額＋ペア併存会員の「ペア1名」予約が変更で月額/通常packへ変質する。
@@ -8681,7 +8693,8 @@ function makeBatchReservationLine(lineUserId, body) {
   return _lbBatchReserve({
     customerId: String(rec.data[MAP_COL.CUSTOMER_ID - 1]), customerName: _cn,
     contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''), lineUserId: lineUserId,
-    consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+    consecRule: true,   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+    enforceHorizon: true   // ★本人の操作（設計25）
   }, (body && body.items) || [], 'line');
 }
 
@@ -8943,6 +8956,13 @@ function _lbBookingHorizonEnd(now) {
   now = now || new Date();
   var hzMonth = (now.getDate() >= 25) ? now.getMonth() + 1 : now.getMonth();
   return new Date(now.getFullYear(), hzMonth + 1, 0, 23, 59, 59);   // その月の末日23:59
+}
+// 開始時刻が予約できる最終日より先なら止める結果を返す（範囲内は null）。案内はその月の前月25日（画面の灰色の案内と同じ・設計25）
+function _lbHorizonGate(startMs) {
+  if (!(startMs > _lbBookingHorizonEnd(new Date()).getTime())) return null;
+  var st = new Date(startMs), open = new Date(st.getFullYear(), st.getMonth() - 1, 25);
+  return { success: false, code: 'NOT_OPEN_YET',
+    message: (st.getMonth() + 1) + '月' + st.getDate() + '日のご予約は、' + (open.getMonth() + 1) + '月25日から受け付けます。' };
 }
 
 // ============================================================

@@ -138,6 +138,7 @@ console.log('=== ⑥ 振替の入口 ===');
       _lbUseTransferCredit: () => { used = true; return { ok: true, rowIndex: 2 }; },
       _lbRevertTransferCredit: () => {},
       _lbReserveCore: () => { reserved = true; return { success: true }; },
+      _lbHorizonGate: () => null,   // 予約できる最終日の関門は booking-horizon-gate.test.js で見る（ここは契約期間だけ）
     };
     vm.createContext(ctx);
     vm.runInContext(MAP_COL_SRC + '\n' + pluckFn(LB, '_lbContractEndOfDayMs') + '\n' + pluckFn(LB, '_lbInSomeContractPeriod') + '\n' + pluckFn(LB, 'makeTransferReservationLine'), ctx);
