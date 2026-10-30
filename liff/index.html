@@ -36,6 +36,7 @@
   .cell-open:active { background:#eef1f6; }
   .cell-sel { background:var(--navy,#1f2a44)!important; color:#fff!important; font-weight:700; }
   .cell-none { background:#fff; color:#ccc; }
+  .cell-closed { background:#f2f2f2; color:#bbb; }
   .err { color:#c62828; font-size:13px; margin-top:8px; }
   .sect-h { font-family:'Shippori Mincho',serif; font-size:14px; color:var(--navy); font-weight:600; margin:18px 4px 8px; letter-spacing:.04em; }
   .hist { padding:12px 16px; }
@@ -211,7 +212,7 @@
       type_transfer:'振替（+5,500円・残数消化なし）', type_ticket:'チケット（1回消化）', type_normal:'通常（1回消化）',
       trainer_colon:'担当：', location_label:'場所：', location_name:'TOKOWAKA 吉祥寺',
       change_time:'時間を変更する', cancel_this:'この予約をキャンセル',
-      week_prev:'‹ 前の週', week_next:'次の週 ›', week_hint:'○ をタップすると予約確認へ進みます。', week_reselect:'トレーナーを選び直す',
+      week_prev:'‹ 前の週', week_next:'次の週 ›', week_hint:'○ をタップすると予約確認へ進みます。', week_not_open:'灰色の日（{date}以降）は、{open}から予約できます。', week_reselect:'トレーナーを選び直す',
       choose_start:'開始時刻をお選びください',
       cf_title:'この内容で予約しますか？', cf_trainer_label:'担当：', cf_datetime_label:'日時：',
       cf_submit:'予約を確定する', cf_submitting:'処理中…', cf_checking:'ご利用チケットを確認中…', retry:'再試行',
@@ -279,7 +280,7 @@
       type_transfer:'Transfer (+¥5,500 · no balance used)', type_ticket:'Ticket (1 used)', type_normal:'Standard (1 used)',
       trainer_colon:'Trainer: ', location_label:'Location: ', location_name:'TOKOWAKA Kichijoji',
       change_time:'Change time', cancel_this:'Cancel this booking',
-      week_prev:'‹ Prev week', week_next:'Next week ›', week_hint:'Tap ○ to proceed to booking.', week_reselect:'Choose another trainer',
+      week_prev:'‹ Prev week', week_next:'Next week ›', week_hint:'Tap ○ to proceed to booking.', week_not_open:'Grey days ({date} onward) open for booking on {open}.', week_reselect:'Choose another trainer',
       choose_start:'Please choose a start time',
       cf_title:'Confirm this booking?', cf_trainer_label:'Trainer: ', cf_datetime_label:'Date/Time: ',
       cf_submit:'Confirm booking', cf_submitting:'Processing…', cf_checking:'Checking your ticket…', retry:'Retry',
@@ -347,7 +348,7 @@
       type_transfer:'改期（+5,500日元・不消耗次数）', type_ticket:'次卡（消耗1次）', type_normal:'常规（消耗1次）',
       trainer_colon:'教练：', location_label:'地点：', location_name:'TOKOWAKA 吉祥寺',
       change_time:'更改时间', cancel_this:'取消此预约',
-      week_prev:'‹ 上一周', week_next:'下一周 ›', week_hint:'点击 ○ 即可进入预约确认。', week_reselect:'重新选择教练',
+      week_prev:'‹ 上一周', week_next:'下一周 ›', week_hint:'点击 ○ 即可进入预约确认。', week_not_open:'灰色日期（{date}起）将于{open}开放预约。', week_reselect:'重新选择教练',
       choose_start:'请选择开始时间',
       cf_title:'确认此预约？', cf_trainer_label:'教练：', cf_datetime_label:'时间：',
       cf_submit:'确认预约', cf_submitting:'处理中…', cf_checking:'正在确认您的次卡…', retry:'重试',
@@ -415,7 +416,7 @@
       type_transfer:'改期（+5,500日圓・不消耗次數）', type_ticket:'堂票（消耗1次）', type_normal:'一般（消耗1次）',
       trainer_colon:'教練：', location_label:'地點：', location_name:'TOKOWAKA 吉祥寺',
       change_time:'變更時間', cancel_this:'取消此預約',
-      week_prev:'‹ 上一週', week_next:'下一週 ›', week_hint:'點擊 ○ 即可進入預約確認。', week_reselect:'重新選擇教練',
+      week_prev:'‹ 上一週', week_next:'下一週 ›', week_hint:'點擊 ○ 即可進入預約確認。', week_not_open:'灰色日期（{date}起）將於{open}開放預約。', week_reselect:'重新選擇教練',
       choose_start:'請選擇開始時間',
       cf_title:'確認此預約？', cf_trainer_label:'教練：', cf_datetime_label:'時間：',
       cf_submit:'確認預約', cf_submitting:'處理中…', cf_checking:'正在確認您的堂票…', retry:'重試',
@@ -2388,18 +2389,27 @@
     });
     Object.keys(index).forEach(function(k){ index[k].sort(function(a,b){ return a.startISO < b.startISO ? -1 : 1; }); });
 
+    //   予約できる最終日より先の日＝灰色・押せない。万一その日の枠が届いても ○ にしない
+    var _hz = bookingHorizon(new Date());
+    function _closed(d){ return d.getTime() > _hz.getTime(); }
     var html = '<table class="grid"><thead><tr><th></th>';
-    days.forEach(function(d){ html += '<th>'+ (d.getMonth()+1)+'/'+d.getDate()+'<br>'+dow(d.getDay()) +'</th>'; });
+    days.forEach(function(d){ html += '<th'+(_closed(d)?' class="cell-closed"':'')+'>'+ (d.getMonth()+1)+'/'+d.getDate()+'<br>'+dow(d.getDay()) +'</th>'; });
     html += '</tr></thead><tbody>';
     for (var h=BUSINESS_START; h<BUSINESS_END; h++){
       html += '<tr><td class="h">'+h+'</td>';
       days.forEach(function(d){
         var key = fmtDate(d) + '#' + h;
-        html += index[key] ? '<td class="cell-open" data-key="'+key+'">○</td>' : '<td class="cell-none">·</td>';
+        html += _closed(d) ? '<td class="cell-closed">·</td>'
+          : (index[key] ? '<td class="cell-open" data-key="'+key+'">○</td>' : '<td class="cell-none">·</td>');
       });
       html += '</tr>';
     }
     html += '</tbody></table>';
+    if (_closed(days[6])) {
+      var _first = new Date(_hz.getFullYear(), _hz.getMonth(), _hz.getDate()+1);   // 灰色の最初の日＝最終日の翌日（その月の1日）
+      var _open = new Date(_first.getFullYear(), _first.getMonth()-1, 25);          // その月の分を開ける日＝前月25日
+      html += '<p class="muted" id="weekNotOpen" style="margin-top:6px;">' + t('week_not_open', { date: mdLabel(_first), open: mdLabel(_open) }) + '</p>';
+    }
     var wrap = document.getElementById('gridWrap'); wrap.innerHTML = html;
     state._index = index;
     Array.prototype.forEach.call(wrap.querySelectorAll('.cell-open'), function(td){
@@ -2483,14 +2493,21 @@
   });
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
-  // 「次の週へ」で進める上限。予約できる最終日（25日以降は翌月末・それ以前は当月末＝GAS _lbBookingHorizonEnd と同じ）を含む週まで。
-  //   ★週は日曜始まり（renderWeek）なので、今週の日曜から数える。今日から数えると、土曜に見たとき最終週（例 11/29〜11/30）へ進めなかった（2026-10-31）
-  function maxWeekOffset(now){
+  // 予約できる最終日（25日以降は翌月末・それ以前は当月末＝GAS _lbBookingHorizonEnd と同じ規則）。
+  function bookingHorizon(now){
     var n=new Date(now.getTime()); n.setHours(0,0,0,0);
     var hzM=(n.getDate()>=25)?n.getMonth()+1:n.getMonth();
-    var horizon=new Date(n.getFullYear(), hzM+1, 0);
+    return new Date(n.getFullYear(), hzM+1, 0);
+  }
+  // 「次の週へ」で進める上限。予約できる最終日の**翌月末**を含む週まで（2026-10-31 オーナー：先も表示してよい・予約はできないこと）。
+  //   最終日より先の日は灰色で、押せない（renderWeek）。枠も作られていない（GAS・Worker は最終日まで）。
+  //   ★週は日曜始まり（renderWeek）なので、今週の日曜から数える。今日から数えると、土曜に見たとき最終週へ進めなかった（2026-10-31）
+  function maxWeekOffset(now){
+    var n=new Date(now.getTime()); n.setHours(0,0,0,0);
+    var hz=bookingHorizon(n);
+    var viewEnd=new Date(hz.getFullYear(), hz.getMonth()+2, 0);
     var sun=new Date(n); sun.setDate(n.getDate()-n.getDay());
-    return Math.floor(Math.round((horizon.getTime()-sun.getTime())/86400000)/7);
+    return Math.floor(Math.round((viewEnd.getTime()-sun.getTime())/86400000)/7);
   }
   on('nextWeek', function(){
     if(state.weekOffset < maxWeekOffset(new Date())){ state.weekOffset++; renderWeek(); }
