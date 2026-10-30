@@ -13,6 +13,7 @@ function eq(name, got, want) {
 
 // 9月＝月6回・残1／10月＝月6回・残6 を持っている会員
 const payload = homePayload({
+  currentMonth: '2026-09', nextMonth: '2026-10',   // 月の選び分けを見る検査＝月は固定で渡す（既定はいまの月）
   current: { monthlyRemaining: 1, carryover: 0 },
   next:    { monthlyRemaining: 6, carryover: 1 },
 });

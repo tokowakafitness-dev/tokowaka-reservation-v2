@@ -25,13 +25,21 @@ export const HOME_TICKET = {
   ticketPacks: [{ remaining: 5, expire: '2026-12-31', kind: 'normal' }], remaining: 5,
 };
 
+// いま（JST）の月と翌月。★月を固定で書くと、明日が翌々月になった日から検査が落ちる（2026-10-31・'2026-09'/'2026-10' 固定で entry-smoke が落ちた）
+function jstMonthKey(ms) { const d = new Date(ms + 9 * 3600000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
+function monthsNow() {
+  const d = new Date(Date.now() + 9 * 3600000);
+  return { cur: jstMonthKey(Date.now()), next: jstMonthKey(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 15) - 9 * 3600000) };
+}
+
 // 1人ぶんの写し（member_home.payload に入る形）
 export function homePayload(opts = {}) {
+  const m = monthsNow();
   const cur = { ...HOME_MONTHLY, ...(opts.current || {}) };
   const nxt = opts.next === null ? null : { ...HOME_MONTHLY, monthlyRemaining: 6, ...(opts.next || {}) };
   return JSON.stringify({
-    currentMonth: opts.currentMonth || '2026-09',
-    nextMonth: opts.nextMonth || '2026-10',
+    currentMonth: opts.currentMonth || m.cur,
+    nextMonth: opts.nextMonth || m.next,
     current: cur,
     next: nxt,
   });

@@ -2483,12 +2483,17 @@
   });
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
+  // 「次の週へ」で進める上限。予約できる最終日（25日以降は翌月末・それ以前は当月末＝GAS _lbBookingHorizonEnd と同じ）を含む週まで。
+  //   ★週は日曜始まり（renderWeek）なので、今週の日曜から数える。今日から数えると、土曜に見たとき最終週（例 11/29〜11/30）へ進めなかった（2026-10-31）
+  function maxWeekOffset(now){
+    var n=new Date(now.getTime()); n.setHours(0,0,0,0);
+    var hzM=(n.getDate()>=25)?n.getMonth()+1:n.getMonth();
+    var horizon=new Date(n.getFullYear(), hzM+1, 0);
+    var sun=new Date(n); sun.setDate(n.getDate()-n.getDay());
+    return Math.floor(Math.round((horizon.getTime()-sun.getTime())/86400000)/7);
+  }
   on('nextWeek', function(){
-    var _n=new Date(); _n.setHours(0,0,0,0);
-    var _hzM=(_n.getDate()>=25)?_n.getMonth()+1:_n.getMonth();   // 25日以降は翌月末まで、それ以前は当月末まで
-    var _horizon=new Date(_n.getFullYear(), _hzM+1, 0);
-    var _max=Math.floor((_horizon.getTime()-_n.getTime())/(7*86400000));
-    if(state.weekOffset < _max){ state.weekOffset++; renderWeek(); }
+    if(state.weekOffset < maxWeekOffset(new Date())){ state.weekOffset++; renderWeek(); }
   });
   on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
 
