@@ -136,9 +136,9 @@ ok('⑤不明の文面が二重予約に触れている', /二重/.test(jaUnknow
   // ★GAS側で「台帳が読めない」を別のコードにしていること。
   //   ここを分けないと、画面がいくら気をつけても取り違える。
   ok('⑥★取消：台帳が読めないときは別のコード',
-     /function cancelReservationLine[\s\S]{0,900}code: 'NO_SHEET'/.test(LB));
+     /function cancelReservationLine[\s\S]{0,1300}code: 'NO_SHEET'/.test(LB));
   ok('⑥★変更：台帳が読めないときも別のコード',
-     /function changeReservationLine[\s\S]{0,900}code: 'NO_SHEET'/.test(LB));
+     /function changeReservationLine[\s\S]{0,1300}code: 'NO_SHEET'/.test(LB));
 
   // 3つの入口すべてで使っていること（1つでも漏れるとそこだけ失敗に見える）
   ok('⑥トレーナーの取消で使っている', /_alreadyGone\(res\)[\s\S]{0,160}loadTrainerReservations/.test(HTML));

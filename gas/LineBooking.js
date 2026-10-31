@@ -286,6 +286,8 @@ function _lbDispatch(params, action, lineUserId, auth) {
     case 'line_listSameDayCancels': return listSameDayCancels(lineUserId);                             // オーナーのみ（設計24）
     case 'line_undoSameDayCancel':  return undoSameDayCancel(lineUserId, params.reservationId);        // オーナーのみ（設計24）
     case 'line_changeReservation':  return changeReservationLine(lineUserId, params.reservationId, params.newStartISO);
+    case 'line_ownerFreeCancel':    return cancelReservationLine(lineUserId, params.reservationId, { ownerFree: true });                    // オーナーのみ・当日でも無料（設計26）
+    case 'line_ownerFreeChange':    return changeReservationLine(lineUserId, params.reservationId, params.newStartISO, { ownerFree: true }); // オーナーのみ・当日でも無料（設計26）
     case 'line_getTrainerReservations': return getTrainerReservations(lineUserId);
     case 'line_getPaceBoard':       return getPaceBoard(lineUserId);
     case 'line_getHealthBoard':     return getHealthBoard(lineUserId);
@@ -1906,7 +1908,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-31b お客様の繰り返し予約を止める・繰り返しの全回で最終日を確かめる（設計25）';
+var LB_HEALTH_BUILD = '2026-10-31c オーナーの当日無料取消・変更（設計26）＋お客様の繰り返し予約を止める（設計25）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -7635,6 +7637,8 @@ var _LB_ST = {
   // 予約確定/変更/キャンセルの顧客通知
   push_booked:       { ja:'ご予約を登録しました。\n日時：{dt}\nLINEの「予約を確認する」からご確認いただけます。', en:'Your booking is confirmed.\nDate/Time: {dt}\nYou can check it from "View my bookings" in LINE.', zh:'您的预约已确认。\n时间：{dt}\n可通过LINE的“查看我的预约”确认。', 'zh-Hant':'您的預約已確認。\n時間：{dt}\n可透過LINE的「查看我的預約」確認。' },
   push_changed:      { ja:'ご予約の時間を変更しました。\n変更前：{old}\n変更後：{new}\n担当：{trainer}', en:'Your booking time was changed.\nBefore: {old}\nAfter: {new}\nTrainer: {trainer}', zh:'您的预约时间已更改。\n更改前：{old}\n更改后：{new}\n教练：{trainer}', 'zh-Hant':'您的預約時間已變更。\n變更前：{old}\n變更後：{new}\n教練：{trainer}' },
+  push_change_owner_free:{ ja:'\n（今回は無料でのご変更となります）', en:'\n(This change is free of charge)', zh:'\n（本次更改免费）', 'zh-Hant':'\n（本次變更免費）' },
+  push_cancel_owner_free:{ ja:'\n（今回は無料でのお取り消しとなります）', en:'\n(This cancellation is free of charge)', zh:'\n（本次取消免费）', 'zh-Hant':'\n（本次取消免費）' },
   push_change_penalty:{ ja:'\n（当日変更のため1回分の消化となります）', en:'\n(Same-day change: counts as one used session)', zh:'\n（当天更改将消耗一次）', 'zh-Hant':'\n（當天變更將消耗一次）' },
   push_cancelled:    { ja:'ご予約を取り消しました。\n日時：{dt}\n担当：{trainer}', en:'Your booking was cancelled.\nDate/Time: {dt}\nTrainer: {trainer}', zh:'您的预约已取消。\n时间：{dt}\n教练：{trainer}', 'zh-Hant':'您的預約已取消。\n時間：{dt}\n教練：{trainer}' },
   push_cancel_free:  { ja:'\n（前日17時までのため無料です）', en:'\n(Free: before 17:00 the day before)', zh:'\n（前一天17点前免费）', 'zh-Hant':'\n（前一天17點前免費）' },
@@ -7750,11 +7754,15 @@ function _lbConsumeReservationEvents(customerName, trainer, start) {
   }
 }
 
-function cancelReservationLine(lineUserId, reservationId) {
+//   opts.ownerFree（設計26）：オーナーが当日（前日17時以降）でも無料で取り消す。専用の入口 line_ownerFreeCancel からだけ付く。
+//     オーナー以外が頼んだら何も書かずに FORBIDDEN（黙って当日消化にしない）
+function cancelReservationLine(lineUserId, reservationId, opts) {
   reservationId = String(reservationId || '').trim();
   if (!reservationId) return { success: false, code: 'BAD_REQUEST', message: '予約IDがありません。' };
   var rec = getCustomerByLine(lineUserId);
   var _actorTrainer = getTrainerByLine(lineUserId);   // トレーナーも操作可（管理ページ）＝会員verified必須の対象外。行単位で担当を再検証する。
+  var _ownerFreeReq = !!(opts && opts.ownerFree === true);
+  if (_ownerFreeReq && !_lbIsOwnerRole(_actorTrainer)) return { success: false, code: 'FORBIDDEN', message: 'オーナーのみ操作できます。' };
   if (!_actorTrainer && (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified')) return { success: false, code: 'NOT_VERIFIED', message: '会員登録が必要です。' };
 
   // ★「表そのものが読めない」と「その予約が見つからない」を分ける（2026-10-04）。
@@ -7782,12 +7790,16 @@ function cancelReservationLine(lineUserId, reservationId) {
       var _isOwner = String(r[3]) === String(lineUserId);
       var _isTrainer = _actorTr && String(r[4]) === String(_actorTr.trainerId);
       if (!_isOwner && !_isTrainer && !_lbIsOwnerRole(_actorTr)) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };   // オーナーは全予約を操作可
+      //   ★オーナーの無料取消は認可の正本も通す（設計24と同じ・例外を増やさない・名簿に無い顧客は止める）
+      if (_ownerFreeReq && !_lbTrainerMaySeeCustomer(_actorTr, _lbCustOwnerOf(String(r[2] || '')))) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };
       if (String(r[6]) !== 'confirmed') return { success: false, code: 'ALREADY', message: 'この予約は既に取消・変更済みです。' };
       var start = _lbParseResvDate(r[0]);
       if (!start) return { success: false, code: 'SERVER_ERROR', message: '予約日時を解釈できません。' };
       if (start.getTime() < new Date().getTime()) return { success: false, code: 'PAST', message: '過ぎた予約は取消できません。' };
 
-      var free = _lbIsFreeCancelWindow(start);
+      var _freeWin = _lbIsFreeCancelWindow(start);
+      var _ownerApplied = _ownerFreeReq && !_freeWin;   // ★オーナー権限で無料にした（期限前はもともと無料＝通常の無料として扱う）
+      var free = _freeWin || _ownerApplied;
       var customerName = String(r[1]);
       var trainer = _lbTrainerById(String(r[4]));
 
@@ -7797,7 +7809,7 @@ function cancelReservationLine(lineUserId, reservationId) {
 
       var row = i + 2;
       sh.getRange(row, 7).setValue(free ? 'cancelled' : 'consumed');   // 無料=cancelled(残数が戻る)／当日=consumed(消化計上=戻さない)
-      sh.getRange(row, 9).setValue(reservationId + (free ? '|無料取消' : '|当日消化取消'));  // 備考に記録
+      sh.getRange(row, 9).setValue(reservationId + (_ownerApplied ? '|無料取消（オーナー権限 ' + Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '）' : (free ? '|無料取消' : '|当日消化取消')));  // 備考に記録
       // #9：当日キャンセル（消化）で振替権を1件付与（6日有効）。振替予約のキャンセルには付与しない（再振替ループ防止）。
       if (!free && String(r[9] || '') !== 'transfer') _lbGrantTransferCredit(String(r[2]), reservationId);
       // （回数券の実消化は残数管理フェーズで payment_flag/請求連携。ここでは記録＋penalty返却のみ）
@@ -7805,10 +7817,10 @@ function cancelReservationLine(lineUserId, reservationId) {
       var s = _lbFmtResvLabel(r[0]);   // トレーナー通知用（日本語）
       var _cl = _lbMemberLang(String(r[3]));
       _lbPush(String(r[3]), _lbSt(_cl, 'push_cancelled', { dt: _lbFmtResvLabel(r[0], _cl), trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
-        _lbSt(_cl, free ? 'push_cancel_free' : 'push_cancel_penalty'), 'cancel_customer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
+        _lbSt(_cl, _ownerApplied ? 'push_cancel_owner_free' : (free ? 'push_cancel_free' : 'push_cancel_penalty')), 'cancel_customer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
       if (trainer) {
         var trId = getTrainerLineId(trainer.id);
-        if (trId) _lbPush(trId, '【予約キャンセル】' + customerName + '様\n日時：' + s + (free ? '\n（無料取消）' : '\n（当日消化）'), 'cancel_trainer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
+        if (trId) _lbPush(trId, '【予約キャンセル】' + customerName + '様\n日時：' + s + (_ownerApplied ? '\n（無料取消・オーナー権限）' : (free ? '\n（無料取消）' : '\n（当日消化）')), 'cancel_trainer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
       }
 
       //   ★会員IDを返す（2026-10-08・二重書きの穴を塞ぐ）。
@@ -7820,7 +7832,7 @@ function cancelReservationLine(lineUserId, reservationId) {
       //   ★氏名は返さない（2026-10-08・Codex関門②）。
       //     edgeAfterWrite は氏名が無ければ customerId から引き直す。
       //     応答に不要な個人情報を増やす理由がない。
-      return { success: true, penalty: !free, customerId: String(r[2] || '') };
+      return { success: true, penalty: !free, ownerFree: _ownerApplied, customerId: String(r[2] || '') };
     }
     return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
   } finally {
@@ -8017,11 +8029,15 @@ function undoSameDayCancel(lineUserId, reservationId) {
 // 時間変更 — 同トレーナーの別時刻へ。新枠を先に確保し、成功したら旧を changed に。
 //   前日17:00まで＝無料／以降＝1回消化。Lockは _lbReserveCore に委譲（ネスト回避）。
 // ============================================================
-function changeReservationLine(lineUserId, reservationId, newStartISO) {
+//   opts.ownerFree（設計26）：オーナーが当日（前日17時以降）でも無料で変更する。専用の入口 line_ownerFreeChange からだけ付く。
+//     記録・通知・戻り値も同じ値（free）で揃える＝「無料で通したのに当日消化と通知」を作らない（Codex 関門①）
+function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
   reservationId = String(reservationId || '').trim();
   if (!reservationId || !newStartISO) return { success: false, code: 'BAD_REQUEST', message: '変更に必要な情報が不足しています。' };
   var rec = getCustomerByLine(lineUserId);
   var _actorTrainerC = getTrainerByLine(lineUserId);   // トレーナーも操作可（管理ページ）＝会員verified必須の対象外。行単位で担当を再検証する。
+  var _ownerFreeReqC = !!(opts && opts.ownerFree === true);
+  if (_ownerFreeReqC && !_lbIsOwnerRole(_actorTrainerC)) return { success: false, code: 'FORBIDDEN', message: 'オーナーのみ操作できます。' };
   if (!_actorTrainerC && (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified')) return { success: false, code: 'NOT_VERIFIED', message: '会員登録が必要です。' };
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
   if (!sh) return { success: false, code: 'NO_SHEET', message: '予約の台帳が読めません。恐れ入りますが担当トレーナーへご連絡ください。' };   // ★表が壊れているのを「すでに取り消されている」と見せない（2026-10-04）
@@ -8044,13 +8060,16 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
   var _isOwner = String(r[3]) === String(lineUserId);
   var _isTrainer = _actorTr && String(r[4]) === String(_actorTr.trainerId);
   if (!_isOwner && !_isTrainer && !_lbIsOwnerRole(_actorTr)) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };   // オーナーは全予約を操作可
+  if (_ownerFreeReqC && !_lbTrainerMaySeeCustomer(_actorTr, _lbCustOwnerOf(String(r[2] || '')))) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };   // ★設計26：認可の正本も通す
   if (String(r[6]) !== 'confirmed') return { success: false, code: 'ALREADY', message: 'この予約は既に取消・変更済みです。' };
   if (String(r[9]) === 'transfer') return { success: false, code: 'NO_TRANSFER_CHANGE', message: '振替セッションは変更できません。キャンセルのうえ、改めてお申し込みください。' };   // 要望1：振替の振替禁止
   var oldStart = _lbParseResvDate(r[0]);
   if (!oldStart) return { success: false, code: 'SERVER_ERROR', message: '予約日時を解釈できません。' };
   if (oldStart.getTime() < new Date().getTime()) return { success: false, code: 'PAST', message: '過ぎた予約は変更できません。' };
 
-  var free = _lbIsFreeCancelWindow(oldStart);
+  var _freeWinC = _lbIsFreeCancelWindow(oldStart);
+  var _ownerAppliedC = _ownerFreeReqC && !_freeWinC;
+  var free = _freeWinC || _ownerAppliedC;
   // 当日（前日17時以降）の変更は不可 → キャンセル(1消化)＋振替(5,500円)に統一（オーナー運用・二重防御）
   if (!free) return { success: false, code: 'SAME_DAY', message: '当日の変更はできません。キャンセルのうえ振替セッションをお申し込みください。' };
   var customerName = String(r[1]);
@@ -8091,7 +8110,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
       _lbDeleteReservationEvents(customerName, trainer, oldStart,
         { eventIds: [made.calendarEventId, made.trainerEventId], startMs: new Date(newStartISO).getTime() });
     } catch (eD) { Logger.log('旧予定削除失敗（予約変更は確定済み）: ' + eD.message); }
-    try { sh.getRange(row, 9).setValue(reservationId + '|→' + made.reservationId + (free ? '|無料変更' : '|当日消化変更')); } catch (eN) {}
+    try { sh.getRange(row, 9).setValue(reservationId + '|→' + made.reservationId + (_ownerAppliedC ? '|無料変更（オーナー権限 ' + Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '）' : (free ? '|無料変更' : '|当日消化変更'))); } catch (eN) {}
   } finally {
     lock.releaseLock();
   }
@@ -8106,17 +8125,18 @@ function changeReservationLine(lineUserId, reservationId, newStartISO) {
   var _newEndHm = Utilities.formatDate(new Date(_newStart.getTime() + _chMins * 60000), SETTINGS.TIMEZONE, 'HH:mm');
   _lbPush(String(r[3]), _lbSt(_cl, 'push_changed', { old: _lbFmtResvLabel(r[0], _cl), new: _lbFmtResvLabel(_newStart, _cl) + '〜' + _newEndHm, trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
     '\n' + _lbSt(_cl, 'rem_place') + _lbSt(_cl, 'gym_name') + '\n' + _lbSt(_cl, 'rem_free_cancel') +
-    (free ? '' : _lbSt(_cl, 'push_change_penalty')), 'change_customer', _chCtx);
+    (_ownerAppliedC ? _lbSt(_cl, 'push_change_owner_free') : (free ? '' : _lbSt(_cl, 'push_change_penalty'))), 'change_customer', _chCtx);
   if (trainer) {
     var trId = getTrainerLineId(trainer.id);
     if (trId) _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(_newStart) + '〜' + _newEndHm
+      + (_ownerAppliedC ? '\n（当日の無料変更・オーナー権限）' : '')
       + _lbTrainerRemainText(String(r[2]), customerName, _newStart), 'change_trainer', _chCtx);
   }
 
   //   ★取消と同じ理由で会員IDを返す（2026-10-08）。
   //     トレーナーが変更したときに会員が特定できず、D1の引当が更新されない。
   //   ★氏名は返さない（取消と同じ理由）
-  return { success: true, penalty: !free, newReservationId: made.reservationId,
+  return { success: true, penalty: !free, ownerFree: _ownerAppliedC, newReservationId: made.reservationId,
            customerId: String(r[2] || '') };
 }
 

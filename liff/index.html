@@ -640,7 +640,7 @@
   var _NO_RETRY = [
     'makeReservationLine', 'makeReservationLineProxy', 'makeTransferReservation',
     'makeRecurringReservation', 'makeBatchReservation', 'makeBatchReservationProxy',
-    'changeReservation', 'cancelReservation', 'undoSameDayCancel', 'makeAdminBooking', 'makeBlock',
+    'changeReservation', 'cancelReservation', 'undoSameDayCancel', 'ownerFreeCancel', 'ownerFreeChange', 'makeAdminBooking', 'makeBlock',
     'linkUnlinked', 'addTicketRefill', 'addRecurringPatternByTrainer', 'deleteRecurringPattern',
     'verifyMembership'
   ];
@@ -766,7 +766,7 @@
   //   書き込みをしたら、残数まわりはしばらくGASに直接聞く（正しさを優先）。
   //   ★期限は端末に残す。画面を閉じたり再読み込みすると変数は消えるが、
   //     写しが新しくなるわけではないので、古い残数がまた出てしまう。
-  var EDGE_WRITE_ACTIONS = /^(makeReservation|makeRecurring|makeBatch|makeTransfer|changeReservation|cancelReservation|undoSameDayCancel|makeAdminBooking|makeBlock|linkUnlinked|addTicketRefill|addRecurringPatternByTrainer|deleteRecurringPattern|deleteAdminSlot|selfRegister)/;
+  var EDGE_WRITE_ACTIONS = /^(makeReservation|makeRecurring|makeBatch|makeTransfer|changeReservation|cancelReservation|undoSameDayCancel|ownerFreeCancel|ownerFreeChange|makeAdminBooking|makeBlock|linkUnlinked|addTicketRefill|addRecurringPatternByTrainer|deleteRecurringPattern|deleteAdminSlot|selfRegister)/;
   //   枠も対象にする。自分が取った枠が「まだ空いている」と見えるのを防ぐ。
   var EDGE_HOME_ACTIONS = { getMemberStatus:1, getCustomerHome:1, getBookingOptions:1,
                             getTrainerSlots:1, getMyReservations:1, getTrainerReservations:1,
@@ -1266,7 +1266,7 @@
         d.className = 'trainer';
         var isDefault = (defId && tr.id === defId);
         d.innerHTML = '<span>'+ tr.name + (isDefault ? ' <span style="font-size:12px;color:#c8a25a;">'+t('trainer_badge')+'</span>' : '') +'</span><span style="color:#c8a25a;">'+t('trainer_choose')+'</span>';
-        d.onclick = function(){ state.trainerId=tr.id; state.trainerName=tr.name; state.weekOffset=0; state.changeMode=false; state.transferMode=false; state.excludeStartISO=''; loadSlots(); };
+        d.onclick = function(){ state.trainerId=tr.id; state.trainerName=tr.name; state.weekOffset=0; state.changeMode=false; state._ownerFreeResId=''; state.transferMode=false; state.excludeStartISO=''; loadSlots(); };
         box.appendChild(d);
       });
       state._repaint = loadTrainers;
@@ -1283,11 +1283,16 @@
   function renderTrainerAdmin(res){
     state.trainerId = res.trainerId || '';
     state.trainerName = res.trainerName || '';
+    state._adminTrainerId = state.trainerId; state._adminTrainerName = state.trainerName;   // 管理画面の本人（変更で他の担当を見たあと戻すため・設計26）
     state._isOwner = !!res.isOwner;   // システム状態の導線をオーナーにだけ出す（roleは'trainer'固定のため別フラグで判定）
     document.getElementById('tadminName').textContent = (res.trainerName || 'トレーナー') + ' 様｜担当の今後のご予約';
     loadTrainerReservations();
   }
   function loadTrainerReservations(){
+    //   ★一覧に戻るたびに本人へ戻す。オーナーが他の担当の予約を変えると state.trainerId がその担当になり、
+    //     見出し・固定枠の既定の担当に残っていた（Codex 関門②・設計26）。印も消す
+    if (state._adminTrainerId) { state.trainerId = state._adminTrainerId; state.trainerName = state._adminTrainerName || ''; }
+    state._ownerFreeResId = '';
     show('s-loading'); dbg('担当予約を取得中…');
     api({ action:'line_getTrainerReservations' }).then(function(res){
       if (!res || !res.success) { showError('担当予約の取得に失敗しました（' + ((res&&res.code)||'不明') + '）。'); return; }
@@ -1922,9 +1927,21 @@
           chg.onclick = function(){ startTrainerChange(r); };
           btns.appendChild(chg);
         }
-        var cxl = document.createElement('button'); cxl.className = 'btn btn-outline'; cxl.style.margin = '0'; cxl.textContent = 'キャンセル';
+        var cxl = document.createElement('button'); cxl.className = 'btn btn-outline'; cxl.style.margin = '0';
+        cxl.textContent = (state._isOwner && !r.freeCancel) ? 'キャンセル（当日消化）' : 'キャンセル';
         cxl.onclick = function(){ trainerCancel(r); };
         btns.appendChild(cxl);
+        //   ★オーナーだけ：前日17時を過ぎた予約も無料で変更・取消できる（設計26）。専用の入口なので、古い GAS では「知らない操作」で止まる
+        if (state._isOwner && !r.freeCancel && !r.transfer) {
+          var ochg = document.createElement('button'); ochg.className = 'btn btn-outline'; ochg.style.margin = '0'; ochg.textContent = '時間を変更（無料・オーナー）';
+          ochg.onclick = function(){ startTrainerChange(r, true); };
+          btns.appendChild(ochg);
+        }
+        if (state._isOwner && !r.freeCancel) {
+          var ocxl = document.createElement('button'); ocxl.className = 'btn btn-outline'; ocxl.style.margin = '0'; ocxl.textContent = '無料で取り消す（オーナー）';
+          ocxl.onclick = function(){ ownerFreeCancel(r); };
+          btns.appendChild(ocxl);
+        }
       } else {
         var othr = document.createElement('p'); othr.className = 'muted'; othr.style.margin = '0';
         othr.textContent = '他のトレーナーが担当する予約です（変更・キャンセルは担当者が行います）';
@@ -1989,7 +2006,7 @@
     state.proxyMode = true;
     state.proxyCustomerId = customerId;
     state.proxyCustomerName = name;
-    state.changeMode = false; state.transferMode = false;
+    state.changeMode = false; state._ownerFreeResId=''; state.transferMode = false;
     state.excludeStartISO = '';
     state._fromTrainerAdmin = true;
     state.weekOffset = 0;
@@ -2005,7 +2022,25 @@
       else { showError('キャンセルに失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
-  function startTrainerChange(r){
+  // 当日の予約をオーナー権限で無料で取り消す（設計26）。消化にせず残数を戻し、振替権は付けない
+  function ownerFreeCancel(r){
+    if (!window.confirm(r.customerName + '様の予約（' + r.dateLabel + '）を無料で取り消します。\n当日消化にせず、残数を戻します（振替権は付きません）。よろしいですか？')) return;
+    api({ action:'line_ownerFreeCancel', reservationId: r.reservationId }).then(function(res){
+      if (res && res.success) { window.alert('無料で取り消しました。お客様に「今回は無料」と通知が届きます。'); loadTrainerReservations(); }
+      else if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadTrainerReservations(); }
+      else { showError('無料での取り消しに失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
+    }).catch(function(e){ showError('通信に失敗しました：'+e); });
+  }
+  //   ownerFree＝オーナー権限の当日無料変更（設計26）。送信はこの予約IDのときだけ専用の入口へ（state._ownerFreeResId）
+  function startTrainerChange(r, ownerFree){
+    state._ownerFreeResId = ownerFree ? r.reservationId : '';
+    //   ★空き枠はその予約の担当トレーナーで出す（サーバーは担当を変えずに作る）。オーナーが他の担当の予約を変えるとき、
+    //     自分の枠を出していた（Codex 関門①）
+    if (r.trainerId) {
+      state.trainerId = r.trainerId;
+      var _tn = (state._allTrainers || []).filter(function(x){ return String(x.id) === String(r.trainerId); })[0];
+      if (_tn) state.trainerName = _tn.name;
+    }
     state.changeMode = true;
     state.changeReservationId = r.reservationId;
     state.excludeStartISO = r.startISO || '';   // 代行変更時も旧予定を空き枠から除外（問題2）
@@ -2158,7 +2193,7 @@
 
   // 予約/キャンセル完了後にアプリを閉じず、残数を再取得してホームへ戻す（連続予約対応）。
   function loadHome(){
-    state.transferMode = false; state.changeMode = false; state.changeReservationId = '';
+    state.transferMode = false; state.changeMode = false; state._ownerFreeResId=''; state.changeReservationId = '';
     state.proxyMode = false; state.excludeStartISO = '';   // 次の予約が素の状態で始まるようフラグをリセット
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_getMemberStatus' }).then(function(res){
@@ -2288,6 +2323,7 @@
   function startChange(r){
     var note = r.freeCancel ? '' : t('confirm_change_penalty');
     if (!window.confirm(t('confirm_change', { date: r.dateLabel, note: note }))) return;
+    state._ownerFreeResId = '';   // お客様の変更はオーナー権限を使わない（設計26）
     state.changeMode = true;
     state.changeReservationId = r.reservationId;
     state.excludeStartISO = r.startISO || '';   // 自分の旧予定を空き枠から除外（問題2）
@@ -2330,7 +2366,7 @@
 
   function startTransfer(r){
     state.transferMode = true;
-    state.changeMode = false; state.changeReservationId = '';
+    state.changeMode = false; state._ownerFreeResId=''; state.changeReservationId = '';
     state.excludeStartISO = r.startISO || '';   // キャンセルした元予定を振替枠の空き判定から除外（問題2）
     state.trainerId = r.trainerId;
     state.trainerName = r.trainerName;
@@ -2513,7 +2549,7 @@
   on('nextWeek', function(){
     if(state.weekOffset < maxWeekOffset(new Date())){ state.weekOffset++; renderWeek(); }
   });
-  on('backToTrainer', function(){ state.changeMode=false; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
+  on('backToTrainer', function(){ state.changeMode=false; state._ownerFreeResId=''; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
 
   // 15分刻みの日：同じ時間帯に複数の開始時刻がある→選ばせる
   function chooseStartTime(slots){
@@ -2673,7 +2709,7 @@
   // 全体に戻る＝どの画面/モードからでも最初（会員ホーム／トレーナーは管理一覧）へ抜ける。詰まった時の脱出口。
   function goHome(){
     var wasTrainer = state._fromTrainerAdmin || state.proxyMode;
-    state.changeMode=false; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false;
+    state.changeMode=false; state._ownerFreeResId=''; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false;
     state.proxyCustomerId=''; state.proxyCustomerName=''; state.batchMode=false; state.batchSel={};
     state.excludeStartISO=''; state.useTransfer=false; state.repeatCount=1; state._fromTrainerAdmin=false;
     if (wasTrainer) { loadTrainerReservations(); } else { loadHome(); }   // トレーナーは管理一覧／会員はホームへ
@@ -2773,7 +2809,8 @@
       : _isTransfer
         ? { action:'line_makeTransferReservation', trainerId: state.trainerId, startISO: state.selected.startISO }
         : state.changeMode
-          ? { action:'line_changeReservation', reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
+          ? { action: (state._ownerFreeResId && state._ownerFreeResId === state.changeReservationId) ? 'line_ownerFreeChange' : 'line_changeReservation',
+              reservationId: state.changeReservationId, newStartISO: state.selected.startISO }
           : _isRecurring
             ? { action:'line_makeRecurringReservation', trainerId: state.trainerId, startISO: state.selected.startISO, repeatCount: state.repeatCount }
             // packKind は会員が明示的に選んだときだけ送る（未選択なら対象日基準のサーバ自動判定に任せる）
@@ -2794,7 +2831,7 @@
             var tag = _isTransfer ? t('done_tag_transfer') : state.changeMode ? t('done_tag_change') : state.proxyMode ? t('done_tag_proxy') : '';
             document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + t('done_cust_sep') : '') + state.trainerName + t('done_sep') + s.date + ' ' + s.startTime + '〜' + s.endTime + tag;
           }
-          state.changeMode = false; state.changeReservationId = ''; state.transferMode = false; state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = ''; state.useTransfer = false; state.repeatCount = 1;
+          state.changeMode = false; state._ownerFreeResId=''; state.changeReservationId = ''; state.transferMode = false; state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = ''; state.useTransfer = false; state.repeatCount = 1;
           state._repaint = null;   // 完了画面は静的（data-i18n）で再描画不要
           show('s-done');
         } else {
@@ -2832,7 +2869,7 @@
             document.getElementById('doneDetail').textContent =
               (snap.proxy ? snap.proxyName + t('done_cust_sep') : '')
               + snap.trainer + t('done_sep') + s2.date + ' ' + s2.startTime + '〜' + s2.endTime + tag2;
-            state.changeMode = false; state.changeReservationId = ''; state.transferMode = false;
+            state.changeMode = false; state._ownerFreeResId=''; state.changeReservationId = ''; state.transferMode = false;
             state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = '';
             state.useTransfer = false; state.repeatCount = 1; state._repaint = null;
             btn.disabled = false; btn.textContent = t('cf_submit'); errEl.hidden = true;

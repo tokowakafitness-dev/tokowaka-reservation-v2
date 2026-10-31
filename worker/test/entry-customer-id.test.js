@@ -94,11 +94,15 @@ ok('③-b ★固定枠の削除は res で会員IDを返す',
 ok('③-b 削除は引当を変えないと明記',
   /固定枠の削除そのものは引当を変えない/.test(LB),
   '何のために返すのかを書いておく（将来「不要では」と消されないため）');
-//   ★許可リストの17キーを全部、この検査で触っていること
+//   ownerFreeCancel / ownerFreeChange（設計26）はオーナーが操作する＝③では会員を引けない。
+//     中身は取消・変更と同じ関数（台帳の行の customerId を返す）を { ownerFree: true } で呼ぶだけであることを確かめる
+ok('②-c ownerFreeCancel は取消の関数をオーナー権限で呼ぶ', /case 'line_ownerFreeCancel':\s*return cancelReservationLine\(lineUserId, params\.reservationId, \{ ownerFree: true \}\);/.test(LB));
+ok('②-c ownerFreeChange は変更の関数をオーナー権限で呼ぶ', /case 'line_ownerFreeChange':\s*return changeReservationLine\(lineUserId, params\.reservationId, params\.newStartISO, \{ ownerFree: true \}\);/.test(LB));
+//   ★許可リストの19キーを全部、この検査で触っていること
 {
   const m = PE.match(/var EDGE_AFTER_WRITE = \{([\s\S]*?)\};/);
   const keys = m ? (m[1].match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g) || []).map((x) => x.replace(/\s*:$/, '')) : [];
-  eq('③-b 許可リストは17キー', keys.length, 17);
+  eq('③-b 許可リストは19キー', keys.length, 19);
   //   この検査ファイルが各キーに触れているか（名前の一部で照合）
   const notCovered = keys.filter((k) => {
     const fn = k.replace(/^line_/, '');
