@@ -151,7 +151,44 @@ console.log('=== ③ 配線 ===');
   ok('③-12 ★画面：変更モードを解く所ではすべて印も消す', offs === 0 && (HTML.match(/state\.changeMode ?= ?false; state\._ownerFreeResId='';/g) || []).length >= 8, `消していない所 ${offs}`);
   ok('③-13 ★画面：管理一覧に戻ると本人の担当・名前へ戻し、印も消す', /function loadTrainerReservations\(\)\{[\s\S]{0,400}if \(state\._adminTrainerId\) \{ state\.trainerId = state\._adminTrainerId; state\.trainerName = state\._adminTrainerName \|\| ''; \}\s*state\._ownerFreeResId = '';/.test(HTML));
   ok('③-14 画面：本人の担当・名前は管理画面を開いたときに覚える', /state\._adminTrainerId = state\.trainerId; state\._adminTrainerName = state\.trainerName;/.test(HTML));
-  ok('③-11 画面：変更の空き枠はその予約の担当で出す', /function startTrainerChange\(r, ownerFree\)\{[\s\S]{0,600}state\.trainerId = r\.trainerId;/.test(HTML));
+  ok('③-11 画面：変更の空き枠はその予約の担当で出す', /function startTrainerChange\(r, ownerFree\)\{[\s\S]{0,1400}state\.trainerId = r\.trainerId;/.test(HTML));
+}
+
+console.log('=== ④ 時間切れのあとの成立確認（_verifyBooked を本物のまま）===');
+{
+  const src = (HTML.match(/function _verifyBooked\(req\)\{[\s\S]*?\n  \}\n/) || [])[0];
+  ok('④-0 取り出し', !!src);
+  async function verify(state, lists) {
+    const asked = [];
+    const ctx = {
+      String, Promise, state, VERIFY_RETRY_MS: 0,
+      _delay: () => Promise.resolve(),
+      _sameStart: (a, b) => String(a) === String(b),
+      api: (q) => { asked.push(q.action); return Promise.resolve({ success: true, reservations: lists[q.action] || [] }); },
+    };
+    vm.createContext(ctx);
+    vm.runInContext(src, ctx);
+    const r = await ctx._verifyBooked({ action: 'line_ownerFreeChange', reservationId: 'R1', newStartISO: 'T1930' });
+    return { r, asked };
+  }
+  const TR = { line_getTrainerReservations: [{ startISO: 'T1930', customerId: 'C9', trainerId: 'T1' }, { startISO: 'T1930', customerId: 'C1', trainerId: 'T1', reservationId: 'R2' }] };
+  const a = await verify({ changeMode: true, _fromTrainerAdmin: true, changeCustomerId: 'C1', trainerId: 'T1' }, TR);
+  ok('④-1 ★管理画面からの変更：トレーナーの予約表をその会員で見て「入っていた」', a.r === true && a.asked[0] === 'line_getTrainerReservations', JSON.stringify(a));
+  const b = await verify({ changeMode: true, _fromTrainerAdmin: true, changeCustomerId: 'C1' }, { line_getTrainerReservations: [{ startISO: 'T1930', customerId: 'C9' }] });
+  ok('④-2 ★同じ時刻の別の会員の予約では「入っていた」にしない', b.r === null, JSON.stringify(b));
+  const c = await verify({ changeMode: true, _fromTrainerAdmin: false, changeCustomerId: '' }, { line_getMyReservations: [{ startISO: 'T1930' }] });
+  const d = await verify({ changeMode: true, _fromTrainerAdmin: true, changeCustomerId: 'C1', trainerId: 'T1' }, { line_getTrainerReservations: [{ startISO: 'T1930', customerId: 'C1', trainerId: 'T2' }] });
+  ok('④-2b 同じ会員・同じ時刻でも担当が違えば「入っていた」にしない', d.r === null, JSON.stringify(d));
+  const d2 = await verify({ changeMode: true, _fromTrainerAdmin: true, changeCustomerId: 'C1', trainerId: 'T1' }, { line_getTrainerReservations: [{ startISO: 'T1930', customerId: 'C1', trainerId: '' }] });
+  ok('④-2d 担当が欠けた予約は「入っていた」にしない', d2.r === null, JSON.stringify(d2));
+  const ok1 = await verify({ changeMode: true, _fromTrainerAdmin: true, changeCustomerId: 'C1', trainerId: 'T1' }, { line_getTrainerReservations: [{ startISO: 'T1930', customerId: 'C1', trainerId: 'T1', reservationId: 'R2' }] });
+  ok('④-2e 会員・担当・時刻が一致し別の予約ID → 入っていた', ok1.r === true, JSON.stringify(ok1));
+  const e = await verify({ changeMode: true, _fromTrainerAdmin: true, changeCustomerId: 'C1', trainerId: 'T1' }, { line_getTrainerReservations: [{ startISO: 'T1930', customerId: 'C1', trainerId: 'T1', reservationId: 'R1' }] });
+  ok('④-2c 変更元の予約そのものは「入っていた」にしない', e.r === null, JSON.stringify(e));
+  ok('④-3 お客様の変更は今までどおり自分の予約表', c.r === true && c.asked[0] === 'line_getMyReservations', JSON.stringify(c));
+  ok('④-4 画面：変更の開始で会員を覚える', /state\.changeCustomerId = String\(r\.customerId \|\| ''\);/.test(HTML));
+  ok('④-5 ★画面：担当の名前はトレーナー一覧を読んでから決める・古い読み込みは捨てる', /_ensureAdminTrainers\(function\(\)\{\s*if \(_tok !== state\._chgTok\) return;[\s\S]{0,250}state\.trainerId = r\.trainerId;\s*state\.trainerName = _tn \? _tn\.name : '';/.test(HTML));
+  ok('④-6 画面：一覧の読み直しで会員の印も消す', /state\._ownerFreeResId = ''; state\.changeCustomerId = '';/.test(HTML));
 }
 
 console.log((fail === 0 ? '✅ ' : '⚠️ ') + `オーナーの当日無料取消・変更 検証: ${pass} passed / ${fail} failed`);
