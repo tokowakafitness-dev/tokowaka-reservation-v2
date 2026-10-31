@@ -320,7 +320,7 @@ function fakeEnv(spec) {
           },
           async all() {
             //   設計22：偽の D1 の月額行にも「前借り0・今の月の時点」を補う（指定があればそのまま）
-            if (/FROM monthly_quota/.test(sql)) return { results: (spec.quota || []).map((r) => _fillRow(r, spec.asOf || _jstKey(spec.nowMs || Date.now()))) };
+            if (/FROM monthly_quota/.test(sql)) return { results: (spec.quota || []).map((r) => _fillRow(r, spec.asOf || _jstKey(spec.nowMs || now))) };
             if (/FROM ticket_packs/.test(sql)) return { results: spec.packs || [] };
             return { results: [] };
           },

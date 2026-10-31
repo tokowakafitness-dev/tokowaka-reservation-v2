@@ -21,6 +21,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { handleCalSync, _forTest } from '../src/routes/calsync.js';
 import { _safeEqualForTest } from '../src/routes/ingest.js';
 
+// ★時計を検査の地平（H_START〜H_END）の中に固定する。本物の時計だと 2026-11-04 を過ぎた日から
+//   HORIZON_PAST の警告が付き、「警告は無い」が落ちていた（2026-11-01 に日付をずらして見つけた）。進み方は本物のまま
+{
+  const _RD = Date, _T0 = 1791100800000 + 10 * 86400000, _S = _RD.now();
+  globalThis.Date = class extends _RD { constructor(...a) { if (a.length === 0) super(_T0 + (_RD.now() - _S)); else super(...a); } static now() { return _T0 + (_RD.now() - _S); } };
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCHEMA = readFileSync(join(HERE, '..', 'schema.sql'), 'utf8');
 const SECRET = 'TEST-SECRET';
