@@ -224,7 +224,7 @@
       pay_normal:'通常予約（残数を1回消化）', pay_transfer:'振替で予約（残数を使わない・5,500円）',
       repeat_label:'繰り返し', repeat_none:'なし（1回）', repeat_weekly:'毎週{n}回',
       done_title:'ご予約を承りました', done_note:'前日にリマインドをお送りします。キャンセルは前日17時まで無料です。', done_close:'ホームに戻る',
-      done_recurring:'{trainer}／{date} {time}〜 を毎週 {created} 件予約しました', done_recurring_skip:'（{skipped} 件は空き/残数の都合でスキップ）',
+      done_recurring:'{trainer}／{date} {time}〜 を毎週 {created} 件予約しました', done_recurring_skip:'（{skipped} 件は空き/残数の都合でスキップ）', done_recurring_notopen:'（{n} 件は受付開始前のため、まだお取りしていません。翌月分は毎月25日から予約できます）',
       done_tag_transfer:'（振替・5,500円）', done_tag_change:'（変更）', done_tag_proxy:'（代行予約）', done_cust_sep:' 様／', done_sep:'／',
       until_wrap:'（{e}まで）', month_detail:'{used} 回 ／ {quota}{carry}', pack_line:'{n}枚（{e}まで）',
       bd_label:'内訳', bd_carry:'繰越 残{n}回（今月末まで）', bd_month:'今月 残{n}回', bd_lent:'翌月へ繰越 {n}回（今月は使えません）', bd_pack:'残{n}回（{e}まで）', bd_pack_noexp:'残{n}回（期限なし）', bd_total:'合計',
@@ -292,7 +292,7 @@
       pay_normal:'Standard booking (uses 1 from balance)', pay_transfer:'Book as transfer (no balance used · ¥5,500)',
       repeat_label:'Repeat', repeat_none:'None (once)', repeat_weekly:'Weekly ×{n}',
       done_title:'Your booking is confirmed', done_note:'We will send a reminder the day before. Free cancellation until 17:00 the day before.', done_close:'Back to home',
-      done_recurring:'Booked {trainer} / {date} {time}〜 weekly, {created} sessions', done_recurring_skip:' ({skipped} skipped due to availability/balance)',
+      done_recurring:'Booked {trainer} / {date} {time}〜 weekly, {created} sessions', done_recurring_skip:' ({skipped} skipped due to availability/balance)', done_recurring_notopen:" ({n} not booked yet: next month's sessions open on the 25th of each month)",
       done_tag_transfer:' (Transfer · ¥5,500)', done_tag_change:' (Changed)', done_tag_proxy:' (Booked by trainer)', done_cust_sep:' / ', done_sep:' / ',
       until_wrap:' (until {e})', month_detail:'{used} / {quota}{carry}', pack_line:'{n} (until {e})',
       bd_label:'Breakdown', bd_carry:'Carried over: {n} left (until end of month)', bd_month:'This month: {n} left', bd_lent:'Moved to next month: {n} (not usable this month)', bd_pack:'{n} left (until {e})', bd_pack_noexp:'{n} left (no expiry)', bd_total:'Total',
@@ -360,7 +360,7 @@
       pay_normal:'常规预约（消耗1次）', pay_transfer:'改期预约（不消耗次数・5,500日元）',
       repeat_label:'重复', repeat_none:'无（1次）', repeat_weekly:'每周×{n}',
       done_title:'预约已确认', done_note:'我们将在前一天发送提醒。前一天17点前可免费取消。', done_close:'返回首页',
-      done_recurring:'已预约 {trainer} / {date} {time}〜 每周，共{created}次', done_recurring_skip:'（{skipped}次因空位/次数不足已跳过）',
+      done_recurring:'已预约 {trainer} / {date} {time}〜 每周，共{created}次', done_recurring_skip:'（{skipped}次因空位/次数不足已跳过）', done_recurring_notopen:'（{n}次尚未开放预约。下月的预约于每月25日开放）',
       done_tag_transfer:'（改期・5,500日元）', done_tag_change:'（更改）', done_tag_proxy:'（代预约）', done_cust_sep:' ／ ', done_sep:'／',
       until_wrap:'（{e}前）', month_detail:'{used} 次 ／ {quota}{carry}', pack_line:'{n}张（{e}前）',
       bd_label:'明细', bd_carry:'结转 剩{n}次（本月底前）', bd_month:'本月 剩{n}次', bd_lent:'结转至下月 {n}次（本月不可用）', bd_pack:'剩{n}次（{e}前）', bd_pack_noexp:'剩{n}次（无期限）', bd_total:'合计',
@@ -428,7 +428,7 @@
       pay_normal:'一般預約（消耗1次）', pay_transfer:'改期預約（不消耗次數・5,500日圓）',
       repeat_label:'重複', repeat_none:'無（1次）', repeat_weekly:'每週×{n}',
       done_title:'預約已確認', done_note:'我們將於前一天發送提醒。前一天17點前可免費取消。', done_close:'返回首頁',
-      done_recurring:'已預約 {trainer} / {date} {time}〜 每週，共{created}次', done_recurring_skip:'（{skipped}次因名額／次數不足已跳過）',
+      done_recurring:'已預約 {trainer} / {date} {time}〜 每週，共{created}次', done_recurring_skip:'（{skipped}次因名額／次數不足已跳過）', done_recurring_notopen:'（{n}次尚未開放預約。下月的預約於每月25日開放）',
       done_tag_transfer:'（改期・5,500日圓）', done_tag_change:'（變更）', done_tag_proxy:'（代預約）', done_cust_sep:' ／ ', done_sep:'／',
       until_wrap:'（{e}前）', month_detail:'{used} 次 ／ {quota}{carry}', pack_line:'{n}張（{e}前）',
       bd_label:'明細', bd_carry:'結轉 剩{n}次（本月底前）', bd_month:'本月 剩{n}次', bd_lent:'結轉至下月 {n}次（本月不可用）', bd_pack:'剩{n}次（{e}前）', bd_pack_noexp:'剩{n}次（無期限）', bd_total:'合計',
@@ -2782,7 +2782,12 @@
         if (res.success) {
           var s = state.selected;
           if (_isRecurring) {   // #6：作成件数・スキップ件数を表示
-            document.getElementById('doneDetail').textContent = t('done_recurring', { trainer: state.trainerName, date: s.date, time: s.startTime, created: res.createdCount }) + (res.skippedCount ? t('done_recurring_skip', { skipped: res.skippedCount }) : '');
+            //   受付開始前（最終日より先）の回は「空き/残数」と分けて出す（設計25）。
+            //   ★具体的な日付は出さない：8回だと2か月先にまたがり、開く日が回ごとに違う（Codex 関門②）
+            var _no = Number(res.notOpenCount) || 0, _other = (Number(res.skippedCount) || 0) - _no;
+            document.getElementById('doneDetail').textContent = t('done_recurring', { trainer: state.trainerName, date: s.date, time: s.startTime, created: res.createdCount })
+              + (_other > 0 ? t('done_recurring_skip', { skipped: _other }) : '')
+              + (_no > 0 ? t('done_recurring_notopen', { n: _no }) : '');
           } else {
             var tag = _isTransfer ? t('done_tag_transfer') : state.changeMode ? t('done_tag_change') : state.proxyMode ? t('done_tag_proxy') : '';
             document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + t('done_cust_sep') : '') + state.trainerName + t('done_sep') + s.date + ' ' + s.startTime + '〜' + s.endTime + tag;

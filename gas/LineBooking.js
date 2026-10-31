@@ -5275,7 +5275,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
       message: _lbBookingDeadlineText(start.getTime(), _lbBookingCfg(SETTINGS)) + '別の時間をお選びください。' };
   }
   // 予約できる最終日（25日以降は翌月末・それ以前は当月末）より先は、本人の操作なら作らない（設計25）。
-  //   印 enforceHorizon はサーバーが組み立てる custInfo にだけ付く（body は見ない）。代行・固定枠の自動予約・繰り返しの2回目以降には付かない
+  //   印 enforceHorizon はサーバーが組み立てる custInfo にだけ付く（body は見ない）。代行・固定枠の自動予約には付かない（繰り返しは全回に付く）
   if (custInfo.enforceHorizon === true) { var _hzNg = _lbHorizonGate(start.getTime()); if (_hzNg) return _hzNg; }
   // 体験契約の会員がLINEから予約した場合も実際は90分押さえる（表示・案内は60分）。
   var _sessMins = (String((custInfo && custInfo.contractType) || '').indexOf('体験') >= 0)
@@ -5459,14 +5459,15 @@ function makeRecurringReservationLine(lineUserId, body) {
   var _cn = String(rec.data[MAP_COL.NAME - 1] || '会員');
   var custInfo = { customerId: String(rec.data[MAP_COL.CUSTOMER_ID - 1]), customerName: _cn,
     contractType: _lbContractTypeOf(_cn) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''), lineUserId: lineUserId,
-    consecRule: true   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+    consecRule: true,   // ★顧客が自分で取る予約＝連続ルールを当てる（設計18 §3-6）
+    enforceHorizon: true   // ★全回に付ける＝予約できる最終日より先の回は作らない（設計25・2026-10-31 オーナー「2回目以降も先は作らない」）
   };
   // 繰り返しは常に通常経路（1名・normal）で作る。ペアは来店人数を回ごとに選ぶ必要があるため、この経路では
   //   ペアpackを消化させない（契約種別の文字列で会員を弾くのではなく、消化先を固定して安全にする）。
   var start0 = new Date(body.startISO);
   if (isNaN(start0.getTime())) return { success: false, code: 'BAD_REQUEST', message: '予約時間が不正です。' };
   //   ★1回目（画面で選んだ枠）が予約できる最終日より先なら、1件も作らずに止める（設計25・関門①）。
-  //     1回目が範囲内なら、2回目以降は今までどおり最終日より先も作る（印は付けない）
+  //     2回目以降も各回で止める（custInfo の印）。先の回は skipped に NOT_OPEN_YET で返り、画面は件数を分けて出す
   var _hzNg0 = _lbHorizonGate(start0.getTime());
   if (_hzNg0) return _hzNg0;
   var occ = _lbRecurringStartMs(start0.getTime(), body.repeatCount, 7, 8);
@@ -5481,7 +5482,8 @@ function makeRecurringReservationLine(lineUserId, body) {
       else skipped.push({ startISO: iso, code: (r && r.code) || 'ERROR', message: (r && r.message) || '' });
     }
   } finally { lock.releaseLock(); }
-  return { success: created.length > 0, created: created, createdCount: created.length, skipped: skipped, skippedCount: skipped.length };
+  var notOpen = skipped.filter(function (x) { return x.code === 'NOT_OPEN_YET'; }).length;
+  return { success: created.length > 0, created: created, createdCount: created.length, skipped: skipped, skippedCount: skipped.length, notOpenCount: notOpen };
 }
 
 // ============================================================

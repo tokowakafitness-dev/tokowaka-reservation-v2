@@ -8,7 +8,7 @@
 //
 //   ① 判定の本体：_lbReserveCoreImpl（本物）に印つき／印なしで最終日の前後を渡す
 //   ② 入口：単発・まとめて（本人）は印つき、代行は印なし。body に印を入れても効かない
-//   ③ 繰り返し：1回目が先なら1件も作らない／1回目が範囲内なら2回目以降は印なしで作る
+//   ③ 繰り返し：1回目が先なら1件も作らない／2回目以降も先の回は作らない（2026-10-31 オーナー指摘）・件数を分けて返す
 //   ④ 振替：先なら振替権を使わずに止める
 //   ⑤ 変更：本人のときだけ印（トレーナーが他人の予約を変えるときは付けない）
 import { readFileSync } from 'node:fs';
@@ -36,6 +36,7 @@ const FIRST_NG = new Date(2026, 11, 1, 0, 0).toISOString();  // 12/1 0:00
 const MID = new Date(2026, 10, 10, 10).toISOString();        // 11/10
 class FakeDate extends Date { constructor(...a) { if (a.length === 0) super(NOW); else super(...a); } static now() { return NOW; } }
 const PASSED = 'PASSED_GATE';
+let ctxGate = () => null;
 
 // ---------- ① 判定の本体 ----------
 function core(custInfo, startISO, channel) {
@@ -97,9 +98,12 @@ console.log('=== ③ 繰り返し ===');
 {
   const ng = entry(['makeRecurringReservationLine'], (c) => c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: FIRST_NG, repeatCount: 4 }));
   ok('③-1 ★1回目が 12/1 → 1件も作らない', ng.r.code === 'NOT_OPEN_YET' && ng.seen.length === 0, JSON.stringify({ r: ng.r, seen: ng.seen }));
-  const okk = entry(['makeRecurringReservationLine'], (c) => c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: new Date(2026, 10, 23, 10).toISOString(), repeatCount: 4 }));
-  ok('③-2 ★1回目が 11/23 → 4回とも作る（12月の回も）', okk.seen.length === 4 && okk.seen.some((x) => x.startISO > FIRST_NG), JSON.stringify(okk.seen.map((x) => x.startISO)));
-  ok('③-3 2回目以降に印は付かない', okk.seen.every((x) => x.flag !== true), JSON.stringify(okk.seen));
+  //   各回は本物の関門で判定する（核の代わりに _lbHorizonGate を印つきで当てる）
+  const coreLike = (ci, body) => (ci.enforceHorizon === true && ctxGate(body.startISO)) || { success: true };
+  const okk = entry(['makeRecurringReservationLine'], (c) => { ctxGate = (iso) => c._lbHorizonGate(new Date(iso).getTime()); return c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: new Date(2026, 10, 23, 10).toISOString(), repeatCount: 4 }); }, { coreImpl: coreLike });
+  ok('③-2 ★全回に印', okk.seen.length === 4 && okk.seen.every((x) => x.flag === true), JSON.stringify(okk.seen));
+  ok('③-3 ★11/23・11/30 は作る、12/7・12/14 は作らない', okk.r.createdCount === 2 && okk.r.skippedCount === 2, JSON.stringify(okk.r));
+  ok('③-4 先の回は NOT_OPEN_YET として数える', okk.r.notOpenCount === 2 && okk.r.skipped.every((x) => x.code === 'NOT_OPEN_YET'), JSON.stringify(okk.r.skipped));
 }
 console.log('=== ④ 振替 ===');
 {
