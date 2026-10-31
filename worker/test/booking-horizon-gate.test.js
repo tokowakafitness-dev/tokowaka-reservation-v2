@@ -20,6 +20,7 @@ process.env.TZ = 'Asia/Tokyo';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
 const BR = readFileSync(join(ROOT, 'gas/BookingRules.js'), 'utf8');
+const HTML = readFileSync(join(ROOT, 'liff/index.html'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond, why) { if (cond) pass++; else { fail++; console.log(`❌ ${name}`); if (why) console.log(`   ${why}`); } }
@@ -96,11 +97,19 @@ console.log('=== ② 単発・まとめて・代行 ===');
 }
 console.log('=== ③ 繰り返し ===');
 {
-  const ng = entry(['makeRecurringReservationLine'], (c) => c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: FIRST_NG, repeatCount: 4 }));
+  //   ★2026-10-31 お客様向けは廃止。本番の値は false で、何も作らない
+  ok('③-0a ★本番のスイッチは false', /\nvar LB_CUSTOMER_RECURRING = false;/.test(LB));
+  const off = entry(['makeRecurringReservationLine'], (c) => c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: MID, repeatCount: 4 }), { extra: { LB_CUSTOMER_RECURRING: false } });
+  ok('③-0b ★スイッチ false → RECURRING_DISABLED・1件も作らない', off.r.code === 'RECURRING_DISABLED' && off.seen.length === 0, JSON.stringify(off));
+  ok('③-0c ★画面：選択欄のスイッチは false', /var SHOW_CUSTOMER_REPEAT = false;/.test(HTML));
+  const guard = HTML.indexOf("if (!SHOW_CUSTOMER_REPEAT || state.packKind === 'pair') return;"), build = HTML.indexOf("rc.id='cfRepeatWrap'");
+  ok('③-0d ★画面：選択欄を作る前でスイッチが止める', guard > 0 && build > guard && build - guard < 400, `${guard} / ${build}`);
+  //   以下はスイッチを戻したとき（中身の検査を残す）
+  const ng = entry(['makeRecurringReservationLine'], (c) => c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: FIRST_NG, repeatCount: 4 }), { extra: { LB_CUSTOMER_RECURRING: true } });
   ok('③-1 ★1回目が 12/1 → 1件も作らない', ng.r.code === 'NOT_OPEN_YET' && ng.seen.length === 0, JSON.stringify({ r: ng.r, seen: ng.seen }));
   //   各回は本物の関門で判定する（核の代わりに _lbHorizonGate を印つきで当てる）
   const coreLike = (ci, body) => (ci.enforceHorizon === true && ctxGate(body.startISO)) || { success: true };
-  const okk = entry(['makeRecurringReservationLine'], (c) => { ctxGate = (iso) => c._lbHorizonGate(new Date(iso).getTime()); return c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: new Date(2026, 10, 23, 10).toISOString(), repeatCount: 4 }); }, { coreImpl: coreLike });
+  const okk = entry(['makeRecurringReservationLine'], (c) => { ctxGate = (iso) => c._lbHorizonGate(new Date(iso).getTime()); return c.makeRecurringReservationLine('U1', { trainerId: 't1', startISO: new Date(2026, 10, 23, 10).toISOString(), repeatCount: 4 }); }, { coreImpl: coreLike, extra: { LB_CUSTOMER_RECURRING: true } });
   ok('③-2 ★全回に印', okk.seen.length === 4 && okk.seen.every((x) => x.flag === true), JSON.stringify(okk.seen));
   ok('③-3 ★11/23・11/30 は作る、12/7・12/14 は作らない', okk.r.createdCount === 2 && okk.r.skippedCount === 2, JSON.stringify(okk.r));
   ok('③-4 先の回は NOT_OPEN_YET として数える', okk.r.notOpenCount === 2 && okk.r.skipped.every((x) => x.code === 'NOT_OPEN_YET'), JSON.stringify(okk.r.skipped));

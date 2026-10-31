@@ -1906,7 +1906,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-31a 予約できる最終日より先は本人の操作なら作らない（設計25）';
+var LB_HEALTH_BUILD = '2026-10-31b お客様の繰り返し予約を止める・繰り返しの全回で最終日を確かめる（設計25）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -5451,7 +5451,11 @@ function makeReservationLine(lineUserId, body) {
 
 // #6 繰り返し予約：同じ曜日・時刻でN回分を一括作成（定期イベントは使わず各回独立予約）。
 //   残数・容量は各回 _lbReserveCore が判定。作成できた回/できなかった回を返す（部分成功）。全体を1Lockで直列化。
+//   ★2026-10-31 お客様向けは廃止（オーナー：お客様が選べる繰り返しは無くてよい）。画面の選択欄も消した（SHOW_CUSTOMER_REPEAT）。
+//     中身は残す（戻すときはこのスイッチと画面のスイッチを両方 true に）。固定枠の自動予約・まとめて予約は別の経路で影響しない
+var LB_CUSTOMER_RECURRING = false;
 function makeRecurringReservationLine(lineUserId, body) {
+  if (LB_CUSTOMER_RECURRING !== true) return { success: false, code: 'RECURRING_DISABLED', message: '繰り返し予約の受付は終了しました。お手数ですが1件ずつ（または「まとめて予約」で）お取りください。' };
   var rec = getCustomerByLine(lineUserId);
   if (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified') return { success: false, code: 'NOT_VERIFIED', message: '会員登録が必要です。' };
   var cstat = String(rec.data[MAP_COL.CONTRACT_STAT - 1] || '');

@@ -2493,6 +2493,7 @@
   });
 
   on('prevWeek', function(){ if(state.weekOffset>0){ state.weekOffset--; renderWeek(); } });
+  var SHOW_CUSTOMER_REPEAT = false;   // お客様の「毎週◯回」の選択欄（2026-10-31 廃止・戻すときは GAS の LB_CUSTOMER_RECURRING も）
   // 予約できる最終日（25日以降は翌月末・それ以前は当月末＝GAS _lbBookingHorizonEnd と同じ規則）。
   function bookingHorizon(now){
     var n=new Date(now.getTime()); n.setHours(0,0,0,0);
@@ -2659,7 +2660,8 @@
       host.appendChild(tc);
     }
     // #6：繰り返し（振替選択時は非表示・ペアチケット利用時は人数を回ごとに選ぶ必要があるため非表示。残数不足の回は自動スキップ）
-    if (state.packKind === 'pair') return;
+    //   ★お客様向けの繰り返しは出さない（2026-10-31 オーナー：お客様が選べる繰り返しは無くてよい）。GAS 側も RECURRING_DISABLED で止める
+    if (!SHOW_CUSTOMER_REPEAT || state.packKind === 'pair') return;
     var rc=document.createElement('div'); rc.id='cfRepeatWrap'; rc.style.cssText='display:flex;gap:8px;align-items:center;';
     var lbl=document.createElement('span'); lbl.textContent=t('repeat_label'); lbl.className='muted';
     var sel=document.createElement('select'); sel.style.cssText='padding:8px;';
