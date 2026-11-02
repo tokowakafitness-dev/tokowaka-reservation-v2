@@ -146,6 +146,26 @@ export async function buildShadowStatus(env, opts) {
     }
   }
 
+  //   ★食い違いの標本を添える（2026-11-02）。表には会員・時刻・月・世代が残っているのに、
+  //     読む窓口が無く「誰の・いつの・どの月の計算か」が分からなかった（11/2 朝の1名1回）。
+  //     GAS は sample をそのまま出すので、ここで文字列に足す＝GAS の反映が要らない。
+  //     ★会員は下4桁だけ（公開リポジトリに結果が載りうる経路・決定0089）。
+  if (sampleOk && Object.keys(diffKinds).length) {
+    try {
+      const rs = await env.DB.prepare(
+        `SELECT field, customer_id, entry, at, requested_month, copy_month, d1_month,
+                copy_computed_at, source_version, built_version, d1_status
+           FROM remain_shadow_sample WHERE day BETWEEN ? AND ? ORDER BY at DESC LIMIT 50`
+      ).bind(from, day).all();
+      for (const r of (rs.results || [])) {
+        const k = diffKinds[String(r.field)];
+        if (!k || k.detail) continue;
+        k.detail = sampleDetail(r);
+        k.sample = (k.sample ? String(k.sample) : '') + '\n        標本: ' + k.detail;
+      }
+    } catch (_) { /* 標本が読めなくても集計は返す */ }
+  }
+
   //   ★合格の判定に要る3つ（回数・人数・対象の人数）
   const comparedMembers = Number((members && members.comparedMembers) || 0);
   const targetMembers = Number((members && members.targetMembers) || 0);
@@ -164,6 +184,23 @@ export async function buildShadowStatus(env, opts) {
     diffFields: diffKinds,
     entries: byEntry,
   };
+}
+
+function hhmmJst(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '-';
+  const d = new Date(n + 9 * 3600 * 1000);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/** 標本1行を1行の文字列に（会員は下4桁だけ） */
+export function sampleDetail(r) {
+  const cid = String((r && r.customer_id) || '');
+  return `*${cid.slice(-4)} [${r.entry || '-'}] 比べた ${hhmmJst(r.at)}`
+    + ` / 写しの計算 ${hhmmJst(r.copy_computed_at)}`
+    + ` / 月 求め=${r.requested_month || '-'} 写し=${r.copy_month || '-'} D1=${r.d1_month || '-'}`
+    + ` / 世代 ${r.source_version == null ? '-' : r.source_version}/${r.built_version == null ? '-' : r.built_version}`
+    + ` / D1=${r.d1_status || '-'}`;
 }
 
 function dayKeyJstNow() {
