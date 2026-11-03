@@ -23,6 +23,8 @@ import { remainAllow, remainProbe } from './routes/remain-allow.js';
 import { verifyQuota } from './routes/quota-verify.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
+import { KARTE_HANDLERS, isKarteWrite, KARTE_LIMITS } from './routes/karte.js';
+import { handleBodyWrite, handleBodyFreeze, handleBodySeries } from './routes/body.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
          compatBoot, compatCustomerCard, rolesTooOld,
@@ -61,6 +63,9 @@ const HANDLERS = {
   //   2026-10-03 の実測で、通信の86%がGASのこの2つだった。
   c_boot:                compatBoot,
   c_customerCard:        compatCustomerCard,
+
+  // 顧客カルテ（設計28）。k_ は入口で鮮度・停止・Origin・トークンの新しさを通ってから届く
+  ...KARTE_HANDLERS,
 };
 
 function corsHeaders(origin) {
@@ -92,6 +97,8 @@ export default {
     const t0 = Date.now();
 
     if (request.method === 'OPTIONS') {
+      //   ★事前確認には本文が無く action が分からない（設計28 4-5）。許可外の Origin には CORS を返さず403
+      if (!ALLOWED_ORIGINS.includes(origin)) return new Response(null, { status: 403 });
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
 
@@ -180,6 +187,13 @@ export default {
       return quotaRebuild(request, env);
     }
     if (url.pathname === '/quota/status') return quotaStatus(request, env);
+    //   ★体の記録（設計28 3-1）。GAS からの転送・凍結の写し・突き合わせ用の読み取り。合言葉・POST
+    if (url.pathname === '/body/write' || url.pathname === '/body/freeze' || url.pathname === '/body/series') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      if (url.pathname === '/body/write') return handleBodyWrite(request, env);
+      if (url.pathname === '/body/freeze') return handleBodyFreeze(request, env);
+      return handleBodySeries(request, env);
+    }
     //   作り直しが追いついていない会員のID（読み取りだけ・設計16）。
     //   呼ぶ側は積むだけ。ここでは作り直さない（古い入力に印を付ける窓を作らないため）。
     if (url.pathname === '/quota/behind') {
@@ -201,9 +215,16 @@ export default {
       return json({ success: false, code: 'METHOD_NOT_ALLOWED' }, origin, 405);
     }
 
+    // ★本文の大きさを JSON を読む前に縛る（設計28 4-5）。action は本文の中なので全 action に掛ける。
+    //   画面からの要求は小さい（最大のまとめて予約12件でも数KB）。/ingest など別の道は上で分かれている
+    const declared = Number(request.headers.get('Content-Length') || 0);
+    if (declared > KARTE_LIMITS.BODY_BYTES) return json({ success: false, code: 'TOO_LARGE' }, origin, 413);
     let body;
     try {
-      body = await request.json();
+      const buf = await request.arrayBuffer();
+      if (buf.byteLength > KARTE_LIMITS.BODY_BYTES) return json({ success: false, code: 'TOO_LARGE' }, origin, 413);
+      body = JSON.parse(new TextDecoder().decode(buf));
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('not object');
     } catch (_) {
       return json({ success: false, code: 'BAD_JSON' }, origin, 400);
     }
@@ -211,12 +232,31 @@ export default {
     const action = String(body.action || '');
     if (!action) return json({ success: false, code: 'NO_ACTION' }, origin, 400);
 
+    //   ★カルテの停止スイッチ（wrangler.toml の KARTE = "off"）。認可や D1 より前に止める
+    const isKarte = /^k_/.test(action);
+    if (isKarte && String((env && env.KARTE) || '') === 'off') {
+      return json({ success: false, code: 'KARTE_OFF' }, origin, 503);
+    }
+    //   ★カルテの書き込みは Origin が許可の1つと完全一致のときだけ（欠けていても403）
+    if (isKarte && isKarteWrite(action) && !ALLOWED_ORIGINS.includes(origin)) {
+      return json({ success: false, code: 'FORBIDDEN', detail: 'ORIGIN' }, origin, 403);
+    }
+
     // ① 署名検証
     const auth = await verifyIdToken(body.idToken, env);
     if (!auth.ok) {
       // 期限切れはフロントが取り直せるよう、他の失敗と区別して返す
       const status = auth.code === 'EXPIRED' ? 401 : 401;
       return json({ success: false, code: auth.code === 'EXPIRED' ? 'UNAUTHORIZED' : 'FORBIDDEN', detail: auth.code }, origin, status);
+    }
+    //   ★カルテの書き込みは ID トークンの発行時刻が新しいものだけ（盗まれたトークンの使い回しを狭める・設計28 4-5）
+    //     iat がある・未来60秒以内・発行から10分以内。画面は保存の直前に取り直す
+    if (isKarte && isKarteWrite(action)) {
+      const iat = auth.claims && auth.claims.iat;
+      const nowS = Math.floor(Date.now() / 1000);
+      if (typeof iat !== 'number' || iat > nowS + 60 || nowS - iat > KARTE_LIMITS.TOKEN_MAX_AGE_S) {
+        return json({ success: false, code: 'UNAUTHORIZED', detail: 'STALE_TOKEN' }, origin, 401);
+      }
     }
 
     // ② 役割の確定
@@ -238,7 +278,9 @@ export default {
     //   古い権限のうえで正しい残数を返しても意味がない。ここが一番外側の関門。
     //
     //   ★guest も落とす。「まだ登録していない」も役割の判定だから。
-    if (/^c_/.test(action) && await rolesTooOld(env)) {
+    //   ★カルテ（k_）にも掛ける（設計28 4-1）。k_ には GAS へ落とす道が無いので、古ければ何も返さず403
+    if (/^(c_|k_)/.test(action) && await rolesTooOld(env)) {
+      if (isKarte) return json({ success: false, code: 'FORBIDDEN', detail: 'ROLES_STALE' }, origin, 403);
       return json({ success: false, code: 'FALLBACK', detail: 'ROLES_STALE' }, origin, 200,
                   { 'X-Worker-Ms': String(Date.now() - t0) });
     }
@@ -293,6 +335,11 @@ export default {
     //   間違った残数や古い枠を返すより、遅いほうがよい。
     if (result && result._forbidden) {
       return json({ success: false, code: 'FORBIDDEN' }, origin, 403);
+    }
+    //   カルテの失敗は code と HTTP の状態をそのまま返す（429・409・404 等）
+    if (result && result._error) {
+      return json({ success: false, code: result._error, detail: result.detail || undefined }, origin,
+                  result._status || 400);
     }
     if (result && result._fallback) {
       return json({ success: false, code: 'FALLBACK' }, origin, 200,

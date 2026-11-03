@@ -66,6 +66,22 @@ D1                      その写し ＋ D1で作った枠・引当
 | `customer_sync_version` | customer_id | ingest（source）／quotaBuild（built） | 鮮度の判定 | — |
 | `remain_shadow_slot` / `remain_shadow` / `remain_shadow_sample` | 設計12 | shadow | 心拍 | — |
 
+### 2-3b. 顧客カルテ（設計28・★Worker だけが書く・D1 が唯一の正本）
+| 表 | 主キー | 書くのは | 読むのは | 備考 |
+|---|---|---|---|---|
+| `karte_profile` / `karte_safety` | customer_id | `k_saveProfile` / `k_saveSafety`（rev） | `k_summary` / `k_safety` | 安全面は同意の JOIN でだけ読む |
+| `karte_consent` / `karte_consent_log` | (customer_id, kind) / id | `k_saveConsent`（撤回で safety を同じ batch で消す） | 同意の判定 | log は追記だけ |
+| `karte_notes` / `karte_tr_sessions` / `karte_tr_sets` | TEXT の ID（Worker が作る） | `k_add*` / `k_edit*` / `k_delete*`（deleted_at） | `k_notes` / `k_training` | 1行1セット |
+| `karte_revisions` | id | 編集・削除の前の中身 | 監査 | 安全面の中身は入れない |
+| `karte_requests` / `body_requests` | (trainer,action,req) / (channel,req) | 書き込みと同じ batch | 二重送信の再送 | 成功だけ残る |
+| `karte_rate` | (trainer_id, window_start) | 先行 batch | 回数制限 | 10分の区切りごと60回 |
+| `karte_access_log` | id | best effort | 監査 | 中身を書かない・7種類の結果 |
+| `karte_membership_events` | id | `k_recordMembership`（追記だけ・cancel は最後の1行） | 退会後3年の起算日 | 在籍の判定には使わない |
+| `karte_guard` | （行は入らない） | 見張りの INSERT | — | 名前つき CHECK で batch 全体を巻き戻す |
+| `body_measurements` / `body_goals` | id | `k_addMeasurement` / `/body/write`（d1）／`/body/freeze`（sheet・凍結から一度だけ） | `k_body` / `k_board` / `/body/series` | sheet の行は書き換えない |
+| `body_freeze` | freeze_id | `/body/freeze`（frozen→copying→copied→verified／failed） | 読むのは verified だけ | — |
+★`body_records`（2-1）は使わない（列が足りない・設計28で `body_measurements` に置き換え）。
+
 ### 2-4. トリガー（★4本だけ。ここだけが `used` を動かす）
 ```
 trg_alloc_consume_monthly   引当 INSERT → monthly_quota.used + units
@@ -126,6 +142,13 @@ trg_alloc_return_pack       同
 | I43 | **D1 の月額行は「作った時点の月」（as_of_month）が今の月と同じときだけ答える**（計算は今の月で消化順と前借りが変わる）。翌月の行も同じ厳しさ。今の月でない会員は `/quota/behind` が返し巡回が作り直す | `remain-from-d1.test.js` ⑳、`quota-behind-run.test.js` ⑨ |
 | I44 | **支払い待ちの正本は世代の行の `built_overage_json`（設計27）。** 作った範囲の全月を0も含めて書き、競合で世代を倒すと NULL。読む側は欠け・壊れ・月違い・範囲外・枠の行の overage との割れを全部「答えない」。二度読みで `built_rev`（作り直しのたびに+1）と JSON・範囲の生の値も比べる（同じ世代でも計算には今の時刻が入るため）。★この asOf の検査が**チケットだけの会員の月替わりの守りも兼ねる**（枠の行が無いと I43 が素通り）＝JSON を外すと穴が戻る | `remain-from-d1.test.js` ⑳-12b・㉑、`overage-in-sync-version.test.js` ①〜③ |
 | I45 | 未割当を支払い待ちに数える規則は GAS `_lbOverageOf` と Worker `countsAsOverage` で同じ（理由が空か LB_OVERAGE_REASONS） | `overage-reasons.test.js` ③-b |
+| I46 | **カルテ（k_）は trainer/owner だけ**（許可表）。入口で役割の鮮度（古ければ403）・停止スイッチ KARTE・書き込みの Origin 完全一致・トークンの iat 10分・本文16KB（JSON を読む前）| `karte.test.js` 1-1〜1-11 |
+| I47 | **閲覧の範囲は2つ**：共有（メモ・トレーニング・目標・安全面・体の記録）＝トレーナー全員／担当（契約・残数・一覧）＝担当＋担当なし・オーナー全員 | `karte.test.js` 1-3・2-10・3-4・4-1〜4-4・5-6 |
+| I48 | **健康情報は同意の記録があるときだけ**書ける・読める（見張りと書く文の両方に条件・読みは JOIN）。撤回は同じ batch で中身を消す。履歴に中身を残さない | `karte.test.js` 3-1〜3-10 |
+| I49 | **書き込みは全部か無か**：回数は先行 batch（失敗の要求も数える）／本体は見張りの表の CHECK 違反で巻き戻す／二重送信は requests 表（成功だけ・同じ鍵の再送は保存した応答） | `karte.test.js` 2-2・2-3・8-1〜8-4、`body-d1.test.js` 2-3・2-7 |
+| I50 | **体の記録の合成は GAS の maReadBody_／maReadGoal_ と同じ答え**（元のコードを vm で動かしてランダムに突き合わせる）。d1 の行はシートの行より後 | `body-d1.test.js` 1-1〜1-3 |
+| I51 | **体の記録の新しい書き込みは凍結（body_freeze）の後だけ**。sheet の行は書き換えない（体脂肪率は d1 の行だけ・無ければ known_weight で作る）。読むのは verified の凍結＋d1 | `karte.test.js` 5-1〜5-6、`body-d1.test.js` 2-1・2-4〜2-6・3-1〜3-12 |
+| I52 | 退会の起算日は追記だけの表。交互（withdrawn↔rejoined）・最後の行以降・cancel は最後の1行だけ・オーナーだけ・実在する今日以前の日付 | `karte.test.js` 7-1〜7-12 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。

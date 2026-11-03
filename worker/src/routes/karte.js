@@ -1,0 +1,894 @@
+// 顧客カルテ（設計28・段1＝トレーナー画面だけ）・2026-11-03
+//
+//   入口（index.js）で済んでいること：LINE の ID トークンの検証・役割の確定・許可表（k_ は trainer/owner だけ）・
+//     役割の鮮度（古ければ403）・停止スイッチ KARTE・書き込みの Origin の完全一致・トークンの新しさ（10分）・本文16KB
+//
+//   ここで守ること
+//     ・閲覧の範囲を2つに分ける（4-2）：
+//         共有（メモ・トレーニング・目標・安全面・体の記録）＝トレーナー全員（オーナー決定）
+//         担当（契約・残数・連絡先・一覧）＝担当＋担当なし（オーナーは全員）＝既存 canSeeCustomer
+//     ・書き込みは「回数の先行 batch」→「本体の batch（全部か無か）」（4-5）
+//         本体の失敗は見張りの表（karte_guard）の CHECK 違反で batch 全体を巻き戻し、制約の名前で理由を返す
+//     ・健康情報（安全面）は同意の記録があるときだけ。書く・読むの条件を SQL に置く（3-3）
+//     ・二重送信は karte_requests（本体と同じ batch の最後）。同じ鍵の再送は保存した成功の応答を返す
+//     ・誰がいつ開いた・書いたを karte_access_log に（中身は書かない・best effort）
+
+import { canSeeCustomer } from '../perms.js';
+import { synthesizeBody, pickGoalLine } from '../lib/body-series.js';
+
+export const KARTE_LIMITS = {
+  BODY_BYTES: 16 * 1024,
+  TOKEN_MAX_AGE_S: 600,
+  RATE_PER_WINDOW: 60,
+  WINDOW_MS: 10 * 60 * 1000,
+  NOTE_CHARS: 2000,
+  TEXT_CHARS: 500,
+  EXERCISES: 20,
+  SETS_PER_EXERCISE: 10,
+  PAGE: 20,
+  BOARD_PAGE: 50,
+};
+
+export function isKarteWrite(action) {
+  return /^k_(save|add|edit|delete|record)/.test(String(action || ''));
+}
+
+// ---------------------------------------------------------------- 小さな道具
+const err = (code, status, detail) => ({ _error: code, _status: status, detail });
+const GUARD_CODES = [
+  ['KARTE_GUARD_RATE', 'RATE_LIMITED', 429, 'rate_limited'],
+  ['KARTE_GUARD_TARGET', 'NOT_FOUND', 404, 'not_found'],
+  ['KARTE_GUARD_OWNER', 'FORBIDDEN', 403, 'denied'],
+  ['KARTE_GUARD_CONSENT', 'NO_CONSENT', 403, 'no_consent'],
+  ['KARTE_GUARD_REV', 'CONFLICT', 409, 'conflict'],
+  ['KARTE_GUARD_STATE', 'BAD_STATE', 409, 'conflict'],
+  ['KARTE_GUARD_READY', 'BODY_NOT_READY', 409, 'denied'],
+];
+/** エラー文に既知の制約の名前が**含まれるか**だけを見る。無ければ null（推測しない＝500） */
+export function guardOf(e) {
+  const msg = String((e && e.message) || e || '');
+  for (const g of GUARD_CODES) if (msg.indexOf(g[0]) >= 0) return { code: g[1], status: g[2], log: g[3] };
+  return null;
+}
+const S = (sql, ...args) => ({ sql, args });
+
+function jstToday(nowMs) {
+  const d = new Date(Number(nowMs) + 9 * 3600 * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+/** 実在する YYYY-MM-DD か（2026-13-01 や 2026-02-30 を繰り上げで受けない） */
+export function isRealDate(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
+  if (!m) return false;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+/** 実在し、JST で今日以前 */
+export function isPastOrToday(s, nowMs) {
+  return isRealDate(s) && String(s) <= jstToday(nowMs || Date.now());
+}
+function text(v, max) {
+  if (v == null || v === '') return null;
+  const t = String(v);
+  if (t.length > max) throw new RangeError('TOO_LONG');
+  return t;
+}
+function numOrNull(v, min, max, dec) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < min || n > max) throw new RangeError('OUT_OF_RANGE');
+  const f = Math.pow(10, dec);
+  return Math.round(n * f) / f;
+}
+async function sha256(s) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function newId() { return crypto.randomUUID(); }
+
+// 推定1RM（Epley）。回数1は重量そのもの・13回以上は出さない・重量0は0
+export function e1rm(weight, reps) {
+  const w = Number(weight), r = Number(reps);
+  if (!(w >= 0) || !(r >= 1)) return null;
+  if (r > 12) return null;
+  if (r === 1) return Math.round(w * 10) / 10;
+  return Math.round(w * (1 + r / 30) * 10) / 10;
+}
+
+// ---------------------------------------------------------------- 閲覧の範囲
+/** 共有の範囲：トレーナー・オーナーで、顧客が実在する */
+export async function canSeeKarteShared(env, who, customerId) {
+  if (!customerId) return false;
+  if (who.role !== 'trainer' && who.role !== 'owner') return false;
+  const row = await env.DB.prepare('SELECT 1 AS x FROM customers WHERE customer_id = ?').bind(String(customerId)).first();
+  return !!row;
+}
+
+// ---------------------------------------------------------------- 記録（best effort）
+async function logAccess(env, who, customerId, section, action, result, reqId) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO karte_access_log (at, trainer_id, role, customer_id, section, action, result, req_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(Date.now(), String(who.trainerId || ''), String(who.role || ''), customerId ? String(customerId) : null,
+           section || null, action, result, reqId || null).run();
+  } catch (_) {
+    //   ★中身は出さない。書けなかった回数は日次点検で数える（console の件数）
+    try { console.error('[karte] access_log write failed', action, result); } catch (_) {}
+  }
+}
+
+// ---------------------------------------------------------------- 見張りの文
+const G = {
+  target: (cid) => S(`INSERT INTO karte_guard (target) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM customers WHERE customer_id = ?)`, cid),
+  consent: (cid) => S(`INSERT INTO karte_guard (consent) SELECT 1 WHERE NOT EXISTS (
+                         SELECT 1 FROM karte_consent WHERE customer_id = ? AND kind = 'health' AND state = 'agreed')`, cid),
+  // rev が 0 ＝まだ行が無いはず／1以上＝その rev の行があるはず
+  rev: (table, keyCol, key, rev) => (Number(rev) > 0
+    ? S(`INSERT INTO karte_guard (rev) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ${keyCol} = ? AND rev = ?)`, key, Number(rev))
+    : S(`INSERT INTO karte_guard (rev) SELECT 1 WHERE EXISTS (SELECT 1 FROM ${table} WHERE ${keyCol} = ?)`, key)),
+  // 削除されていない行がある（無ければ 404）
+  rowLive: (table, idCol, id) => S(`INSERT INTO karte_guard (target) SELECT 1 WHERE NOT EXISTS (
+                                      SELECT 1 FROM ${table} WHERE ${idCol} = ? AND deleted_at IS NULL)`, id),
+  // 書いた本人かオーナー
+  author: (table, idCol, id, authorCol, who) => (who.role === 'owner'
+    ? S(`SELECT 1`)
+    : S(`INSERT INTO karte_guard (perm) SELECT 1 WHERE NOT EXISTS (
+           SELECT 1 FROM ${table} WHERE ${idCol} = ? AND ${authorCol} = ?)`, id, String(who.trainerId || ''))),
+  // 担当＋担当なし（オーナーは全員）
+  assigned: (cid, who) => (who.role === 'owner'
+    ? S(`SELECT 1`)
+    : S(`INSERT INTO karte_guard (perm) SELECT 1 WHERE NOT EXISTS (
+           SELECT 1 FROM customers WHERE customer_id = ?
+              AND (default_trainer_id IS NULL OR default_trainer_id = '' OR default_trainer_id = ?))`,
+        cid, String(who.trainerId || ''))),
+  // 体の記録の切り替え（凍結）が済んでいる
+  ready: () => S(`INSERT INTO karte_guard (ready) SELECT 1 WHERE NOT EXISTS (
+                    SELECT 1 FROM body_freeze WHERE state IN ('frozen', 'copying', 'copied', 'verified'))`),
+};
+
+// ---------------------------------------------------------------- 書き込みの流れ
+async function readReq(env, tid, action, crid) {
+  return env.DB.prepare(
+    `SELECT payload_hash, http_status, result_code, result_json FROM karte_requests
+      WHERE trainer_id = ? AND action = ? AND client_req_id = ?`
+  ).bind(tid, action, crid).first();
+}
+function replay(prev, hash) {
+  if (prev.payload_hash !== hash) return err('REQ_REUSED', 409);
+  let r = {};
+  try { r = prev.result_json ? JSON.parse(prev.result_json) : {}; } catch (_) { r = {}; }
+  return { ...r, replayed: true };
+}
+
+/**
+ * spec = { action, customerId, payload, plan(now) → { stmts:[{sql,args}], result:{…}（安全な項目だけ）, resultSql?:'…' } }
+ */
+async function runWrite(c, spec) {
+  const { env, who, body } = c;
+  const crid = String(body.clientReqId || '');
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(crid)) return err('BAD_REQUEST', 400, 'clientReqId');
+  const tid = String(who.trainerId || '');
+  if (!tid) return err('FORBIDDEN', 403);
+  const hash = await sha256(JSON.stringify(spec.payload));
+
+  //   ① 同じ要求が既に完了していれば、保存した成功を返す（本体を読み直さない）
+  const prev = await readReq(env, tid, spec.action, crid);
+  if (prev) return replay(prev, hash);
+
+  //   ② 回数（本体とは別の先行 batch。通ったら1回を消費し、本体が失敗しても戻さない）
+  const win = Math.floor(Date.now() / KARTE_LIMITS.WINDOW_MS) * KARTE_LIMITS.WINDOW_MS;
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO karte_rate (trainer_id, window_start, n) VALUES (?, ?, 1)
+                      ON CONFLICT(trainer_id, window_start) DO UPDATE SET n = n + 1`).bind(tid, win),
+      env.DB.prepare(`INSERT INTO karte_guard (rate) SELECT 1 WHERE
+                        (SELECT n FROM karte_rate WHERE trainer_id = ? AND window_start = ?) > ?`)
+        .bind(tid, win, KARTE_LIMITS.RATE_PER_WINDOW),
+    ]);
+  } catch (e) {
+    const g = guardOf(e);
+    await logAccess(env, who, spec.customerId, spec.section, spec.action, g ? g.log : 'error', crid);
+    return g ? err(g.code, g.status) : err('INTERNAL', 500);
+  }
+
+  //   ③ 本体（全部か無か）。最後に karte_requests
+  const now = Date.now();
+  let plan;
+  try { plan = spec.plan(now); } catch (e) { return err('BAD_REQUEST', 400, e && e.message); }
+  const resultJson = JSON.stringify(plan.result || {});
+  const reqSql = plan.resultSql
+    ? S(`INSERT INTO karte_requests (trainer_id, action, client_req_id, payload_hash, http_status, result_code, result_json, done_at)
+         VALUES (?, ?, ?, ?, 200, 'OK', ${plan.resultSql}, ?)`, tid, spec.action, crid, hash, now)
+    : S(`INSERT INTO karte_requests (trainer_id, action, client_req_id, payload_hash, http_status, result_code, result_json, done_at)
+         VALUES (?, ?, ?, ?, 200, 'OK', ?, ?)`, tid, spec.action, crid, hash, resultJson, now);
+  const stmts = plan.stmts.concat([reqSql]);
+  try {
+    await env.DB.batch(stmts.map((x) => env.DB.prepare(x.sql).bind(...x.args)));
+  } catch (e) {
+    const g = guardOf(e);
+    if (g) {
+      await logAccess(env, who, spec.customerId, spec.section, spec.action, g.log, crid);
+      return err(g.code, g.status);
+    }
+    //   並行して同じ鍵が先に完了した＝引き直して同じ判定
+    if (/karte_requests/.test(String(e && e.message))) {
+      const p2 = await readReq(env, tid, spec.action, crid);
+      if (p2) return replay(p2, hash);
+    }
+    await logAccess(env, who, spec.customerId, spec.section, spec.action, 'error', crid);
+    try { console.error('[karte] write failed', spec.action); } catch (_) {}
+    return err('INTERNAL', 500);
+  }
+  await logAccess(env, who, spec.customerId, spec.section, spec.action, 'ok', crid);
+  if (plan.resultSql) {
+    const saved = await readReq(env, tid, spec.action, crid);
+    try { return saved && saved.result_json ? JSON.parse(saved.result_json) : {}; } catch (_) { return {}; }
+  }
+  return plan.result || {};
+}
+
+function cidOf(body) { return String(body.customerId || ''); }
+
+// ================================================================ 書き込み
+async function saveProfile(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const b = c.body, L = KARTE_LIMITS;
+  let f;
+  try {
+    f = {
+      goal_text: text(b.goalText, L.TEXT_CHARS),
+      goal_value: numOrNull(b.goalValue, -1000, 1000, 1),
+      goal_unit: text(b.goalUnit, 20),
+      goal_deadline: (b.goalDeadline == null || b.goalDeadline === '') ? null : (isRealDate(b.goalDeadline) ? String(b.goalDeadline) : (() => { throw new RangeError('BAD_DATE'); })()),
+      motive: text(b.motive, L.TEXT_CHARS),
+      history: text(b.history, L.TEXT_CHARS),
+    };
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const rev = Number(b.rev || 0);
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    action: 'k_saveProfile', section: 'profile', customerId: cid, payload: { cid, f, rev },
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        G.rev('karte_profile', 'customer_id', cid, rev),
+        S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at)
+           SELECT 'karte_profile', customer_id, rev,
+                  json_object('goal_text', goal_text, 'goal_value', goal_value, 'goal_unit', goal_unit,
+                              'goal_deadline', goal_deadline, 'motive', motive, 'history', history), ?, ?
+             FROM karte_profile WHERE customer_id = ?`, tid, now, cid),
+        S(`INSERT INTO karte_profile (customer_id, goal_text, goal_value, goal_unit, goal_deadline, motive, history, rev, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+           ON CONFLICT(customer_id) DO UPDATE SET goal_text = excluded.goal_text, goal_value = excluded.goal_value,
+             goal_unit = excluded.goal_unit, goal_deadline = excluded.goal_deadline, motive = excluded.motive,
+             history = excluded.history, rev = karte_profile.rev + 1, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+          cid, f.goal_text, f.goal_value, f.goal_unit, f.goal_deadline, f.motive, f.history, tid, now),
+      ],
+      result: { rev: rev + 1 },
+    }),
+  });
+}
+
+async function saveConsent(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const state = String(c.body.state || '');
+  const method = c.body.method == null ? null : String(c.body.method);
+  if (state !== 'agreed' && state !== 'revoked') return err('BAD_REQUEST', 400, 'state');
+  if (method !== null && method !== 'paper' && method !== 'line') return err('BAD_REQUEST', 400, 'method');
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    action: 'k_saveConsent', section: 'consent', customerId: cid, payload: { cid, state, method },
+    plan: (now) => {
+      const stmts = [
+        G.target(cid),
+        S(`INSERT INTO karte_consent (customer_id, kind, state, changed_at, method, recorded_by)
+           VALUES (?, 'health', ?, ?, ?, ?)
+           ON CONFLICT(customer_id, kind) DO UPDATE SET state = excluded.state, changed_at = excluded.changed_at,
+             method = excluded.method, recorded_by = excluded.recorded_by`, cid, state, now, method, tid),
+        S(`INSERT INTO karte_consent_log (customer_id, kind, state, at, method, recorded_by)
+           VALUES (?, 'health', ?, ?, ?, ?)`, cid, state, now, method, tid),
+      ];
+      //   ★撤回は同じ batch で安全面の中身を消す（再同意しても戻らない＝聞き取り直す）
+      if (state === 'revoked') stmts.push(S(`DELETE FROM karte_safety WHERE customer_id = ?`, cid));
+      return { stmts, result: { state } };
+    },
+  });
+}
+
+async function saveSafety(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const b = c.body, L = KARTE_LIMITS;
+  let f;
+  try {
+    f = { conditions: text(b.conditions, L.TEXT_CHARS), injuries: text(b.injuries, L.TEXT_CHARS),
+          pain_sites: text(b.painSites, L.TEXT_CHARS), medication: text(b.medication, L.TEXT_CHARS),
+          restrictions: text(b.restrictions, L.TEXT_CHARS) };
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const rev = Number(b.rev || 0);
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    //   ★payload の hash には中身が入るが、karte_requests に保存するのは hash と rev だけ
+    action: 'k_saveSafety', section: 'safety', customerId: cid, payload: { cid, f, rev },
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        G.consent(cid),
+        G.rev('karte_safety', 'customer_id', cid, rev),
+        //   ★書く文そのものにも同意を条件にする（見張りと二重。どちらかが抜けても書かない）
+        S(`INSERT INTO karte_safety (customer_id, conditions, injuries, pain_sites, medication, restrictions, source, rev, updated_by, updated_at)
+           SELECT ?, ?, ?, ?, ?, ?, 'trainer', 1, ?, ?
+            WHERE EXISTS (SELECT 1 FROM karte_consent WHERE customer_id = ? AND kind = 'health' AND state = 'agreed')
+           ON CONFLICT(customer_id) DO UPDATE SET conditions = excluded.conditions, injuries = excluded.injuries,
+             pain_sites = excluded.pain_sites, medication = excluded.medication, restrictions = excluded.restrictions,
+             source = 'trainer', rev = karte_safety.rev + 1, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+          cid, f.conditions, f.injuries, f.pain_sites, f.medication, f.restrictions, tid, now, cid),
+      ],
+      result: { rev: rev + 1 },
+    }),
+  });
+}
+
+async function addNote(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const b = c.body, L = KARTE_LIMITS;
+  let f;
+  try {
+    if (!isPastOrToday(b.sessionDate)) throw new RangeError('BAD_DATE');
+    const cond = b.condition == null || b.condition === '' ? null : String(b.condition);
+    if (cond !== null && !['good', 'normal', 'bad'].includes(cond)) throw new RangeError('BAD_CONDITION');
+    f = { session_date: String(b.sessionDate), condition: cond, body: text(b.body, L.NOTE_CHARS), next_plan: text(b.nextPlan, L.TEXT_CHARS) };
+    if (!f.body && !f.next_plan && !f.condition) throw new RangeError('EMPTY');
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const tid = String(c.who.trainerId || '');
+  const id = newId();
+  return runWrite(c, {
+    action: 'k_addNote', section: 'notes', customerId: cid, payload: { cid, f },
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        S(`INSERT INTO karte_notes (note_id, customer_id, session_date, condition, body, next_plan, author_trainer_id, rev, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`, id, cid, f.session_date, f.condition, f.body, f.next_plan, tid, now),
+      ],
+      result: { noteId: id, rev: 1 },
+    }),
+  });
+}
+
+async function noteCustomer(env, noteId) {
+  const r = await env.DB.prepare('SELECT customer_id FROM karte_notes WHERE note_id = ?').bind(String(noteId)).first();
+  return r ? String(r.customer_id) : '';
+}
+
+async function editNote(c) {
+  const b = c.body, L = KARTE_LIMITS;
+  const noteId = String(b.noteId || '');
+  const cid = await noteCustomer(c.env, noteId);
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  let f;
+  try {
+    const cond = b.condition == null || b.condition === '' ? null : String(b.condition);
+    if (cond !== null && !['good', 'normal', 'bad'].includes(cond)) throw new RangeError('BAD_CONDITION');
+    f = { condition: cond, body: text(b.body, L.NOTE_CHARS), next_plan: text(b.nextPlan, L.TEXT_CHARS) };
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const rev = Number(b.rev || 0);
+  if (!(rev > 0)) return err('BAD_REQUEST', 400, 'rev');
+  const tid = String(c.who.trainerId || '');
+  const reason = c.who.role === 'owner' ? text(b.reason, L.TEXT_CHARS) : null;
+  return runWrite(c, {
+    action: 'k_editNote', section: 'notes', customerId: cid, payload: { noteId, f, rev, reason },
+    plan: (now) => ({
+      stmts: [
+        G.rowLive('karte_notes', 'note_id', noteId),
+        G.author('karte_notes', 'note_id', noteId, 'author_trainer_id', c.who),
+        G.rev('karte_notes', 'note_id', noteId, rev),
+        S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at, reason)
+           SELECT 'karte_notes', note_id, rev, json_object('condition', condition, 'body', body, 'next_plan', next_plan), ?, ?, ?
+             FROM karte_notes WHERE note_id = ?`, tid, now, reason, noteId),
+        S(`UPDATE karte_notes SET condition = ?, body = ?, next_plan = ?, rev = rev + 1, edited_at = ?, edited_by = ?
+            WHERE note_id = ? AND rev = ? AND deleted_at IS NULL`, f.condition, f.body, f.next_plan, now, tid, noteId, rev),
+      ],
+      result: { noteId, rev: rev + 1 },
+    }),
+  });
+}
+
+async function deleteNote(c) {
+  const b = c.body;
+  const noteId = String(b.noteId || '');
+  const cid = await noteCustomer(c.env, noteId);
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const rev = Number(b.rev || 0);
+  if (!(rev > 0)) return err('BAD_REQUEST', 400, 'rev');
+  let reason = null;
+  try { reason = text(b.reason, KARTE_LIMITS.TEXT_CHARS); } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    action: 'k_deleteNote', section: 'notes', customerId: cid, payload: { noteId, rev, reason },
+    plan: (now) => ({
+      stmts: [
+        G.rowLive('karte_notes', 'note_id', noteId),
+        G.author('karte_notes', 'note_id', noteId, 'author_trainer_id', c.who),
+        G.rev('karte_notes', 'note_id', noteId, rev),
+        S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at, reason)
+           SELECT 'karte_notes', note_id, rev, json_object('condition', condition, 'body', body, 'next_plan', next_plan), ?, ?, ?
+             FROM karte_notes WHERE note_id = ?`, tid, now, reason, noteId),
+        S(`UPDATE karte_notes SET deleted_at = ?, deleted_by = ?, rev = rev + 1 WHERE note_id = ? AND rev = ?`, now, tid, noteId, rev),
+      ],
+      result: { noteId, deleted: true },
+    }),
+  });
+}
+
+async function addTraining(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const b = c.body, L = KARTE_LIMITS;
+  const sets = [];
+  try {
+    if (!isPastOrToday(b.sessionDate)) throw new RangeError('BAD_DATE');
+    const items = Array.isArray(b.items) ? b.items : [];
+    if (!items.length || items.length > L.EXERCISES) throw new RangeError('ITEMS');
+    for (const it of items) {
+      const ex = text(it && it.exercise, 50);
+      if (!ex) throw new RangeError('EXERCISE');
+      const ss = Array.isArray(it.sets) ? it.sets : [];
+      if (!ss.length || ss.length > L.SETS_PER_EXERCISE) throw new RangeError('SETS');
+      ss.forEach((st, i) => {
+        const w = numOrNull(st && st.weight, 0, 500, 1);
+        const r = Number(st && st.reps);
+        if (w === null || !Number.isInteger(r) || r < 1 || r > 100) throw new RangeError('SET_VALUE');
+        sets.push({ exercise: ex, set_no: i + 1, weight_kg: w, reps: r, note: text(st.note, 200) });
+      });
+    }
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const tid = String(c.who.trainerId || '');
+  const sid = newId();
+  const date = String(b.sessionDate);
+  return runWrite(c, {
+    action: 'k_addTraining', section: 'training', customerId: cid, payload: { cid, date, sets },
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        S(`INSERT INTO karte_tr_sessions (session_id, customer_id, session_date, author_trainer_id, rev, created_at)
+           VALUES (?, ?, ?, ?, 1, ?)`, sid, cid, date, tid, now),
+        ...sets.map((x) => S(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps, note)
+                              VALUES (?, ?, ?, ?, ?, ?)`, sid, x.exercise, x.set_no, x.weight_kg, x.reps, x.note)),
+      ],
+      result: { sessionId: sid, rev: 1 },
+    }),
+  });
+}
+
+async function deleteTraining(c) {
+  const b = c.body;
+  const sid = String(b.sessionId || '');
+  const r = await c.env.DB.prepare('SELECT customer_id FROM karte_tr_sessions WHERE session_id = ?').bind(sid).first();
+  const cid = r ? String(r.customer_id) : '';
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const rev = Number(b.rev || 0);
+  if (!(rev > 0)) return err('BAD_REQUEST', 400, 'rev');
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    action: 'k_deleteTraining', section: 'training', customerId: cid, payload: { sid, rev },
+    plan: (now) => ({
+      stmts: [
+        G.rowLive('karte_tr_sessions', 'session_id', sid),
+        G.author('karte_tr_sessions', 'session_id', sid, 'author_trainer_id', c.who),
+        G.rev('karte_tr_sessions', 'session_id', sid, rev),
+        S(`UPDATE karte_tr_sessions SET deleted_at = ?, deleted_by = ?, rev = rev + 1 WHERE session_id = ? AND rev = ?`, now, tid, sid, rev),
+      ],
+      result: { sessionId: sid, deleted: true },
+    }),
+  });
+}
+
+//   体の記録の値（D1 の列名で受ける）。範囲は migration の CHECK と同じ
+export const MEASURE_RANGES = {
+  weight_kg: [20, 250, 1], body_fat_pct: [3, 60, 1], lean_kg: [10, 150, 1], body_water_l: [5, 100, 1],
+  visceral_fat: [1, 30, 0], skeletal_muscle_kg: [5, 80, 1], chest_cm: [50, 180, 1], arm_cm: [15, 70, 1],
+  waist_cm: [40, 180, 1], hip_cm: [50, 180, 1], thigh_cm: [25, 100, 1],
+};
+export function readMeasureValues(src) {
+  const v = {};
+  let filled = 0;
+  for (const k of Object.keys(MEASURE_RANGES)) {
+    const [mn, mx, dec] = MEASURE_RANGES[k];
+    v[k] = numOrNull(src ? src[k] : null, mn, mx, dec);
+    if (v[k] !== null) filled++;
+  }
+  if (!filled) throw new RangeError('EMPTY');
+  //   体重と体脂肪率があって除脂肪が空なら計算で補う（MealAi.js 1353 と同じ）
+  if (v.weight_kg && v.body_fat_pct && v.lean_kg === null) v.lean_kg = Math.round(v.weight_kg * (1 - v.body_fat_pct / 100) * 10) / 10;
+  return v;
+}
+const MCOLS = Object.keys(MEASURE_RANGES);
+
+async function addMeasurement(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  let v;
+  try {
+    if (!isPastOrToday(c.body.measuredDate)) throw new RangeError('BAD_DATE');
+    v = readMeasureValues(c.body.values || {});
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const tid = String(c.who.trainerId || '');
+  const date = String(c.body.measuredDate);
+  const crid = String(c.body.clientReqId || '');
+  return runWrite(c, {
+    action: 'k_addMeasurement', section: 'body', customerId: cid, payload: { cid, date, v },
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        //   ★切り替え（凍結）の前は書かない（シートと並行させない・設計28 3-1）
+        G.ready(),
+        S(`INSERT INTO body_measurements (customer_id, measured_date, source_raw, origin, ${MCOLS.join(', ')},
+                                          entered_by, client_req_id, created_at, updated_at, rev)
+           VALUES (?, ?, 'trainer:inbody', 'd1', ${MCOLS.map(() => '?').join(', ')}, ?, ?, ?, ?, 1)`,
+          cid, date, ...MCOLS.map((k) => v[k]), tid, crid, now, now),
+      ],
+      //   作った行の id は書き込みの中で決まる＝同じ batch の karte_requests に last_insert_rowid() で残す
+      resultSql: `json_object('id', last_insert_rowid(), 'rev', 1)`,
+    }),
+  });
+}
+
+async function deleteMeasurement(c) {
+  const id = Number(c.body.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return err('BAD_REQUEST', 400, 'id');
+  const r = await c.env.DB.prepare('SELECT customer_id FROM body_measurements WHERE id = ?').bind(id).first();
+  const cid = r ? String(r.customer_id) : '';
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const rev = Number(c.body.rev || 0);
+  if (!(rev > 0)) return err('BAD_REQUEST', 400, 'rev');
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    action: 'k_deleteMeasurement', section: 'body', customerId: cid, payload: { id, rev },
+    plan: (now) => ({
+      stmts: [
+        G.rowLive('body_measurements', 'id', id),
+        //   入れた本人かオーナー（シートから写した行は entered_by が人の名前＝オーナーだけが消せる）
+        G.author('body_measurements', 'id', id, 'entered_by', c.who),
+        G.rev('body_measurements', 'id', id, rev),
+        S(`UPDATE body_measurements SET deleted_at = ?, deleted_by = ?, rev = rev + 1, updated_at = ? WHERE id = ? AND rev = ?`, now, tid, now, id, rev),
+      ],
+      result: { id, deleted: true },
+    }),
+  });
+}
+
+async function saveGoalLine(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const b = c.body;
+  let f;
+  try {
+    if (!isRealDate(b.startDate) || !isRealDate(b.endDate) || String(b.startDate) >= String(b.endDate)) throw new RangeError('BAD_DATE');
+    f = { start_date: String(b.startDate), end_date: String(b.endDate),
+          start_weight: numOrNull(b.startWeight, 20, 250, 1), target_weight: numOrNull(b.targetWeight, 20, 250, 1) };
+    if (f.start_weight === null || f.target_weight === null) throw new RangeError('WEIGHT');
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    action: 'k_saveGoalLine', section: 'body', customerId: cid, payload: { cid, f },
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        G.ready(),
+        //   ★上書きせず積む（読むときは最後の行＝GAS の meal_goals と同じ）
+        S(`INSERT INTO body_goals (customer_id, kind, start_date, end_date, start_weight, target_weight, origin, rev, updated_by, updated_at)
+           VALUES (?, 'meal_goal', ?, ?, ?, ?, 'd1', 1, ?, ?)`, cid, f.start_date, f.end_date, f.start_weight, f.target_weight, tid, now),
+      ],
+      resultSql: `json_object('id', last_insert_rowid())`,
+    }),
+  });
+}
+
+//   退会の記録（3年の起算日だけの正本・設計28 §6）
+const MEMBER_VALID_CTE = `
+  WITH v AS (
+    SELECT e.id, e.kind, e.effective_date, e.recorded_at FROM karte_membership_events e
+     WHERE e.customer_id = ? AND e.kind IN ('withdrawn', 'rejoined')
+       AND NOT EXISTS (SELECT 1 FROM karte_membership_events x WHERE x.kind = 'cancel' AND x.target_event_id = e.id)
+  ), last AS (SELECT id, kind, effective_date FROM v ORDER BY effective_date DESC, recorded_at DESC, id DESC LIMIT 1)`;
+
+async function recordMembership(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const kind = String(c.body.kind || '');
+  if (!['withdrawn', 'rejoined', 'cancel'].includes(kind)) return err('BAD_REQUEST', 400, 'kind');
+  if (kind === 'cancel' && c.who.role !== 'owner') return err('FORBIDDEN', 403);
+  let eff = null, target = null, reason = null;
+  try {
+    reason = text(c.body.reason, KARTE_LIMITS.TEXT_CHARS);
+    if (kind === 'cancel') {
+      target = Number(c.body.targetEventId);
+      if (!Number.isSafeInteger(target) || target <= 0 || !reason) throw new RangeError('CANCEL_ARGS');
+    } else {
+      if (!isPastOrToday(c.body.effectiveDate)) throw new RangeError('BAD_DATE');
+      eff = String(c.body.effectiveDate);
+    }
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const tid = String(c.who.trainerId || '');
+  const cond = kind === 'withdrawn'
+    ? `(NOT EXISTS (SELECT 1 FROM last) OR ((SELECT kind FROM last) = 'rejoined' AND (SELECT effective_date FROM last) <= ?))`
+    : kind === 'rejoined'
+      ? `((SELECT kind FROM last) = 'withdrawn' AND (SELECT effective_date FROM last) <= ?)`
+      : `((SELECT id FROM last) = ?)`;
+  const condArg = kind === 'cancel' ? target : eff;
+  return runWrite(c, {
+    action: 'k_recordMembership', section: 'membership', customerId: cid, payload: { cid, kind, eff, target, reason },
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        G.assigned(cid, c.who),
+        S(`${MEMBER_VALID_CTE} INSERT INTO karte_guard (state) SELECT 1 WHERE NOT ${cond}`, cid, condArg),
+        S(`INSERT INTO karte_membership_events (customer_id, kind, effective_date, target_event_id, recorded_by, recorded_at, reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`, cid, kind, eff, target, tid, now, reason),
+      ],
+      resultSql: `json_object('id', last_insert_rowid(), 'kind', '${kind}')`,
+    }),
+  });
+}
+
+/** 起算日（有効な行の最後が withdrawn ならその日）。読み取り用 */
+export async function withdrawnDate(env, cid) {
+  const r = await env.DB.prepare(`${MEMBER_VALID_CTE} SELECT id, kind, effective_date FROM last`).bind(cid).first();
+  return r && r.kind === 'withdrawn' ? { id: r.id, date: r.effective_date } : (r ? { id: r.id, date: null, kind: r.kind } : null);
+}
+
+// ================================================================ 読み取り
+async function readSection(c, section, fn) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) {
+    await logAccess(c.env, c.who, cid, section, 'k_' + section, 'not_found');
+    return err('NOT_FOUND', 404);
+  }
+  const out = await fn(cid);
+  await logAccess(c.env, c.who, cid, section, 'k_' + section, 'ok');
+  return out;
+}
+
+function ageOf(birthday, nowMs) {
+  if (!isRealDate(birthday)) return null;
+  const t = jstToday(nowMs);
+  let a = Number(t.slice(0, 4)) - Number(birthday.slice(0, 4));
+  if (t.slice(5) < String(birthday).slice(5)) a--;
+  return a;
+}
+
+async function bodyReady(env) {
+  const r = await env.DB.prepare(`SELECT freeze_id FROM body_freeze WHERE state = 'verified' ORDER BY started_at DESC LIMIT 1`).first();
+  return r ? String(r.freeze_id) : null;
+}
+
+/** 読む行：verified の凍結から写した行＋凍結より後の d1 の行（削除済みを除く） */
+async function bodyRows(env, cid, freezeId) {
+  const r = await env.DB.prepare(
+    `SELECT * FROM body_measurements
+      WHERE customer_id = ? AND deleted_at IS NULL
+        AND (origin = 'd1' OR (origin = 'sheet' AND origin_key LIKE ?))`
+  ).bind(cid, freezeId + ':%').all();
+  return r.results || [];
+}
+async function goalRows(env, cid, freezeId) {
+  const r = await env.DB.prepare(
+    `SELECT * FROM body_goals WHERE customer_id = ? AND deleted_at IS NULL
+        AND (origin = 'd1' OR (origin = 'sheet' AND origin_key LIKE ?))`
+  ).bind(cid, freezeId + ':%').all();
+  return r.results || [];
+}
+
+async function summary(c) {
+  return readSection(c, 'summary', async (cid) => {
+    const env = c.env, now = Date.now();
+    const assigned = await canSeeCustomer(env, c.who, cid);
+    const [cust, profile, consent, safety, lastNote, nextResv] = await Promise.all([
+      env.DB.prepare(`SELECT customer_id, name, birthday, default_trainer_id, contract_status FROM customers WHERE customer_id = ?`).bind(cid).first(),
+      env.DB.prepare(`SELECT goal_text, goal_value, goal_unit, goal_deadline, motive, history, rev, updated_at FROM karte_profile WHERE customer_id = ?`).bind(cid).first(),
+      env.DB.prepare(`SELECT state, changed_at, method FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first(),
+      //   ★安全面は同意があるときだけ（JOIN を SQL に置く）。概要には要点（制限と痛む部位）だけ
+      env.DB.prepare(`SELECT s.restrictions, s.pain_sites FROM karte_safety s JOIN karte_consent k
+                        ON k.customer_id = s.customer_id AND k.kind = 'health' AND k.state = 'agreed'
+                       WHERE s.customer_id = ?`).bind(cid).first(),
+      env.DB.prepare(`SELECT note_id, session_date, condition, body, next_plan, author_trainer_id FROM karte_notes
+                       WHERE customer_id = ? AND deleted_at IS NULL ORDER BY session_date DESC, created_at DESC LIMIT 1`).bind(cid).first(),
+      env.DB.prepare(`SELECT start_at, trainer_id FROM reservations WHERE customer_id = ? AND status = 'booked' AND start_at >= ?
+                       ORDER BY start_at LIMIT 1`).bind(cid, now).first(),
+    ]);
+    if (!cust) return err('NOT_FOUND', 404);
+    return {
+      customer: { customerId: cust.customer_id, name: cust.name, age: ageOf(cust.birthday, now),
+                  trainerId: cust.default_trainer_id || null,
+                  //   ★契約の状態は担当（＋担当なし・オーナー）だけ（設計28 4-2）
+                  ...(assigned ? { contractStatus: cust.contract_status || null } : {}) },
+      assigned,
+      profile: profile || null,
+      consent: consent ? { state: consent.state, changedAt: consent.changed_at, method: consent.method } : { state: 'none' },
+      safetyBrief: safety ? { restrictions: safety.restrictions, painSites: safety.pain_sites } : null,
+      lastNote: lastNote || null,
+      nextReservation: nextResv ? { startAt: nextResv.start_at, trainerId: nextResv.trainer_id } : null,
+    };
+  });
+}
+
+async function notes(c) {
+  return readSection(c, 'notes', async (cid) => {
+    const before = String(c.body.before || '');
+    const r = await c.env.DB.prepare(
+      `SELECT note_id, session_date, condition, body, next_plan, author_trainer_id, rev, created_at, edited_at
+         FROM karte_notes WHERE customer_id = ? AND deleted_at IS NULL ${before ? 'AND session_date < ?' : ''}
+        ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
+    ).bind(...(before ? [cid, before] : [cid])).all();
+    return { notes: r.results || [] };
+  });
+}
+
+async function training(c) {
+  return readSection(c, 'training', async (cid) => {
+    const before = String(c.body.before || '');
+    const ss = await c.env.DB.prepare(
+      `SELECT session_id, session_date, author_trainer_id, rev, created_at FROM karte_tr_sessions
+        WHERE customer_id = ? AND deleted_at IS NULL ${before ? 'AND session_date < ?' : ''}
+        ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
+    ).bind(...(before ? [cid, before] : [cid])).all();
+    const sessions = ss.results || [];
+    if (!sessions.length) return { sessions: [], best: [] };
+    const ids = sessions.map((x) => x.session_id);
+    const st = await c.env.DB.prepare(
+      `SELECT session_id, exercise, set_no, weight_kg, reps, note FROM karte_tr_sets
+        WHERE session_id IN (${ids.map(() => '?').join(',')}) ORDER BY session_id, exercise, set_no`
+    ).bind(...ids).all();
+    const by = {};
+    for (const s of (st.results || [])) (by[s.session_id] = by[s.session_id] || []).push({ ...s, e1rm: e1rm(s.weight_kg, s.reps) });
+    //   グラフ：種目ごとに、その日の推定1RMの最大
+    const best = [];
+    for (const se of sessions) {
+      const day = {};
+      for (const s of (by[se.session_id] || [])) if (s.e1rm != null && (!(s.exercise in day) || s.e1rm > day[s.exercise])) day[s.exercise] = s.e1rm;
+      for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
+    }
+    return { sessions: sessions.map((x) => ({ ...x, sets: by[x.session_id] || [] })), best };
+  });
+}
+
+async function safety(c) {
+  return readSection(c, 'safety', async (cid) => {
+    const r = await c.env.DB.prepare(
+      `SELECT s.conditions, s.injuries, s.pain_sites, s.medication, s.restrictions, s.source, s.rev, s.updated_at
+         FROM karte_safety s JOIN karte_consent k ON k.customer_id = s.customer_id AND k.kind = 'health' AND k.state = 'agreed'
+        WHERE s.customer_id = ?`
+    ).bind(cid).first();
+    const k = await c.env.DB.prepare(`SELECT state FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first();
+    return { consent: k ? k.state : 'none', safety: r || null };
+  });
+}
+
+async function bodySection(c) {
+  return readSection(c, 'body', async (cid) => {
+    const fz = await bodyReady(c.env);
+    if (!fz) return { ready: false, rows: [], goal: null, raw: [] };
+    const [rows, goals] = await Promise.all([bodyRows(c.env, cid, fz), goalRows(c.env, cid, fz)]);
+    //   raw：削除・編集のための行（新しい順・20件）
+    const raw = rows.slice().sort((a, b) => (a.measured_date < b.measured_date ? 1 : -1)).slice(0, KARTE_LIMITS.PAGE)
+      .map((r) => ({ id: r.id, d: r.measured_date, origin: r.origin, rev: r.rev, enteredBy: r.origin === 'd1' ? r.entered_by : null,
+                     ...Object.fromEntries(MCOLS.map((k) => [k, r[k]])) }));
+    return { ready: true, rows: synthesizeBody(rows), goal: pickGoalLine(goals), raw };
+  });
+}
+
+//   契約：計算用に写した契約の行から、金額を含まない項目だけ（担当＋担当なし・オーナーは全員）
+async function contract(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeCustomer(c.env, c.who, cid))) {
+    await logAccess(c.env, c.who, cid, 'contract', 'k_contract', 'denied');
+    return err('FORBIDDEN', 403);
+  }
+  const [meta, rows] = await Promise.all([
+    c.env.DB.prepare(`SELECT payload FROM calc_meta WHERE key = 'contract_cols'`).first(),
+    c.env.DB.prepare(`SELECT row_json, start_ms, end_ms FROM calc_contract_rows WHERE customer_id = ? ORDER BY start_ms DESC`).bind(cid).all(),
+  ]);
+  let cols = null;
+  try { cols = meta ? JSON.parse(meta.payload).cols : null; } catch (_) { cols = null; }
+  if (!cols) return { contracts: [], note: 'NO_META' };
+  const pick = (r, k) => (cols[k] != null && cols[k] >= 0 ? r[cols[k]] : null);
+  const out = [];
+  for (const x of (rows.results || [])) {
+    let r;
+    try { r = JSON.parse(x.row_json); } catch (_) { continue; }
+    out.push({ type: pick(r, 'type'), course: pick(r, 'course'), method: pick(r, 'method'), freq: pick(r, 'freq'),
+               tickets: pick(r, 'ticket'), trainer: pick(r, 'trainer'), startMs: x.start_ms, endMs: x.end_ms });
+  }
+  await logAccess(c.env, c.who, cid, 'contract', 'k_contract', 'ok');
+  return { contracts: out };
+}
+
+//   一覧（担当＋担当なし・オーナーは全員）。印と名前だけ（金額・種別・健康情報は出さない）
+async function board(c) {
+  const env = c.env, who = c.who, now = Date.now();
+  const scope = who.role === 'owner' ? { where: '', args: [] }
+    : { where: `AND (default_trainer_id IS NULL OR default_trainer_id = '' OR default_trainer_id = ?)`, args: [String(who.trainerId || '')] };
+  const after = String(c.body.after || '');
+  const cs = await env.DB.prepare(
+    `SELECT customer_id, name FROM customers WHERE 1 = 1 ${scope.where} ${after ? 'AND customer_id > ?' : ''}
+      ORDER BY customer_id LIMIT ${KARTE_LIMITS.BOARD_PAGE + 1}`
+  ).bind(...scope.args, ...(after ? [after] : [])).all();
+  const list = (cs.results || []);
+  const more = list.length > KARTE_LIMITS.BOARD_PAGE;
+  const page = list.slice(0, KARTE_LIMITS.BOARD_PAGE);
+  if (!page.length) return { customers: [], next: null };
+  const ids = page.map((x) => x.customer_id);
+  const ph = ids.map(() => '?').join(',');
+  const [sync, nextR, lastM, ends, homes, fz] = await Promise.all([
+    env.DB.prepare(`SELECT key, synced_at FROM sync_state WHERE key IN ('reservations', 'calcContracts')`).all(),
+    env.DB.prepare(`SELECT customer_id, MIN(start_at) AS t FROM reservations WHERE customer_id IN (${ph}) AND status = 'booked' AND start_at >= ? GROUP BY customer_id`).bind(...ids, now).all(),
+    //   ★最終測定日も「verified の凍結から写した行＋d1」だけ（未確認の写しを混ぜない・I51）
+    bodyReady(env).then((vf) => env.DB.prepare(
+      `SELECT customer_id, MAX(measured_date) AS d FROM body_measurements WHERE customer_id IN (${ph}) AND deleted_at IS NULL
+          AND (origin = 'd1' OR (origin = 'sheet' AND origin_key LIKE ?)) GROUP BY customer_id`).bind(...ids, (vf || '__none__') + ':%').all()),
+    env.DB.prepare(`SELECT r.customer_id, MAX(r.end_ms) AS e FROM calc_contract_rows r JOIN customer_sync_version v ON v.customer_id = r.customer_id
+                     WHERE r.customer_id IN (${ph}) AND v.source_version = v.built_version AND v.built_version > 0 GROUP BY r.customer_id`).bind(...ids).all(),
+    env.DB.prepare(`SELECT customer_id, payload, computed_at FROM member_home WHERE customer_id IN (${ph})`).bind(...ids).all(),
+    bodyReady(env),
+  ]);
+  const syncAt = {}; for (const s of (sync.results || [])) syncAt[s.key] = Number(s.synced_at || 0);
+  const resvFresh = now - (syncAt.reservations || 0) <= 30 * 60 * 1000;
+  const contractsFresh = now - (syncAt.calcContracts || 0) <= 26 * 3600 * 1000;
+  const nextBy = {}; for (const r of (nextR.results || [])) nextBy[r.customer_id] = r.t;
+  const lastBy = {}; for (const r of (lastM.results || [])) lastBy[r.customer_id] = r.d;
+  const endBy = {}; for (const r of (ends.results || [])) endBy[r.customer_id] = r.e;
+  const homeBy = {}; for (const r of (homes.results || [])) homeBy[r.customer_id] = r;
+  const HOME_HARD = 40 * 60 * 1000;
+  const today = jstToday(now);
+  const out = page.map((cu) => {
+    const id = cu.customer_id;
+    const flags = {};
+    //   次の予約が無い（予約の写しが30分以内に同期されているときだけ判定）
+    flags.noNextBooking = resvFresh ? !nextBy[id] : 'unknown';
+    //   記録が止まっている（体の記録の切り替えが verified のときだけ。30日以上 or 記録なし）
+    if (!fz) flags.recordStale = 'preparing';
+    else if (!lastBy[id]) flags.recordStale = 'none';
+    else flags.recordStale = (Date.parse(today) - Date.parse(lastBy[id])) / 86400000 >= 30;
+    //   契約の終了が近い（30日以内）。世代が新しく、完全同期が26時間以内のときだけ
+    if (!contractsFresh || !(id in endBy)) flags.contractEnding = 'unknown';
+    else flags.contractEnding = endBy[id] != null && endBy[id] - now <= 30 * 86400000 && endBy[id] >= now - 86400000;
+    //   支払い待ち（残数の写し。40分を超えたら答えない＝readHomeSafe と同じ上限）
+    const h = homeBy[id];
+    if (!h || now - Number(h.computed_at || 0) > HOME_HARD) flags.paymentPending = 'unknown';
+    else {
+      try { const p = JSON.parse(h.payload); flags.paymentPending = !!(p && p.current && p.current.paymentRequired); }
+      catch (_) { flags.paymentPending = 'unknown'; }
+    }
+    return { customerId: id, name: cu.name, flags };
+  });
+  await logAccess(env, who, null, 'board', 'k_board', 'ok');
+  return { customers: out, next: more ? page[page.length - 1].customer_id : null };
+}
+
+export const KARTE_HANDLERS = {
+  k_summary: summary,
+  k_notes: notes,
+  k_training: training,
+  k_safety: safety,
+  k_body: bodySection,
+  k_contract: contract,
+  k_board: board,
+  k_saveProfile: saveProfile,
+  k_saveConsent: saveConsent,
+  k_saveSafety: saveSafety,
+  k_addNote: addNote,
+  k_editNote: editNote,
+  k_deleteNote: deleteNote,
+  k_addTraining: addTraining,
+  k_deleteTraining: deleteTraining,
+  k_addMeasurement: addMeasurement,
+  k_deleteMeasurement: deleteMeasurement,
+  k_saveGoalLine: saveGoalLine,
+  k_recordMembership: recordMembership,
+};

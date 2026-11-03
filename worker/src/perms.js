@@ -75,6 +75,29 @@ const TABLE = {
   'marginView':       ['owner'],     // 粗利率・粗利額
   'pendingApprovals': ['owner'],
 
+  // ---- 顧客カルテ（設計28）----
+  //   ★k_ はトレーナーだけ（オーナーは継承）。customer・guest には何も載せない＝顧客の端末から届かない。
+  //   ★入口（index.js）で k_ には役割の鮮度検査（古ければ403）と停止スイッチ KARTE が掛かる。
+  'k_summary':          ['trainer'],
+  'k_notes':            ['trainer'],
+  'k_training':         ['trainer'],
+  'k_safety':           ['trainer'],
+  'k_body':             ['trainer'],
+  'k_contract':         ['trainer'],
+  'k_board':            ['trainer'],
+  'k_saveProfile':      ['trainer'],
+  'k_saveConsent':      ['trainer'],
+  'k_saveSafety':       ['trainer'],
+  'k_addNote':          ['trainer'],
+  'k_editNote':         ['trainer'],
+  'k_deleteNote':       ['trainer'],
+  'k_addTraining':      ['trainer'],
+  'k_deleteTraining':   ['trainer'],
+  'k_addMeasurement':   ['trainer'],
+  'k_deleteMeasurement':['trainer'],
+  'k_saveGoalLine':     ['trainer'],
+  'k_recordMembership': ['trainer'],
+
   // ---- 顧客マスタ ----
   'customerCreate':   ['trainer'],
   'customerUpdate':   ['trainer'],
