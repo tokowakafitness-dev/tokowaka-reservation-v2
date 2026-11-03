@@ -42,6 +42,10 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 
 // 認可の正本。ここを通らずに顧客の情報へ触れてはいけない。
 const GUARD = '_lbTrainerMaySeeCustomer';
+//   ★共有の範囲（2026-11-03 オーナー決定・設計28 4-2）：体の記録はトレーナー全員が読み書きできる。
+//     担当の照合の代わりに共有の照合（名簿に無い顧客は止める）を通す入口。**この3つだけ**
+const SHARED_GUARD = '_lbTrainerMaySeeShared';
+const SHARED_OK = { line_maInBodyCard: 1, line_maSaveInBody: 1, ma_series: 1 };
 
 // ---- 例外（理由を書くこと。書けないものは例外にしない）----
 const EXEMPT = {
@@ -153,9 +157,20 @@ for (const e of takesCustomer) {
   if (EXEMPT[e.name]) continue;                     // 理由を書いた例外
   if (e.block.includes(GUARD)) continue;            // 入口そのもので守っている
   if (guardedByCallee(e.block)) continue;           // 呼ぶ先で守っている
+  //   共有の範囲の3つの入口だけ、共有の照合で通す（入口か1段先の呼び先にあること）
+  if (SHARED_OK[e.name] && (e.block.includes(SHARED_GUARD)
+      || [...e.block.matchAll(/\b([a-zA-Z_]\w*)\s*\(/g)].some((m) => { const f = ALL_CODE.match(new RegExp('function ' + m[1] + '\\([\\s\\S]*?\\n\\}', '')); return f && f[0].includes(SHARED_GUARD); }))) continue;
   unguarded.push(e.name);
 }
 eq('①★顧客IDを受け取る入口がすべて認可を通る', unguarded.sort(), []);
+
+// ---- ①-b 共有の照合の中身：トレーナーであること・名簿に無い顧客は止めること ----
+{
+  const fn = (stripComments(LB).match(/function _lbTrainerMaySeeShared\([\s\S]*?\n\}/) || [])[0] || '';
+  ok('①-b 共有の照合はトレーナーでなければ通さない', /if \(!tr\) return false;/.test(fn));
+  ok('①-b 共有の照合は名簿に無い顧客（判定できない）を通さない', /_lbCustOwnerOf\(customerId\)/.test(fn) && /owner === null \|\| owner === undefined/.test(fn));
+  ok('①-b 共有の照合を使う入口は3つだけ', Object.keys(SHARED_OK).length === 3);
+}
 
 // ---- ② 例外は「理由が書いてある」ものだけ ----
 for (const [name, why] of Object.entries(EXEMPT)) {

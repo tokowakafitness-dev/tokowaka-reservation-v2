@@ -157,10 +157,11 @@ eq('①違うIDなら数値でも通さない',   maySee({ trainerId: 1, role: '
   const iCard = codeLB.indexOf("case 'line_maInBodyCard'");
   const iSave = codeLB.indexOf("case 'line_maSaveInBody'");
   ok('③-3 InBody の入口がある', iCard >= 0 && iSave >= 0);
-  ok('③-3★InBody の読み取りに担当照合がある',
-     /line_maInBodyCard[\s\S]{0,400}_lbTrainerMaySeeCustomer/.test(codeLB));
-  ok('③-3★InBody の書き込みに担当照合がある',
-     /line_maSaveInBody[\s\S]{0,400}_lbTrainerMaySeeCustomer/.test(codeLB));
+  //   ★2026-11-03 オーナー決定：体の記録はトレーナー全員が読み書き（設計28）。担当の照合の代わりに共有の照合
+  ok('③-3★InBody の読み取りに共有の照合がある（名簿に無い顧客は止める）',
+     /line_maInBodyCard[\s\S]{0,400}_lbTrainerMaySeeShared/.test(codeLB));
+  ok('③-3★InBody の書き込みに共有の照合がある（名簿に無い顧客は止める）',
+     /line_maSaveInBody[\s\S]{0,400}_lbTrainerMaySeeShared/.test(codeLB));
   // 予約オプション（チケット残・ペア残・期限が出る）
   const opt = (codeLB.match(/function getBookingOptions[\s\S]*?\n\}/) || [])[0] || '';
   ok('③-3★予約オプションに担当照合がある', /_lbTrainerMaySeeCustomer/.test(opt));

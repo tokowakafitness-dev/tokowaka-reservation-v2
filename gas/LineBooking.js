@@ -317,18 +317,16 @@ function _lbDispatch(params, action, lineUserId, auth) {
     case 'line_maInBodyCard': {
       var _pic = requireTrainer(lineUserId);
       if (!_pic) return { success: false, code: 'FORBIDDEN' };
-      // ★担当外の顧客の体組成を見せない（2026-10-03・Codexの再判定）。
-      //   maInBodyCard_ は顧客IDだけで記録を返すため、ここで止めるしかない。
-      if (!_lbTrainerMaySeeCustomer(_pic, _lbCustOwnerOf(params.customerId))) return { success: false, code: 'FORBIDDEN' };
+      // ★体の記録はトレーナー全員が読める（2026-11-03 オーナー決定・設計28）。名簿に無い顧客は返さない
+      if (!_lbTrainerMaySeeShared(_pic, params.customerId)) return { success: false, code: 'FORBIDDEN' };
       try { return maInBodyCard_(_pic, params.customerId); }
       catch (e1) { Logger.log('meal-ai 隔離(card): ' + e1.message); return { success: false, code: 'UNAVAILABLE' }; }
     }
     case 'line_maSaveInBody': {
       var _pis = requireTrainer(lineUserId);
       if (!_pis) return { success: false, code: 'FORBIDDEN' };
-      // ★担当外の顧客の体組成を**書き込めない**ようにする（2026-10-03・Codexの再判定）。
-      //   読み取りより重い。他のトレーナーの顧客の記録に測定値を混ぜられる状態だった。
-      if (!_lbTrainerMaySeeCustomer(_pis, _lbCustOwnerOf(params.customerId))) return { success: false, code: 'FORBIDDEN' };
+      // ★体の記録はトレーナー全員が書ける（2026-11-03 オーナー決定・設計28）。名簿に無い顧客には書かない
+      if (!_lbTrainerMaySeeShared(_pis, params.customerId)) return { success: false, code: 'FORBIDDEN' };
       try {
         return maSaveInBody_(_pis, params.customerId, {
           date: params.date, w: params.w, pbf: params.pbf,
@@ -1908,7 +1906,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-10-31c オーナーの当日無料取消・変更（設計26）＋お客様の繰り返し予約を止める（設計25）';
+var LB_HEALTH_BUILD = '2026-11-03a 体の記録を D1 へ（切替フラグ・凍結・転送）＋契約の入力の点検（設計28）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2504,6 +2502,17 @@ function dailyHealthCheck(dryRunArg) {
   } catch (e) {
     add('dualwrite_check_fail', '二重書き', 'high', 1,
         '二重書きの点検そのものが失敗しました: ' + (e && e.message));
+  }
+
+  _step('契約の入力');
+  // ---- 契約の入力（2026-11-03・設計28 の付帯）----
+  //   ★顧客IDが空の同名の契約行が1つでもあると、D1 への契約の送信が全員分止まる（PushToEdge.js _edgeCalcContracts）。
+  //     日次点検にも出ていなかった（静かに壊れる経路）。原因（ID の空欄）と結果（送信の停止）の両方を見る
+  try {
+    var ci = lbContractInputCheck();
+    for (var cii = 0; cii < ci.length; cii++) add(ci[cii].key, '契約の入力', ci[cii].severity, ci[cii].count, ci[cii].detail);
+  } catch (e) {
+    add('contract_input_check_fail', '契約の入力', 'warn', 1, '契約の入力の点検そのものが失敗しました: ' + (e && e.message));
   }
 
   _step('記録');
@@ -7195,6 +7204,15 @@ function _lbTrainerMaySeeCustomer(tr, ownerTrainerId) {
   var owner = String(ownerTrainerId);
   if (!owner) return true;                                  // 実在して担当なし＝誰が見てもよい
   return owner === String((tr && tr.trainerId) || '');
+}
+
+// カルテの共有の範囲（2026-11-03 オーナー決定・設計28 4-2）：体の記録はトレーナー全員が読み書きできる。
+//   ★担当の照合はしないが、「判定できない」（名簿に無い顧客・シートが読めない）は誰にも通さない（上と同じ）。
+//   使う入口は3つだけ（line_maInBodyCard・line_maSaveInBody・ma_series）。検査（gas-entry-guard）が固定する
+function _lbTrainerMaySeeShared(tr, customerId) {
+  if (!tr) return false;
+  var owner = _lbCustOwnerOf(customerId);
+  return !(owner === null || owner === undefined);
 }
 
 // この月に「枠にもチケットにも割り当たらなかった予約」が何件あるか（2026-10-04）。

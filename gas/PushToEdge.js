@@ -2812,6 +2812,16 @@ function quotaBuildText(args) {
   if (a0.d1Allow != null || a0.d1Remove != null || a0.d1AllowList === true) return _edgeD1AllowText(a0);
   if (a0.d1Probe === true) return _edgeD1ProbeText();
   if (a0.onboardingCheck === true) return _edgeOnboardingText();
+  //   体の記録を D1 へ（設計28 3-1）。arm → 6分以上待つ → cutover → copy → verify。status は読み取りだけ
+  if (a0.body) {
+    var bstep = String(a0.body);
+    if (bstep === 'status') return bodyStatus();
+    if (bstep === 'arm') return bodyArm();
+    if (bstep === 'cutover') return bodyCutover();
+    if (bstep === 'copy') return bodyCopy();
+    if (bstep === 'verify') return bodyVerify();
+    return 'body は status / arm / cutover / copy / verify のどれか';
+  }
   // args.verify を付けたら、D1の行と計算を突き合わせる
   if (a0.verify === true || a0.verify === '1') {
     var v = _edgeQuotaVerify({ month: a0.month, limit: a0.limit, after: a0.after, maxPages: a0.maxPages });
@@ -3892,6 +3902,52 @@ function lbDualWriteStatusText() {
   var t = o.join('\n');
   Logger.log(t);
   return t;
+}
+
+// 契約の入力の点検（2026-11-03・dailyHealthCheck から）。読み取りだけ
+//   ① 顧客IDが空の同名の契約行（移行ギャップ）がある会員 … D1 への契約の送信を全員分止める原因
+//   ② D1 の calcContracts の完全同期が26時間以上前 … 原因を問わず「送信が止まっている」結果
+function lbContractInputCheck() {
+  var out = [];
+  var customers = _edgeCustomers();
+  if (!customers) out.push({ key: 'contract_input_unreadable', severity: 'warn', count: 1, detail: '名簿を読めず、契約の入力の点検ができませんでした。' });
+  if (customers) {
+    //   ★名簿は _edgeCustomers の1回だけ（電話番号もそこに入っている。会員ごとに名簿を読み直さない）
+    var gaps = [], failed = 0;
+    for (var i = 0; i < customers.length; i++) {
+      var c = customers[i];
+      if (!c.customer_id || !c.name) continue;
+      var hit = null;
+      //   契約表は _lbContractRowsAll のキャッシュから（読み直さない）。読めなかった会員は数えて warn にする（黙って「異常なし」にしない）
+      try { hit = _lbContractRowsAll(c.name, c.phone || '', false, c.customer_id); } catch (e) { failed++; continue; }
+      if (hit && hit.migrationGap) gaps.push('*' + String(c.customer_id).slice(-4));
+    }
+    if (failed) out.push({ key: 'contract_input_partial', severity: 'warn', count: failed, detail: '契約を読めなかった会員が ' + failed + '名いて、その方は点検できていません。' });
+    if (gaps.length) {
+      out.push({ key: 'contract_id_blank', severity: 'high', count: gaps.length,
+                 detail: '契約シートに「顧客IDが空で名前が同じ行」がある会員 ' + gaps.length + '名（' + gaps.slice(0, 5).join('・') + '）。'
+                       + 'フォームで足した行の顧客ID欄を、同じ方の既存の行と同じIDで埋めてください。'
+                       + 'このままだと、その行は残数の計算に入らず、D1 への契約の送信も全員分止まります。' });
+    }
+  }
+  try {
+    var url = _edgeProp('EDGE_URL');
+    if (url) {
+      var res = UrlFetchApp.fetch(String(url).replace(/\/+$/, '') + '/health', { muteHttpExceptions: true });
+      var body = JSON.parse(res.getContentText() || '{}');
+      var at = 0;
+      (body.sync || []).forEach(function (s) { if (s.key === 'calcContracts') at = Number(s.synced_at || 0); });
+      var hours = at ? (Date.now() - at) / 3600000 : null;
+      if (hours === null || hours > 26) {
+        out.push({ key: 'contract_push_stalled', severity: 'high', count: 1,
+                   detail: 'D1 への契約の完全同期が ' + (hours === null ? '一度も記録されていません' : Math.floor(hours) + '時間止まっています') + '。'
+                         + 'D1 から答えている会員の残数が古い契約のままになります（顧客IDの空欄・シートの読み取り失敗を確認）。' });
+      }
+    }
+  } catch (e) {
+    out.push({ key: 'contract_push_check_fail', severity: 'warn', count: 1, detail: 'D1 の同期の時刻を読めませんでした: ' + (e && e.message) });
+  }
+  return out;
 }
 
 // 待ち行列を空にする（取り扱い注意・手で呼ぶときだけ）

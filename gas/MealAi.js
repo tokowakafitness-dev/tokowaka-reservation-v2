@@ -375,7 +375,7 @@ function _maHandleMessageInner(ev) {
           _lbReply(ev.replyToken, '体脂肪率として読み取れませんでした（3〜60の範囲の数値で送ってください）。\nやり直す場合は「体重」と送ってください。');
           return true;
         }
-        _lbReply(ev.replyToken, maLogFat_(c1.customerId, pct));
+        _lbReply(ev.replyToken, maLogFat_(c1.customerId, pct, ev.webhookEventId ? ev.webhookEventId + ':f' : null));
         return true;
       }
       if (awaiting === 'w') {
@@ -384,7 +384,7 @@ function _maHandleMessageInner(ev) {
           _lbReply(ev.replyToken, '体重として読み取れませんでした（20〜250の範囲の数値で送ってください）。\nやり直す場合は「体重」と送ってください。');
           return true;
         }
-        var rm = maLogWeight_(c1.customerId, kgm);
+        var rm = maLogWeight_(c1.customerId, kgm, ev.webhookEventId ? ev.webhookEventId + ':w' : null);
         maReply_(ev.replyToken, [
           maTextMsg_(maBuildWeightReply_(c1, kgm, rm)),
           maFlexMsg_('体脂肪率の確認', maAskFatBubble_())
@@ -401,7 +401,7 @@ function _maHandleMessageInner(ev) {
       _lbReply(ev.replyToken, '会員情報が確認できませんでした。メニューから会員登録をお願いします。\n（すでに登録済みの場合はトレーナーにお伝えください）');
       return true;
     }
-    var res = maLogWeight_(cust.customerId, kg);
+    var res = maLogWeight_(cust.customerId, kg, ev.webhookEventId ? ev.webhookEventId + ':w' : null);
     _lbReply(ev.replyToken, maBuildWeightReply_(cust, kg, res));
     return true;
   } catch (err) {
@@ -543,8 +543,21 @@ function maSnapRebuild_(customerId) {
   return snap;
 }
 
-/** body_log へ1行追記する。2回目以降はシートを読まずに追記だけで済む */
-function maLogWeight_(customerId, kg) {
+/** 体重を記録する（設計28：切替フラグで body_log か D1 か）。reqId は送り直しでも同じ値（LINE の webhookEventId 等） */
+function maLogWeight_(customerId, kg, reqId) {
+  var t = maBodyWithTarget_(function () { return maLogWeightSheet_(customerId, kg); });
+  if (t.target === 'sheet') return t.value;
+  var today = maToday_();
+  var before = maBodyLive_(customerId, 60);
+  var wasToday = !!(before && (before.rows || []).some(function (r) { return r.d === today && r.w; }));
+  var w = maBodyPost_('/body/write', { op: 'addWeight', channel: 'line', customerId: String(customerId), date: today, weightKg: kg,
+                                       clientReqId: String(reqId || ('w:' + customerId + ':' + today + ':' + kg)).slice(0, 128) });
+  if (!w.ok) throw new Error('BODY_WRITE_FAILED:' + (w.code || w.httpCode));   // ★成功と返さない（呼ぶ側が失敗の返信をする）
+  return maWeightReplyFromLive_(before, today, kg, wasToday);
+}
+
+/** body_log へ1行追記する（切り替え前）。2回目以降はシートを読まずに追記だけで済む */
+function maLogWeightSheet_(customerId, kg) {
   var snap = maSnapGet_(customerId);
   var sh = maSheet_('body_log');
   if (!sh) throw new Error('body_log が無い。setupMealSheets() を実行してください');
@@ -899,7 +912,9 @@ function _maHandlePostbackInner(ev) {
     if (q.ma === 'w') {
       var kg = parseFloat(q.v);
       if (!maOnce_(uid, 'w' + maToday_() + kg)) { Logger.log('二度押しを無視: w ' + kg); return true; }
-      var res = maLogWeight_(cust.customerId, kg);
+      var res;
+      try { res = maLogWeight_(cust.customerId, kg, (ev.webhookEventId || '') ? ev.webhookEventId + ':w' : null); }
+      catch (eW) { maOnceRelease_(uid, 'w' + maToday_() + kg); throw eW; }   // ★失敗したら二度押しの印を外す
       maMark_('保存');
       maReply_(ev.replyToken, [
         maTextMsg_(maBuildWeightReply_(cust, kg, res)),
@@ -920,7 +935,10 @@ function _maHandlePostbackInner(ev) {
     if (q.ma === 'f') {
       var pct = parseFloat(q.v);
       if (!maOnce_(uid, 'f' + maToday_() + pct)) { Logger.log('二度押しを無視: f ' + pct); return true; }
-      _lbReply(ev.replyToken, maLogFat_(cust.customerId, pct));
+      var fr;
+      try { fr = maLogFat_(cust.customerId, pct, (ev.webhookEventId || '') ? ev.webhookEventId + ':f' : null); }
+      catch (eF) { maOnceRelease_(uid, 'f' + maToday_() + pct); throw eF; }
+      _lbReply(ev.replyToken, fr);
       return true;
     }
     if (q.ma === 'done') { _lbReply(ev.replyToken, '記録しました。今日もおつかれさまでした。'); return true; }
@@ -940,8 +958,32 @@ function _maHandlePostbackInner(ev) {
   }
 }
 
-/** 体脂肪率を今日の行へ書き、除脂肪を計算して返す */
-function maLogFat_(customerId, pct) {
+/** 体脂肪率（設計28：切替フラグで body_log か D1 か） */
+function maLogFat_(customerId, pct, reqId) {
+  var t = maBodyWithTarget_(function () { return maLogFatSheet_(customerId, pct); });
+  if (t.target === 'sheet') return t.value;
+  var today = maToday_();
+  var live = maBodyLive_(customerId, 60);
+  var rows = (live && live.rows) || [];
+  var todayRow = rows.filter(function (r) { return r.d === today; })[0] || null;
+  //   その日の体重（D1 の答え、無ければ切り替え前のキャッシュ）。D1 の行が無いとき Worker はこれで行を作る
+  var snap = maSnapGet_(customerId);
+  var known = (todayRow && todayRow.w) || (snap && snap.lastW && snap.lastW.date === today ? snap.lastW.v : null) || (snap && snap.todayKg) || null;
+  var prevLeanRow = rows.filter(function (r) { return r.d !== today && r.lean; }).sort(function (a, b) { return a.d < b.d ? 1 : -1; })[0] || null;
+  var w = maBodyPost_('/body/write', { op: 'addFat', channel: 'line', customerId: String(customerId), date: today, fatPct: pct, knownWeightKg: known,
+                                       clientReqId: String(reqId || ('f:' + customerId + ':' + today + ':' + pct)).slice(0, 128) });
+  if (!w.ok && w.code === 'NEED_WEIGHT_FIRST') return '先に体重を記録してください。';
+  if (!w.ok) throw new Error('BODY_WRITE_FAILED:' + (w.code || w.httpCode));
+  var kg = Number(w.result && w.result.weightKg) || known, lean = Number(w.result && w.result.leanKg);
+  var fatKg = kg * pct / 100;
+  var lines = ['体脂肪率 ' + pct.toFixed(1) + '% を記録しました',
+               '体脂肪量 ' + fatKg.toFixed(1) + 'kg',
+               '除脂肪量 ' + lean.toFixed(1) + 'kg' + (prevLeanRow ? '（前回 ' + Number(prevLeanRow.lean).toFixed(1) + 'kg）' : '')];
+  return lines.join('\n');
+}
+
+/** 体脂肪率を今日の行へ書き、除脂肪を計算して返す（切り替え前） */
+function maLogFatSheet_(customerId, pct) {
   var sh = maSheet_('body_log');
   var today = maToday_();
   var snap = maSnapGet_(customerId);
@@ -1050,6 +1092,9 @@ function maListVerifiedNames() {
  * 読み取り側も「同日は最後の行を採る」ので必須ではないが、シートを綺麗に保つ。
  */
 function maDedupeBodyLog() {
+  //   ★実行禁止（設計28 3-1）。同じ日の先行行を丸ごと消すので、体重の行とウエストの行が別だと体重が消える。
+  //     さらに凍結の後に行を消すと、写しの位置がずれる
+  return '実行禁止：maDedupeBodyLog は使いません（設計28）。同じ日の行は読むときに項目ごとに合成されます。';
   var ss = maOpenSs_(), sh = ss.getSheetByName('body_log');
   var last = sh.getLastRow();
   if (last < 3) return '重複なし（' + Math.max(0, last - 1) + '行）';
@@ -1108,11 +1153,10 @@ function maApiSeries_(uid, params, tr) {
   if (tr && params.customerId) {
     var nm = maCustomerName_(String(params.customerId));
     if (!nm) return { success: false, code: 'NOT_FOUND' };
-    // ★担当外の顧客のカルテを開かせない（2026-10-03・Codexの5回目の判定）。
-    //   予約側（line_*）の入口は塞いだが、こちら（ma_*）は別のdispatchで、
-    //   担当の確認が無いまま体組成の履歴と目標を返していた。
-    //   規則は予約側と同じ（オーナーは全員／担当なしは誰でも／担当が他人なら不可）。
-    if (!_lbTrainerMaySeeCustomer(tr, _lbCustOwnerOf(String(params.customerId)))) {
+    // ★体の記録はトレーナー全員が読める（2026-11-03 オーナー決定・設計28 4-2）。
+    //   ただし名簿に無い顧客（判定できない）は返さない（_lbCustOwnerOf が null）。
+    //   （2026-10-03 は担当だけに絞っていた。カルテの共有の範囲に揃えた）
+    if (!_lbTrainerMaySeeShared(tr, String(params.customerId))) {
       return { success: false, code: 'FORBIDDEN' };
     }
     cust = { customerId: String(params.customerId), name: nm };
@@ -1128,6 +1172,16 @@ function maApiSeries_(uid, params, tr) {
   if (!sh) return { success: false, code: 'NO_SHEET' };
 
   var rows = maReadBody_(sh, cust.customerId, days);
+  var goalOverride = null;
+  //   ★切り替え後（D1）で写しが verified なら、Worker の答え（同じ合成）を使う。それまではシート（凍結の時点で止まっている）
+  if (maBodyTarget_() === 'd1') {
+    var live = maBodyLive_(cust.customerId, days);
+    if (live && live.freezeId) {
+      var from0 = maShiftDays_(maToday_(), -days);
+      rows = (live.rows || []).filter(function (r) { return r.d >= from0; });
+      goalOverride = live.goal ? { line: live.goal.points } : null;
+    }
+  }
   return {
     success: true,
     name: cust.name,
@@ -1138,7 +1192,12 @@ function maApiSeries_(uid, params, tr) {
     from: maShiftDays_(maToday_(), -days),
     days: days,                                   // 画面の見出しはこれを使う（要求値ではなく返した値）
     rows: rows,                                   // [{d,w,pbf,fat,lean,tbw,vis,src}]
-    goal: maReadGoal_(ss, cust.customerId)        // 無ければ null
+    goal: (function () {                          // 無ければ null。D1 の答えがあれば線だけ差し替える（ほかの項目は凍結の時点のまま）
+      var g0 = maReadGoal_(ss, cust.customerId);
+      if (!goalOverride) return g0;
+      var g1 = {}; if (g0) for (var k in g0) g1[k] = g0[k];
+      g1.line = goalOverride.line; return g1;
+    })()
   };
 }
 
@@ -1326,6 +1385,33 @@ var MA_INBODY_FIELDS = [
  * @param {Object} v         {w,pbf,lean,tbw,vis,date}
  */
 function maSaveInBody_(tr, customerId, v, shOverride) {
+  //   ★切り替え後（D1）は body_log に書かず Worker へ（自己テストの shOverride は従来どおりシート）
+  if (!shOverride) {
+    var t = maBodyWithTarget_(function () { return maSaveInBodySheet_(tr, customerId, v, null); });
+    if (t.target === 'sheet') return t.value;
+    return maSaveInBodyD1_(tr, customerId, v);
+  }
+  return maSaveInBodySheet_(tr, customerId, v, shOverride);
+}
+
+function maSaveInBodyD1_(tr, customerId, v) {
+  customerId = String(customerId || '');
+  var date = String(v.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) date = maToday_();
+  if (date > maToday_()) return { success: false, code: 'BAD_REQUEST', message: '未来の日付は記録できません。' };
+  var map = { w: 'weight_kg', pbf: 'body_fat_pct', lean: 'lean_kg', tbw: 'body_water_l', vis: 'visceral_fat' };
+  var values = {}, any = false;
+  Object.keys(map).forEach(function (k) { var raw = v[k]; if (raw !== undefined && raw !== null && String(raw).trim() !== '') { values[map[k]] = Number(String(raw).replace(/[^0-9.\-]/g, '')); any = true; } });
+  if (!any) return { success: false, code: 'EMPTY', message: '1つ以上入力してください。' };
+  var reqId = 'ib:' + customerId + ':' + date + ':' + maHash_([values]).slice(0, 16);
+  var w = maBodyPost_('/body/write', { op: 'addInBody', channel: 'gas_inbody', customerId: customerId, date: date, values: values,
+                                       enteredBy: (tr && tr.name) ? String(tr.name) : 'trainer', clientReqId: reqId });
+  if (!w.ok) return { success: false, code: w.code || 'UNAVAILABLE', message: '記録できませんでした（' + (w.code || w.httpCode) + '）' };
+  return { success: true, date: date, saved: values, prevDate: '', diffs: [] };
+}
+
+/** トレーナーが測定値を1件書く（切り替え前・body_log に追記） */
+function maSaveInBodySheet_(tr, customerId, v, shOverride) {
   customerId = String(customerId || '');
   if (!customerId) return { success: false, code: 'BAD_REQUEST', message: '顧客が指定されていません。' };
 
@@ -1411,7 +1497,16 @@ function maInBodyCard_(tr, customerId) {
     fields: MA_INBODY_FIELDS.map(function (f) {
       return { key: f.key, label: f.label, unit: f.unit, min: f.min, max: f.max, dec: f.dec };
     }),
-    last: maLastInBody_(sh, String(customerId || ''), '') || null
+    last: (function () {
+      if (maBodyTarget_() !== 'd1') return maLastInBody_(sh, String(customerId || ''), '') || null;
+      var live = maBodyLive_(String(customerId || ''), 400);
+      var rows = (live && live.rows) || [];
+      for (var i = rows.length - 1; i >= 0; i--) {
+        var r = rows[i], s = r.s || {};
+        if (s.w === 'i' || s.pbf === 'i') { var o = { d: r.d }; ['w', 'pbf', 'lean', 'tbw', 'vis'].forEach(function (k) { if (r[k]) o[k] = r[k]; }); return o; }
+      }
+      return maLastInBody_(sh, String(customerId || ''), '') || null;
+    })()
   };
 }
 
@@ -1681,4 +1776,198 @@ function _maHandlePostback(ev) {
   maPerfStart_('タップ', ev);
   try { return _maHandlePostbackInner(ev); }
   finally { maPerfEnd_(); }
+}
+
+
+/* =========================================================
+ *  体の記録を D1 へ（設計28 3-1・2026-11-03）
+ *
+ *  ★書き込み口（maLogWeight_・maLogFat_・maSaveInBody_）は、共通のロックの中で切替フラグを見る。
+ *     'sheet'（既定）… 今までどおり body_log に書く
+ *     'd1'          … body_log に書かず Worker の /body/write へ転送する（失敗したら成功と返さない）
+ *  ★切り替えは2段：①この版を反映 → bodyArm（印を付ける）→ ②6分以上待ってから bodyCutover
+ *     （ロックの中でフラグを 'd1' にし、同時に凍結用シートへ値をコピーして Worker に begin）
+ *  ★写し（bodyCopy）と突き合わせ（bodyVerify）は凍結用シートだけを読む。元のシートは読まない
+ * ========================================================= */
+var MA_BODY = {
+  TARGET_PROP: 'BODY_WRITE_TARGET',     // 'sheet' | 'd1'
+  ARMED_PROP:  'BODY_ARMED_AT',         // bodyArm の時刻（ms）
+  FREEZE_PROP: 'BODY_FREEZE_ID',        // 凍結の ID
+  SHEETS: ['body_log', 'meal_goals', 'goal_phases'],
+  WAIT_MS: 6.5 * 60 * 1000,             // 旧版の最大実行時間（6分）を超えて待つ
+  DATE_COLS: { body_log: [1], meal_goals: [2, 3], goal_phases: [3, 4] }
+};
+
+function maBodyTarget_() {
+  return String(PropertiesService.getScriptProperties().getProperty(MA_BODY.TARGET_PROP) || 'sheet') === 'd1' ? 'd1' : 'sheet';
+}
+
+/** Worker の体の記録の入口へ（合言葉つき・GAS→Worker の既存の形） */
+function maBodyPost_(path, payload) {
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return { ok: false, code: 'NOT_CONFIGURED' };
+  var res = UrlFetchApp.fetch(String(url).replace(/\/+$/, '') + path, {
+    method: 'post', contentType: 'application/json', payload: JSON.stringify(payload),
+    headers: { 'X-Ingest-Secret': secret }, muteHttpExceptions: true
+  });
+  var body = {};
+  try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) { body = {}; }
+  if (res.getResponseCode() !== 200 && body.ok !== false) body.ok = false;
+  body.httpCode = res.getResponseCode();
+  return body;
+}
+
+/** 書き込み口の共通：ロックの中でフラグを読み、'sheet' ならロックの中で fnSheet を実行する */
+function maBodyWithTarget_(fnSheet) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('BODY_LOCK_TIMEOUT');
+  try {
+    if (maBodyTarget_() === 'sheet') return { target: 'sheet', value: fnSheet() };
+  } finally { lock.releaseLock(); }
+  //   'd1' は戻らない（一方向）ので、転送はロックの外でよい
+  return { target: 'd1' };
+}
+
+/** 今の答え（verified の凍結＋d1）。LINE ボットの「前回」と、テスターのグラフに使う */
+function maBodyLive_(customerId, days) {
+  var r = maBodyPost_('/body/series', { mode: 'live', customerId: String(customerId), days: days || 400 });
+  return (r && r.ok) ? r : null;
+}
+
+/** 体重の返信用の材料（d1 のとき）：今日を除いた直近の体重 */
+function maWeightReplyFromLive_(live, today, kg, wasToday) {
+  var rows = (live && live.rows) || [];
+  var prev = rows.filter(function (r) { return r.d !== today && r.w; }).sort(function (a, b) { return a.d < b.d ? 1 : -1; });
+  return { today: today, isRepeat: !!wasToday, last: prev.length ? { date: prev[0].d, kg: prev[0].w } : null,
+           avg7: maAvg_(prev.slice(0, 7).map(function (r) { return r.w; })), count: prev.length + 1 };
+}
+
+/** postback の二度押し防止を外す（転送に失敗したとき、同じ操作を二度押しとして捨てない） */
+function maOnceRelease_(uid, key) {
+  try { CacheService.getScriptCache().remove('ma_once_' + uid + '_' + key); } catch (e) {}
+}
+
+// ------------------------------------------------------------ 切り替えの手順（作業依頼 quotaBuild の引数から）
+/** ① 移行版を反映したあとに1回。6分以上たってから bodyCutover できる */
+function bodyArm() {
+  var p = PropertiesService.getScriptProperties();
+  if (maBodyTarget_() === 'd1') return '既に切り替え済みです（' + (p.getProperty(MA_BODY.FREEZE_PROP) || '-') + '）';
+  p.setProperty(MA_BODY.ARMED_PROP, String(Date.now()));
+  return '印を付けました。' + Math.ceil(MA_BODY.WAIT_MS / 60000) + '分以上たってから bodyCutover を実行してください。';
+}
+
+/** シートの値を、写し・ハッシュ用の形に（日付の列は yyyy-MM-dd） */
+function maFreezeValues_(sheetName, sh) {
+  if (!sh || sh.getLastRow() < 2) return [];
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+  var dc = MA_BODY.DATE_COLS[sheetName] || [];
+  return vals.map(function (r) {
+    return r.map(function (v, i) {
+      if (dc.indexOf(i) >= 0) return (v instanceof Date) ? maDateStr_(v) : String(v == null ? '' : v).slice(0, 10);
+      if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ss");
+      return v;
+    });
+  });
+}
+function maHash_(rows) {
+  var b = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(rows), Utilities.Charset.UTF_8);
+  return b.map(function (x) { return ('0' + (x & 0xff).toString(16)).slice(-2); }).join('');
+}
+function maFreezeSheet_(ss, fz, name) { return ss.getSheetByName(name + '__freeze_' + fz); }
+
+/** ② ロックの中で：フラグ 'd1' ＋凍結用シートへのコピー＋Worker に begin。失敗したらフラグを戻す（ロックの中なので書き込みは来ていない） */
+function bodyCutover() {
+  var p = PropertiesService.getScriptProperties();
+  if (maBodyTarget_() === 'd1') return '既に切り替え済みです（' + (p.getProperty(MA_BODY.FREEZE_PROP) || '-') + '）';
+  var armed = Number(p.getProperty(MA_BODY.ARMED_PROP) || 0);
+  if (!armed) return '先に bodyArm を実行してください。';
+  var waited = Date.now() - armed;
+  if (waited < MA_BODY.WAIT_MS) return 'まだ待つ必要があります（あと ' + Math.ceil((MA_BODY.WAIT_MS - waited) / 60000) + '分）。';
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return 'ロックを取れませんでした。少し待ってもう一度。';
+  try {
+    if (maBodyTarget_() === 'd1') return '既に切り替え済みです。';
+    var fz = 'fz' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMddHHmmss');
+    var ss = maOpenSs_();
+    var counts = {}, hashes = {};
+    MA_BODY.SHEETS.forEach(function (name) {
+      var src = ss.getSheetByName(name);
+      var copy = src ? src.copyTo(ss) : ss.insertSheet();
+      copy.setName(name + '__freeze_' + fz);
+      try { copy.hideSheet(); } catch (e) {}
+      var rows = maFreezeValues_(name, copy);
+      counts[name] = rows.length; hashes[name] = maHash_(rows);
+    });
+    var r = maBodyPost_('/body/freeze', { op: 'begin', freezeId: fz, counts: counts, hashes: hashes });
+    if (!r.ok) return '凍結を始められませんでした（' + (r.code || r.httpCode) + '）。フラグは sheet のまま。';
+    p.setProperty(MA_BODY.FREEZE_PROP, fz);
+    p.setProperty(MA_BODY.TARGET_PROP, 'd1');
+    return '切り替えました（' + fz + '）。以後の体の記録は D1 に入ります。行数 ' + JSON.stringify(counts) + '。次は bodyCopy。';
+  } finally { lock.releaseLock(); }
+}
+
+/** ③ 凍結用シートだけを読んで Worker に写す（分割・再開できる・時間内で止める） */
+function bodyCopy() {
+  var fz = PropertiesService.getScriptProperties().getProperty(MA_BODY.FREEZE_PROP);
+  if (!fz) return '凍結がありません（bodyCutover が先）。';
+  var ss = maOpenSs_(), t0 = Date.now(), out = [];
+  for (var s = 0; s < MA_BODY.SHEETS.length; s++) {
+    var name = MA_BODY.SHEETS[s];
+    var rows = maFreezeValues_(name, maFreezeSheet_(ss, fz, name));
+    var hashNow = maHash_(rows);
+    var pos = 0;
+    //   位置は Worker に聞く（BAD_POSITION が expected を返す）。最初は0で送ってみる
+    while (pos <= rows.length) {
+      if (Date.now() - t0 > 4.5 * 60 * 1000) { out.push(name + '：時間切れ（' + pos + '/' + rows.length + '）→ もう一度 bodyCopy'); return out.join('\n'); }
+      var chunk = rows.slice(pos, pos + 300);
+      var r = maBodyPost_('/body/freeze', { op: 'rows', freezeId: fz, sheet: name, startOrder: pos, rows: chunk, hashNow: hashNow });
+      if (r.code === 'BAD_POSITION' && typeof r.expected === 'number') { pos = r.expected; if (pos >= rows.length && rows.length) break; continue; }
+      if (!r.ok) { out.push(name + '：失敗（' + (r.code || r.httpCode) + (r.orders ? ' 行 ' + r.orders.join(',') : '') + '）'); return out.join('\n'); }
+      pos = r.copied;
+      if (!chunk.length || pos >= rows.length) break;
+    }
+    out.push(name + '：' + rows.length + '行');
+  }
+  var st = maBodyPost_('/body/freeze', { op: 'state', freezeId: fz, state: 'copied' });
+  out.push(st.ok ? '→ copied。次は bodyVerify。' : '→ copied にできません（' + (st.code || st.httpCode) + '）');
+  return out.join('\n');
+}
+
+/** ④ 凍結用シートを GAS の計算（maReadBody_・maReadGoal_）に通した答えと、Worker（凍結の写しだけ）の答えを全会員で比べる */
+function bodyVerify() {
+  var fz = PropertiesService.getScriptProperties().getProperty(MA_BODY.FREEZE_PROP);
+  if (!fz) return '凍結がありません。';
+  var ss = maOpenSs_();
+  var bl = maFreezeSheet_(ss, fz, 'body_log');
+  var fakeSs = { getSheetByName: function (n) { return maFreezeSheet_(ss, fz, n); } };
+  var ids = {};
+  MA_BODY.SHEETS.forEach(function (n) { maFreezeValues_(n, maFreezeSheet_(ss, fz, n)).forEach(function (r) { if (String(r[0] || '').trim()) ids[String(r[0]).trim()] = 1; }); });
+  var keys = ['w', 'pbf', 'lean', 'tbw', 'vis', 'fat'];
+  function norm(rows) {
+    return JSON.stringify((rows || []).map(function (r) {
+      var o = { d: r.d }, s = {};
+      keys.forEach(function (k) { if (r[k] != null) o[k] = r[k]; if (r.s && r.s[k]) s[k] = r.s[k]; });
+      o.s = s; return o;
+    }));
+  }
+  var bad = 0, n = 0, sample = '';
+  Object.keys(ids).forEach(function (cid) {
+    n++;
+    var gas = (bl && bl.getLastRow() >= 2) ? maReadBody_(bl, cid, 3650) : [];
+    var goal = maReadGoal_(fakeSs, cid);
+    var w = maBodyPost_('/body/series', { mode: 'sheet', freezeId: fz, customerId: cid });
+    var okBody = w.ok && norm(gas) === norm(w.rows);
+    var okGoal = w.ok && JSON.stringify(goal ? goal.line : null) === JSON.stringify(w.goal ? w.goal.points : null);
+    if (!okBody || !okGoal) { bad++; if (!sample) sample = '*' + cid.slice(-4) + (okBody ? '' : ' 体') + (okGoal ? '' : ' 目標'); }
+  });
+  var to = bad ? 'failed' : 'verified';
+  var st = maBodyPost_('/body/freeze', { op: 'state', freezeId: fz, state: to, note: bad ? ('不一致 ' + bad + '名 例 ' + sample) : ('一致 ' + n + '名') });
+  return '突き合わせ：' + n + '名中 不一致 ' + bad + '名' + (sample ? '（例 ' + sample + '）' : '') + ' → ' + (st.ok ? to : '状態を変えられません（' + (st.code || st.httpCode) + '）');
+}
+
+/** 状態だけ見る（読み取り） */
+function bodyStatus() {
+  var p = PropertiesService.getScriptProperties();
+  return '書き込み先: ' + maBodyTarget_() + ' / 凍結: ' + (p.getProperty(MA_BODY.FREEZE_PROP) || '-')
+    + ' / 印: ' + (p.getProperty(MA_BODY.ARMED_PROP) ? Utilities.formatDate(new Date(Number(p.getProperty(MA_BODY.ARMED_PROP))), 'Asia/Tokyo', 'MM/dd HH:mm') : '-');
 }

@@ -171,7 +171,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-10-04e 超過を落ち着いた赤で出す';
+  var LIFF_BUILD = '2026-11-03a 顧客カルテ（段1・トレーナー画面）の入口';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -1310,6 +1310,13 @@
     var cntById = {}; resv.forEach(function(r){ cntById[r.customerId] = (cntById[r.customerId]||0)+1; });
     // 担当顧客（予約0でも表示）＋予約はあるが担当リスト外の顧客も統合（取りこぼし防止）
     var list = [], seen = {};
+    // 顧客カルテの一覧（次の予約なし・記録停止・更新が近い・支払い待ち）。担当＋担当なし（オーナーは全員）
+    //   ★担当が0名のトレーナーにも出す（担当なしの顧客は見られる）＝空の判定の外に置く
+    if (window.KarteUI) {
+      var kb = document.createElement('button'); kb.className = 'btn btn-outline'; kb.style.marginTop = '0'; kb.textContent = 'カルテの一覧（声かけが要る人）';
+      kb.onclick = function(){ KarteUI.openBoard(); };
+      box.appendChild(kb);
+    }
     custs.forEach(function(c){ if (c.customerId && !seen[c.customerId]) { seen[c.customerId]=true; list.push({ customerId:c.customerId, name:c.name, count: cntById[c.customerId]||0 }); } });
     resv.forEach(function(r){ if (r.customerId && !seen[r.customerId]) { seen[r.customerId]=true; list.push({ customerId:r.customerId, name:r.customerName, count: cntById[r.customerId]||0 }); } });
     if (!list.length) {
@@ -1898,6 +1905,12 @@
     var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
+    // 顧客カルテ（設計28・段1）。★InBody カードの外に置く（カードの読み込みが落ちても入口は消えない）
+    if (window.KarteUI) {
+      var kbtn = document.createElement('button'); kbtn.className = 'btn'; kbtn.textContent = 'カルテを開く';
+      kbtn.onclick = function(){ KarteUI.open(customerId, name, 'summary'); };
+      box.appendChild(kbtn);
+    }
     // お客様の残数（トレーナーが確認できるよう表示）— 選択時に取得。チケット補充後も同関数で最新化。
     var homeCard = document.createElement('div'); homeCard.className = 'card';
     box.appendChild(homeCard);
@@ -2922,5 +2935,7 @@
 
   boot();
 </script>
+<!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
+<script src="karte.js?v=2026-11-03a"></script>
 </body>
 </html>
