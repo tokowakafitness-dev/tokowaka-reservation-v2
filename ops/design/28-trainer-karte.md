@@ -29,23 +29,74 @@
 | 一覧 | 次の予約が無い／記録が止まっている／契約の終了・残数切れが近い／支払い待ち | 自動 |
 | 後で | ④生活習慣（問診票）・⑥写真・全種目の記録・食事・契約の登録/更新・顧客への公開 | — |
 
-## 3. データ（関門①を受けて改訂・v2）
+## 3. データ（関門①を受けて改訂・v4）
 
-### 3-1. 体の記録（⑤）は段1では**シートのまま**（案C）
-- 正本は今の `body_log`（GAS）のまま。**既存5項目の意味と列（1〜11列）は変えず、新しい項目を末尾に足す**：骨格筋量・胸囲・上腕・ウエスト・ヒップ・太もも（12〜17列）
-- GAS の変更（関門②の対象）：
-  - `body_log.header` を17列に
-  - `MA_INBODY_FIELDS`（MealAi.js 1313）に6項目と範囲を足す
-  - `maSaveInBody_`（1363）の保存行を**列番号から組み立てる**（11要素の固定配列をやめる）
-  - `maLastInBody_`（1385）と `maReadBody_`（1154）の読む幅を最大列まで広げ、**6項目も項目ごとの後勝ち合成**（空欄で上書きしない）
-  - `line_maSaveInBody`（LineBooking.js 333）の引き渡しに6項目を足す
-  - `ma_series` の返り値に6項目を足す（karte/index.html は知らない鍵を無視する＝テスターの画面は変わらない）
-  - ★**`maDedupeBodyLog()`（1047〜1063）は実行禁止にする**（先頭で止めて理由を返す）。同じ日の先行行を丸ごと消すので、体重の行とウエストの行が別だと体重が消える（関門①2周目）
-  - staging の自己テストを新しい列まで広げる
-- 読む・書くの認可：GAS 側にも**共有用の認可**（トレーナーであり、顧客が実在し照合済み）を置き、`ma_series` のトレーナー経路（MealAi.js 1108〜1115）と InBody カードの読み書き（LineBooking.js 320・329）をそれに替える。**共有の範囲は読み・書きとも全トレーナー**（2026-11-03 オーナー決定）
-- 体脂肪量は保存列ではなく、読むときに 体重×体脂肪率 で出している（MealAi.js 1183）
-- 理由：D1 へ移す案（案A）の落とし穴（安定IDが無い・項目ごとの合成・テスター画面が古くなる）は、移すときだけ起きる。段3（顧客への公開）の設計で正本の移し方を決める
-- GAS の反映が1回要る → 次のまとめ反映に入れる
+### 3-1. 体の記録（⑤）と目標線は **D1 が唯一の正本**（2026-11-03 オーナー「最速化したく、D1ベースで」・v4）
+- 旧案C（シートのまま）は取り下げ。v3（シートから15分ごとに写し続ける）は、書き込み先が2つに割れて安定ID・差分・順序・二重登録・6分制限の穴が出た（関門①再審査）→ **書き込み口を全部 D1 に向け、シートは切り替えの時点で凍結して一度だけ写す**
+
+**書き込み口（すべて D1 へ）**
+| 書き込み口 | 段1 |
+|---|---|
+| トレーナーの InBody 入力 | 新しい画面 → Worker `k_addMeasurement`（D1）。★**サーバー側の関門：body_freeze に state が frozen 以上の行が1つも無い（＝切り替え前）なら BODY_NOT_READY で書かない**（画面は入力欄を「準備中」にし、従来の InBody カード＝GAS 経由を出す）。切り替えより前に D1 とシートへ並行して書かれることを無くす。**古い画面が GAS の `line_maSaveInBody` を呼んでも、切り替え後（フラグ 'd1'）は GAS が body_log に書かず Worker へ転送**（切り替え前の 'sheet' は今までどおり body_log）（GAS→Worker は既存の合言葉つきの入口と同じ方式）。転送は client_req_id 付き＝二重にならない |
+| 会員が LINE で体重（`maLogWeight_` 547） | GAS は body_log に appendRow せず、**Worker の入口へ転送して D1 に書く** |
+| 会員が LINE で体脂肪率（`maLogFat_` 945・その日の行を書き換え） | 同じく Worker へ。D1 側で「その会員のその日の最後の行」に体脂肪率と除脂肪を足す（同日の行が無ければ『先に体重を』の今の応答のまま） |
+| 目標線（meal_goals／goal_phases・**いまはシートを手で編集**） | カルテの画面から入力（`k_saveGoalLine`）。シートの編集は切り替え以降は使わない（オーナーに周知） |
+- LINE ボットの「前回 ○kg」は GAS のキャッシュではなく Worker から引く（同じ D1 を見る）
+
+**一度だけの写し（切り替えの手順・2段で凍結を確実にする）**
+1. **移行版の GAS を反映**（まとめ反映の1回）：書き込み口（`maLogWeight_`・`maLogFat_`・`line_maSaveInBody`・`maSaveInBody_`）がすべて**共通のロック**（ScriptLock）の中で切替フラグ `BODY_WRITE_TARGET`（Script Properties・既定 'sheet'）を見る。'sheet' の間は今までどおり body_log、'd1' なら Worker へ転送。`maDedupeBodyLog()` は実行禁止。この時点では何も変わらない
+2. **待つ**：旧版の最大実行時間（6分）を超えて待ち、LINE の webhook が指す GAS の URL が移行版の配信（同じデプロイの新しい版）であることを確かめる
+3. **切り替え** `bodyCutover()`（作業依頼）：**共通のロックの中で**、①フラグを 'd1' に ②body_log・meal_goals・goal_phases の値を**凍結用のシート**（`body_log__freeze_<freeze_id>` 等）へ丸ごとコピー ③行数と全体のハッシュを `body_freeze` に記録（state='frozen'）。ロックを離したら、以後の書き込みは全部 D1
+4. **写し**：凍結用のシートだけを読む（元のシートは読まない）。鍵＝`<freeze_id>:<シート名>:<行の順番>`（シート名を含める＝meal_goals と goal_phases が衝突しない）。分割して再開できる（どこまで写したかを記録）。**開始・各分割・終了で凍結用シートの行数とハッシュを確かめ、変わっていたらこの freeze_id を failed にして全部やり直す**。state：frozen → copying → copied
+5. **突き合わせ**：凍結用シートを GAS の計算（maReadBody_ と同じ）に通した答えと、Worker の答え（その freeze_id の行だけ）を全会員×日付×項目×出所で比べる。目標線も。一致したら state='verified'、違えば 'failed'（切り替えない）
+6. **読み先の切り替え**：Worker の読み取り（k_body・k_board・会員用）は **state='verified' の freeze_id の行＋origin='d1' の行**だけを使う。verified になるまで、カルテの「からだ」タブと一覧の「記録停止」は「準備中」。テスターの karte/index.html を Worker の会員用窓口（`myBodyRecords`）へ＝**関門③**（テスターだけ）
+- `body_freeze`：freeze_id(PK)・state（frozen／copying／copied／verified／failed）・各シートの行数とハッシュ・写した位置・開始/終了時刻
+
+**GAS → Worker の転送（Worker が落ちているとき）**
+- 入口：Worker に**体の記録専用の入口**（`/body/write`）。既存の GAS→Worker と同じ方式（EDGE_URL・EDGE_SECRET・X-Ingest-Secret・muteHttpExceptions・200以外は失敗＝PushToEdge.js 41）。許す操作は addWeight／addFat／addInBody だけ・列と範囲を検査・冪等
+- **同期で転送し、失敗したら成功の返信をしない**（LINE には「記録できませんでした。少し時間をおいてもう一度送ってください」）。キューや後からの push はしない（会員が送り直せば入る）
+- client_req_id は**送り直しでも同じ値**：LINE の `webhookEventId＋操作の種類`／LIFF は画面が作った ID を再試行でも保つ
+- Worker は保存済みで GAS が応答を受け取れなかった場合：同じ client_req_id の再送に同じ成功を返す（karte_requests と同じ仕組み）
+- postback の二度押し防止（`maOnce_`・MealAi.js 887）は **Worker の成功の後に確定**し、失敗したら解除する（失敗後の同じ操作を二度押しとして捨てない）
+
+**体脂肪率を同日の行に足す（D1）**
+- ★**origin='sheet' の行（凍結から写した行）は決して書き換えない**（突き合わせの対象を変えない）。体脂肪率が足されるのは origin='d1' の行だけ
+- GAS は転送のとき、**その日の体重**（GAS が今まで見ていたもの＝写しのキャッシュ／当日の行）を要求に含める（`known_weight_kg`）。切り替えの直前にシートへ体重を入れ、直後に体脂肪率を送った会員でも結びつけられるように
+- D1 の処理（1つの batch）：
+  ※ D1 は batch を1つずつトランザクションとして実行する（書き手は1つ・途中で他の batch が割り込まない＝Cloudflare の仕様）。1と2を同じ batch に入れるので、別の要求の体脂肪率と交互に混ざらない
+  1. その会員のその日の **origin='d1'** の行のうち最後（サーバー採番の id が最大・削除済みを除く・体重あり）を、`UPDATE … SET body_fat_pct=?, lean_kg=ROUND(weight_kg*(1-?/100.0),1), rev=rev+1 WHERE id=(SELECT … ORDER BY id DESC LIMIT 1)` の**1文**で更新（除脂肪は同じ文の中で対象行の体重から計算）
+  2. `INSERT … SELECT … WHERE ? IS NOT NULL AND NOT EXISTS (その会員のその日の origin='d1'・削除済みでない・体重ありの行)`：1で更新できなかったとき（＝d1 の行が無い）だけ、`known_weight_kg` で origin='d1'・source='self' の行を**体重と体脂肪率つきで新しく作る**（読み方の順序では d1 の行がシートの行より後＝その日の値はこの組になる）
+  3. どちらも無ければ「先に体重を記録してください」（今の応答）
+- 1が更新したら、2の NOT EXISTS が偽になり作らない（同じ batch の中で順に）
+
+**/body/write の二重送信の防止**
+- 表 `body_requests`：(channel（line／liff／gas_inbody）, client_req_id)(PK)・payload_hash・http_status・result_code・result_json（作った ID・体重/体脂肪率の数値だけ）・done_at
+- **本体と同じ batch の先頭で** body_requests に INSERT。主キー違反（＝同じ要求が既に完了 or 並行中）なら batch 全体が巻き戻り、本体の UPDATE も rev も動かない → 引き直して、同じ payload_hash なら保存した結果を返す・違えば REQ_REUSED・まだ無ければ（並行中）少し待って引き直し、決まらなければ500（会員には「もう一度」）
+- channel を主キーに含める＝会員の LINE と LIFF とトレーナー入力の ID が衝突しない（trainer_id を持たない要求も扱える）
+
+**読み方（Worker・GAS と同じ答え）**
+- 削除済み（deleted_at）の行は読まない。同じ日の複数行は**項目ごとに後勝ち・空欄では上書きしない**（maReadBody_ 1157〜1170）。順序は「origin='sheet' を sheet_order 順 → その後に origin='d1' を created_at・id 順」（凍結より後の書き込みは必ずシートの行より新しい）
+- 出所：測定元の文字列に `inbody` を**含めば** i、それ以外は s（MealAi.js 1166 と同じ）
+- 除脂肪が無く体重と体脂肪率があれば計算で補う・体脂肪量は 体重×体脂肪率（1183）
+- 目標線：meal_goals は同じ会員の**最後の行**／goal_phases は『無効』を除き phase_no 順／有効な点が2つ未満なら meal_goals の線（MealAi.js 1200〜1245 と同じ）
+
+**表**
+- `body_measurements`：id・customer_id・measured_date・source_raw（測定元の文字列）・origin（sheet／d1）・origin_key（一意）・sheet_order・weight_kg・body_fat_pct・lean_kg・body_water_l・visceral_fat・skeletal_muscle_kg・chest_cm・arm_cm・waist_cm・hip_cm・thigh_cm・entered_by・client_req_id・created_at・updated_at・deleted_at・rev
+- 値の範囲（CHECK・保存時の検査も同じ）：体重 20〜250（0.1）／体脂肪率 3〜60（0.1）／除脂肪 10〜150（0.1）／体水分 5〜100（0.1）／内臓脂肪 1〜30（整数）＝MealAi.js 1313 と同じ。**新しい項目**：骨格筋量 5〜80kg（0.1）／胸囲 50〜180cm（0.1）／上腕 15〜70cm（0.1）／ウエスト 40〜180cm（0.1）／ヒップ 50〜180cm（0.1）／太もも 25〜100cm（0.1）
+- `body_goals`：id・customer_id・kind（meal_goal／phase）・phase_no・状態・開始/終了・体重・origin・origin_key・sheet_order・rev・updated_by・updated_at
+
+**検査**
+- 書き込み口（k_addMeasurement・line_maSaveInBody・maSaveInBody_・maLogWeight_・maLogFat_）がフラグ 'd1' でどれも D1 に入り、body_log が増えない／'sheet' の間は今までどおり
+- 切り替えはロックの中でフラグと凍結コピーが同時／凍結用シートが写しの途中で変わったら failed
+- Worker が落ちているとき：成功の返信をしない・maOnce_ が解除される・同じ webhookEventId の再送で二重にならない
+- 体脂肪率と体重が同時でも、選ぶ・書くが1文／切り替え直後（体重はシート・体脂肪率は D1）でも known_weight_kg で結びつく／origin='sheet' の行は書き換わらない／origin='d1' の行も known_weight_kg も無ければ「先に体重を」
+- k_addMeasurement は切り替え前（body_freeze が無い）だと BODY_NOT_READY
+- /body/write：同じ client_req_id を2回送っても rev が1回しか増えない・違う中身は REQ_REUSED
+- 体脂肪率は同日の最後の行に足される／同日の行が無ければ今の応答
+- 写しを2回流しても増えない
+- 突き合わせ：凍結したシートの GAS と Worker（sheet 由来だけ）が全会員で一致。不一致なら切り替えない
+- 範囲外は CHECK で入らない
+- 同じ日に sheet と d1 が混ざっても d1 が後勝ち
 
 ### 3-2. D1 の新しい表（カルテ固有のもの）
 | 表 | 主キー・主な列 | 備考 |
@@ -63,7 +114,7 @@
 | `karte_access_log` | id・at・trainer_id・role・customer_id・section・action・result（ok／denied／not_found／conflict／no_consent／rate_limited／error）・req_id | 中身は書かない。保存1年 |
 
 - 編集・削除：書いた人（author_trainer_id＝不変の trainer_id）とオーナー。オーナーの代理修正は reason 必須
-- 測定値は固定列（3-1 のとおりシート側）。D1 側に JSON の値の列は作らない
+- 測定値は D1 の固定列（3-1 の body_measurements）。JSON の値の列は作らない
 
 ### 3-3. 安全面（要配慮個人情報）
 - 書く：`INSERT … SELECT … WHERE EXISTS (SELECT 1 FROM karte_consent WHERE customer_id=? AND kind='health' AND state='agreed')`（更新も同じ条件＋rev）。**影響0件なら NO_CONSENT**。同意の確認と書き込みが1文
@@ -94,13 +145,13 @@
 | `k_board` | 担当＋担当なし（**オーナーは全員**・2026-11-03 オーナー決定） | 4-4。50件ずつ |
 | `k_save*` / `k_add*` / `k_edit*` / `k_delete*` | 共有（安全面は同意） | 4-5 |
 | `k_recordMembership` | 担当＋担当なし（オーナーは全員）。cancel はオーナーだけ | §6 |
-- 体の記録は GAS の `ma_series`（拡張）から（3-1）
+- 体の記録・目標線は Worker の `k_body`（D1・3-1）
 
 ### 4-4. 一覧（k_board）の材料
 | 印 | 正本 | 新しさの条件 | 判定できないとき |
 |---|---|---|---|
 | 次の予約が無い | D1 `reservations`（写し） | 同期の時刻（sync_state）が30分以内 | 「確認中」（問題なしにしない） |
-| 記録が止まっている | GAS の新しい窓口 `ma_lastMeasured`（会員ごとの最終測定日 or 「記録なし」。body_log を全行見る。`ma_myMembers` は記録のある会員・末尾6000行だけなので使わない） | GAS が答えたとき | 「確認中」 |
+| 記録が止まっている | D1 `body_measurements` の会員ごとの最終測定日（削除済みを除く・無ければ「記録なし」） | body_freeze が **verified** | 「準備中」 |
 | 契約の終了が近い | D1 `calc_contract_rows.end_ms`（写し） | その会員の世代が新しい（fresh.js）**かつ** `sync_state` の calcContracts（完全同期の時刻・ingest.js 483〜497）が26時間以内 | 「確認中」 |
 | 残数・支払い待ち | 既存の残数の読み取り。`readHomeSafe`（compat.js 109〜112・40分を超えたら null）と同じ上限で。生の表を独自に読まない | readHomeSafe が答えたとき | 「確認中」 |
 - 一覧には金額・契約の種別・健康情報を出さない（印と名前だけ）
@@ -166,11 +217,11 @@
 - 壊して落ちることを確かめる
 
 ## 8. 反映
-- D1 migration → Worker（自動）→ LIFF（main への push＝即公開）。Worker の窓口が先に出ても、LIFF が呼ばなければ影響なし
-- GAS：body_log の列追加と ma_series の拡張で1回（次のまとめ反映）
+- D1 migration → Worker（自動）→ LIFF（main への push＝即公開）。Worker の窓口が先に出ても、LIFF が呼ばなければ影響なし。**体の記録の新しい入力は、切り替え（3-1 の3）が済むまでサーバー側で止まっている**（BODY_NOT_READY）ので、LIFF を先に出してもシートと並行しない
+- GAS：転送の対象4関数（maLogWeight_・maLogFat_・line_maSaveInBody・maSaveInBody_）の切替フラグと転送・写しの関数（body_log・meal_goals・goal_phases → D1）・maDedupeBodyLog の禁止で1回（次のまとめ反映）。手順は 3-1 の1〜6
 - 関門：①この設計 ②push 前 ③段1はトレーナーだけ＝「顧客に出す前」は段3で
 
-## 関門①の結果：**通過**（2026-11-03・10周目・軽微のみ）
+## 関門①の結果：10周目で通過 → 3-1 を D1 に変更して再審査 → **再審査5周目で通過（軽微のみ・2026-11-03）**
 
 ## 9. 関門①（Codex・2026-11-03 1周目）の指摘と対処
 | 指摘 | 対処 |
@@ -266,3 +317,42 @@
 |---|---|
 | 要修正：途中の行を cancel すると交互が崩れる | cancel の対象を有効な最後の1行だけに限定 |
 | 軽微：ISO・未来日の条件が本文から抜けた | §6 に戻し、§7 に形式違い・実在しない日を追加 |
+
+## 18. 関門①（再審査1周目・3-1 v3）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 重大：origin_key（記録日時）は衝突しうる | 書き込みを全部 D1 にしてシートを凍結 → 凍結時の行番号を鍵に（凍結後は動かない） |
+| 重大：15分の差分では体脂肪率の書き換えを拾えない | 写し続けない（凍結・一度だけ）。体脂肪率も D1 に直接 |
+| 重大：後勝ちの順序が GAS の行順と違う | sheet_order を保持・d1 はその後。出所は `inbody` を含むか |
+| 重大：一覧の記録停止が D1 の直接入力を見ない | 一覧も D1 から |
+| 要修正：新旧の画面で二重登録 | 古い画面の GAS 経由も Worker へ転送・client_req_id |
+| 要修正：照合の母集団 | sheet 由来だけで比べる・手順を固定（3-1 の1〜4） |
+| 要修正：目標線の選び方 | GAS と同じ規則を明記・目標線の編集はカルテへ |
+| 要修正：6分制限・ロック | 15分ごとの写しを無くした（一度だけの写しは分割して再開できる形・行番号で進む） |
+| 要修正：新しい項目の範囲が無い | 範囲を明記 |
+| 軽微：§4・§8 が旧仕様 | 直した |
+
+## 19. 関門①（再審査2周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 重大：反映の瞬間＝凍結は成り立たない（実行中の旧版・再送） | 2段：移行版（共通ロック＋切替フラグ）を先に反映 → 6分以上待つ → ロックの中でフラグと凍結コピー |
+| 重大：行番号は凍結後も動きうる | 凍結用シートにコピーし `freeze_id:シート名:順番` を鍵に。行数とハッシュを各段で確かめ、変われば failed |
+| 要修正：Worker が落ちたとき | 専用の入口・同期で転送・失敗なら成功を返さない・決定的な client_req_id・maOnce_ は成功後に確定 |
+| 要修正：体重と体脂肪率の同時 | 選ぶと書くを1文に |
+| 要修正：凍結の状態が1つの印では足りない | body_freeze の状態（frozen→copying→copied→verified／failed）。読むのは verified だけ |
+| 軽微：見出し・旧仕様の文言・書き込み口の数え方・削除済みの除外 | 直した |
+
+## 20. 関門①（再審査3周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 重大：切り替え直後の体脂肪率が、写しの途中だと失敗・検証対象を書き換える | origin='sheet' の行は書き換えない。GAS がその日の体重を要求に含め、D1 の行が無ければ体重つきで新しく作る |
+| 要修正：1文では除脂肪を計算できない | 同じ文の中で対象行の体重から計算 |
+| 要修正：/body/write の冪等の鍵と同じ batch | body_requests（channel＋client_req_id）を batch の先頭に |
+| 軽微：書き込み口の数え方 | 「転送の対象4関数」に統一 |
+
+## 21. 関門①（再審査4周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 重大：LIFF が先に出ると、切り替え前に D1 とシートへ並行して書かれる | k_addMeasurement は切り替え前は BODY_NOT_READY（サーバー側の関門）。画面は従来の InBody カードを出す |
+| 要修正：体脂肪率の並行処理の排他が未定義 | 1と2を同じ batch・2は NOT EXISTS の条件つき INSERT。D1 は batch を1つずつトランザクションで実行するので交互に混ざらない |
+| 軽微：検査の文言 | 「d1 の行も known_weight_kg も無ければ」に |
