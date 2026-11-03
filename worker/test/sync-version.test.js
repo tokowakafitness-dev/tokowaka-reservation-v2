@@ -61,6 +61,7 @@ function reset() {
   sql(MIG);
   sql(MIG16);
   sql(MIG20);
+  sql(readFileSync(join(ROOT, 'worker/migrations/0024_sync_overage.sql'), 'utf8'));   // 設計27
 }
 
 reset();

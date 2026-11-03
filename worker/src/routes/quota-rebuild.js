@@ -23,7 +23,7 @@
 import { requireSecret, mask, computeCustomerBuild } from './quota.js';
 import { assembleCalcInput } from '../calc.js';
 import { customerReplaceStatements } from './ingest.js';
-import { readSyncVersion, markBuiltStatement, bumpSourceStatement } from '../lib/sync-version.js';
+import { readSyncVersion, markBuiltStatement, bumpSourceStatement, overageJson } from '../lib/sync-version.js';
 import { quotaUpsertStatements, clearGenerationStatements } from '../lib/quota-build.js';
 
 //   ★大きさの上限（§7-3）。いまの最大の会員（契約4行・予約30件前後）の十倍以上の余裕を取る
@@ -137,6 +137,7 @@ export async function quotaRebuild(request, env) {
     for (const g of gen) stmts.push(env.DB.prepare(g.sql).bind(...(g.args || [])));
     const mk = markBuiltStatement(cid, expected, now, {
       quotaRows: built.monthly.length, packRows: built.packs.length, fromMonth: from, toMonth: to,
+      overageJson: overageJson(cb.al, jstMonthKeyOf(now), from, to),   // 設計27
     }, { coversSeq: seq });
     stmts.push(env.DB.prepare(mk.sql).bind(...mk.args));
   }
@@ -174,4 +175,10 @@ export async function quotaRebuild(request, env) {
     dirtySeq: after ? after.dirtySeq : null,
     ms: Date.now() - t0,
   });
+}
+
+//   今の月（JST）。quota.js の nowMonthKeyJst と同じ（輪を作らないためここに置く）
+function jstMonthKeyOf(ms) {
+  const d = new Date(Number(ms) + 9 * 3600 * 1000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
 }

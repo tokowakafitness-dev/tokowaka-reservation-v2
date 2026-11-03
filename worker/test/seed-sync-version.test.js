@@ -30,6 +30,7 @@ sql(rd('worker/migrations/0014_customer_sync_version.sql'));
 sql(rd('worker/migrations/0016_row_generation.sql')
   .split('\n').filter((l) => /^ALTER TABLE customer_sync_version/.test(l)).join('\n'));
 sql(rd('worker/migrations/0020_write_seq.sql'));   // 2026-10-20 設計20：通し番号の列（markBuilt が書く）
+sql(rd('worker/migrations/0024_sync_overage.sql'));   // 設計27：支払い待ち
 sql(`CREATE TABLE calc_contract_rows (row_key TEXT PRIMARY KEY, customer_id TEXT, idx INT, row_json TEXT);`);
 
 //   対象の会員（契約行がある）

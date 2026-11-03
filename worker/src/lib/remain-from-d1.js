@@ -63,6 +63,46 @@ export function rowAsOfOk(row, nowKey) {
   if (!row) return true;
   return row.as_of_month != null && String(row.as_of_month) === String(nowKey);
 }
+//   世代の行の支払い待ち（設計27）を確かめて、当月の件数を返す。
+//     input = { raw, fromMonth, toMonth }（readSyncVersionForRemain が読んだ生の値）
+//     ★欠け・壊れ・形違いは全部「答えない」。0 で埋めない。壊れた値は出力に出さない。
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+function monthsBetween(from, to) {
+  const out = [];
+  let [y, m] = String(from).split('-').map(Number);
+  for (let i = 0; i < 240; i++) {
+    const k = `${y}-${String(m).padStart(2, '0')}`;
+    out.push(k);
+    if (k === String(to)) return out;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return null;
+}
+function isPlainObject(x) { return x != null && typeof x === 'object' && !Array.isArray(x); }
+export function overageOf(input, nowKey) {
+  if (!input || input.raw == null) return { ok: false, why: 'overage_missing' };
+  const from = input.fromMonth, to = input.toMonth;
+  if (!MONTH_RE.test(String(from || '')) || !MONTH_RE.test(String(to || '')) || String(from) > String(to)) {
+    return { ok: false, why: 'overage_bad_shape' };
+  }
+  let j;
+  try { j = JSON.parse(String(input.raw)); } catch (_) { return { ok: false, why: 'overage_bad_shape' }; }
+  if (!isPlainObject(j) || !MONTH_RE.test(String(j.asOf || '')) || !isPlainObject(j.m)) {
+    return { ok: false, why: 'overage_bad_shape' };
+  }
+  //   ★月の鍵は from〜to の全月と過不足なく一致し、値は全部0以上の安全な整数（関門②）
+  const want = monthsBetween(from, to);
+  const keys = Object.keys(j.m).sort();
+  if (!want || keys.length !== want.length || keys.some((k, i) => k !== want[i])) return { ok: false, why: 'overage_bad_shape' };
+  for (const k of keys) {
+    const v = j.m[k];
+    if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) return { ok: false, why: 'overage_bad_shape' };
+  }
+  if (String(j.asOf) !== String(nowKey)) return { ok: false, why: 'as_of_stale' };
+  if (String(nowKey) < String(from) || String(nowKey) > String(to)) return { ok: false, why: 'overage_out_of_range' };
+  return { ok: true, n: j.m[String(nowKey)] };
+}
+
 function jstMonthKey(ms) {
   const d = new Date(Number(ms) + 9 * 3600 * 1000);
   return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -151,6 +191,16 @@ export function buildRemainDiag(input) {
   //   契約が無い（写しと同じ形）。これは「作れなかった」ではない
   if (!hasMonthly && !hasTicket) return { value: { type: null }, status: 'ok' };
 
+  //   ★支払い待ちは世代の行の JSON が正本（設計27）。確かめられなければ答えない。
+  //     ★この asOf の検査は、**チケットだけの会員の月替わりの守りも兼ねる**
+  //       （枠の行が無いと rowAsOfOk が素通りになる）。JSON を外すとその穴が戻る。
+  const ov = overageOf(input.overage, nowKey);
+  if (!ov.ok) return { value: null, status: ov.why };
+  //   2つの写し（枠の行の overage と JSON）が割れていたら答えない
+  if (input.curMonthRow && Number(input.curMonthRow.overage || 0) !== ov.n) {
+    return { value: null, status: 'overage_mismatch' };
+  }
+
   const tk = ticketsAt(packs, targetMs);
 
   //   ★枠の行の2列（3-bで足した）から、写しと同じ2つを作る。
@@ -168,7 +218,7 @@ export function buildRemainDiag(input) {
 
   //   ★支払い待ちは引当の行に現れない（未割当の予約は引当を作らない）。
   //     枠の行の overage 列に入れてある。当月のものを使う（GASの癖に合わせる）。
-  const overageCount = input.curMonthRow ? Number(input.curMonthRow.overage || 0) : 0;
+  const overageCount = ov.n;
 
   const type = (hasMonthly && hasTicket) ? 'both' : (hasTicket ? 'ticket' : 'monthly');
   const monthlyRemaining = tm.rem;
@@ -328,7 +378,12 @@ export async function readRemainDiag(env, customerId, targetMs, opts) {
   //     「新しいと確かめた世代」と「実際に読んだ行」がずれる。
   const ver2 = await readSyncVersionForRemain(env, customerId);
   if (!ver2.ok || ver2.version.sourceVersion !== ver.version.sourceVersion
-               || ver2.version.builtVersion !== ver.version.builtVersion) {
+               || ver2.version.builtVersion !== ver.version.builtVersion
+               //   ★同じ世代のまま作り直されたときに、別の回の JSON・範囲を混ぜない（設計27 関門①）
+               || ver2.version.builtRev !== ver.version.builtRev
+               || ver2.version.overageRaw !== ver.version.overageRaw
+               || ver2.version.fromMonth !== ver.version.fromMonth
+               || ver2.version.toMonth !== ver.version.toMonth) {
     return { value: null, status: 'version_changed', month: wantKey, version: ver.version };
   }
 
@@ -362,6 +417,7 @@ export async function readRemainDiag(env, customerId, targetMs, opts) {
     packs: packs.results || [],
     thisMonthCount: Number((cnt && cnt.n) || 0),
     lang: o.lang,
+    overage: { raw: ver.version.overageRaw, fromMonth: ver.version.fromMonth, toMonth: ver.version.toMonth },
   });
   return { value: built.value, status: built.status, month: wantKey, version: ver.version };
 }
@@ -372,7 +428,8 @@ async function readSyncVersionForRemain(env, customerId) {
   try {
     const r = await env.DB.prepare(
       `SELECT source_version, built_version, built_quota_rows, built_pack_rows,
-              dirty_seq, built_covers_seq, built_at
+              dirty_seq, built_covers_seq, built_at,
+              built_overage_json, built_from_month, built_to_month, built_rev
          FROM customer_sync_version WHERE customer_id = ?`
     ).bind(String(customerId)).first();
     if (!r) return { ok: false, status: 'no_version_row', version: none };
@@ -383,6 +440,12 @@ async function readSyncVersionForRemain(env, customerId) {
       packRows: r.built_pack_rows == null ? null : Number(r.built_pack_rows),
       dirtySeq: Number(r.dirty_seq || 0), coversSeq: Number(r.built_covers_seq || 0),
       builtAt: r.built_at == null ? null : Number(r.built_at),   // 設計21：D1 で答えたときの調査用（remainBuiltAt）
+      //   設計27：支払い待ちと、それを作った範囲（生の値のまま。確かめるのは overageOf）
+      //   作り直しのたびに進む番号（関門②）。列が無い・NULL は答えない側（下の freshStatus の後で見る）
+      builtRev: r.built_rev == null ? null : Number(r.built_rev),
+      overageRaw: r.built_overage_json == null ? null : String(r.built_overage_json),
+      fromMonth: r.built_from_month == null ? null : String(r.built_from_month),
+      toMonth: r.built_to_month == null ? null : String(r.built_to_month),
     };
     //   ★判定は fresh.js の1か所だけ（設計20 §7-7 の3）。
     //     'behind_write' ＝ 書き込み（通し番号）より前の台帳で作り直している＝答えない

@@ -124,6 +124,8 @@ trg_alloc_return_pack       同
 | I41 | 書き込みの直後は写しと予約一覧の**両方**に通し番号を載せる（予約0件でも送る）。両方失敗した会員は記録して点検に出す | `read-on.test.js` ⑥、`gas-1022.test.js` ①〜③ |
 | I42 | **月額の残り＝quota − used − lent**（lent＝翌月以降に前借りされた回数＝計算の carryForward）。used は引当トリガーだけが動かすので前借りが入らない。lent が NULL の limited 行からは答えない（0で埋めない） | `remain-from-d1.test.js` ⑳、`quota-build.test.js` 設計22、`quota-verify.test.js` ② |
 | I43 | **D1 の月額行は「作った時点の月」（as_of_month）が今の月と同じときだけ答える**（計算は今の月で消化順と前借りが変わる）。翌月の行も同じ厳しさ。今の月でない会員は `/quota/behind` が返し巡回が作り直す | `remain-from-d1.test.js` ⑳、`quota-behind-run.test.js` ⑨ |
+| I44 | **支払い待ちの正本は世代の行の `built_overage_json`（設計27）。** 作った範囲の全月を0も含めて書き、競合で世代を倒すと NULL。読む側は欠け・壊れ・月違い・範囲外・枠の行の overage との割れを全部「答えない」。二度読みで `built_rev`（作り直しのたびに+1）と JSON・範囲の生の値も比べる（同じ世代でも計算には今の時刻が入るため）。★この asOf の検査が**チケットだけの会員の月替わりの守りも兼ねる**（枠の行が無いと I43 が素通り）＝JSON を外すと穴が戻る | `remain-from-d1.test.js` ⑳-12b・㉑、`overage-in-sync-version.test.js` ①〜③ |
+| I45 | 未割当を支払い待ちに数える規則は GAS `_lbOverageOf` と Worker `countsAsOverage` で同じ（理由が空か LB_OVERAGE_REASONS） | `overage-reasons.test.js` ③-b |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。
@@ -259,7 +261,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 ### `readRemainDiag`（D1から作る・`worker/src/lib/remain-from-d1.js`）
 答えない理由：`no_customer` / `out_of_range` / `no_version_row` / `not_built` / `behind` / `behind_write`（書き込みの通し番号より前の台帳で作り直している・設計20） /
 `read_failed` / `version_changed` / `row_count_missing` / `row_count_mismatch` /
-`coverage_missing` / `base_freq_missing`
+`coverage_missing` / `base_freq_missing` / `overage_missing` / `overage_bad_shape` / `overage_out_of_range` / `overage_mismatch` / `as_of_stale`（設計27：支払い待ち）
 ★`{ type: null }`（契約が無い会員）は**正常な答え**。`null`（答えない）とは別物。
 
 ### 範囲のずれ（★2026-10-09 に踏んだ）

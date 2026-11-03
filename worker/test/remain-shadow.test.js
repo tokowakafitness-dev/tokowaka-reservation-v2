@@ -249,6 +249,7 @@ const D = '2026-10-09';
     .split('\n').filter((l) => /^ALTER TABLE customer_sync_version/.test(l)).join('\n'));
   //   0020 の通し番号の列も当てる（2026-10-20・設計20。読み取りが dirty_seq / built_covers_seq を読む）
   sql(readFileSync(join(ROOT, 'worker/migrations/0020_write_seq.sql'), 'utf8'));
+  sql(readFileSync(join(ROOT, 'worker/migrations/0024_sync_overage.sql'), 'utf8'));   // 設計27
   //   ★0016 で足した built_version も持たせる（読む側が世代で絞るため）
   sql(`CREATE TABLE IF NOT EXISTS monthly_quota (customer_id TEXT, month_key TEXT, quota INT, used INT,
         coverage TEXT, base_freq INT, overage INT DEFAULT 0, built_version INT,
@@ -259,7 +260,7 @@ const D = '2026-10-09';
   sql(`CREATE TABLE IF NOT EXISTS reservations (reservation_id TEXT PRIMARY KEY, customer_id TEXT,
         start_at INT, status TEXT, book_type TEXT);`);
   sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
-        built_quota_rows, built_pack_rows) VALUES ('${cid}', 3, 3, 1, 1, 1, 0);`);
+        built_quota_rows, built_pack_rows, built_overage_json, built_from_month, built_to_month) VALUES ('${cid}', 3, 3, 1, 1, 1, 0, '{"asOf":"2026-10","m":{"2026-10":0}}', '2026-10', '2026-10');`);
   sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 9, 3, 'limited', 8, 0, 3, 0, '2026-10');`);
 
   //   写し（D1と同じ値になるように作る）
@@ -340,7 +341,7 @@ const D = '2026-10-09';
   const E4 = sqliteEnv();
   const cid = 'CBROKEN', now = jst(2026, 10, 9, 10), day = dayKeyJst(now);
   sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
-        built_quota_rows, built_pack_rows) VALUES ('${cid}', 1, 1, 1, 1, 1, 0);`);
+        built_quota_rows, built_pack_rows, built_overage_json, built_from_month, built_to_month) VALUES ('${cid}', 1, 1, 1, 1, 1, 0, '{"asOf":"2026-10","m":{"2026-10":0}}', '2026-10', '2026-10');`);
   sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 5, 0, 'limited', 5, 0, 1, 0, '2026-10');`);
   const r = await runShadow(E4, {
     customerId: cid, entry: 'boot', nowMs: now,
@@ -543,7 +544,7 @@ const D = '2026-10-09';
   let n = 0;
   const E6 = sqliteEnv();
   sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
-        built_quota_rows, built_pack_rows) VALUES ('${cid}', 3, 3, 1, 1, 1, 0);`);
+        built_quota_rows, built_pack_rows, built_overage_json, built_from_month, built_to_month) VALUES ('${cid}', 3, 3, 1, 1, 1, 0, '{"asOf":"2026-10","m":{"2026-10":0}}', '2026-10', '2026-10');`);
   sql(`INSERT INTO monthly_quota VALUES ('${cid}', '2026-10', 5, 0, 'limited', 5, 0, 3, 0, '2026-10');`);
   const base2 = E6.DB.prepare.bind(E6.DB);
   E6.DB.prepare = (s0) => {
@@ -578,7 +579,7 @@ const D = '2026-10-09';
   let n2 = 0;
   const E7 = sqliteEnv();
   sql(`INSERT INTO customer_sync_version (customer_id, source_version, built_version, built_at, updated_at,
-        built_quota_rows, built_pack_rows) VALUES ('${cid}', 3, 3, 1, 1, 0, 0);`);
+        built_quota_rows, built_pack_rows, built_overage_json, built_from_month, built_to_month) VALUES ('${cid}', 3, 3, 1, 1, 0, 0, '{"asOf":"2026-10","m":{"2026-10":0}}', '2026-10', '2026-10');`);
   const base3 = E7.DB.prepare.bind(E7.DB);
   E7.DB.prepare = (s0) => {
     const st = base3(s0);

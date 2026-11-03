@@ -85,6 +85,29 @@ export function bumpAllSourceStatement(nowMs) {
  *
  *   ★MAX は同じ世代から同時に作り直した2本のためだけに残す（巻き戻し防止）。
  */
+/**
+ * 支払い待ちの件数を世代の行に書く形にする（設計27）。
+ *   { asOf:'YYYY-MM', m:{ 'YYYY-MM': n } } … 作った範囲 from〜to の**全月を0も含めて**書く
+ *   （読む側が「欠け」と「0件」を区別できるように）。
+ *   ★引当の計算が最後まで通っていなければ null（＝読む側は答えない）。
+ */
+export function overageJson(al, nowKey, fromMonth, toMonth) {
+  if (!al || al.computed !== true) return null;
+  const re = /^\d{4}-(0[1-9]|1[0-2])$/;
+  if (!re.test(String(nowKey)) || !re.test(String(fromMonth)) || !re.test(String(toMonth))) return null;
+  if (String(fromMonth) > String(toMonth)) return null;
+  const by = al.overageByMonth || {};
+  const m = {};
+  let [y, mo] = String(fromMonth).split('-').map(Number);
+  for (let i = 0; i < 240; i++) {
+    const k = `${y}-${String(mo).padStart(2, '0')}`;
+    m[k] = Number(by[k] || 0);
+    if (k === String(toMonth)) return JSON.stringify({ asOf: String(nowKey), m });
+    mo++; if (mo > 12) { mo = 1; y++; }
+  }
+  return null;
+}
+
 export function markBuiltStatement(customerId, version, nowMs, rows, opts) {
   //   ★通し番号（設計20・決定0091）。/quota/rebuild だけが coversSeq を渡す。
   //     ほかの作り直し（/quota/build・深夜・作業依頼）は渡さない＝built_covers_seq を**変えない**（§7-1 の4）。
@@ -102,11 +125,14 @@ export function markBuiltStatement(customerId, version, nowMs, rows, opts) {
   //     （範囲は会員ごと・実行ごとに違うので、あとから推測できない）。
   const fm = (rows && rows.fromMonth) ? String(rows.fromMonth) : null;
   const tm = (rows && rows.toMonth) ? String(rows.toMonth) : null;
+  //   ★支払い待ち（設計27）。渡されなければ NULL＝読む側は答えない
+  const oj = (rows && typeof rows.overageJson === 'string') ? rows.overageJson : null;
   return {
     sql: `INSERT INTO customer_sync_version
             (customer_id, source_version, built_version, built_at, updated_at,
-             built_quota_rows, built_pack_rows, built_from_month, built_to_month, built_covers_seq)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             built_quota_rows, built_pack_rows, built_from_month, built_to_month, built_covers_seq,
+             built_overage_json, built_rev)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
           ON CONFLICT(customer_id) DO UPDATE SET
             --   ★built_covers_seq と dirty_since は built_version より**前**に書く（SQLite の UPDATE SET は
             --     右辺に更新前の値を使うので順番は結果に影響しないが、読み手のために判定の元を先に置く）
@@ -144,9 +170,15 @@ export function markBuiltStatement(customerId, version, nowMs, rows, opts) {
             built_to_month = CASE
               WHEN customer_sync_version.source_version = excluded.built_version
                 THEN excluded.built_to_month ELSE NULL END,
+            --   ★作り直しのたびに必ず進める（結果にかかわらず・設計27 関門②）。
+            --     読む側は前後でこれを比べ、同じ世代のまま別の回の行が混ざるのを捕まえる
+            built_rev = customer_sync_version.built_rev + 1,
+            built_overage_json = CASE
+              WHEN customer_sync_version.source_version = excluded.built_version
+                THEN excluded.built_overage_json ELSE NULL END,
             updated_at = excluded.updated_at`,
     args: [String(customerId), Number(version), Number(version), Number(nowMs), Number(nowMs),
-           qr, pr, fm, tm, cs == null ? 0 : cs,
+           qr, pr, fm, tm, cs == null ? 0 : cs, oj,
            cs, cs, cs, cs],
   };
 }

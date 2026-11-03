@@ -26,9 +26,18 @@ function _fillRow(row, key) {
   if (r.as_of_month === undefined) r.as_of_month = key;
   return r;
 }
+//   ★2026-11-03（設計27）：支払い待ちの正本が世代の行の JSON になった。
+//     既存の検査には「当月の枠の行の overage と同じ値の JSON」を補う（無ければ 0）。
+//     JSON が無い・壊れた・月違いのときの振る舞いは、補わずに末尾の ㉑ で確かめる。
+function _fillOverage(i, key) {
+  if (i.overage !== undefined) return i.overage;
+  const n = (i.curMonthRow && i.curMonthRow.overage != null) ? Number(i.curMonthRow.overage) : 0;
+  return { raw: JSON.stringify({ asOf: key, m: { [key]: n } }), fromMonth: key, toMonth: key };
+}
 function _fill(i) {
   const key = _jstKey(i.nowMs);
-  return Object.assign({}, i, { targetMonthRow: _fillRow(i.targetMonthRow, key), curMonthRow: _fillRow(i.curMonthRow, key), nextMonthRow: _fillRow(i.nextMonthRow, key) });
+  return Object.assign({}, i, { targetMonthRow: _fillRow(i.targetMonthRow, key), curMonthRow: _fillRow(i.curMonthRow, key), nextMonthRow: _fillRow(i.nextMonthRow, key),
+                                overage: _fillOverage(i, key) });
 }
 const buildRemainFromRows = (i) => _buildRemainFromRows(_fill(i));
 const monthlyRemainOf = (row) => _monthlyRemainOf(row && row.lent === undefined ? Object.assign({}, row, { lent: 0 }) : row);
@@ -313,6 +322,12 @@ function fakeEnv(spec) {
           async first() {
             if (/customer_sync_version/.test(sql)) {
               if (spec.version === 'throw') throw new Error('no such table');
+              //   設計27：世代の行に支払い待ち（今の月の時点・0件）を補う（指定があればそのまま）
+              if (spec.version && spec.version.built_overage_json === undefined) {
+                const k = spec.asOf || _jstKey(spec.nowMs || now);
+                return Object.assign({ built_overage_json: JSON.stringify({ asOf: k, m: { [k]: 0 } }),
+                                       built_from_month: k, built_to_month: k }, spec.version);
+              }
               return spec.version || null;
             }
             if (/COUNT\(\*\) AS n FROM reservations/.test(sql)) return { n: spec.count || 0 };
@@ -453,7 +468,9 @@ ok('⑫会員が分からなければ答えない', (await readRemainFromD1(fake
   const m3 = _monthlyRemainOf(row({ lent: null }));
   ok('⑳-3 ★前借りが未設定（NULL）なら答えない（0で埋めない）', m3.ok === false && m3.why === 'lent_missing');
   ok('⑳-4 覆っていない月・上限なしの月は lent を見ない', _monthlyRemainOf(row({ coverage: 'uncovered', lent: null })).rem === 0 && _monthlyRemainOf(row({ coverage: 'unlimited', lent: null })).ok === true);
-  const base = { nowMs: now, targetMs: now, packs: [], thisMonthCount: 3 };
+  //   設計27：支払い待ちの JSON（10月の時点・0件）を渡す
+  const ov10 = { raw: JSON.stringify({ asOf: '2026-10', m: { '2026-10': 0, '2026-11': 0 } }), fromMonth: '2026-10', toMonth: '2026-11' };
+  const base = { nowMs: now, targetMs: now, packs: [], thisMonthCount: 3, overage: ov10 };
   const d1 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row(), curMonthRow: row(), nextMonthRow: row({ month_key: '2026-11', quota: 5, used: 5, lent: 0 }) }));
   ok('⑳-5 ★入口から：*3105 の形で10月の残りが0', d1.status === 'ok' && d1.value.monthlyRemaining === 0 && d1.value.remaining === 0, JSON.stringify(d1).slice(0, 200));
   const d2 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row({ as_of_month: '2026-09' }), curMonthRow: row({ as_of_month: '2026-09' }) }));
@@ -461,7 +478,7 @@ ok('⑫会員が分からなければ答えない', (await readRemainFromD1(fake
   const d3 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row({ as_of_month: null }), curMonthRow: row({ as_of_month: null }) }));
   ok('⑳-7 時点が未設定の行からも答えない', d3.value === null && d3.status === 'as_of_stale');
   //   ★10月に作った行を11月1日に読む（月替わり）
-  const d4 = _buildRemainDiag({ nowMs: jst(2026, 11, 1), targetMs: jst(2026, 11, 1), packs: [], thisMonthCount: 0,
+  const d4 = _buildRemainDiag({ nowMs: jst(2026, 11, 1), targetMs: jst(2026, 11, 1), packs: [], thisMonthCount: 0, overage: ov10,
     targetMonthRow: row({ month_key: '2026-11', quota: 5, used: 5, lent: 0 }), curMonthRow: row({ month_key: '2026-11', quota: 5, used: 5, lent: 0 }) });
   ok('⑳-8 ★10月に作った行を11月に読むと答えない（月替わり）', d4.value === null && d4.status === 'as_of_stale');
   //   ★翌月の行だけ前借りが未設定 → 全体を答えない（翌月の案内だけ消して続けない・関門①）
@@ -469,17 +486,96 @@ ok('⑫会員が分からなければ答えない', (await readRemainFromD1(fake
   ok('⑳-9 ★25日以降、翌月の行の前借りが未設定なら全体を答えない', d5.value === null && d5.status === 'lent_missing');
   const d6 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: row(), curMonthRow: row(), nextMonthRow: row({ month_key: '2026-11', as_of_month: '2026-09' }) }));
   ok('⑳-10 ★25日以降、翌月の行が別の月の時点なら全体を答えない', d6.value === null && d6.status === 'as_of_stale');
-  const d7 = _buildRemainDiag({ nowMs: jst(2026, 10, 10), targetMs: jst(2026, 10, 10), packs: [], thisMonthCount: 3,
+  const d7 = _buildRemainDiag({ nowMs: jst(2026, 10, 10), targetMs: jst(2026, 10, 10), packs: [], thisMonthCount: 3, overage: ov10,
     targetMonthRow: row(), curMonthRow: row(), nextMonthRow: row({ month_key: '2026-11', lent: null }) });
   ok('⑳-11 25日より前は翌月の行を見ない（従来どおり）', d7.status === 'ok');
-  //   チケットだけの会員（月額の行が無い）は時点の判定の対象外
-  const d8 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: null, curMonthRow: null, nextMonthRow: null,
-    packs: [{ pack_id: 'p', kind: 'normal', total: 5, used: 1, opening_used: 0, valid_from: jst(2026, 9, 1), valid_to: jst(2026, 12, 31) }] }));
-  ok('⑳-12 チケットだけの会員は時点の判定の対象外', d8.status === 'ok' && d8.value.type === 'ticket', JSON.stringify(d8).slice(0, 160));
+  //   チケットだけの会員（月額の行が無い）：枠の行の時点の判定は素通りするが、
+  //   ★設計27 以降は世代の行の JSON の asOf が月替わりを守る（以前は完全に対象外だった＝穴）
+  const pk = [{ pack_id: 'p', kind: 'normal', total: 5, used: 1, opening_used: 0, valid_from: jst(2026, 9, 1), valid_to: jst(2026, 12, 31) }];
+  const d8 = _buildRemainDiag(Object.assign({}, base, { targetMonthRow: null, curMonthRow: null, nextMonthRow: null, packs: pk }));
+  ok('⑳-12 チケットだけの会員：今の月の時点なら答える', d8.status === 'ok' && d8.value.type === 'ticket', JSON.stringify(d8).slice(0, 160));
+  const d8b = _buildRemainDiag(Object.assign({}, base, { nowMs: jst(2026, 11, 1), targetMs: jst(2026, 11, 1),
+    targetMonthRow: null, curMonthRow: null, nextMonthRow: null, packs: pk }));
+  ok('⑳-12b ★チケットだけの会員も、10月に作ったものを11月に読むと答えない（設計27）', d8b.value === null && d8b.status === 'as_of_stale', JSON.stringify(d8b).slice(0, 160));
   //   ★本番の SELECT に2列が入っている（既存の入口検査は補い役を通すので、SQL から抜けても気づけない・関門②）
   const SRC = readFileSync(join(HERE, '../src/lib/remain-from-d1.js'), 'utf8');
   ok('⑳-13 ★D1 から読む SELECT に lent・as_of_month が入っている',
      /SELECT month_key, quota, used, coverage, base_freq, overage, lent, as_of_month\s+FROM monthly_quota WHERE customer_id = \? AND built_version = \?/.test(SRC));
+}
+
+// ============================================================
+// ㉑ 設計27：支払い待ちは世代の行の JSON が正本（チケットだけの会員にも残る）
+// ============================================================
+{
+  const now11 = jst(2026, 11, 3);
+  const pk = [{ pack_id: 'p', kind: 'normal', total: 3, used: 3, opening_used: 0, valid_from: jst(2026, 9, 1), valid_to: jst(2026, 10, 31) }];
+  const ov = (o) => Object.assign({ raw: JSON.stringify({ asOf: '2026-11', m: { '2026-11': 1, '2026-12': 0 } }), fromMonth: '2026-11', toMonth: '2026-12' }, o);
+  const b = (o) => _buildRemainDiag(Object.assign({ nowMs: now11, targetMs: now11, packs: pk, thisMonthCount: 1,
+                                                     targetMonthRow: null, curMonthRow: null, nextMonthRow: null, overage: ov() }, o));
+  const r1 = b({});
+  ok('㉑-1 ★チケットだけの会員（*4717 の形）：支払い待ち1・要支払い',
+     r1.status === 'ok' && r1.value.overageCount === 1 && r1.value.paymentRequired === true && r1.value.displayRemaining === -1, JSON.stringify(r1).slice(0, 200));
+  ok('㉑-2 JSON が無い → 答えない（0で埋めない）', b({ overage: { raw: null, fromMonth: '2026-11', toMonth: '2026-12' } }).status === 'overage_missing');
+  ok('㉑-2b overage を渡さない → 答えない', b({ overage: undefined }).status === 'overage_missing');
+  ok('㉑-3 別の月の時点 → as_of_stale', b({ overage: ov({ raw: JSON.stringify({ asOf: '2026-10', m: { '2026-11': 0, '2026-12': 0 } }) }) }).status === 'as_of_stale');
+  ok('㉑-4 当月が作った範囲の外 → 答えない', b({ overage: ov({ raw: JSON.stringify({ asOf: '2026-11', m: { '2026-12': 0 } }), fromMonth: '2026-12', toMonth: '2026-12' }) }).status === 'overage_out_of_range');
+  ok('㉑-5 当月の鍵が無い（欠けと0を区別）→ 答えない', b({ overage: ov({ raw: JSON.stringify({ asOf: '2026-11', m: { '2026-12': 0 } }) }) }).status === 'overage_bad_shape');
+  const bad = ['{', '[]', '{"asOf":"2026-11"}', '{"asOf":"2026-11","m":[1]}', '{"asOf":"x","m":{"2026-11":0}}',
+               '{"asOf":"2026-11","m":{"2026-11":"1"}}', '{"asOf":"2026-11","m":{"2026-11":-1}}', '{"asOf":"2026-11","m":{"2026-11":1.5}}',
+               //   ★当月以外の月の壊れ・過不足も答えない（関門②）
+               '{"asOf":"2026-11","m":{"2026-11":0,"2026-12":"x"}}', '{"asOf":"2026-11","m":{"2026-11":0}}',
+               '{"asOf":"2026-11","m":{"2026-11":0,"2026-12":0,"2027-01":0}}', '{"asOf":"2026-11","m":{"2026-11":0,"2026-13":0}}'];
+  ok('㉑-6 壊れた・形違いの JSON は全部答えない', bad.every((raw) => b({ overage: ov({ raw }) }).status === 'overage_bad_shape'),
+     bad.map((raw) => b({ overage: ov({ raw }) }).status).join(','));
+  ok('㉑-7 範囲（from/to）が無い → 答えない', b({ overage: ov({ fromMonth: null }) }).status === 'overage_bad_shape');
+  ok('㉑-7b 暦に無い月の範囲 → 答えない', b({ overage: ov({ toMonth: '2026-13' }) }).status === 'overage_bad_shape');
+  const mrow = { month_key: '2026-11', quota: 4, used: 4, coverage: 'limited', base_freq: 4, overage: 0, lent: 0, as_of_month: '2026-11' };
+  ok('㉑-8 ★枠の行の overage と JSON が割れていたら答えない', b({ targetMonthRow: mrow, curMonthRow: mrow }).status === 'overage_mismatch');
+  ok('㉑-9 揃っていれば月額会員も JSON の値', b({ targetMonthRow: Object.assign({}, mrow, { overage: 1 }), curMonthRow: Object.assign({}, mrow, { overage: 1 }) }).value.overageCount === 1);
+  ok('㉑-10 契約が無い会員は JSON が無くても { type:null }（従来どおり）', b({ packs: [], overage: undefined }).value.type === null);
+
+  //   ★入口から：世代の行の JSON が読まれ、二度読みで生の値も比べる
+  const SRC = readFileSync(join(HERE, '../src/lib/remain-from-d1.js'), 'utf8');
+  ok('㉑-11 世代の行の SELECT に JSON・範囲・番号が入っている', /built_overage_json, built_from_month, built_to_month, built_rev\s+FROM customer_sync_version/.test(SRC));
+  {
+    let n = 0;
+    const env = fakeEnv({ packs: pk, count: 1, nowMs: now11 });
+    const base0 = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = (sql) => {
+      const st = base0(sql);
+      if (/customer_sync_version/.test(sql)) {
+        st.first = async () => ({ source_version: 5, built_version: 5, built_quota_rows: 0, built_pack_rows: 1,
+          built_overage_json: JSON.stringify({ asOf: '2026-11', m: { '2026-11': (++n === 1 ? 0 : 1) } }),
+          built_from_month: '2026-11', built_to_month: '2026-11' });
+      }
+      return st;
+    };
+    const r = await readRemainDiag(env, 'C1', now11, { nowMs: now11 });
+    ok('㉑-12 ★同じ世代のまま JSON が変わったら答えない（関門①）', r.value === null && r.status === 'version_changed', JSON.stringify(r).slice(0, 160));
+  }
+  {
+    //   ★JSON も範囲も同じまま、作り直しだけが挟まった（計算には今の時刻も入る＝枠・パックだけ変わりうる）
+    let n = 0;
+    const env = fakeEnv({ packs: pk, count: 1, nowMs: now11 });
+    const base0 = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = (sql) => {
+      const st = base0(sql);
+      if (/customer_sync_version/.test(sql)) {
+        st.first = async () => ({ source_version: 5, built_version: 5, built_quota_rows: 0, built_pack_rows: 1, built_rev: (++n === 1 ? 7 : 8),
+          built_overage_json: JSON.stringify({ asOf: '2026-11', m: { '2026-11': 1 } }), built_from_month: '2026-11', built_to_month: '2026-11' });
+      }
+      return st;
+    };
+    const r = await readRemainDiag(env, 'C1', now11, { nowMs: now11 });
+    ok('㉑-12b ★JSON が同じでも作り直しの番号が進んでいたら答えない（関門②）', r.value === null && r.status === 'version_changed' && n === 2, JSON.stringify(r).slice(0, 160));
+  }
+  {
+    const env = fakeEnv({ version: { source_version: 5, built_version: 5, built_quota_rows: 0, built_pack_rows: 1,
+      built_overage_json: JSON.stringify({ asOf: '2026-11', m: { '2026-11': 1 } }), built_from_month: '2026-11', built_to_month: '2026-11' },
+      packs: pk, count: 1, nowMs: now11 });
+    const r = await readRemainDiag(env, 'C1', now11, { nowMs: now11 });
+    ok('㉑-13 ★入口から：チケットだけの会員の支払い待ちが D1 から出る', r.status === 'ok' && r.value.overageCount === 1 && r.value.paymentRequired === true, JSON.stringify(r).slice(0, 200));
+  }
 }
 
 console.log(`\n${fail ? '❌' : '✅'} D1から残数を作る 検証: ${pass} passed / ${fail} failed`);

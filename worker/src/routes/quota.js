@@ -17,7 +17,7 @@
 import { loadCalcInput } from '../calc.js';
 import { buildQuotaForCustomer, quotaUpsertStatements, clearGenerationStatements } from '../lib/quota-build.js';
 import { buildAllocationsForCustomer, allocationInsertStatements } from '../lib/alloc-build.js';
-import { readSyncVersion, markBuiltStatement } from '../lib/sync-version.js';
+import { readSyncVersion, markBuiltStatement, overageJson } from '../lib/sync-version.js';
 import { FRESH_SQL, NOT_FRESH_SQL, freshSqlFor } from '../lib/fresh.js';   // ★新しさの定義は1か所（設計20）
 import { _lbPackPrefix } from '../allocate.js';
 
@@ -205,6 +205,8 @@ export async function buildQuota(request, env) {
           //   ★どの範囲で作ったかも残す。照合が主キーの集合を突き合わせるのに要る
           //     （範囲は会員ごと・実行ごとに違うので、あとから推測できない）。
           fromMonth: from, toMonth: to,
+          //   ★支払い待ち（設計27）。チケットだけの会員は枠の行が無いので、ここにしか残らない
+          overageJson: overageJson(cb.al, nowMonthKeyJst(now), from, to),
         });
         stmts.push({ sql: mk.sql, args: mk.args });
       }

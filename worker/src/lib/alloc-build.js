@@ -43,6 +43,12 @@ const OVERAGE_REASONS = {
   PACK_KIND_UNAVAILABLE: 1,   // 種別が合わない（ペア券しか無いのに1名で取った等）
 };
 
+/** 未割当の予約を「支払い待ち」に数えるか（GAS の _lbOverageOf と同じ：理由が空か一覧にある） */
+export function countsAsOverage(reason) {
+  const r = String(reason || '');
+  return !r || !!OVERAGE_REASONS[r];
+}
+
 export function buildAllocationsForCustomer(customerId, rows, sessions, opening, opts) {
   const { fromMonth, toMonth, nowKey, targetDateMs, carryRate } = opts;
   //   seenIds … 今回「見た」予約のID。行を作らなかったもの（超過・問題あり）も含める。
@@ -96,7 +102,9 @@ export function buildAllocationsForCustomer(customerId, rows, sessions, opening,
       //   ★数え方を GAS の _lbOverageOf と同じ規則にする（LB_OVERAGE_REASONS）。
       //     **入力の誤りは数えない。** 数えると、契約の不備を「支払い待ち」として
       //     顧客に見せてしまう（支払えば解決する、という誤った案内になる）。
-      if (OVERAGE_REASONS[String(ps.reason || '')]) {
+      //   ★理由が空のものも数える（GAS の _lbOverageOf と同じ・設計27 関門①）。
+      //     GAS は `if (ps.reason && !一覧) continue` ＝空は数える。規則を1つにする。
+      if (countsAsOverage(ps.reason)) {
         out.overageByMonth[mk] = (out.overageByMonth[mk] || 0) + 1;
       }
       continue;

@@ -55,7 +55,15 @@ ok('②GAS側も同じ趣旨', /入力の誤りは数えない/.test(LB));
 console.log('=== 3. 月ごとに数えて枠の行へ移す ===');
 ok('③月ごとに数える', /out\.overageByMonth\[mk\] = \(out\.overageByMonth\[mk\] \|\| 0\) \+ 1;/.test(AB));
 ok('③理由で絞ってから数える',
-  /if \(OVERAGE_REASONS\[String\(ps\.reason \|\| ''\)\]\) \{[\s\S]{0,120}?overageByMonth/.test(AB));
+  /if \(countsAsOverage\(ps\.reason\)\) \{[\s\S]{0,120}?overageByMonth/.test(AB));
+//   ★理由が空の未割当も数える（GAS と同じ・設計27 関門①）。動かして確かめる
+{
+  const { countsAsOverage } = await import('../src/lib/alloc-build.js');
+  ok('③-b 理由が空 → 数える（GAS と同じ）', countsAsOverage('') === true && countsAsOverage(undefined) === true);
+  ok('③-b 一覧の理由 → 数える', countsAsOverage('PACK_EXPIRED') === true && countsAsOverage('NO_ENTITLEMENT') === true);
+  ok('③-b 入力の誤り → 数えない', countsAsOverage('INVALID_INPUT') === false && countsAsOverage('PRE_CUTOVER') === false);
+  ok('③-b GAS 側も空を数える形のまま', /if \(ps\.reason && !LB_OVERAGE_REASONS\[String\(ps\.reason\)\]\) continue;/.test(LB));
+}
 ok('③初期値がある', /overageByMonth: \{\},/.test(AB));
 
 console.log('=== 4. 枠の行に書く（頻度と支払い待ち）===');
