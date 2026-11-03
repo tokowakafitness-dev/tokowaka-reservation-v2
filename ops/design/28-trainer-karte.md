@@ -42,7 +42,7 @@
   - `ma_series` の返り値に6項目を足す（karte/index.html は知らない鍵を無視する＝テスターの画面は変わらない）
   - ★**`maDedupeBodyLog()`（1047〜1063）は実行禁止にする**（先頭で止めて理由を返す）。同じ日の先行行を丸ごと消すので、体重の行とウエストの行が別だと体重が消える（関門①2周目）
   - staging の自己テストを新しい列まで広げる
-- 読む・書くの認可：GAS 側にも**共有用の認可**（トレーナーであり、顧客が実在し照合済み）を置き、`ma_series` のトレーナー経路（MealAi.js 1108〜1115）と InBody カードの読み書き（LineBooking.js 320・329）をそれに替える。**共有の範囲は読み・書きとも全トレーナー**（メモと同じ扱い。オーナー確認を取って確定する）
+- 読む・書くの認可：GAS 側にも**共有用の認可**（トレーナーであり、顧客が実在し照合済み）を置き、`ma_series` のトレーナー経路（MealAi.js 1108〜1115）と InBody カードの読み書き（LineBooking.js 320・329）をそれに替える。**共有の範囲は読み・書きとも全トレーナー**（2026-11-03 オーナー決定）
 - 体脂肪量は保存列ではなく、読むときに 体重×体脂肪率 で出している（MealAi.js 1183）
 - 理由：D1 へ移す案（案A）の落とし穴（安定IDが無い・項目ごとの合成・テスター画面が古くなる）は、移すときだけ起きる。段3（顧客への公開）の設計で正本の移し方を決める
 - GAS の反映が1回要る → 次のまとめ反映に入れる
@@ -58,7 +58,8 @@
 | `karte_tr_sessions` | session_id(PK)・customer_id・session_date・author_trainer_id・rev・created_at・deleted_at・deleted_by | ⑦の親 |
 | `karte_tr_sets` | set_id(PK)・session_id・exercise・set_no・weight_kg・reps・note | **1行＝1セット**（40kg×10・45kg×8 を表せる）。推定1RMはセットごとに計算し、その日の最大をグラフに |
 | `karte_revisions` | id・table_name・row_id・rev・before_json・changed_by・changed_at・reason | 編集・削除の前の中身（追記だけ）。**安全面の中身は入れない**（3-3） |
-| `karte_requests` | (trainer_id, action, client_req_id)(PK)・payload_hash・result_id・done_at | 二重送信を弾く。本体の書き込みと**同じ batch**。同じ鍵の再送は同じ結果を返す。payload_hash が違えば REQ_REUSED |
+| `karte_requests` | (trainer_id, action, client_req_id)(PK)・payload_hash・result_id・**http_status・result_code・result_json**（**本体が確定した成功の応答だけ**。中身は操作ごとに列挙した安全な項目＝作った ID・新しい rev だけ。健康情報・メモ本文・名前は入れない）・done_at | 二重送信を弾く。本体の書き込みと**同じ batch**。同じ鍵の再送は保存した成功の応答をそのまま返す（本体を読み直さない）。失敗（競合・同意なし等）は保存されない＝再送はもう一度判定する。payload_hash が違えば REQ_REUSED |
+| `karte_membership_events` | id(PK)・customer_id・kind（withdrawn／rejoined／cancel）・effective_date・target_event_id・recorded_by・recorded_at・reason | 退会後3年の起算日の正本（追記だけ・§6） |
 | `karte_access_log` | id・at・trainer_id・role・customer_id・section・action・result（ok／denied／not_found／conflict／no_consent／rate_limited／error）・req_id | 中身は書かない。保存1年 |
 
 - 編集・削除：書いた人（author_trainer_id＝不変の trainer_id）とオーナー。オーナーの代理修正は reason 必須
@@ -90,8 +91,9 @@
 | `k_notes` / `k_training` | 共有 | 20件ずつ |
 | `k_safety` | 共有＋同意 | 開いたときだけ取る（概要に全文を含めない） |
 | `k_contract` | 担当 | 既存 contractList と同じ出し分け |
-| `k_board` | 担当＋担当なし（**オーナーは全員**） | 4-4。50件ずつ |
+| `k_board` | 担当＋担当なし（**オーナーは全員**・2026-11-03 オーナー決定） | 4-4。50件ずつ |
 | `k_save*` / `k_add*` / `k_edit*` / `k_delete*` | 共有（安全面は同意） | 4-5 |
+| `k_recordMembership` | 担当＋担当なし（オーナーは全員）。cancel はオーナーだけ | §6 |
 - 体の記録は GAS の `ma_series`（拡張）から（3-1）
 
 ### 4-4. 一覧（k_board）の材料
@@ -104,7 +106,7 @@
 - 一覧には金額・契約の種別・健康情報を出さない（印と名前だけ）
 
 ### 4-5. 書き込みの守り（Worker で初めて受ける書き込み）
-入れる場所（worker/src/index.js）：大きさ＝200行（JSON を読む前）／KARTE 停止＝action 確定の直後（211）／Origin＝同じく211付近・書き込みの k_ だけ／iat＝署名検証の直後（215）／鮮度＝230〜241 を `^(c_|k_)` に（k_ は 200＋FALLBACK ではなく **403**）／回数＝許可表の後・本体の中（同じ batch）
+入れる場所（worker/src/index.js）：大きさ＝200行（JSON を読む前）／KARTE 停止＝action 確定の直後（211）／Origin＝同じく211付近・書き込みの k_ だけ／iat＝署名検証の直後（215）／鮮度＝230〜241 を `^(c_|k_)` に（k_ は 200＋FALLBACK ではなく **403**）／回数＝許可表の後・**本体より前の別 batch**
 | 守り | 中身 |
 |---|---|
 | Origin | `k_` の書き込みは Origin が許可の1つと**完全一致**でなければ処理前に403。欠けていても403 |
@@ -117,7 +119,7 @@
 | 二重送信 | batch の前に karte_requests を引く：同じ鍵・同じ payload_hash → 保存済みの結果を返す／hash 違い → REQ_REUSED。並行で先を越されて主キー違反になったら、catch のあとに同じ鍵を引き直して同じ判定。それでも決まらなければ 500 |
 | 失敗の記録 | 巻き戻ったあとに別の文で access_log に1行（best effort）。書けなくても元の code を返し、console には中身なしで出す。書けなかった回数を日次点検に出す。result は ok／denied／not_found／conflict／no_consent／rate_limited／error |
 | CORS | 2段構え：①**OPTIONS（事前確認）は本文が無く action が分からない**ので、全体に許可 Origin の判定を掛け、許可外は CORS ヘッダなしで403 ②通常の POST は action が分かった後、k_ の書き込みに Origin の完全一致を追加で掛ける（既存の helper は許可外にも先頭の Origin を返す＝index.js 66） |
-| 記録 | 成功・拒否・競合・同意なしを karte_access_log に。本文・健康情報は console に出さない |
+| 記録 | 7種類の結果（ok／denied／not_found／conflict／no_consent／rate_limited／error）を全部 karte_access_log に。本文・健康情報は console に出さない |
 | 安全面の記録が書けないとき | 安全面の読み書きは止める（fail-closed）。それ以外は続けて、失敗の回数を日次点検に出す |
 
 ## 5. 画面（LIFF・トレーナー管理）
@@ -130,7 +132,24 @@
 - 健康情報は 3-3。閲覧・書き込みは karte_access_log（保存1年・オーナーだけが読める窓口を後で）
 - 作業依頼（job）・shadow・ログにカルテの中身を出さない
 - バックアップ：D1 Time Travel（30日）。定期の書き出し（暗号化・保持世代・復旧の試験）は段3の前に決める（未決）
-- 退会後の保存期間：同意文の未決と合わせてオーナーに確認
+- 退会後（2026-11-03 オーナー決定：3年保持 → その後は外に漏れない形で残す）：**消去と匿名化は別の設計（設計29・未着手）に切り出す**。段1の開始後に退会した方は、最初の期限が早くても2029年。**既に退会している方**は2029年より前に3年を迎えうる＝設計29の移行要件
+  - ★段1で入れること：**退会を明示の操作で記録し始める**（契約の期限切れ＝contract_status 'expired' とは別。expired は日次処理が期限で付ける＝LineBooking.js 870・878 なので退会日にしてはいけない）
+    - 正本＝D1 の新しい表 `karte_membership_events`。**用途は「退会後3年の起算日」だけ**（会員の状態そのものの正本ではない。予約・一覧の在籍判定は今までどおり contract_status）
+      - 列：id・customer_id・kind（withdrawn／rejoined／cancel）・effective_date・target_event_id・recorded_by・recorded_at・reason
+        - withdrawn：effective_date＝**退会の発効日**（必須）／rejoined：**再入会の発効日**（必須）／cancel：effective_date は **NULL**（CHECK で固定）・target_event_id と reason 必須
+        - withdrawn／rejoined の effective_date は `YYYY-MM-DD` の**実在する日付**で、**Worker の時計（JST）で今日以前**（JavaScript の日付の繰り上がりで 2026-13-01 等を受けない・JST の日付の境界を検査で固定）
+      - **追記だけ**。元の行は更新・削除しない
+      - **有効な行**＝kind が withdrawn／rejoined で、どの cancel 行からも target_event_id として指されていない行（cancel の行そのものは並べない）
+      - cancel の対象は**同じ customer_id の、有効な行の最後の1行だけ**（途中の行・cancel 行・取り消し済みは不可）。最後を外しても残りは先頭が withdrawn の交互のまま＝規則が崩れない。途中を直したいときは、後ろから順に cancel してから記録し直す。存在・顧客一致・最後の行であることは本体と同じ batch の見張りの表で
+      - **交互の規則**：有効な行を effective_date → recorded_at → id の順に並べたとき、新しい withdrawn は「直前が無い（在籍）か rejoined」のときだけ、rejoined は「直前が withdrawn」のときだけ書ける（見張りの表で batch 内に検査）。同じ状態を重ねて起算日を動かせない
+      - 新しい行の effective_date は、有効な最後の行の effective_date **以降**（過去へ差し込まない。過去を直したいときは cancel してから記録し直す）
+      - 起算日＝有効な行の最後が withdrawn なら、その effective_date。rejoined なら起算日なし
+    - 操作 `k_recordMembership`：withdrawn／rejoined は**トレーナー（担当＋担当なし）・オーナー（全員）**。cancel は**オーナーだけ**。顧客の実在・権限は本体と同じ batch の見張りの表で。access_log には action=k_recordMembership で記録し、cancel の成功も result=ok（7種類の中で）
+    - 一覧（k_board）に「契約が切れて更新が無い」会員を出し、退会かどうかを確認して**退会だけを記録**（休会は記録しない）。contract_status と食い違う（記録は退会なのに在籍等）ときは一覧に「要確認」
+    - GAS・契約フォームは変えない
+    - 既に退会している会員：推測の日付を入れない。設計29の移行で「要確認」として解消
+  - 設計29の要件（関門①5周目）：消去の対象をD1・GAS・シート・ログ・履歴（karte_revisions）・キャッシュ・CSV・バックアップまで列挙／GAS の完全同期で消したものが D1 に戻らない／**ダウンロードは集計だけ**（個人ごとの時系列は少人数の店では匿名にならない＝再識別できる。区分ごとの最低人数 k≥5・丸め・差し引きで1人が分かる小計の抑止）／**集計専用の表**を作り、個人の行との**対応表は持たない**・CSV は集計の表だけから作る／集計を作って確かめてから個人の行を消す／件数の照合
+- 名前つきの書き出しは作らない（漏れたときの害が大きい。必要になったら別途設計）
 
 ## 7. 検査（入口から）
 - 許可表：customer・guest は `k_` に届かない／役割の写しが古いと `k_` は ROLES_STALE／KARTE=off で全部止まる
@@ -142,6 +161,7 @@
 - 見張りの表：同意なし・rev 違い・権限なし・顧客なし → それぞれ全部巻き戻り、正しい code が返る（本物の SQLite に migration を流して確かめる）
 - 推定1RM：回数1＝重量・回数12まで・13以上は出さない・重量0
 - 一覧：同期が古いと「確認中」
+- 退会の記録：担当外のトレーナーは記録できない／cancel はオーナーだけ・理由必須・二重の取り消し不可・cancel 行は対象にできない／未来日・過去への差し込み・形式違い（2026-13-01 等の実在しない日）は不可／途中の行の cancel は拒否・cancel のあとも全体が先頭 withdrawn の交互／withdrawn の後の withdrawn・在籍での rejoined は拒否／`withdrawn → rejoined → rejoined を cancel` で起算日が withdrawn の日に戻る
 - 画面：カルテの入口が InBody カードの失敗で消えない
 - 壊して落ちることを確かめる
 
@@ -149,6 +169,8 @@
 - D1 migration → Worker（自動）→ LIFF（main への push＝即公開）。Worker の窓口が先に出ても、LIFF が呼ばなければ影響なし
 - GAS：body_log の列追加と ma_series の拡張で1回（次のまとめ反映）
 - 関門：①この設計 ②push 前 ③段1はトレーナーだけ＝「顧客に出す前」は段3で
+
+## 関門①の結果：**通過**（2026-11-03・10周目・軽微のみ）
 
 ## 9. 関門①（Codex・2026-11-03 1周目）の指摘と対処
 | 指摘 | 対処 |
@@ -199,8 +221,48 @@
 | 要修正：回数の加算まで巻き戻る＝失敗の要求は無制限 | 回数は別の先行 batch で消費（4-5） |
 | 要修正：CHECK のエラーに表名が出ない | 名前つき制約・名前が含まれるかだけを見る・不明は500・本物の D1 で統合検査 |
 | 要修正：二重送信と batch の失敗 | 事前に引く＋主キー違反のあと引き直す・決まらなければ500 |
-| 要修正：GAS の書き込み範囲が未決と完了で矛盾 | **オーナー確認待ち**（§3-1）。確定したら両方を直す |
+| 要修正：GAS の書き込み範囲が未決と完了で矛盾 | オーナー決定（全トレーナーが読み書き）で両方を統一 |
 | 軽微：失敗の記録は best effort | 元の code を返す・書けなかった回数を日次点検に |
 | 軽微：OPTIONS では action が分からない | 2段構え |
 | 軽微：access_log の結果の種類 | 7種類に固定 |
 | D1 の batch が巻き戻る前提 | Codex が Cloudflare の仕様で確認（batch は SQL トランザクション・途中で失敗すれば全体をロールバック） |
+
+## 13. 関門①（5周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 重大：個人ごとの時系列は少人数では匿名にならない | ダウンロードは集計だけ（k≥5・丸め・小計の抑止）。設計29に切り出し |
+| 重大：消去の対象が保存先を覆っていない・退会日が無い | 設計29に切り出し、要件を列挙。段1では退会日の記録だけ始める |
+| 要修正：回数の batch の所属が矛盾 | 「本体より前の別 batch」に統一 |
+| 要修正：result_id だけでは同じ応答を返せない | http_status・result_code・result_json を保存（中身は入れない） |
+| 要修正：匿名化後の表が未定義 | 設計29（集計専用表・対応表を持たない・CSV は集計表だけから） |
+| 軽微：記録の対象の文言 | 7種類に揃えた |
+
+## 14. 関門①（6周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 重大：退会日の正本と記録の契機が無い（expired は期限切れでも付く） | 明示の操作で D1 `karte_membership_events` に追記（§6・3-2）。既存の退会者は推測せず設計29で「要確認」 |
+| 要修正：失敗は requests に残らないのに「同じ応答を返す」 | 保存するのは確定した成功だけ・失敗は再判定。result_json は操作ごとに列挙した安全な項目だけ |
+| 要修正：匿名化の要件の置き場所 | §6 の本文に集計専用表・対応表を持たない・CSV は集計だけ |
+| 軽微：「2029年」は段1開始後の退会に限る | 文言を限定し、既存の退会者を設計29の移行要件に |
+
+## 15. 関門①（7周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 要修正：追記だけの表で誤記録を訂正できない | cancel の行（target_event_id・理由必須・オーナーだけ・二重不可）。起算日の求め方を固定 |
+| 要修正：k_recordMembership の権限が未定義 | 担当＋担当なし（オーナーは全員）・見張りの表・access_log・検査 |
+| 要修正：contract_status と二重化 | 用途を「3年の起算日」だけに限定。在籍の判定は contract_status のまま。食い違いは一覧に「要確認」。休会は記録しない |
+| 軽微：effective_date の意味 | 発効日に限定・ISO・未来日不可 |
+
+## 16. 関門①（8周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 要修正：cancel 行そのものが「取り消されていない行」に入る | 有効な行＝withdrawn／rejoined で、cancel から指されていない行。cancel 行は並べない・対象にもできない |
+| 要修正：同じ状態の重ね記録で起算日を動かせる | 交互の規則と「最後の行以降」を batch 内の見張りで |
+| 軽微：effective_date の意味が kind で違う | kind ごとに定義・cancel は NULL（CHECK） |
+| 軽微：access_log の文言 | action=k_recordMembership・cancel も result=ok |
+
+## 17. 関門①（9周目）の指摘と対処
+| 指摘 | 対処 |
+|---|---|
+| 要修正：途中の行を cancel すると交互が崩れる | cancel の対象を有効な最後の1行だけに限定 |
+| 軽微：ISO・未来日の条件が本文から抜けた | §6 に戻し、§7 に形式違い・実在しない日を追加 |
