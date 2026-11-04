@@ -779,7 +779,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
   btn(root, '✓のセットを記録する').click(); await settle();
   ok('14-11 ★メモだけ書いて✓の無いセットも「記録されない入力」として保存の前に知らせる（やめたら送らない）', msgs.some((m) => m.includes('記録されない入力が 1 セット')) && !sent.some((x) => x.action === 'k_addTraining'), msgs.join(' / '));
-  ok('14-12 幅の狭い端末では、セットを消すボタンをメモ欄へ移して数字の欄を広く取る', /@media \(max-width:360px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 48px 44px/.test(SRC) && /k-setdel\{display:none;\}/.test(SRC));
+  ok('14-12 幅の狭い端末（380px 以下＝SE・mini を含む）では、セットを消すボタンをメモ欄へ移して数字の欄を広く取る', /@media \(max-width:380px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 48px 44px/.test(SRC) && /k-setdel\{display:none;\}/.test(SRC));
 }
 
 {
@@ -793,6 +793,36 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   root.querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
   const del2 = root.querySelector('.k-setdel2');
   ok('14-13 ★広い画面では「このセットを消す」は出さない（×だけ）', del2 && w.getComputedStyle(del2).display === 'none', del2 && w.getComputedStyle(del2).display);
+}
+
+{
+  //   ★はみ出し（2026-11-04g・iPhone で日付の欄がカードの右端を越え、日付の下に空の緑の帯が出た）
+  //     計算後の見た目で確かめる（inline に display を2つ書くと後が勝つ、は文字列の検査では見つからない）
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  w.confirm = () => true;
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, '＋ 今日の記録').click(); await settle();
+  const date = root.querySelector('.k-field input[type="date"]');
+  const cs = date && w.getComputedStyle(date);
+  ok('15-1 ★日付の欄は最小幅0・ブロック・幅100%（iOS の固有の最小幅で親を越えない）', !!cs && cs.minWidth === '0px' && cs.display === 'block' && cs.width === '100%' && cs.maxWidth === '100%', cs && [cs.minWidth, cs.display, cs.width, cs.maxWidth].join(' '));
+  ok('15-2 ★date/time 入力の固有の見た目を外す（-webkit-appearance と appearance）', /input\[type=date\],#karteRoot input\[type=time\]\{[^}]*-webkit-appearance:none;appearance:none;/.test(SRC) && /::-webkit-date-and-time-value[^{]*\{[^}]*text-align:left/.test(SRC));
+  ok('15-3 日付の欄も押しやすい高さ（44px 以上）・16px（触って拡大しない）', !!cs && parseInt(cs.minHeight, 10) >= 44 && cs.fontSize === '16px', cs && cs.minHeight + ' ' + cs.fontSize);
+  const lab = date && date.closest('.k-field');
+  ok('15-4 入力の枠（label）も最小幅0（grid の中で縮める）', !!lab && w.getComputedStyle(lab).minWidth === '0px');
+  ok('15-5 grid の子は最小幅0（2列・3列の中の日付・数字の欄が列を越えない）', /\.k-grid2>\*,#karteRoot \.k-grid3>\*\{min-width:0;\}/.test(SRC));
+  const rb = root.querySelector('.k-restbar');
+  ok('15-6 ★休憩を数えていないときは、休憩の帯を出さない（空の緑の帯）', !!rb && rb.children.length === 0 && w.getComputedStyle(rb).display === 'none', rb && w.getComputedStyle(rb).display);
+  if (rb) { rb.style.display = ''; }
+  ok('15-6b ★inline の display が外れても、中身が空なら帯は出ない（二重の守り）', !!rb && w.getComputedStyle(rb).display === 'none', rb && w.getComputedStyle(rb).display);
+  if (rb) { rb.style.display = 'none'; }
+  ok('15-7 ★休憩の帯は inline に display を2つ書かない（後の flex が勝って空のまま出る）', !/display:none;[^']*display:flex/.test(SRC));
+  btn(root, '前回（').click(); await settle();
+  root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
+  const rb2 = root.querySelector('.k-restbar');
+  ok('15-8 ✓で休憩の帯が出る（横並び＝「止める」が右端）', !!rb2 && rb2.textContent.includes('休憩') && w.getComputedStyle(rb2).display === 'flex', rb2 && w.getComputedStyle(rb2).display);
+  ok('15-9 長い英数字（種目名・メモ）は途中で折り返す', /#karteRoot\{overflow-wrap:anywhere;/.test(SRC));
+  ok('15-10 ★予約画面全体の viewport は変えない（会員の画面に効くため）', HTML.includes('<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);

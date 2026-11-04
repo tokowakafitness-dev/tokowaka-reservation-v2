@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-04f カルテ セットごとのメモ（よく使うメモ・狭い画面）';
+  var KARTE_BUILD = '2026-11-04g カルテ はみ出し（日付の欄・空の休憩の帯・狭い画面）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -112,8 +112,9 @@
     '#karteRoot .k-btn.k-setdel2{display:none;}',   // .k-btn.small（inline-block）より強くする
     '#karteRoot .k-memochips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}',
     '#karteRoot .k-memochips button{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;font-size:14px;font-family:inherit;color:#3f4550;}',
-    //   幅の狭い端末（360px 以下）：セットを消すボタンはメモ欄の中へ移し、数字の欄を広く取る
-    '@media (max-width:360px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 48px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setdel{display:none;} #karteRoot .k-btn.k-setdel2{display:inline-block;} #karteRoot .k-setnote{margin-left:24px;}}',
+    //   幅の狭い端末（380px 以下＝iPhone SE・mini を含む）：セットを消すボタンはメモ欄の中へ移し、数字の欄を広く取る
+    //   （375px で6列のままだと数字の欄が約47px＝「102.5」が欠ける）
+    '@media (max-width:380px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 48px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setdel{display:none;} #karteRoot .k-btn.k-setdel2{display:inline-block;} #karteRoot .k-setnote{margin-left:24px;}}',
     '#karteRoot .k-setnote input{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;}',
     '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:48px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:17px;}',
     '#karteRoot .k-picker-go{position:sticky;bottom:76px;z-index:2;}',
@@ -126,6 +127,20 @@
     '#karteRoot .k-rest-done{animation:kflash 0.6s ease-in-out 0s 6 alternate;}',
     '@keyframes kflash{from{background:#fdf0e4;}to{background:#f6c58f;}}',
     'html.karte-open,html.karte-open body{overflow:hidden;}',
+    //   ★はみ出し対策（2026-11-04g・iPhone の LIFF で日付の欄がカードの右端を越えた）
+    //     ・iOS の date/time 入力は固有の見た目と最小幅を持ち、width:100% でも親を越える＝appearance を外し、最小幅を0にする
+    //     ・grid / flex の子は既定で「中身の最小幅」より縮まない＝min-width:0 を明示する
+    //     ・長い英数字（種目名・メモ・URL）は途中で折り返す
+    '#karteRoot{overflow-wrap:anywhere;word-wrap:break-word;}',
+    '#karteRoot .k-field{min-width:0;}',
+    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{display:block;min-width:0;max-width:100%;}',
+    '#karteRoot input[type=date],#karteRoot input[type=time]{-webkit-appearance:none;appearance:none;display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;text-align:left;line-height:1.5;}',
+    '#karteRoot input[type=date]::-webkit-date-and-time-value,#karteRoot input[type=time]::-webkit-date-and-time-value{text-align:left;margin:0;min-height:1.5em;}',
+    '#karteRoot .k-grid2>*,#karteRoot .k-grid3>*{min-width:0;}',
+    '#karteRoot .k-pill,#karteRoot .k-btn.small{max-width:100%;}',
+    //   休憩の帯：数えていないとき（中身が空）は出さない。inline の display:none と二重に守る
+    '#karteRoot .k-restbar{position:sticky;top:0;z-index:3;background:var(--k-acc-l);border:1px solid #cfe5df;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:10px;}',
+    '#karteRoot .k-restbar:empty{display:none !important;}',
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}'
   ].join('\n');
   function ensureStyle() {
@@ -524,7 +539,7 @@
         if (pain.length || (sb && (sb.restrictions || sb.painSites || sb.diagnosis || sb.medication))) {
           var row = el('div', { style: 'display:flex;gap:12px;align-items:flex-start;' });
           if (pain.length) row.appendChild(el('div', { style: 'display:flex;gap:2px;' }, [bodyFigure(pain, 'f', 64), bodyFigure(pain, 'b', 64)]));
-          var txt = el('div', { style: 'flex:1;display:flex;flex-direction:column;gap:4px;font-size:14px;line-height:1.6;' });
+          var txt = el('div', { style: 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;font-size:14px;line-height:1.6;' });
           pain.forEach(function (p) { txt.appendChild(el('div', { text: label(REGIONS, p.region) + ' ' + p.level + '/10' + (p.symptom ? '（' + p.symptom + '）' : '') })); });
           if (sb.restrictions) txt.appendChild(el('div', { text: '運動制限：' + sb.restrictions }));
           if (sb.painSites && !pain.length) txt.appendChild(el('div', { text: '痛む部位：' + sb.painSites }));
@@ -558,7 +573,7 @@
       if (!(hearing.purposes || []).length) pc.appendChild(el('span', { class: 'k-sub', text: '目的は未記入' }));
       box.appendChild(el('div', { class: 'k-card', style: 'display:flex;gap:16px;align-items:center;' }, [
         hearing.motivation ? ring(hearing.motivation / 10, String(hearing.motivation), 72) : el('div', { class: 'k-sub', style: 'width:72px;text-align:center;', text: 'やる気 未記入' }),
-        el('div', { style: 'flex:1;display:flex;flex-direction:column;gap:8px;' }, [el('div', { class: 'k-sub', text: 'やる気（10段階）と目的' }), pc])
+        el('div', { style: 'flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;' }, [el('div', { class: 'k-sub', text: 'やる気（10段階）と目的' }), pc])
       ]));
 
       //   引き締めたい部位
@@ -721,7 +736,7 @@
         list.innerHTML = '';
         pain.forEach(function (p, i) {
           list.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;font-size:14px;' }, [
-            el('span', { style: 'flex:1;', text: label(REGIONS, p.region) + ' ' + p.level + '/10' + (p.symptom ? '（' + p.symptom + '）' : '') }),
+            el('span', { style: 'flex:1;min-width:0;', text: label(REGIONS, p.region) + ' ' + p.level + '/10' + (p.symptom ? '（' + p.symptom + '）' : '') }),
             el('button', { type: 'button', class: 'k-btn out small', text: '直す', onclick: function () { edit(p.region); } }),
             el('button', { type: 'button', class: 'k-btn out small', text: '外す', onclick: function () { cur.dirty = true; pain.splice(i, 1); redraw(); } })]));
         });
@@ -912,7 +927,7 @@
       (r.raw || []).forEach(function (m) {
         var parts = MEASURE.filter(function (f) { return m[f[0]] != null; }).map(function (f) { return f[1] + ' ' + m[f[0]] + f[2]; });
         var row = el('div', { style: 'display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--k-line);padding:8px 0;font-size:13px;' }, [
-          el('div', { text: md(m.d) + '　' + parts.join('・') })
+          el('div', { style: 'flex:1;min-width:0;', text: md(m.d) + '　' + parts.join('・') })
         ]);
         var mine = m.origin === 'd1' && (String(m.enteredBy) === String(state.trainerId) || state._isOwner);
         if (mine || (state._isOwner && m.origin === 'sheet')) {
@@ -1152,7 +1167,7 @@
     c.appendChild(partsLine);
     var prevBtnBox = el('div');
     c.appendChild(prevBtnBox);
-    var restBar = el('div', { style: 'display:none;position:sticky;top:0;z-index:3;background:var(--k-acc-l);border:1px solid #cfe5df;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:10px;' });
+    var restBar = el('div', { class: 'k-restbar', style: 'display:none;' });   // ★見た目は CSS の .k-restbar（inline に display を2つ書くと後の flex が勝ち、空の帯が出ていた）
     rest.box = restBar; restTick();
     c.appendChild(restBar);
     var list = el('div'); c.appendChild(list);
@@ -1204,7 +1219,7 @@
         var noneDone = !it.sets.some(function (s) { return s.done === true; });
         var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#f1c9a3' : 'var(--k-line)') + ';border-radius:12px;padding:12px;margin-bottom:10px;' + (hasVal && noneDone ? 'background:#fffaf4;' : '') });
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
-          el('div', { style: 'flex:1;font-weight:700;font-size:15px;', text: it.exercise }),
+          el('div', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
           el('button', { type: 'button', class: 'k-btn out small', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { D.items.splice(ei, 1); save(); draw(); } })]));
         blk.appendChild(el('div', { class: 'k-sub', style: 'margin:2px 0 8px;', text: prevLabel(it.exercise) }));
@@ -1404,7 +1419,7 @@
           el('div', { class: 'k-sub', text: '推定MAX＝1回で挙げられる重さの目安（重量と回数から計算・13回以上は出しません）' })]));
         var recent = card('直近3回', []);
         st.days.slice(-3).reverse().forEach(function (dd) {
-          recent.appendChild(el('div', { style: 'display:grid;grid-template-columns:56px 1fr 56px;gap:8px;font-size:13px;padding:6px 0;border-top:1px solid var(--k-line);' }, [
+          recent.appendChild(el('div', { style: 'display:grid;grid-template-columns:56px minmax(0,1fr) 56px;gap:8px;font-size:13px;padding:6px 0;border-top:1px solid var(--k-line);' }, [
             el('div', { class: 'k-sub', text: md(dd.d) }), el('div', {}, [document.createTextNode(dd.sets.map(function (x) { return x.weight_kg + 'kg×' + x.reps; }).join(' ・ '))].concat(
               dd.sets.filter(function (x) { return x.note; }).map(function (x) { return el('div', { class: 'k-sub', text: x.set_no + 'セット目：' + x.note }); }))),
             el('div', { class: 'k-num', style: 'text-align:right;', text: dd.v != null ? String(dd.v) : '' })]));
@@ -1419,7 +1434,7 @@
         if (!keys.length) c2.appendChild(msg('直近1ヶ月の記録がありません。'));
         keys.forEach(function (k) {
           var bar = el('div', { class: 'k-bar' }, [el('div', { style: 'width:' + Math.round(cnt[k] / total * 100) + '%;' })]);
-          c2.appendChild(el('div', { style: 'display:grid;grid-template-columns:52px 1fr 30px;gap:8px;align-items:center;font-size:12px;margin-bottom:8px;' }, [el('div', { text: k }), bar, el('div', { style: 'text-align:right;', text: String(cnt[k]) })]));
+          c2.appendChild(el('div', { style: 'display:grid;grid-template-columns:52px minmax(0,1fr) 30px;gap:8px;align-items:center;font-size:12px;margin-bottom:8px;' }, [el('div', { text: k }), bar, el('div', { style: 'text-align:right;', text: String(cnt[k]) })]));
         });
         var ps = partsSince(sessions, today());
         if (ps.length) c2.appendChild(el('div', { style: 'font-size:13px;margin-top:6px;', text: '前回から：' + ps.map(function (x) { return x.text; }).join('・') }));
@@ -1637,7 +1652,7 @@
           list.appendChild(el('div', { class: 'k-card', style: 'cursor:pointer;', role: 'button', tabindex: '0', onclick: function () { open(c.customerId, c.name, 'summary'); } }, [
             el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [
               el('div', { style: 'width:40px;height:40px;border-radius:20px;background:var(--k-acc-l);color:var(--k-acc);display:flex;align-items:center;justify-content:center;font-weight:700;', text: initial }),
-              el('b', { style: 'font-size:15px;', text: c.name + ' 様' })]), tags]));
+              el('b', { style: 'flex:1;min-width:0;font-size:15px;', text: c.name + ' 様' })]), tags]));
         });
         if (!shown.length) list.appendChild(msg(all.length ? 'この条件のお客様はいません。' : '対象のお客様がいません。'));
         if (r.next) list.appendChild(el('button', { class: 'k-btn out', text: 'さらに表示', onclick: function () { openBoard(r.next, all); } }));
