@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-04g カルテ はみ出し（日付の欄・空の休憩の帯・狭い画面）';
+  var KARTE_BUILD = '2026-11-04h カルテ 下のタブを大きく';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -74,7 +74,8 @@
     '#karteRoot .k-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}',
     '#karteRoot .k-chip-h{font-size:12px;padding:4px 10px;background:#eeeeec;color:#3f4550;border-radius:999px;}',
     '#karteRoot .k-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:#fff;border-top:1px solid var(--k-line);position:sticky;bottom:0;z-index:2;padding:4px 4px calc(8px + env(safe-area-inset-bottom));margin-top:auto;}',
-    '#karteRoot .k-tab{min-height:48px;padding:0 2px;border:none;background:transparent;font-size:12px;color:var(--k-sub);border-top:3px solid transparent;font-family:inherit;}',
+    '#karteRoot .k-tab{min-height:56px;padding:4px 2px;border:none;background:transparent;font-size:14px;line-height:1.25;color:var(--k-sub);border-top:3px solid transparent;font-family:inherit;}',   // ★iPhone で小さすぎた（12px・48px → 14px・56px、2026-11-04h）
+    '@media (min-width:400px){#karteRoot .k-tab{font-size:15px;}}',
     '#karteRoot .k-tab.on{color:var(--k-acc);font-weight:700;border-top-color:var(--k-acc);}',
     '#karteRoot .k-body{padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px;flex:1;}',
     '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:14px;padding:16px;}',

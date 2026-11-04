@@ -829,6 +829,9 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   await new Promise((r) => setTimeout(r, 650));
   const rb3 = root.querySelector('.k-restbar');
   ok('15-11 ★休憩中に記録の欄が作り直されても、休憩の帯が出たまま数え続ける', !!again && !!rb3 && rb3.isConnected && rb3.textContent.includes('休憩 ') && w.getComputedStyle(rb3).display === 'flex', rb3 && (rb3.textContent + ' ' + w.getComputedStyle(rb3).display));
+  const tab = root.querySelector('.k-tab');
+  const tcs = tab && w.getComputedStyle(tab);
+  ok('15-12 ★下のタブは文字14px以上・押せる高さ56px以上（iPhone で小さすぎた）', !!tcs && parseFloat(tcs.fontSize) >= 14 && parseInt(tcs.minHeight, 10) >= 56, tcs && tcs.fontSize + ' ' + tcs.minHeight);
   ok('15-10 ★予約画面全体の viewport は変えない（会員の画面に効くため）', HTML.includes('<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'));
 }
 
