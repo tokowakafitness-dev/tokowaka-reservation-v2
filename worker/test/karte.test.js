@@ -418,6 +418,17 @@ let noteId;
   ok('10-23 ★最大の正規の要求が本文16KB以内（UTF-8 のバイト数）', Buffer.byteLength(bigReq) <= 16384 && Buffer.byteLength(bigPain) <= 16384, `${Buffer.byteLength(bigReq)} / ${Buffer.byteLength(bigPain)}`);
 }
 
+// ================= 11. トレーニングの記録（設計33 第1回） =================
+{
+  d.exec(`DELETE FROM karte_rate`);
+  const e0 = await call('U_T1', 'k_training', { customerId: 'C2' });
+  ok('11-1 ★記録が0件でも窓口の版を返す', e0.success && e0.karteSchema === 31 && Array.isArray(e0.sessions) && !e0.sessions.length, JSON.stringify(e0));
+  const mk = (n) => Array.from({ length: Math.ceil(n / 10) }, (_, i) => ({ exercise: '種目' + i, sets: Array.from({ length: Math.min(10, n - i * 10) }, () => ({ weight: 20, reps: 10 })) }));
+  const ok60 = await call('U_T1', 'k_addTraining', { customerId: 'C2', sessionDate: today, items: mk(60), clientReqId: crid() });
+  const ng61 = await call('U_T1', 'k_addTraining', { customerId: 'C2', sessionDate: today, items: mk(61), clientReqId: crid() });
+  ok('11-2 ★合計60セットは通り、61は TOTAL_SETS（400）', ok60.success && ng61.status === 400 && ng61.code === 'TOTAL_SETS', JSON.stringify(ng61));
+}
+
 // ================= 9. 日付の道具 =================
 ok('9-1 実在しない日付を繰り上げで受けない', !isRealDate('2026-13-01') && !isRealDate('2026-02-30') && isRealDate('2028-02-29') && !isRealDate('2027-02-29'));
 ok('9-2 今日以前（JST）', isPastOrToday(today) && !isPastOrToday(dayOffset(1)));

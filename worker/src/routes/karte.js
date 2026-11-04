@@ -26,6 +26,7 @@ export const KARTE_LIMITS = {
   TEXT_CHARS: 500,
   EXERCISES: 20,
   SETS_PER_EXERCISE: 10,
+  TOTAL_SETS: 60,          // 1回の記録の合計（設計33・本文16KB の余裕）
   PAGE: 20,
   BOARD_PAGE: 50,
 };
@@ -502,6 +503,8 @@ async function addTraining(c) {
       });
     }
   } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  //   ★合計の上限は正規化の後に数える。専用のコードで返す（画面が「合計60セットまで」と出せるように・関門①）
+  if (sets.length > L.TOTAL_SETS) return err('TOTAL_SETS', 400);
   const tid = String(c.who.trainerId || '');
   const sid = newId();
   const date = String(b.sessionDate);
@@ -801,7 +804,7 @@ async function training(c) {
         ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
     ).bind(...(before ? [cid, before] : [cid])).all();
     const sessions = ss.results || [];
-    if (!sessions.length) return { sessions: [], best: [] };
+    if (!sessions.length) return { karteSchema: KARTE_SCHEMA, sessions: [], best: [] };   // ★空でも版を返す
     const ids = sessions.map((x) => x.session_id);
     const st = await c.env.DB.prepare(
       `SELECT session_id, exercise, set_no, weight_kg, reps, note FROM karte_tr_sets
@@ -816,7 +819,7 @@ async function training(c) {
       for (const s of (by[se.session_id] || [])) if (s.e1rm != null && (!(s.exercise in day) || s.e1rm > day[s.exercise])) day[s.exercise] = s.e1rm;
       for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
     }
-    return { sessions: sessions.map((x) => ({ ...x, sets: by[x.session_id] || [] })), best };
+    return { karteSchema: KARTE_SCHEMA, sessions: sessions.map((x) => ({ ...x, sets: by[x.session_id] || [] })), best };
   });
 }
 
