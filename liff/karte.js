@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-04d カルテ グリーン・キーパッドの上に入力欄（前へ／次へ／完了）・休憩の振動と音';
+  var KARTE_BUILD = '2026-11-04e カルテ スワイプで戻る・進む（LIFF を閉じない・関門②）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -294,6 +294,99 @@
     accessory();
   }
   function onFocusOut() { setTimeout(accessory, 0); }
+  // ---------------------------------------------------------------- 戻る・進む（2026-11-04 オーナー指示）
+  //   ★カルテの画面を移るたびにブラウザの履歴へ1つ積む＝iPhone の左端スワイプ・Android の戻るボタンが
+  //     LIFF を閉じずにカルテの前の画面へ戻る。履歴には顧客ID・タブだけ（氏名は入れない）
+  //   ★画面の中の横スワイプ：左→右で戻る、右→左で進む（入力欄・選択肢・グラフの上やキーパッド表示中は反応しない）
+  var nav = { i: 0, restoring: false, canceling: false };
+  function navState() { return (window.history && history.state && history.state.karte) ? history.state : null; }
+  function navPush(st, mode) {
+    if (mode === 'none' || nav.restoring || !window.history || !history.pushState) return;
+    var curSt = navState();
+    try {
+      //   いまの画面のスクロール位置を、いまの履歴に残してから移る（戻ったときに同じ位置へ）
+      if (curSt && cur.root && mode !== 'replace') history.replaceState(Object.assign({}, curSt, { scroll: cur.root.scrollTop }), '');
+      if (mode === 'replace' && curSt) { st.karte = 1; st.i = curSt.i; history.replaceState(st, ''); }
+      else { st.karte = 1; st.i = (curSt ? curSt.i : 0) + 1; history.pushState(st, ''); }
+      nav.i = st.i;
+    } catch (e) {}
+  }
+  function goBack() { if (navState()) history.back(); else close(); }
+  function exitKarte() {
+    if (cur.dirty && !window.confirm('入力中の内容は保存されていません。カルテを閉じますか？')) return;
+    cur.dirty = false;
+    var st = navState();
+    if (st && st.i > 0) { try { history.go(-st.i); return; } catch (e) {} }
+    close();
+  }
+  function onPopState(e) {
+    if (nav.canceling) { nav.canceling = false; return; }   // 取り消しで元の位置へ戻ったときの1回は描かない
+    var st = e.state && e.state.karte ? e.state : null;
+    //   入力中なら確かめる。やめたら、来た向きの逆へ1つ動いて元の位置に戻る（積み直さない＝履歴の数え方を崩さない）
+    if (cur.root && cur.dirty) {
+      if (!window.confirm('入力中の内容は保存されていません。前の画面に戻りますか？')) {
+        nav.canceling = true;
+        try { if (!st || st.i < nav.i) history.forward(); else history.back(); } catch (er) { nav.canceling = false; }
+        return;
+      }
+    }
+    cur.dirty = false;
+    if (!st) { if (cur.root) close(); return; }
+    nav.i = st.i; nav.restoring = true;
+    try {
+      if (st.board) openBoard(null, null, 'none');
+      else open(st.cid, st.cid === cur.customerId ? cur.name : '', st.tab, st.sub ? { kind: 'sub', sub: st.sub, navMode: 'none' } : null, 'none');
+    } finally { nav.restoring = false; }
+    if (st.scroll) restoreScroll(st.scroll, st);
+  }
+  //   中身は読み込みのあとに伸びるので、何度か当てる。★当てるのは「その履歴の画面のまま」のときだけ・指で触ったらやめる
+  var scrollFix = { gen: 0 };
+  function restoreScroll(y, st) {
+    var root = cur.root, gen = ++scrollFix.gen;
+    [60, 400, 1000].forEach(function (t) {
+      setTimeout(function () {
+        var now = navState();
+        if (gen !== scrollFix.gen || !root || cur.root !== root || !now) return;
+        if (now.i !== st.i || (now.cid || '') !== (st.cid || '') || (now.tab || '') !== (st.tab || '') || (now.sub || '') !== (st.sub || '') || !!now.board !== !!st.board) return;
+        if (root.scrollTop < y) root.scrollTop = y;
+      }, t);
+    });
+  }
+  //   いまの画面のスクロール位置を、いまの履歴に残し続ける（端末の戻るで離れても、進んで戻ったとき同じ位置に）
+  var scrollSave = { t: 0 };
+  function onRootScroll() {
+    if (scrollSave.t) clearTimeout(scrollSave.t);
+    scrollSave.t = setTimeout(function () {
+      scrollSave.t = 0;
+      var st = navState(); if (!st || !cur.root) return;
+      try { history.replaceState(Object.assign({}, st, { scroll: cur.root.scrollTop }), ''); } catch (e) {}
+    }, 150);
+  }
+  window.addEventListener('popstate', onPopState);
+  var swipe = null;
+  function onTouchStart(e) {
+    scrollFix.gen++;   // 指で触ったら、残っているスクロールの当て直しをやめる
+    if (kb.on || !e.touches || e.touches.length !== 1) { swipe = null; return; }
+    var t = e.touches[0], tg = e.target;
+    //   左端20pxは端末（iPhone）の戻るに任せる。入力欄・横に並ぶ選択肢・グラフ・セットの行の上では反応しない
+    if (t.clientX < 20 || (tg && tg.closest && tg.closest('input,textarea,select,button,a,svg,.k-pills,.k-seg,.k-setrow,.k-accessory'))) { swipe = null; return; }
+    swipe = { x: t.clientX, y: t.clientY, at: Date.now() };
+  }
+  function onTouchEnd(e) {
+    if (!swipe || !e.changedTouches || !e.changedTouches.length) { swipe = null; return; }
+    var t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y, dt = Date.now() - swipe.at;
+    swipe = null;
+    if (dt > 700 || Math.abs(dx) < 80 || Math.abs(dy) > 50 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    if (dx > 0) { if (navState()) history.back(); }
+    else { try { history.forward(); } catch (er) {} }
+  }
+  function onDirty(e) {
+    var t = e.target;
+    if (t && t.closest && t.closest('.k-setrow,.k-picker-go')) return;   // トレーニングの記録は端末の下書きがあるので確かめない
+    if (t && t.closest && t.closest('[data-nodirty]')) return;
+    cur.dirty = true;
+  }
+
   function ensureRoot() {
     ensureStyle();
     if (cur.root) return cur.root;
@@ -303,6 +396,10 @@
     document.documentElement.classList.add('karte-open');   // 後ろの予約画面がつられて動かないように
     root.addEventListener('focusin', onFocusIn);
     root.addEventListener('focusout', onFocusOut);
+    root.addEventListener('touchstart', onTouchStart, { passive: true });
+    root.addEventListener('touchend', onTouchEnd, { passive: true });
+    root.addEventListener('input', onDirty);
+    root.addEventListener('scroll', onRootScroll, { passive: true });
     if (window.visualViewport) { window.visualViewport.addEventListener('resize', fitViewport); window.visualViewport.addEventListener('scroll', fitViewport); }
     window.addEventListener('resize', fitViewport);
     fitNow();
@@ -315,11 +412,15 @@
     document.documentElement.classList.remove('karte-open');
     kb.on = false; kb.base = 0; kb.w = 0; kb.resampleUntil = 0; kb.lastInput = null;
     if (kb.revealT) { clearTimeout(kb.revealT); kb.revealT = 0; }
+    if (scrollSave.t) { clearTimeout(scrollSave.t); scrollSave.t = 0; }
+    scrollFix.gen++;
     if (cur.root) { cur.root.remove(); cur.root = null; }
   }
 
-  function open(customerId, name, tab, draft) {
+  function open(customerId, name, tab, draft, mode) {
     restStop();   // ★画面を移ったら休憩タイマーは消す（設計33 §9-7）
+    navPush({ cid: String(customerId || ''), tab: tab || 'summary' }, mode);
+    cur.dirty = false;
     var same = cur.customerId === String(customerId || '');
     cur.customerId = String(customerId || ''); cur.name = String(name || ''); cur.tab = tab || 'summary';
     if (!same) cur.summary = null;
@@ -329,7 +430,7 @@
     var chips = el('div', { class: 'k-chips' });
     var head = el('div', { class: 'k-head' }, [
       el('div', { class: 'k-head-row' }, [
-        el('button', { class: 'k-back', 'aria-label': '戻る', text: '←', onclick: close }),
+        el('button', { class: 'k-back', 'aria-label': 'カルテを閉じる', text: '←', onclick: exitKarte }),
         el('div', { style: 'flex:1;min-width:0;' }, [(cur.headName = el('div', { class: 'k-name', text: cur.name ? cur.name + ' 様' : '' })), meta])
       ]), chips
     ]);
@@ -476,7 +577,9 @@
       //   直近の指導
       if (r.lastNote) box.appendChild(card('直近の指導', [noteView(r.lastNote)]));
       if (r.assigned) box.appendChild(membershipCard());
-      if (draft && draft.kind === 'profile') hearingForm(box, r, draft.data);
+      if (draft && draft.kind === 'profile') hearingForm(box, r, draft.data, draft.navMode);
+      else if (draft && draft.kind === 'sub' && draft.sub === 'hearing') hearingForm(box, r, null, draft.navMode);
+      else if (draft && draft.kind === 'sub' && draft.sub === 'safety' && agreed) safetyForm(box, draft.navMode);
     });
   }
   function goalCol(name, now, target, unit) {
@@ -495,7 +598,7 @@
       if (!window.confirm(lbl)) return;
       kWrite('k_saveConsent', { customerId: cur.customerId, state: stateTo, method: method }, newReqId()).then(function (r) {
         if (!r || !r.success) { window.alert(errText(r)); return; }
-        open(cur.customerId, cur.name, 'summary');
+        open(cur.customerId, cur.name, 'summary', null, 'replace');
       });
     }
     if (state0 !== 'agreed') {
@@ -528,6 +631,7 @@
     }
     tbl.forEach(function (t) {
       btns[t[0]] = el('button', { type: 'button', onclick: function () {
+        cur.dirty = true;
         var i = sel.indexOf(t[0]);
         if (i >= 0) sel.splice(i, 1);
         else if (!o.max || sel.length < o.max) sel.push(t[0]);
@@ -544,7 +648,7 @@
     var box = el('div', { style: 'display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:3px;' });
     var bs = [];
     for (var n = 1; n <= 10; n++) (function (n) {
-      var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { v = (v === n ? null : n); paint(); } });
+      var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { cur.dirty = true; v = (v === n ? null : n); paint(); } });
       bs.push(b); box.appendChild(b);
     })(n);
     function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #0e6b5c;background:#0e6b5c;color:#fff;font-weight:700' : '1px solid #c9ccd3;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
@@ -553,7 +657,8 @@
   }
 
   // ---------------------------------------------------------------- ヒアリング入力
-  function hearingForm(box, r, draftData) {
+  function hearingForm(box, r, draftData, mode) {
+    navPush({ cid: cur.customerId, tab: 'summary', sub: 'hearing' }, mode);
     box.innerHTML = '';
     var p = r.profile || {}, h = draftData ? draftData.hearing || {} : (p.hearing || {});
     var purposes = pills(PURPOSES, h.purposes);
@@ -583,14 +688,15 @@
       var params = { customerId: cur.customerId, rev: r.profile ? r.profile.rev : 0, goalText: data.goalText, goalDeadline: data.goalDeadline, hearing: data.hearing };
       kWrite('k_saveProfile', params, reqId, { kind: 'profile', data: data }).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
-        window.alert('保存しました。'); open(cur.customerId, cur.name, 'summary');
+        window.alert('保存しました。'); open(cur.customerId, cur.name, 'summary', null, 'replace');
       });
     } }));
-    box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { open(cur.customerId, cur.name, 'summary'); } }));
+    box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { goBack(); } }));
   }
 
   // ---------------------------------------------------------------- 安全面（健康情報・端末に退避しない）
-  function safetyForm(box) {
+  function safetyForm(box, mode) {
+    navPush({ cid: cur.customerId, tab: 'summary', sub: 'safety' }, mode);
     box.innerHTML = ''; box.appendChild(msg('読み込み中…'));
     kRead('k_safety', { customerId: cur.customerId }).then(function (r) {
       box.innerHTML = '';
@@ -610,7 +716,7 @@
           list.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;font-size:14px;' }, [
             el('span', { style: 'flex:1;', text: label(REGIONS, p.region) + ' ' + p.level + '/10' + (p.symptom ? '（' + p.symptom + '）' : '') }),
             el('button', { type: 'button', class: 'k-btn out small', text: '直す', onclick: function () { edit(p.region); } }),
-            el('button', { type: 'button', class: 'k-btn out small', text: '外す', onclick: function () { pain.splice(i, 1); redraw(); } })]));
+            el('button', { type: 'button', class: 'k-btn out small', text: '外す', onclick: function () { cur.dirty = true; pain.splice(i, 1); redraw(); } })]));
         });
       }
       function edit(region) {
@@ -621,6 +727,7 @@
         editor.appendChild(el('div', { class: 'k-caution', style: 'margin-top:10px;' }, [el('div', { class: 'k-h', text: label(REGIONS, region) + ' の強さ' }), lv.el, el('div', { style: 'height:8px;' }), sy.row,
           el('button', { type: 'button', class: 'k-btn small', text: 'この部位を入れる', onclick: function () {
             if (!lv.get()) { window.alert('強さを選んでください。'); return; }
+            cur.dirty = true;
             var item = { region: region, level: lv.get(), symptom: sy.get() };
             var done = false; pain.forEach(function (p, i) { if (p.region === region) { pain[i] = item; done = true; } });
             if (!done) { if (pain.length >= 12) { window.alert('部位は12か所までです。'); return; } pain.push(item); }
@@ -646,10 +753,10 @@
         //   ★安全面は端末に退避しない（健康情報を sessionStorage に残さない）
         kWrite('k_saveSafety', params, reqId, null).then(function (w) {
           if (!w || !w.success) { window.alert(errText(w)); return; }
-          window.alert('保存しました。'); open(cur.customerId, cur.name, 'summary');
+          window.alert('保存しました。'); open(cur.customerId, cur.name, 'summary', null, 'replace');
         });
       } }));
-      box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { open(cur.customerId, cur.name, 'summary'); } }));
+      box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { goBack(); } }));
     });
   }
 
@@ -806,7 +913,7 @@
             if (!window.confirm(m.d + ' の記録を削除しますか？')) return;
             kWrite('k_deleteMeasurement', { id: m.id, rev: m.rev }, newReqId()).then(function (w) {
               if (!w || !w.success) { window.alert(errText(w)); return; }
-              open(cur.customerId, cur.name, 'body');
+              open(cur.customerId, cur.name, 'body', null, 'replace');
             });
           } }));
         }
@@ -836,7 +943,7 @@
       if (!any) { window.alert('1つ以上入力してください。'); return; }
       kWrite('k_addMeasurement', { customerId: cur.customerId, measuredDate: d.get(), values: values }, reqId, { kind: 'measure', data: { measuredDate: d.get(), values: values } }).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
-        window.alert('記録しました。'); open(cur.customerId, cur.name, 'body');
+        window.alert('記録しました。'); open(cur.customerId, cur.name, 'body', null, 'replace');
       });
     } }));
     return c;
@@ -852,7 +959,7 @@
     c.appendChild(el('button', { class: 'k-btn out', text: '目標線を保存', onclick: function () {
       kWrite('k_saveGoalLine', { customerId: cur.customerId, startDate: sd.get(), endDate: ed.get(), startWeight: sw.get(), targetWeight: tw.get() }, reqId).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
-        window.alert('保存しました。'); open(cur.customerId, cur.name, 'body');
+        window.alert('保存しました。'); open(cur.customerId, cur.name, 'body', null, 'replace');
       });
     } }));
     return c;
@@ -1015,13 +1122,13 @@
       c.appendChild(el('button', { class: 'k-btn out', text: '日別の記録を確かめる', onclick: function () { if (cur.showDayView) cur.showDayView(); } }));
       c.appendChild(el('button', { class: 'k-btn out', text: '破棄して入れ直す', onclick: function () {
         if (!window.confirm('送り直さずに破棄しますか？（記録されていたかは「日別の記録を確かめる」で見られます）')) return;
-        lsDel(draftKey); open(cid, cname, 'training');
+        lsDel(draftKey); open(cid, cname, 'training', null, 'replace');
       } }));
       return c;
     }
     if (restored) note.textContent = '入力の途中を戻しました（' + fmtDate(D.at) + '）。この端末に最大24時間残ります。';
 
-    var d = field('日付', D.sessionDate, 'date'); d.el.max = today();
+    var d = field('日付', D.sessionDate, 'date'); d.el.max = today(); d.el.setAttribute('data-nodirty', '1');
     c.appendChild(d.row);
     var partsLine = el('div', { class: 'k-sub', style: 'margin:-4px 0 10px;' });
     c.appendChild(partsLine);
@@ -1124,7 +1231,7 @@
     picker.style.display = 'none';
     c.appendChild(picker);
     c.appendChild(remain);
-    var rs = el('select', { 'aria-label': '休憩の秒数', style: 'min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 8px;font-size:16px;' });
+    var rs = el('select', { 'data-nodirty': '1', 'aria-label': '休憩の秒数', style: 'min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 8px;font-size:16px;' });
     [60, 90, 120, 180].forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSeconds()) o.selected = true; rs.appendChild(o); });
     rs.onchange = function () { try { localStorage.setItem('karte_rest_s', rs.value); } catch (e) {} };
     var snd = el('button', { type: 'button', class: 'k-pill' + (restSound() ? ' on' : ''), 'aria-pressed': restSound() ? 'true' : 'false', text: restSound() ? '終了音：あり' : '終了音：なし', onclick: function () {
@@ -1145,7 +1252,7 @@
       sending = true;
       Array.prototype.forEach.call(c.querySelectorAll('button,input,select'), function (x) { x.disabled = true; });
       if (saveBtn) saveBtn.textContent = '送信中…';
-      function back() { if (same()) open(cid, cname, 'training'); }
+      function back() { if (same()) open(cid, cname, 'training', null, 'replace'); }
       function unknown() { sending = false; if (same()) { window.alert('通信の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); back(); } }
       kWrite('k_addTraining', payload, reqId, { kind: 'training', customerId: cid }).then(function (w) {
         if (!w || w.code === 'BAD_RESPONSE') { unknown(); return; }
@@ -1193,7 +1300,7 @@
     var all = recent.concat(EXERCISES.filter(function (x) { return recent.indexOf(x) < 0; }));
     var picked = [];
     var box = el('div', { class: 'k-card', style: 'margin-top:8px;background:var(--k-cream);' });
-    var q = el('input', { type: 'search', placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
+    var q = el('input', { 'data-nodirty': '1', type: 'search', placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
     var area = el('div');
     var go = el('button', { type: 'button', class: 'k-btn k-picker-go', text: '選んだ種目を足す' });
     function chip(ex) {
@@ -1288,7 +1395,7 @@
               if (!window.confirm(s.session_date + ' の記録を削除しますか？')) return;
               kWrite('k_deleteTraining', { sessionId: s.session_id, rev: s.rev }, newReqId()).then(function (w) {
                 if (!w || !w.success) { window.alert(errText(w)); return; }
-                open(cur.customerId, cur.name, 'training');
+                open(cur.customerId, cur.name, 'training', null, 'replace');
               });
             } }));
           }
@@ -1350,7 +1457,7 @@
               if (!window.confirm('このメモを削除しますか？')) return;
               kWrite('k_deleteNote', { noteId: n.note_id, rev: n.rev }, newReqId()).then(function (w) {
                 if (!w || !w.success) { window.alert(errText(w)); return; }
-                open(cur.customerId, cur.name, 'notes');
+                open(cur.customerId, cur.name, 'notes', null, 'replace');
               });
             } }));
           }
@@ -1383,7 +1490,7 @@
       var params = { customerId: cur.customerId }; for (var k in data) params[k] = data[k];
       kWrite('k_addNote', params, reqId, { kind: 'note', data: data }).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
-        open(cur.customerId, cur.name, 'notes');
+        open(cur.customerId, cur.name, 'notes', null, 'replace');
       });
     } }));
     return c;
@@ -1412,7 +1519,7 @@
       var params = { customerId: cur.customerId }; for (var k in data) params[k] = data[k];
       kWrite('k_addNote', params, reqId, { kind: 'reflectNote', data: data }).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
-        open(cur.customerId, cur.name, 'notes');
+        open(cur.customerId, cur.name, 'notes', null, 'replace');
       });
     } }));
     return c;
@@ -1450,11 +1557,12 @@
   };
   //   声かけの印（並べ替えに使う）。注意・未記入・同意待ちは並べ替えに入れない（毎回上に来てしまう）
   var CALL_FLAGS = ['noNextBooking', 'recordStale', 'contractEnding', 'paymentPending'];
-  function openBoard(after, acc) {
+  function openBoard(after, acc, mode) {
+    if (!after) navPush({ board: 1 }, mode);   // 「さらに表示」は積まない
     var root = ensureRoot(); root.innerHTML = '';
     var wrap = el('div', { class: 'k-wrap' });
     wrap.appendChild(el('div', { class: 'k-head' }, [el('div', { class: 'k-head-row' }, [
-      el('button', { class: 'k-back', 'aria-label': '戻る', text: '←', onclick: close }),
+      el('button', { class: 'k-back', 'aria-label': 'カルテを閉じる', text: '←', onclick: exitKarte }),
       el('div', { class: 'k-name', style: 'flex:1;', text: 'カルテの一覧' })])]));
     var filt = el('div', { class: 'k-pills', style: 'gap:6px;padding:12px 14px 0;' });
     var list = el('div', { class: 'k-body' });
@@ -1508,7 +1616,10 @@
     (function wait() {
       //   トレーナーの起動（state.trainerId）が済むのを待つ
       if (window.state && state.trainerId) {
-        open(d.customerId, d.name, d.tab, d.draft);
+        //   ★読み直す前の履歴がそのまま残っている＝積み足さず置き換える（戻る回数を増やさない）
+        var m = navState() ? 'replace' : undefined;
+        if (d.draft && m) d.draft.navMode = 'replace';
+        open(d.customerId, d.name, d.tab, d.draft, m);
         try { sessionStorage.removeItem('karte_reauth'); } catch (e) {}
         window.alert('ログインを更新しました。入力内容を戻したので、もう一度「保存」を押してください。');
         return;

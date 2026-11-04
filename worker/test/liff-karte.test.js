@@ -600,5 +600,131 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
 ok('12-7 ★休憩おわりの振動は長め（0.6秒×3回）・音と点滅もある（iPhone は振動できないため）', /navigator\.vibrate\(\[600, 200, 600, 200, 600\]\)/.test(SRC) && /function beep\(\)/.test(SRC) && /k-rest-done/.test(SRC));
 ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に効くため）', !/interactive-widget/.test(HTML));
 
+// ================= 13. 戻る・進む（スワイプ・LIFF を閉じない） =================
+{
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    return { success: true, notes: [], contracts: [] };
+  });
+  const pop = () => new Promise((r) => setTimeout(r, 30));
+  const start = w.history.length;
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  [...w.document.querySelectorAll('#karteRoot .k-tab')].find((x) => x.textContent === 'トレーニング').click(); await settle();
+  [...w.document.querySelectorAll('#karteRoot .k-tab')].find((x) => x.textContent === '契約').click(); await settle();
+  ok('13-1 ★画面を移るたびに履歴に積む（顧客ID・タブだけ・氏名は入れない）', w.history.length === start + 3 && w.history.state.karte === 1 && w.history.state.tab === 'contract' && !JSON.stringify(w.history.state).includes('会員'), JSON.stringify(w.history.state));
+  w.history.back(); await pop(); await settle();
+  ok('13-2 ★戻る（端末のスワイプ・戻るボタン）で前のタブへ。カルテは閉じない', !!w.document.getElementById('karteRoot') && w.document.querySelector('#karteRoot .k-tab.on').textContent === 'トレーニング');
+  w.history.forward(); await pop(); await settle();
+  ok('13-3 進むで次のタブへ', w.document.querySelector('#karteRoot .k-tab.on').textContent === '契約');
+  //   画面の中の横スワイプ
+  const root = w.document.getElementById('karteRoot');
+  const touch = (type, x, y) => { const tgt = w.document.querySelector('#karteRoot .k-body'); const ev = new w.Event(type, { bubbles: true }); ev.touches = type === 'touchend' ? [] : [{ clientX: x, clientY: y }]; ev.changedTouches = [{ clientX: x, clientY: y }]; tgt.dispatchEvent(ev); };
+  touch('touchstart', 60, 300); touch('touchend', 220, 310); await pop(); await settle();
+  ok('13-4 ★画面の中で左→右にスワイプすると戻る', w.document.querySelector('#karteRoot .k-tab.on').textContent === 'トレーニング');
+  touch('touchstart', 300, 300); touch('touchend', 120, 305); await pop(); await settle();
+  ok('13-5 ★右→左にスワイプすると進む', w.document.querySelector('#karteRoot .k-tab.on').textContent === '契約');
+  touch('touchstart', 60, 300); touch('touchend', 120, 420); await pop(); await settle();
+  ok('13-6 縦に大きく動いたもの（スクロール）は戻らない', w.document.querySelector('#karteRoot .k-tab.on').textContent === '契約');
+  //   いちばん前まで戻るとカルテを閉じる（予約画面に戻る・LIFF は閉じない）
+  w.history.go(-3); await pop(); await settle();
+  ok('13-7 ★カルテに入る前まで戻るとカルテを閉じる（LIFF は閉じない）', !w.document.getElementById('karteRoot'));
+}
+{
+  //   入力中に戻ろうとしたら確かめる
+  let asked = 0;
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
+    return { success: true };
+  });
+  w.confirm = (m) => { if (String(m).includes('入力中')) { asked++; return false; } return true; };
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, 'ヒアリングを').click(); await settle();
+  [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'ダイエット').click();
+  w.history.back(); await new Promise((r) => setTimeout(r, 30)); await settle();
+  ok('13-8 ★入力中に戻ろうとしたら確かめ、やめたらその画面に留まる', asked === 1 && root.textContent.includes('ヒアリングを保存'));
+}
+
+{
+  //   「進む」を途中でやめても、閉じるボタンで予約画面まで正しく戻る／ヒアリング・安全面に戻ったらその画面が出る
+  let cancel = false;
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_safety') return { success: true, karteSchema: 31, consent: 'agreed', safety: null };
+    return { success: true, notes: [], contracts: [] };
+  });
+  w.confirm = (m) => (String(m).includes('入力中') ? !cancel : true);
+  const pop = () => new Promise((r) => setTimeout(r, 40));
+  const start = w.history.length;
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  let root = w.document.getElementById('karteRoot');
+  btn(root, 'ヒアリングを').click(); await settle();
+  [...root.querySelectorAll('.k-tab')].find((x) => x.textContent === '契約').click(); await settle();
+  w.history.back(); await pop(); await settle(); await settle();
+  root = w.document.getElementById('karteRoot');
+  ok('13-9 ★戻るとヒアリングの画面が出る（概要に落ちない）', root.textContent.includes('ヒアリングを保存'), root.textContent.slice(0, 80));
+  w.history.back(); await pop(); await settle();   // 概要へ
+  btn(root, '安全面を見る・書く').click(); await settle();
+  [...root.querySelectorAll('.k-tab')].find((x) => x.textContent === '契約').click(); await settle();
+  w.history.back(); await pop(); await settle(); await settle();
+  ok('13-10 ★戻ると安全面の画面が出る', w.document.getElementById('karteRoot').textContent.includes('痛み・不調'));
+  //   進むを、入力中なのでやめる
+  w.history.back(); await pop(); await settle();   // 概要
+  btn(w.document.getElementById('karteRoot'), 'ヒアリングを').click(); await settle();   // 新しい枝：概要→ヒアリング
+  [...w.document.querySelectorAll('#karteRoot button.k-pill')].find((x) => x.textContent === 'ダイエット').click();
+  cancel = true;
+  w.history.back(); await pop(); await pop(); await settle();
+  ok('13-11 入力中に戻るのをやめると、その画面に留まる', w.document.getElementById('karteRoot').textContent.includes('ヒアリングを保存'));
+  cancel = false;
+  const st = w.history.state;
+  w.document.querySelector('#karteRoot .k-back').click(); await pop(); await pop(); await settle();
+  ok('13-12 ★やめた後でも、閉じるボタンでカルテに入る前まで戻って閉じる（履歴の数え方が崩れない）', !w.document.getElementById('karteRoot') && !(w.history.state && w.history.state.karte), JSON.stringify(st) + ' → ' + JSON.stringify(w.history.state));
+}
+
+{
+  //   「進む」を入力中なのでやめた後も、閉じるボタンで予約画面まで正しく戻る
+  let cancel = false;
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
+    return { success: true, notes: [], contracts: [] };
+  });
+  w.confirm = (m) => (String(m).includes('入力中') ? !cancel : true);
+  const pop = () => new Promise((r) => setTimeout(r, 40));
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  [...w.document.querySelectorAll('#karteRoot .k-tab')].find((x) => x.textContent === '契約').click(); await settle();
+  w.history.back(); await pop(); await settle();   // 概要（進む先＝契約がある）
+  btn(w.document.getElementById('karteRoot'), 'ヒアリングを').click(); await settle();   // 進む先を捨てて概要→ヒアリング
+  w.history.back(); await pop(); await settle();   // 概要（進む先＝ヒアリング）
+  const root = w.document.getElementById('karteRoot');
+  root.querySelector('textarea, input').dispatchEvent(new w.Event('input', { bubbles: true }));   // 入力中にする
+  cancel = true;
+  w.history.forward(); await pop(); await pop(); await settle();
+  cancel = false;
+  ok('13-13 入力中に進むのをやめると、その画面に留まる', !w.document.getElementById('karteRoot').textContent.includes('ヒアリングを保存'));
+  w.document.querySelector('#karteRoot .k-back').click(); await pop(); await pop(); await settle();
+  ok('13-14 ★進むをやめた後でも、閉じるボタンでカルテに入る前まで戻って閉じる', !w.document.getElementById('karteRoot') && !(w.history.state && w.history.state.karte), JSON.stringify(w.history.state));
+}
+
+{
+  //   スクロールの位置：端末の戻るで離れた画面も、進んで戻ると同じ位置。別の画面には当てない
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
+    return { success: true, notes: [], contracts: [] };
+  });
+  const pop = () => new Promise((r) => setTimeout(r, 40));
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  [...w.document.querySelectorAll('#karteRoot .k-tab')].find((x) => x.textContent === '契約').click(); await settle();
+  const root = w.document.getElementById('karteRoot');
+  root.scrollTop = 300; root.dispatchEvent(new w.Event('scroll')); await new Promise((r) => setTimeout(r, 220));
+  ok('13-15 ★いまの画面のスクロール位置を、いまの履歴に残し続ける', w.history.state.scroll === 300, JSON.stringify(w.history.state));
+  w.history.back(); await pop(); await settle();
+  w.history.forward(); await pop(); await settle();   // 契約（300）に戻る＝当て直しが予約される
+  [...w.document.querySelectorAll('#karteRoot .k-tab')].find((x) => x.textContent === '指導の履歴').click(); await settle();   // すぐ別の画面へ
+  root.scrollTop = 0;
+  await new Promise((r) => setTimeout(r, 1100));
+  ok('13-16 ★戻した位置の当て直しは、別の画面には当てない', root.scrollTop === 0);
+}
+
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
