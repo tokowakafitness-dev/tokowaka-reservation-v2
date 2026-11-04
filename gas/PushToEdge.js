@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-10-22a D1 から出す仕組み・予約一覧にも番号・許可表の作業依頼（設計21）';
+var LB_EDGE_BUILD = '2026-11-04a 棚卸しを1名でも読めなければ送らない・ログに氏名を出さない（設計30）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -715,7 +715,7 @@ function _edgeCalcContracts(customers) {
     if (!cid || !name) continue;
     var hit;
     try { hit = _lbContractRowsAll(name, _lbPhoneByCustomerId(cid), false, cid); }
-    catch (e) { throw new Error('契約の照合に失敗（' + name + '）: ' + e.message); }
+    catch (e) { throw new Error('契約の照合に失敗（*' + String(cid).slice(-4) + '）'); }   // ★ログに氏名を出さない（下4桁）
     if (hit && hit.migrationGap) { unresolved++; continue; }   // 同名の未採番行が残る＝紐付けられない
     for (var i = 0; i < (hit || []).length; i++) {
       var rr = hit[i];
@@ -768,15 +768,21 @@ function _edgeCalcReservations() {
 // 棚卸し（繰越の初期値）。39名中31名がこれに依存している。
 function _edgeOpening(customers) {
   if (customers == null) throw new Error('顧客の元データが読めませんでした');
-  var out = [];
+  //   ★読めなかった会員を黙って抜かさない（設計30・Codex 関門②）。
+  //     抜かしたまま scope:'all' で送ると、Worker は「全件届いた」と印を押し、
+  //     その会員の古い棚卸しで D1 が答え続ける。1名でも読めなければ送らない＝印を進めない
+  //     （D1 側は4つの印の回が割れて写しに倒れる）。棚卸しが無い会員（null）は正常。
+  var out = [], failed = [];
   for (var i = 0; i < customers.length; i++) {
     var cid = customers[i].customer_id;
     if (!cid) continue;
     var op = null;
-    try { op = _lbMemberOpeningWithFloor(cid); } catch (e) { op = null; }
+    try { op = _lbMemberOpeningWithFloor(cid); }
+    catch (e) { failed.push('*' + String(cid).slice(-4)); continue; }
     if (!op) continue;
     out.push({ customer_id: cid, payload: JSON.stringify(op) });
   }
+  if (failed.length) throw new Error('棚卸しを読めなかった会員が ' + failed.length + '名（' + failed.slice(0, 5).join('・') + '）。送信を中止しました');
   return out;
 }
 
@@ -3907,6 +3913,25 @@ function lbDualWriteStatusText() {
 // 契約の入力の点検（2026-11-03・dailyHealthCheck から）。読み取りだけ
 //   ① 顧客IDが空の同名の契約行（移行ギャップ）がある会員 … D1 への契約の送信を全員分止める原因
 //   ② D1 の calcContracts の完全同期が26時間以上前 … 原因を問わず「送信が止まっている」結果
+//   ★計算の材料4つの印（設計30）。Worker の calcInputStatus（remain-read-on.js）と同じ規則
+var LB_CALC_INPUT_KEYS = ['calcContracts', 'calcMeta', 'calcReservations', 'opening'];
+function lbCalcInputStatus(calc, nowMs) {
+  var at = null, missing = [], split = false;
+  for (var i = 0; i < LB_CALC_INPUT_KEYS.length; i++) {
+    var v = calc[LB_CALC_INPUT_KEYS[i]];
+    if (typeof v !== 'number' || !isFinite(v) || v <= 0 || Math.floor(v) !== v) { missing.push(LB_CALC_INPUT_KEYS[i]); continue; }
+    if (at === null) at = v; else if (v !== at) split = true;
+  }
+  var times = LB_CALC_INPUT_KEYS.map(function (k) {
+    var v = calc[k]; return k + '=' + ((typeof v === 'number' && v > 0) ? Math.floor((nowMs - v) / 60000) + '分前' : '無し');
+  }).join(' / ');
+  if (missing.length) return { status: 'unknown', text: '届いた記録がありません（' + missing.join('・') + '）', detail: '（' + times + '）' };
+  if (split) return { status: 'split', text: '同じ回でそろって届いていません', detail: '（' + times + '）' };
+  if (at > nowMs + 5 * 60000) return { status: 'unknown', text: '未来の時刻で届いています', detail: '（' + times + '）' };
+  if (nowMs - at >= 45 * 60000) return { status: 'stale', text: Math.floor((nowMs - at) / 60000) + '分届いていません', detail: '' };
+  return { status: 'ok', text: '', detail: '' };
+}
+
 function lbContractInputCheck() {
   var out = [];
   var customers = _edgeCustomers();
@@ -3935,13 +3960,23 @@ function lbContractInputCheck() {
     if (url) {
       var res = UrlFetchApp.fetch(String(url).replace(/\/+$/, '') + '/health', { muteHttpExceptions: true });
       var body = JSON.parse(res.getContentText() || '{}');
-      var at = 0;
-      (body.sync || []).forEach(function (s) { if (s.key === 'calcContracts') at = Number(s.synced_at || 0); });
+      var at = 0, calc = {};
+      (body.sync || []).forEach(function (s) {
+        if (s.key === 'calcContracts') at = Number(s.synced_at || 0);
+        if (LB_CALC_INPUT_KEYS.indexOf(s.key) >= 0) calc[s.key] = s.synced_at;
+      });
       var hours = at ? (Date.now() - at) / 3600000 : null;
       if (hours === null || hours > 26) {
         out.push({ key: 'contract_push_stalled', severity: 'high', count: 1,
                    detail: 'D1 への契約の完全同期が ' + (hours === null ? '一度も記録されていません' : Math.floor(hours) + '時間止まっています') + '。'
                          + 'D1 から答えている会員の残数が古い契約のままになります（顧客IDの空欄・シートの読み取り失敗を確認）。' });
+      }
+      var ci = lbCalcInputStatus(calc, Date.now());
+      if (ci.status !== 'ok') {
+        out.push({ key: 'calc_input_' + ci.status, severity: 'high', count: 1,
+                   detail: '残数の計算の材料（契約・列の並び・予約・棚卸し）が D1 に' + ci.text + '。'
+                         + 'この間は D1 から答えず写しで答えています（顧客の表示は安全）が、続くと D1 へ移る意味がなくなります。'
+                         + '計算入力の送信のログ（[edge] 計算入力）を確認してください。' + ci.detail });
       }
     }
   } catch (e) {

@@ -170,6 +170,8 @@ function fakeSs(failCopy) {
     UrlFetchApp: { fetch: () => ({ getContentText: () => JSON.stringify({ sync: [{ key: 'calcContracts', synced_at: Date.now() - 30 * 3600000 }] }) }) },
   };
   vm.createContext(ctx);
+  vm.runInContext("var LB_CALC_INPUT_KEYS = ['calcContracts', 'calcMeta', 'calcReservations', 'opening'];", ctx);
+  vm.runInContext(pluck(PE, 'lbCalcInputStatus'), ctx);
   vm.runInContext(pluck(PE, 'lbContractInputCheck'), ctx);
   const items = ctx.lbContractInputCheck();
   const gap = items.find((x) => x.key === 'contract_id_blank');

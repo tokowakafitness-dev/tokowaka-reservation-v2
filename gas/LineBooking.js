@@ -1906,7 +1906,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-03a 体の記録を D1 へ（切替フラグ・凍結・転送）＋契約の入力の点検（設計28）';
+var LB_HEALTH_BUILD = '2026-11-04a 計算の材料4つの印を日次点検で確かめる・補充のログに氏名を出さない（設計30）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -7450,7 +7450,7 @@ function _lbAnyContractIsRental(name, phone) {
   return false;
 }
 function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, pair, normalUnitPrice, rental) {
-  Logger.log('[REFILL v3] 受信: customerId=' + customerId + ' unitPrice=' + unitPrice + ' pair=' + pair + ' rental=' + rental + ' tickets=' + tickets);   // 配信バージョン確認用（実行数ログにこの行が出れば最新コードが稼働）
+  Logger.log('[REFILL v3] 受信: customerId=*' + String(customerId).slice(-4) + ' unitPrice=' + unitPrice + ' pair=' + pair + ' rental=' + rental + ' tickets=' + tickets);   // 配信バージョン確認用（実行数ログにこの行が出れば最新コードが稼働）
   var tr = getTrainerByLine(lineUserId);
   if (!tr) return { success: false, code: 'FORBIDDEN', message: 'トレーナー権限が必要です。' };
   tickets = Number(tickets);
@@ -7493,7 +7493,7 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   //   0円可否は【契約マスタのレンタル種別】でのみ判定（非pairで単価0の時だけ検証）。mapのstale種別やrentalフラグ単独に依存しない（Codex越権対策）。
   if (!isPair && !(unitPrice > 0)) {
     if (!_lbAnyContractIsRental(name, phone)) {
-      Logger.log('❌ 0円拒否(PRICE_REQUIRED): name=' + name + ' / phone=' + phone + ' / mapKind=' + kind + ' → 契約マスタに「種別」がレンタルの行が見つからない。testLbRentalCheck(\'' + customerId + '\') で契約行を確認。');
+      Logger.log('❌ 0円拒否(PRICE_REQUIRED): 会員=*' + String(customerId).slice(-4) + ' / mapKind=' + kind + ' → 契約マスタに「種別」がレンタルの行が見つからない。testLbRentalCheck(顧客ID) で契約行を確認。');   // ★氏名・電話・フルIDを出さない
       return { success: false, code: 'PRICE_REQUIRED', message: 'チケット単価を入力してください（0円はレンタル契約の会員のみ）。' };
     }
     unitPrice = 0;   // レンタルは0円で確定（負や空は上で弾き済み）
@@ -7547,7 +7547,7 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   if (cols.reward >= 0 && kind.indexOf('レンタル') < 0) {
     var _rw = (contract && contract.cols && contract.cols.reward >= 0) ? contract.row[contract.cols.reward] : '';
     if (_rw !== '' && _rw != null) rowArr[cols.reward] = _rw;
-    else Logger.log('⚠️ チケット補充：既存契約から報酬割合を読めず空のまま行を作ります（' + name + '）→ 顧客マスタでこの行の報酬割合を入れてください（空だとチケット分の報酬が¥0になります）');
+    else Logger.log('⚠️ チケット補充：既存契約から報酬割合を読めず空のまま行を作ります（*' + String(customerId).slice(-4) + '）→ 顧客マスタでこの行の報酬割合を入れてください（空だとチケット分の報酬が¥0になります）');
   }
   if (cols.ticketPrice >= 0) rowArr[cols.ticketPrice] = unitPrice;   // 通常＝チケット単価／ペア＝ペア単価
   if (isPair) rowArr[cols.normalPrice] = normalUnitPrice;   // 1名来店の通常単価＝専用列（上でスキーマ検証済み）

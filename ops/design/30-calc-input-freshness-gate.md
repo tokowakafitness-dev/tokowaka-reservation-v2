@@ -31,3 +31,10 @@ Codex 関門③（全員を D1 から答える前）の指摘1：GAS の契約�
 
 ## 関連
 - 厳密IDモード（LB_STRICT_ID_MODE）は **on にしない**。addTicketRefill が顧客IDを書かないため、on にすると migrationGap で全員の契約送信が止まる（Codex 関門③ 指摘2）
+
+## 追記（2026-11-04・関門②で足したもの・GAS）
+- _edgeOpening：会員単位の読み取り例外を黙って抜かしていた（抜かしたまま scope:'all' で送ると印が進み、古い棚卸しで D1 が答え続ける）→ 1名でも読めなければ送らない（棚卸しなしの null は正常）
+- 日次点検 lbContractInputCheck：/health の4つの印を Worker と同じ規則で見て calc_input_{unknown|split|stale} を high（全員が写しに倒れたままを気づけるように）。26時間の判定を先に置く
+- ログの個人情報：契約照合の失敗（氏名・元例外本文）、補充の受信（フルID）、0円拒否（氏名・電話・フルID）、報酬割合の警告（氏名）→ 下4桁だけ
+- 版の印 LB_HEALTH_BUILD / LB_EDGE_BUILD 2026-11-04a。検査 gas-opening-fail.test.js（16件）
+- ★正当に0件の完全同期（opening/calcReservations が本当に0件）は EMPTY_SOURCE で印を押さず、次の15分まで split＝写し（安全側の一時退避）
