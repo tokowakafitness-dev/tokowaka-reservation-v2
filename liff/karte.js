@@ -1,4 +1,4 @@
-/* 顧客カルテ（設計28・段1＝トレーナー画面だけ）・2026-11-03
+/* 顧客カルテ（設計28 段1 → 設計31 ヒアリング構造化と見せ方の改修）・2026-11-04
  *
  *   予約 LIFF（index.html）の全体の変数を使う：idToken・EDGE_URL・state（trainerId・_isOwner）・liff
  *   Worker の k_ 窓口だけを呼ぶ（GAS には落とさない＝カルテの正本は D1）。
@@ -6,24 +6,112 @@
  *   ★守ること
  *     ・書き込みは clientReqId を「その保存1回」で1つ作り、送り直しでも同じ値を使う（二重にならない）
  *     ・トークンが古くて断られたら（STALE_TOKEN）、入力中の内容を端末に退避して読み直し、戻す（メモを消さない）
- *     ・表示は textContent で入れる（会員の入力・メモを HTML として解釈しない）
+ *     ・表示は textContent で入れる（会員の入力・メモを HTML として解釈しない）。SVG は createElementNS で数値と固定の文字だけ
+ *     ・安全面（健康情報）は端末に退避しない
  *     ・顧客の画面からは呼ばれない（入口のボタンはトレーナー画面にだけある・Worker も customer を通さない）
+ *     ・配色は TOKOWAKA の規約（tokowaka-lp/design-system.md §4）。注意の赤は予約画面の --warn
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-03a カルテ段1';
+  var KARTE_BUILD = '2026-11-04a カルテ 設計31（ヒアリング・体組成・指導の履歴）';
   var DRAFT_KEY = 'karte_draft_v1';
-  var EXERCISES = ['ベンチプレス', 'スクワット', 'デッドリフト', 'ラットプルダウン', 'ショルダープレス'];
-  var MEASURE = [
-    ['weight_kg', '体重', 'kg', 0.1], ['body_fat_pct', '体脂肪率', '%', 0.1], ['lean_kg', '除脂肪量', 'kg', 0.1],
-    ['skeletal_muscle_kg', '骨格筋量', 'kg', 0.1], ['body_water_l', '体水分量', 'L', 0.1], ['visceral_fat', '内臓脂肪', '', 1],
-    ['chest_cm', '胸囲', 'cm', 0.1], ['arm_cm', '上腕', 'cm', 0.1], ['waist_cm', 'ウエスト', 'cm', 0.1],
-    ['hip_cm', 'ヒップ', 'cm', 0.1], ['thigh_cm', '太もも', 'cm', 0.1]
-  ];
-  var CHARTS = [['w', '体重', 'kg'], ['pbf', '体脂肪率', '%'], ['waist', 'ウエスト', 'cm'], ['chest', '胸囲', 'cm']];
-  var COND = { good: '良い', normal: '普通', bad: '悪い' };
+  //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
+  var NEED_SCHEMA = 31;
+  var SCHEMA_MSG = 'システムの更新中です。少し時間をおいて、カルテを開き直してから保存してください（入力はまだ保存されていません）。';
+  function schemaOk(r) { return !!(r && typeof r.karteSchema === 'number' && r.karteSchema >= NEED_SCHEMA); }
 
-  var cur = { customerId: '', name: '', tab: 'summary', root: null, body: null };
+  // ---------------------------------------------------------------- 固定表（鍵は worker/src/lib/karte-hearing.js と同じ・検査で一致を確かめる）
+  var PURPOSES = [['diet', 'ダイエット'], ['bodymake', 'ボディメイク'], ['strength', '筋力アップ'], ['posture', '姿勢改善'],
+    ['condition', 'コンディショニング'], ['stamina', '体力づくり'], ['health', '健康維持'], ['sports', '競技・大会']];
+  var SLIM_AREAS = [['face', '顔・首'], ['arm', '二の腕'], ['chest', '胸'], ['belly', 'お腹'], ['waist', 'くびれ'],
+    ['back', '背中'], ['hip', 'お尻'], ['thigh', '太もも'], ['calf', 'ふくらはぎ']];
+  var REGIONS = [['neck', '首'], ['shoulder_r', '右肩'], ['shoulder_l', '左肩'], ['upper_back', '背中'], ['lower_back', '腰'],
+    ['elbow_r', '右肘'], ['elbow_l', '左肘'], ['wrist_r', '右手首'], ['wrist_l', '左手首'],
+    ['hip_r', '右股関節'], ['hip_l', '左股関節'], ['knee_r', '右膝'], ['knee_l', '左膝'],
+    ['ankle_r', '右足首'], ['ankle_l', '左足首'], ['other', 'その他']];
+  var TAGS = [['training', 'トレーニング'], ['meal', '食事'], ['life', '生活'], ['body', '体組成の変化']];
+  var REASONS = [['snack_down', '間食が減った', 'meal'], ['protein_low', 'タンパク質が少ない', 'meal'], ['eating_out', '外食が多い', 'meal'],
+    ['cut_too_much', '量を減らしすぎ', 'meal'], ['meal_irregular', '食事の時間が不規則', 'meal'],
+    ['self_training_up', '自主トレが増えた', 'exercise'], ['cardio_up', '有酸素運動が増えた', 'exercise'],
+    ['visit_gap', '来店の間隔が空いた', 'exercise'], ['steps_down', '日常の歩数が減った', 'exercise'],
+    ['sleep_short', '睡眠が短い', 'life'], ['busy', '仕事が忙しい', 'life'], ['tired', '疲れが抜けない', 'life']];
+  var REASON_GROUPS = [['meal', '食事'], ['exercise', '運動'], ['life', '睡眠と生活']];
+  //   身体図の位置（前・後ろ。人の右＝図の左）
+  var REGION_POS = { neck: ['f', 60, 40], shoulder_r: ['f', 30, 52], shoulder_l: ['f', 90, 52], elbow_r: ['f', 22, 80], elbow_l: ['f', 98, 80],
+    wrist_r: ['f', 22, 102], wrist_l: ['f', 98, 102], hip_r: ['f', 48, 114], hip_l: ['f', 72, 114], knee_r: ['f', 48, 150], knee_l: ['f', 72, 150],
+    ankle_r: ['f', 48, 184], ankle_l: ['f', 72, 184], upper_back: ['b', 60, 62], lower_back: ['b', 60, 98] };
+  var EXERCISES = ['ベンチプレス', 'チェストプレス', 'スクワット', 'レッグプレス', 'ヒップスラスト', 'デッドリフト', 'ラットプルダウン', 'シーテッドロウ', 'ショルダープレス', 'サイドレイズ', 'アームカール', 'プランク'];
+  //   上から順に当てる（「ショルダープレス」「プレスダウン」「レッグレイズ」を胸・脚に取られないよう、胸は最後）
+  var PARTS = [['体幹', /プランク|クランチ|腹筋|レッグレイズ|ドローイン|デッドバグ/],
+    ['脚・尻', /スクワット|レッグ|ランジ|ヒップ|デッドリフト|ブルガリアン|カーフ|アダクション|アブダクション/],
+    ['背中', /ラット|ロウ|懸垂|プルダウン|背筋|プルオーバー/],
+    ['肩', /ショルダー|サイドレイズ|リアレイズ|フロントレイズ|アップライト/], ['腕', /カール|トライセプス|キックバック|プレスダウン/],
+    ['胸', /ベンチ|チェスト|プレス|フライ|腕立て|ディップス/]];
+  var MEASURE = [
+    ['weight_kg', '体重', 'kg', 0.1], ['body_fat_pct', '体脂肪率', '%', 0.1], ['skeletal_muscle_kg', '骨格筋量', 'kg', 0.1],
+    ['lean_kg', '除脂肪量', 'kg', 0.1], ['body_water_l', '体水分量', 'L', 0.1], ['visceral_fat', '内臓脂肪', '', 1],
+    ['waist_cm', 'ウエスト', 'cm', 0.1], ['hip_cm', 'ヒップ', 'cm', 0.1], ['chest_cm', '胸囲', 'cm', 0.1],
+    ['arm_cm', '上腕', 'cm', 0.1], ['thigh_cm', '太もも', 'cm', 0.1]
+  ];
+  var METRICS = [['w', '体重', 'kg'], ['pbf', '体脂肪率', '%'], ['smm', '骨格筋量', 'kg'], ['waist', 'ウエスト', 'cm']];
+  var COND = { good: '良い', normal: '普通', bad: '悪い' };
+  var TABS = [['summary', '概要'], ['body', '体組成'], ['training', 'トレーニング'], ['notes', '指導の履歴'], ['contract', '契約']];
+
+  var cur = { customerId: '', name: '', tab: 'summary', root: null, body: null, summary: null };
+
+  // ---------------------------------------------------------------- 見た目（固定の CSS。会員のデータは入れない）
+  var CSS = [
+    '#karteRoot{--k-navy:#1b2a47;--k-navy2:#37527e;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#f7f4ee;--k-ink:#22201c;--k-sub:#5d574e;--k-line:#e6ddcd;--k-warn:#a8524a;--k-warn-l:#f6e7e3;',
+    'position:fixed;inset:0;z-index:9000;background:var(--k-cream);overflow:auto;-webkit-overflow-scrolling:touch;color:var(--k-ink);font-family:"Noto Sans JP",sans-serif;}',
+    '#karteRoot .k-wrap{max-width:520px;margin:0 auto;padding:0 0 48px;}',
+    '#karteRoot .k-head{background:var(--k-navy);color:#fff;padding:12px 14px 12px;}',
+    '#karteRoot .k-head-row{display:flex;align-items:center;gap:10px;}',
+    '#karteRoot .k-back{min-width:44px;min-height:44px;border:1px solid rgba(255,255,255,.35);background:transparent;color:#fff;border-radius:3px;font-size:14px;}',
+    '#karteRoot .k-name{font-family:"Shippori Mincho",serif;font-size:20px;font-weight:600;letter-spacing:.04em;}',
+    '#karteRoot .k-meta{font-size:12px;color:#d9dfea;margin-top:2px;}',
+    '#karteRoot .k-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}',
+    '#karteRoot .k-chip-h{font-size:12px;padding:3px 10px;border:1px solid rgba(205,168,108,.6);color:#f3ecdc;border-radius:999px;}',
+    '#karteRoot .k-tabs{display:flex;background:#fff;border-bottom:1px solid var(--k-line);overflow-x:auto;position:sticky;top:0;z-index:2;}',
+    '#karteRoot .k-tab{flex:1 0 auto;min-height:46px;padding:0 12px;border:none;background:transparent;font-size:13px;color:var(--k-sub);border-bottom:3px solid transparent;font-family:inherit;}',
+    '#karteRoot .k-tab.on{color:var(--k-navy);font-weight:700;border-bottom-color:var(--k-gold);}',
+    '#karteRoot .k-body{padding:14px;display:flex;flex-direction:column;gap:12px;}',
+    '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:3px;padding:16px;}',
+    '#karteRoot .k-h{font-family:"Shippori Mincho",serif;font-size:15px;font-weight:600;color:var(--k-navy);margin:0 0 10px;letter-spacing:.03em;}',
+    '#karteRoot .k-sub{font-size:12px;color:var(--k-sub);}',
+    '#karteRoot .k-msg{font-size:13px;color:var(--k-sub);margin:6px 0;}',
+    '#karteRoot .k-msg.bad{color:var(--k-warn);}',
+    '#karteRoot .k-caution{background:var(--k-warn-l);border:1px solid #e4c3bc;border-radius:3px;padding:14px;}',
+    '#karteRoot .k-caution .k-h{color:var(--k-warn);}',
+    '#karteRoot .k-btn{display:block;width:100%;min-height:46px;border:none;border-radius:3px;background:var(--k-navy);color:#fff;font-size:15px;font-weight:600;margin-top:12px;font-family:inherit;}',
+    '#karteRoot .k-btn.out{background:#fff;color:var(--k-navy);border:1px solid var(--k-line);}',
+    '#karteRoot .k-btn.small{display:inline-block;width:auto;min-height:38px;padding:0 12px;font-size:13px;margin:0;}',
+    '#karteRoot .k-pill{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--k-line);background:#fff;color:var(--k-ink);font-size:13px;font-family:inherit;}',
+    '#karteRoot .k-pill.on{border:1.5px solid var(--k-navy);background:var(--k-navy);color:#fff;font-weight:600;}',
+    '#karteRoot .k-pills{display:flex;flex-wrap:wrap;gap:8px;}',
+    '#karteRoot .k-seg{display:flex;background:var(--k-gold-l);border-radius:3px;padding:3px;gap:2px;}',
+    '#karteRoot .k-seg button{flex:1;min-height:38px;border:none;border-radius:3px;background:transparent;font-size:13px;color:var(--k-sub);font-family:inherit;}',
+    '#karteRoot .k-seg button.on{background:#fff;color:var(--k-navy);font-weight:700;}',
+    '#karteRoot .k-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}',
+    '#karteRoot .k-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}',
+    '#karteRoot .k-num{font-family:"Shippori Mincho",serif;font-weight:600;color:var(--k-navy);}',
+    '#karteRoot .k-up{color:var(--k-warn);font-weight:700;} #karteRoot .k-down{color:var(--k-navy2);font-weight:700;}',
+    '#karteRoot .k-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--k-sub);margin-bottom:10px;}',
+    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{min-height:44px;border:1px solid var(--k-line);border-radius:3px;padding:8px 10px;font-size:15px;font-family:inherit;color:var(--k-ink);background:#fff;box-sizing:border-box;width:100%;}',
+    '#karteRoot .k-tag{font-size:11px;padding:3px 8px;border-radius:3px;background:var(--k-gold-l);color:#6b5530;}',
+    '#karteRoot .k-flag{font-size:11px;padding:3px 8px;border-radius:3px;background:var(--k-warn-l);color:var(--k-warn);font-weight:600;}',
+    '#karteRoot .k-flag.soft{background:var(--k-gold-l);color:#6b5530;font-weight:500;}',
+    '#karteRoot .k-flag.grey{background:#efebe3;color:var(--k-sub);font-weight:400;}',
+    '#karteRoot .k-tl{border-left:2px solid var(--k-line);margin-left:6px;padding-left:14px;display:flex;flex-direction:column;gap:12px;}',
+    '#karteRoot .k-tl-item{position:relative;}',
+    '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-gold);}',
+    '#karteRoot .k-bar{height:12px;border-radius:6px;background:#efebe3;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-navy);}',
+    '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:3px;padding:6px 10px;margin-bottom:10px;}'
+  ].join('\n');
+  function ensureStyle() {
+    if (document.getElementById('karteStyle')) return;
+    var st = document.createElement('style'); st.id = 'karteStyle'; st.textContent = CSS;
+    document.head.appendChild(st);
+  }
 
   // ---------------------------------------------------------------- 道具
   function el(tag, attrs, kids) {
@@ -38,23 +126,34 @@
     (kids || []).forEach(function (c) { if (c) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
     return e;
   }
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function sv(tag, attrs, text) {
+    var e = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) e.setAttribute(k, String(attrs[k]));
+    if (text != null) e.textContent = String(text);
+    return e;
+  }
+  function label(tbl, key) { for (var i = 0; i < tbl.length; i++) if (tbl[i][0] === key) return tbl[i][1]; return key; }
   function today() { var t = new Date(Date.now() + 9 * 3600000); return t.toISOString().slice(0, 10); }
   function newReqId() {
     try { if (window.crypto && crypto.randomUUID) return 'k' + crypto.randomUUID().replace(/-/g, ''); } catch (e) {}
     return 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
   }
   function fmtDate(ms) { if (!ms) return ''; var t = new Date(Number(ms) + 9 * 3600000); return (t.getUTCMonth() + 1) + '/' + t.getUTCDate() + ' ' + String(t.getUTCHours()).padStart(2, '0') + ':' + String(t.getUTCMinutes()).padStart(2, '0'); }
-  function msg(text, bad) { return el('p', { class: 'muted', style: 'margin:6px 0;' + (bad ? 'color:var(--warn);' : ''), text: text }); }
+  function md(d) { var p = String(d || '').split('-'); return p.length === 3 ? (+p[1]) + '/' + (+p[2]) : String(d || ''); }
+  function msg(text, bad) { return el('p', { class: 'k-msg' + (bad ? ' bad' : ''), text: text }); }
+  function card(title, kids, cls) { return el('div', { class: cls || 'k-card' }, [title ? el('div', { class: 'k-h', text: title }) : null].concat(kids || [])); }
   function trainerName(id) {
     var list = (window.state && state._allTrainers) || [];
     for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) return list[i].name;
     return id ? 'トレーナー' : '';
   }
+  function r1(x) { return Math.round(Number(x) * 10) / 10; }
   var ERR = {
     NO_CONSENT: '健康情報の同意が記録されていません。先に「同意を記録」してください。',
     CONFLICT: 'ほかの人が先に更新しました。画面を開き直して最新の内容を確認してください。',
     RATE_LIMITED: '短い時間に保存が続いたため、少し時間をおいてください。',
-    BODY_NOT_READY: '体の記録はまだ切り替え前です（従来の InBody 入力を使ってください）。',
+    BODY_NOT_READY: '体組成の記録はまだ切り替え前です（従来の InBody 入力を使ってください）。',
     BAD_STATE: 'この記録はできません（退会・再入会の順序、または取り消せるのは最後の記録だけです）。',
     FORBIDDEN: 'この操作の権限がありません。', NOT_FOUND: '見つかりませんでした。', REQ_REUSED: '送信が重なりました。開き直してください。',
     KARTE_OFF: 'カルテは一時停止中です。', TOO_LARGE: '入力が長すぎます。', BAD_REQUEST: '入力を確認してください。'
@@ -103,14 +202,14 @@
     } catch (e) {}
     return { success: false, code: 'STALE', message: 'ログインの更新が必要です。LINE から開き直してください（入力内容は端末に残っています）。' };
   }
-
   //   読み直しは1か所（検査では window.__karteReload で差し替える）
   function reloadPage() { if (typeof window.__karteReload === 'function') window.__karteReload(); else location.reload(); }
 
   // ---------------------------------------------------------------- 画面の枠
   function ensureRoot() {
+    ensureStyle();
     if (cur.root) return cur.root;
-    var root = el('div', { id: 'karteRoot', style: 'position:fixed;inset:0;z-index:9000;background:var(--bg);overflow:auto;-webkit-overflow-scrolling:touch;' });
+    var root = el('div', { id: 'karteRoot' });
     document.body.appendChild(root);
     cur.root = root;
     return root;
@@ -118,130 +217,273 @@
   function close() { if (cur.root) { cur.root.remove(); cur.root = null; } }
 
   function open(customerId, name, tab, draft) {
+    var same = cur.customerId === String(customerId || '');
     cur.customerId = String(customerId || ''); cur.name = String(name || ''); cur.tab = tab || 'summary';
+    if (!same) cur.summary = null;
     var root = ensureRoot(); root.innerHTML = '';
-    var wrap = el('div', { style: 'max-width:520px;margin:0 auto;padding:14px 14px 40px;' });
-    var head = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;' }, [
-      el('button', { class: 'btn btn-outline', style: 'margin:0;width:auto;padding:8px 12px;', text: '← 戻る', onclick: close }),
-      el('div', { style: 'font-weight:700;font-size:16px;flex:1;text-align:right;', text: cur.name + ' 様のカルテ' })
+    var wrap = el('div', { class: 'k-wrap' });
+    var meta = el('div', { class: 'k-meta' });
+    var chips = el('div', { class: 'k-chips' });
+    var head = el('div', { class: 'k-head' }, [
+      el('div', { class: 'k-head-row' }, [
+        el('button', { class: 'k-back', 'aria-label': '戻る', text: '←', onclick: close }),
+        el('div', { style: 'flex:1;min-width:0;' }, [el('div', { class: 'k-name', text: cur.name + ' 様' }), meta])
+      ]), chips
     ]);
-    var tabs = el('div', { style: 'display:flex;gap:6px;overflow-x:auto;margin:6px 0 12px;' });
-    [['summary', '概要'], ['body', 'からだ'], ['training', 'トレーニング'], ['notes', 'メモ'], ['contract', '契約']].forEach(function (t) {
-      tabs.appendChild(el('button', { class: 'btn ' + (t[0] === cur.tab ? '' : 'btn-outline'), style: 'margin:0;width:auto;padding:8px 12px;white-space:nowrap;', text: t[1],
+    var tabs = el('div', { class: 'k-tabs', role: 'tablist' });
+    TABS.forEach(function (t) {
+      tabs.appendChild(el('button', { class: 'k-tab' + (t[0] === cur.tab ? ' on' : ''), role: 'tab', text: t[1],
         onclick: function () { open(cur.customerId, cur.name, t[0]); } }));
     });
-    var body = el('div');
+    var body = el('div', { class: 'k-body' });
     wrap.appendChild(head); wrap.appendChild(tabs); wrap.appendChild(body);
     root.appendChild(wrap);
-    cur.body = body;
+    cur.body = body; cur.headMeta = meta; cur.headChips = chips;
+    fillHead();
     ({ summary: tabSummary, body: tabBody, training: tabTraining, notes: tabNotes, contract: tabContract })[cur.tab](body, draft);
+  }
+  //   見出しの補足（概要を一度読めば埋まる）
+  function fillHead() {
+    var s = cur.summary; if (!s || !cur.headMeta) return;
+    var c = s.customer || {};
+    cur.headMeta.textContent = (c.age != null ? c.age + '歳 ／ ' : '') + (c.trainerId ? '担当 ' + trainerName(c.trainerId) : '担当なし');
+    cur.headChips.innerHTML = '';
+    cur.headChips.appendChild(el('span', { class: 'k-chip-h', text: s.nextReservation ? '次回 ' + fmtDate(s.nextReservation.startAt) : '次回の予約なし' }));
+    if (s.consent && s.consent.state !== 'agreed') cur.headChips.appendChild(el('span', { class: 'k-chip-h', text: '同意待ち' }));
+  }
+  function loadSummary() {
+    if (cur.summary) return Promise.resolve(cur.summary);
+    return kRead('k_summary', { customerId: cur.customerId }).then(function (r) { if (r && r.success) { cur.summary = r; fillHead(); } return r; });
+  }
+
+  // ---------------------------------------------------------------- 身体図（数値と固定の文字だけ）
+  function painColor(level) { return level >= 7 ? '#8e3b34' : (level >= 4 ? '#a8524a' : '#c9a27a'); }
+  function bodyFigure(pain, side, size) {
+    var w = size || 110, h = Math.round(w * 200 / 120);
+    var s = sv('svg', { viewBox: '0 0 120 200', width: w, height: h, role: 'img' });
+    var names = [];
+    var fill = '#efe7d6', line = '#d8ccb4';
+    s.appendChild(sv('circle', { cx: 60, cy: 22, r: 16, fill: fill, stroke: line }));
+    s.appendChild(sv('rect', { x: 34, y: 44, width: 52, height: 66, rx: 14, fill: fill, stroke: line }));
+    s.appendChild(sv('rect', { x: 14, y: 48, width: 16, height: 60, rx: 8, fill: fill, stroke: line }));
+    s.appendChild(sv('rect', { x: 90, y: 48, width: 16, height: 60, rx: 8, fill: fill, stroke: line }));
+    s.appendChild(sv('rect', { x: 38, y: 112, width: 20, height: 80, rx: 9, fill: fill, stroke: line }));
+    s.appendChild(sv('rect', { x: 62, y: 112, width: 20, height: 80, rx: 9, fill: fill, stroke: line }));
+    (pain || []).forEach(function (p) {
+      var pos = REGION_POS[p.region];
+      if (!pos || pos[0] !== side) return;
+      var lv = Number(p.level) || 0;
+      s.appendChild(sv('circle', { cx: pos[1], cy: pos[2], r: 11, fill: painColor(lv), opacity: 0.9 }));
+      s.appendChild(sv('text', { x: pos[1], y: pos[2] + 4.5, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: lv >= 4 ? '#ffffff' : '#22201c' }, lv));
+      names.push(label(REGIONS, p.region) + ' ' + lv);
+    });
+    s.setAttribute('aria-label', (side === 'f' ? '身体図（前）' : '身体図（後ろ）') + (names.length ? '：' + names.join('・') : '：記録なし'));
+    return s;
+  }
+  function ring(pct, text, size) {
+    var z = size || 64, r = z / 2 - 5, c = 2 * Math.PI * r, p = Math.max(0, Math.min(1, Number(pct) || 0));
+    var s = sv('svg', { viewBox: '0 0 ' + z + ' ' + z, width: z, height: z, role: 'img', 'aria-label': text });
+    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#efe7d6', 'stroke-width': 8 }));
+    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#1b2a47', 'stroke-width': 8, 'stroke-linecap': 'round',
+      'stroke-dasharray': (c * p).toFixed(1) + ' ' + c.toFixed(1), transform: 'rotate(-90 ' + z / 2 + ' ' + z / 2 + ')' }));
+    s.appendChild(sv('text', { x: z / 2, y: z / 2 + 5, 'text-anchor': 'middle', 'font-size': Math.round(z / 4.4), 'font-weight': 700, fill: '#22201c' }, text));
+    return s;
   }
 
   // ---------------------------------------------------------------- 概要
   function tabSummary(box, draft) {
     box.appendChild(msg('読み込み中…'));
-    kRead('k_summary', { customerId: cur.customerId }).then(function (r) {
+    cur.summary = null;
+    Promise.all([loadSummary(), kRead('k_body', { customerId: cur.customerId })]).then(function (rs) {
+      var r = rs[0], b = rs[1];
       box.innerHTML = '';
       if (!r || !r.success) { box.appendChild(msg(errText(r), true)); return; }
-      var c = r.customer || {};
-      //   注意事項（安全面の要点）を最上部に
-      var safe = el('div', { class: 'card', style: 'border-color:' + (r.safetyBrief ? 'var(--warn)' : 'var(--line)') + ';' });
-      safe.appendChild(el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '注意事項（安全面）' }));
-      if (r.consent && r.consent.state === 'agreed') {
-        if (r.safetyBrief && (r.safetyBrief.restrictions || r.safetyBrief.painSites)) {
-          if (r.safetyBrief.restrictions) safe.appendChild(el('div', { text: '運動制限：' + r.safetyBrief.restrictions }));
-          if (r.safetyBrief.painSites) safe.appendChild(el('div', { text: '痛む部位：' + r.safetyBrief.painSites }));
-        } else safe.appendChild(msg('記録はまだありません。'));
-        safe.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:8px 0 0;', text: '安全面を見る・書く', onclick: function () { safetyForm(box); } }));
+      var hearing = (r.profile && r.profile.hearing) || {};
+      var latest = latestBody(b && b.success && b.ready ? b.rows : []);
+
+      //   注意すること（安全面の要点）を最上部に
+      var agreed = r.consent && r.consent.state === 'agreed';
+      var sb = r.safetyBrief;
+      var caut = el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: '注意すること' })]);
+      if (agreed) {
+        var pain = (sb && sb.pain) || [];
+        if (pain.length || (sb && (sb.restrictions || sb.painSites || sb.diagnosis || sb.medication))) {
+          var row = el('div', { style: 'display:flex;gap:12px;align-items:flex-start;' });
+          if (pain.length) row.appendChild(el('div', { style: 'display:flex;gap:2px;' }, [bodyFigure(pain, 'f', 64), bodyFigure(pain, 'b', 64)]));
+          var txt = el('div', { style: 'flex:1;display:flex;flex-direction:column;gap:4px;font-size:14px;line-height:1.6;' });
+          pain.forEach(function (p) { txt.appendChild(el('div', { text: label(REGIONS, p.region) + ' ' + p.level + '/10' + (p.symptom ? '（' + p.symptom + '）' : '') })); });
+          if (sb.restrictions) txt.appendChild(el('div', { text: '運動制限：' + sb.restrictions }));
+          if (sb.painSites && !pain.length) txt.appendChild(el('div', { text: '痛む部位：' + sb.painSites }));
+          txt.appendChild(el('div', { class: 'k-sub', text: '医師の診断：' + (sb.diagnosis || 'なし') + ' ／ 服薬：' + (sb.medication || 'なし') }));
+          row.appendChild(txt); caut.appendChild(row);
+        } else caut.appendChild(msg('記録はまだありません。'));
+        caut.appendChild(el('button', { class: 'k-btn out small', style: 'margin-top:10px;', text: '安全面を見る・書く', onclick: function () { safetyForm(box); } }));
       } else {
-        safe.appendChild(msg(r.consent && r.consent.state === 'revoked' ? '同意が撤回されています（健康情報は記録できません）。' : '同意待ち：入会時の同意書でカルテでの健康情報の管理に同意をもらってから記録できます。'));
+        caut.appendChild(msg(r.consent && r.consent.state === 'revoked' ? '同意が撤回されています（健康情報は記録できません）。' : '同意待ち：入会時の同意書でカルテでの健康情報の管理に同意をもらってから記録できます。'));
       }
-      safe.appendChild(consentRow(r.consent));
-      box.appendChild(safe);
+      caut.appendChild(consentRow(r.consent));
+      box.appendChild(caut);
 
-      var info = el('div', { class: 'card' });
-      info.appendChild(el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '基本' }));
-      info.appendChild(el('div', { text: (c.age != null ? c.age + '歳　' : '') + (c.trainerId ? '担当：' + trainerName(c.trainerId) : '担当なし') }));
-      if (r.nextReservation) info.appendChild(el('div', { text: '次回の予約：' + fmtDate(r.nextReservation.startAt) }));
-      else info.appendChild(el('div', { style: 'color:var(--warn);', text: '次回の予約：なし' }));
-      if (r.assigned && c.contractStatus) info.appendChild(el('div', { class: 'muted', text: '契約の状態：' + c.contractStatus }));
-      box.appendChild(info);
+      //   目標（3列）
+      var p = r.profile || {};
+      var g = el('div', { class: 'k-grid3' });
+      g.appendChild(goalCol('体重', latest.w, hearing.targetWeight, 'kg'));
+      g.appendChild(goalCol('体脂肪率', latest.pbf, hearing.targetFat, '%'));
+      var dl = p.goal_deadline ? Math.ceil((Date.parse(p.goal_deadline) - Date.parse(today())) / 86400000) : null;
+      g.appendChild(el('div', {}, [el('div', { class: 'k-sub', text: '期日' }),
+        el('div', { class: 'k-num', style: 'font-size:20px;margin-top:4px;', text: p.goal_deadline ? md(p.goal_deadline) : '—' }),
+        el('div', { class: 'k-sub', text: p.goal_deadline ? p.goal_deadline.slice(0, 4) + '年' : '' }),
+        el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-navy);margin-top:4px;', text: dl == null ? '' : (dl >= 0 ? '残り ' + dl + '日' : '期日を過ぎています') })]));
+      var goalCard = card('目標', [g]);
+      if (p.goal_text) goalCard.appendChild(el('div', { style: 'font-size:13px;line-height:1.7;background:var(--k-cream);border-radius:3px;padding:10px 12px;margin-top:12px;', text: '理想：' + p.goal_text }));
+      box.appendChild(goalCard);
 
-      box.appendChild(profileCard(r.profile, draft && draft.kind === 'profile' ? draft.data : null));
-      if (r.lastNote) {
-        var n = r.lastNote;
-        var ln = el('div', { class: 'card' });
-        ln.appendChild(el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '直近のメモ（' + n.session_date + '・' + trainerName(n.author_trainer_id) + '）' }));
-        if (n.condition) ln.appendChild(el('div', { text: '体調：' + (COND[n.condition] || n.condition) }));
-        if (n.body) ln.appendChild(el('div', { style: 'white-space:pre-wrap;', text: n.body }));
-        if (n.next_plan) ln.appendChild(el('div', { text: '次回：' + n.next_plan }));
-        box.appendChild(ln);
+      //   やる気＋目的
+      var pc = el('div', { class: 'k-pills', style: 'gap:6px;' });
+      (hearing.purposes || []).forEach(function (k) { pc.appendChild(el('span', { class: 'k-tag', style: 'font-size:12px;padding:5px 10px;', text: label(PURPOSES, k) })); });
+      if (!(hearing.purposes || []).length) pc.appendChild(el('span', { class: 'k-sub', text: '目的は未記入' }));
+      box.appendChild(el('div', { class: 'k-card', style: 'display:flex;gap:16px;align-items:center;' }, [
+        hearing.motivation ? ring(hearing.motivation / 10, String(hearing.motivation), 72) : el('div', { class: 'k-sub', style: 'width:72px;text-align:center;', text: 'やる気 未記入' }),
+        el('div', { style: 'flex:1;display:flex;flex-direction:column;gap:8px;' }, [el('div', { class: 'k-sub', text: 'やる気（10段階）と目的' }), pc])
+      ]));
+
+      //   引き締めたい部位
+      if ((hearing.slimAreas || []).length) {
+        var sa = el('div', { style: 'display:flex;gap:8px;' });
+        hearing.slimAreas.forEach(function (k, i) {
+          sa.appendChild(el('div', { style: 'flex:1;text-align:center;padding:10px 0;border-radius:3px;background:' + (i === 0 ? 'var(--k-gold-l)' : 'var(--k-cream)') + ';' }, [
+            el('div', { class: 'k-sub', text: String(i + 1) }), el('div', { style: 'font-size:15px;font-weight:700;', text: label(SLIM_AREAS, k) })]));
+        });
+        box.appendChild(card('引き締めたい部位', [sa]));
       }
+
+      //   運動と生活
+      var life = [['いまの運動', hearing.exerciseNow], ['過去の経験', hearing.exercisePast], ['睡眠', hearing.sleep], ['食事', hearing.meals]].filter(function (x) { return x[1]; });
+      if (life.length) {
+        var lg = el('div', { class: 'k-grid2', style: 'font-size:13px;' });
+        life.forEach(function (x) { lg.appendChild(el('div', {}, [el('div', { class: 'k-sub', text: x[0] }), el('div', { text: x[1] })])); });
+        box.appendChild(card('運動と生活', [lg]));
+      }
+      box.appendChild(el('button', { class: 'k-btn' + (r.profile && r.profile.hearing ? ' out' : ''), text: r.profile && r.profile.hearing ? 'ヒアリングを編集' : 'ヒアリングを記入する',
+        onclick: function () { hearingForm(box, r, null); } }));
+
+      //   直近の指導
+      if (r.lastNote) box.appendChild(card('直近の指導', [noteView(r.lastNote)]));
       if (r.assigned) box.appendChild(membershipCard());
+      if (draft && draft.kind === 'profile') hearingForm(box, r, draft.data);
     });
+  }
+  function goalCol(name, now, target, unit) {
+    var rest = (now != null && target != null) ? r1(Math.abs(now - target)) : null;
+    return el('div', {}, [el('div', { class: 'k-sub', text: name }),
+      el('div', { class: 'k-num', style: 'font-size:20px;margin-top:4px;', text: now != null ? String(now) + unit : '—' }),
+      el('div', { class: 'k-sub', text: target != null ? '→ ' + target + unit : '目標 未設定' }),
+      el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-navy);margin-top:4px;', text: rest != null ? 'あと ' + rest + unit : '' })]);
   }
 
   function consentRow(consent) {
     var row = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;' });
     var state0 = consent ? consent.state : 'none';
     function rec(stateTo, method) {
-      var label = stateTo === 'agreed' ? '同意を記録しますか？（' + (method === 'paper' ? '紙の同意書' : 'LINE') + '）' : '同意の撤回を記録しますか？\n★記録済みの健康情報は削除され、元に戻せません。';
-      if (!window.confirm(label)) return;
-      var id = newReqId();
-      kWrite('k_saveConsent', { customerId: cur.customerId, state: stateTo, method: method }, id).then(function (r) {
+      var lbl = stateTo === 'agreed' ? '同意を記録しますか？（' + (method === 'paper' ? '紙の同意書' : 'LINE') + '）' : '同意の撤回を記録しますか？\n★記録済みの健康情報は削除され、元に戻せません。';
+      if (!window.confirm(lbl)) return;
+      kWrite('k_saveConsent', { customerId: cur.customerId, state: stateTo, method: method }, newReqId()).then(function (r) {
         if (!r || !r.success) { window.alert(errText(r)); return; }
         open(cur.customerId, cur.name, 'summary');
       });
     }
     if (state0 !== 'agreed') {
-      row.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:0;width:auto;padding:6px 10px;font-size:12px;', text: '同意を記録（紙）', onclick: function () { rec('agreed', 'paper'); } }));
-      row.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:0;width:auto;padding:6px 10px;font-size:12px;', text: '同意を記録（LINE）', onclick: function () { rec('agreed', 'line'); } }));
+      row.appendChild(el('button', { class: 'k-btn out small', text: '同意を記録（紙）', onclick: function () { rec('agreed', 'paper'); } }));
+      row.appendChild(el('button', { class: 'k-btn out small', text: '同意を記録（LINE）', onclick: function () { rec('agreed', 'line'); } }));
     } else {
-      row.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:0;width:auto;padding:6px 10px;font-size:12px;color:var(--warn);', text: '撤回を記録', onclick: function () { rec('revoked', null); } }));
+      row.appendChild(el('button', { class: 'k-btn out small', style: 'color:var(--k-warn);', text: '撤回を記録', onclick: function () { rec('revoked', null); } }));
     }
     return row;
   }
 
-  function profileCard(p, draftData) {
-    var card = el('div', { class: 'card' });
-    card.appendChild(el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '目標・動機' }));
-    var v = draftData || p || {};
-    var f = {
-      goalText: input('目標（例：胸板を厚くしたい・−5kg）', v.goal_text || v.goalText),
-      goalValue: input('目標の数値', v.goal_value != null ? v.goal_value : v.goalValue, 'number'),
-      goalUnit: input('単位（kg・cm など）', v.goal_unit || v.goalUnit),
-      goalDeadline: input('期限', v.goal_deadline || v.goalDeadline, 'date'),
-      motive: area('なぜそうなりたいか（結婚式・自信など）', v.motive),
-      history: area('過去のジム経験と続かなかった理由', v.history)
-    };
-    for (var k in f) card.appendChild(f[k].row);
+  function field(lbl, val, type, attrs) {
+    var i = el(type === 'area' ? 'textarea' : 'input', type === 'area' ? { rows: '3' } : { type: type || 'text' });
+    if (attrs) for (var k in attrs) i.setAttribute(k, attrs[k]);
+    if (val != null && val !== '') i.value = val;
+    if (type === 'number') { i.inputMode = 'decimal'; i.step = 'any'; }
+    return { row: el('label', { class: 'k-field' }, [el('span', { text: lbl }), i]), get: function () { return i.value.trim(); }, el: i };
+  }
+  function pills(tbl, selected, opts) {
+    var o = opts || {}, sel = (selected || []).slice();
+    var box = el('div', { class: 'k-pills' });
+    var btns = {};
+    function paint() {
+      tbl.forEach(function (t) {
+        var i = sel.indexOf(t[0]);
+        btns[t[0]].className = 'k-pill' + (i >= 0 ? ' on' : '');
+        btns[t[0]].textContent = (o.ordered && i >= 0 ? (i + 1) + ' ' : '') + t[1];
+        btns[t[0]].setAttribute('aria-pressed', i >= 0 ? 'true' : 'false');
+      });
+    }
+    tbl.forEach(function (t) {
+      btns[t[0]] = el('button', { type: 'button', onclick: function () {
+        var i = sel.indexOf(t[0]);
+        if (i >= 0) sel.splice(i, 1);
+        else if (!o.max || sel.length < o.max) sel.push(t[0]);
+        if (o.single) sel = i >= 0 ? [] : [t[0]];
+        paint();
+      } });
+      box.appendChild(btns[t[0]]);
+    });
+    paint();
+    return { el: box, get: function () { return sel.slice(); } };
+  }
+  function scale(val) {
+    var v = val || null;
+    var box = el('div', { style: 'display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:3px;' });
+    var bs = [];
+    for (var n = 1; n <= 10; n++) (function (n) {
+      var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:3px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { v = (v === n ? null : n); paint(); } });
+      bs.push(b); box.appendChild(b);
+    })(n);
+    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:3px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #1b2a47;background:#1b2a47;color:#fff;font-weight:700' : '1px solid #e6ddcd;background:#fff;color:#22201c'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
+    paint();
+    return { el: box, get: function () { return v; } };
+  }
+
+  // ---------------------------------------------------------------- ヒアリング入力
+  function hearingForm(box, r, draftData) {
+    box.innerHTML = '';
+    var p = r.profile || {}, h = draftData ? draftData.hearing || {} : (p.hearing || {});
+    var purposes = pills(PURPOSES, h.purposes);
+    var slim = pills(SLIM_AREAS, h.slimAreas, { max: 3, ordered: true });
+    var mot = scale(h.motivation);
+    var tw = field('目標体重 kg', h.targetWeight, 'number'), tf = field('目標体脂肪率 %', h.targetFat, 'number');
+    var dl = field('期日', draftData ? draftData.goalDeadline : p.goal_deadline, 'date');
+    var ideal = field('理想の姿（本人の言葉で）', draftData ? draftData.goalText : p.goal_text, 'area', { maxlength: '500' });
+    var now = field('いまの運動', h.exerciseNow, 'text', { maxlength: '100' }), past = field('過去の経験', h.exercisePast, 'text', { maxlength: '100' });
+    var sleep = field('睡眠', h.sleep, 'text', { maxlength: '100' }), meals = field('食事', h.meals, 'text', { maxlength: '100' });
+    box.appendChild(card('目的（いくつでも）', [purposes.el]));
+    box.appendChild(card('引き締めたい部位（上位3つまで・押した順）', [slim.el]));
+    var tg = el('div', { class: 'k-grid2' }, [tw.row, tf.row]);
+    box.appendChild(card('目標', [tg, dl.row, ideal.row, el('div', { class: 'k-sub', style: 'margin-bottom:6px;', text: 'やる気（10段階）' }), mot.el]));
+    box.appendChild(card('運動と生活', [el('div', { class: 'k-note-hint', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }), el('div', { class: 'k-grid2' }, [now.row, past.row, sleep.row, meals.row])]));
     var reqId = newReqId();
-    card.appendChild(el('button', { class: 'btn', text: '保存する', onclick: function () {
-      var data = {}; for (var k in f) data[k] = f[k].get();
-      var params = { customerId: cur.customerId, rev: p ? p.rev : 0 };
-      for (var k2 in data) params[k2] = data[k2];
-      kWrite('k_saveProfile', params, reqId, { kind: 'profile', data: data }).then(function (r) {
-        if (!r || !r.success) { window.alert(errText(r)); return; }
+    function collect() {
+      var num = function (s) { return s === '' ? null : Number(s); };
+      return { goalText: ideal.get(), goalDeadline: dl.get(), hearing: { purposes: purposes.get(), slimAreas: slim.get(), motivation: mot.get(),
+        targetWeight: num(tw.get()), targetFat: num(tf.get()), exerciseNow: now.get(), exercisePast: past.get(), sleep: sleep.get(), meals: meals.get() } };
+    }
+    box.appendChild(el('button', { class: 'k-btn', text: 'ヒアリングを保存', onclick: function () {
+      var data = collect();
+      if ((data.hearing.targetWeight != null && !(data.hearing.targetWeight >= 20 && data.hearing.targetWeight <= 250))
+          || (data.hearing.targetFat != null && !(data.hearing.targetFat >= 3 && data.hearing.targetFat <= 60))) { window.alert('目標の数値を確認してください。'); return; }
+      if (!schemaOk(r)) { window.alert(SCHEMA_MSG); return; }
+      var params = { customerId: cur.customerId, rev: r.profile ? r.profile.rev : 0, goalText: data.goalText, goalDeadline: data.goalDeadline, hearing: data.hearing };
+      kWrite('k_saveProfile', params, reqId, { kind: 'profile', data: data }).then(function (w) {
+        if (!w || !w.success) { window.alert(errText(w)); return; }
         window.alert('保存しました。'); open(cur.customerId, cur.name, 'summary');
       });
     } }));
-    return card;
-  }
-  function input(label, val, type) {
-    var i = el('input', { type: type || 'text', style: 'width:100%;padding:9px;box-sizing:border-box;' });
-    if (val != null && val !== '') i.value = val;
-    if (type === 'number') { i.inputMode = 'decimal'; i.step = 'any'; }
-    return { row: el('label', { style: 'display:block;margin-bottom:8px;font-size:13px;' }, [el('div', { class: 'muted', text: label }), i]),
-             get: function () { return i.value.trim(); }, el: i };
-  }
-  function area(label, val, max) {
-    var t = el('textarea', { rows: '3', style: 'width:100%;padding:9px;box-sizing:border-box;font-family:inherit;' });
-    if (max) t.maxLength = max;
-    if (val) t.value = val;
-    return { row: el('label', { style: 'display:block;margin-bottom:8px;font-size:13px;' }, [el('div', { class: 'muted', text: label }), t]),
-             get: function () { return t.value.trim(); }, el: t };
+    box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { open(cur.customerId, cur.name, 'summary'); } }));
   }
 
+  // ---------------------------------------------------------------- 安全面（健康情報・端末に退避しない）
   function safetyForm(box) {
     box.innerHTML = ''; box.appendChild(msg('読み込み中…'));
     kRead('k_safety', { customerId: cur.customerId }).then(function (r) {
@@ -249,15 +491,51 @@
       if (!r || !r.success) { box.appendChild(msg(errText(r), true)); return; }
       if (r.consent !== 'agreed') { box.appendChild(msg('同意が無いため、健康情報は表示・記録できません。', true)); return; }
       var s = r.safety || {};
-      var card = el('div', { class: 'card' });
-      card.appendChild(el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '安全面（健康情報・要配慮個人情報）' }));
-      card.appendChild(msg('指導に必要な範囲だけを書いてください。トレーナー全員が読めます。'));
-      var f = { conditions: area('既往歴', s.conditions, 500), injuries: area('ケガ', s.injuries, 500), painSites: area('痛む部位', s.pain_sites, 500),
-                medication: area('服薬', s.medication, 500), restrictions: area('運動制限', s.restrictions, 500) };
-      for (var k in f) card.appendChild(f[k].row);
+      var pain = (s.pain || []).map(function (x) { return { region: x.region, level: x.level, symptom: x.symptom || '' }; });
+      var figs = el('div', { style: 'display:flex;gap:12px;justify-content:center;' });
+      var list = el('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:10px;' });
+      var editor = el('div');
+      function redraw() {
+        figs.innerHTML = '';
+        figs.appendChild(el('div', { style: 'text-align:center;' }, [bodyFigure(pain, 'f', 110), el('div', { class: 'k-sub', text: '前' })]));
+        figs.appendChild(el('div', { style: 'text-align:center;' }, [bodyFigure(pain, 'b', 110), el('div', { class: 'k-sub', text: '後ろ' })]));
+        list.innerHTML = '';
+        pain.forEach(function (p, i) {
+          list.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;font-size:14px;' }, [
+            el('span', { style: 'flex:1;', text: label(REGIONS, p.region) + ' ' + p.level + '/10' + (p.symptom ? '（' + p.symptom + '）' : '') }),
+            el('button', { type: 'button', class: 'k-btn out small', text: '直す', onclick: function () { edit(p.region); } }),
+            el('button', { type: 'button', class: 'k-btn out small', text: '外す', onclick: function () { pain.splice(i, 1); redraw(); } })]));
+        });
+      }
+      function edit(region) {
+        editor.innerHTML = '';
+        var ex = null; pain.forEach(function (p) { if (p.region === region) ex = p; });
+        var lv = scale(ex ? ex.level : null);
+        var sy = field('症状（80字まで）', ex ? ex.symptom : '', 'text', { maxlength: '80' });
+        editor.appendChild(el('div', { class: 'k-caution', style: 'margin-top:10px;' }, [el('div', { class: 'k-h', text: label(REGIONS, region) + ' の強さ' }), lv.el, el('div', { style: 'height:8px;' }), sy.row,
+          el('button', { type: 'button', class: 'k-btn small', text: 'この部位を入れる', onclick: function () {
+            if (!lv.get()) { window.alert('強さを選んでください。'); return; }
+            var item = { region: region, level: lv.get(), symptom: sy.get() };
+            var done = false; pain.forEach(function (p, i) { if (p.region === region) { pain[i] = item; done = true; } });
+            if (!done) { if (pain.length >= 12) { window.alert('部位は12か所までです。'); return; } pain.push(item); }
+            editor.innerHTML = ''; redraw();
+          } })]));
+      }
+      var pick = el('div', { class: 'k-pills', style: 'margin-top:10px;' });
+      REGIONS.forEach(function (t) { pick.appendChild(el('button', { type: 'button', class: 'k-pill', text: t[1], onclick: function () { edit(t[0]); } })); });
+      var f = { conditions: field('既往歴', s.conditions, 'area', { maxlength: '500' }), injuries: field('ケガ', s.injuries, 'area', { maxlength: '500' }),
+                diagnosis: field('医師の診断', s.diagnosis, 'area', { maxlength: '500' }), medication: field('服薬', s.medication, 'area', { maxlength: '500' }),
+                restrictions: field('運動制限', s.restrictions, 'area', { maxlength: '500' }), painSites: field('痛む部位（自由記入・旧欄）', s.pain_sites, 'area', { maxlength: '500' }) };
+      box.appendChild(card('痛み・不調', [msg('部位を選び、強さを 1〜10 で入れます。ここに入れた内容は概要の一番上に出ます（トレーナー全員が読めます）。'), figs, list, pick, editor]));
+      var c2 = card('健康の情報', []);
+      for (var k in f) c2.appendChild(f[k].row);
+      box.appendChild(c2);
+      redraw();
       var reqId = newReqId();
-      card.appendChild(el('button', { class: 'btn', text: '保存する', onclick: function () {
-        var params = { customerId: cur.customerId, rev: r.safety ? r.safety.rev : 0 };
+      box.appendChild(el('button', { class: 'k-btn', text: '保存する', onclick: function () {
+        if (!schemaOk(r)) { window.alert(SCHEMA_MSG); return; }
+        var params = { customerId: cur.customerId, rev: r.safety ? r.safety.rev : 0,
+          painMap: pain.map(function (p) { return { region: p.region, level: p.level, symptom: p.symptom || null }; }) };
         for (var k in f) params[k] = f[k].get();
         //   ★安全面は端末に退避しない（健康情報を sessionStorage に残さない）
         kWrite('k_saveSafety', params, reqId, null).then(function (w) {
@@ -265,76 +543,160 @@
           window.alert('保存しました。'); open(cur.customerId, cur.name, 'summary');
         });
       } }));
-      card.appendChild(el('button', { class: 'btn btn-outline', text: '戻る', onclick: function () { open(cur.customerId, cur.name, 'summary'); } }));
-      box.appendChild(card);
+      box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { open(cur.customerId, cur.name, 'summary'); } }));
     });
   }
 
   function membershipCard() {
-    var card = el('div', { class: 'card' });
-    card.appendChild(el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '退会・再入会の記録' }));
-    card.appendChild(msg('退会後3年の保存期間の起算日になります。契約の期限切れとは別に、退会が決まったときだけ記録してください。'));
-    var d = input('発効日', today(), 'date'); d.el.max = today();
-    card.appendChild(d.row);
+    var d = field('発効日', today(), 'date'); d.el.max = today();
     function rec(kind) {
       if (!window.confirm((kind === 'withdrawn' ? '退会' : '再入会') + '（' + d.get() + '）を記録しますか？')) return;
       kWrite('k_recordMembership', { customerId: cur.customerId, kind: kind, effectiveDate: d.get() }, newReqId()).then(function (r) {
         window.alert(r && r.success ? '記録しました。' : errText(r));
       });
     }
-    card.appendChild(el('div', { style: 'display:flex;gap:6px;' }, [
-      el('button', { class: 'btn btn-outline', style: 'margin:0;', text: '退会を記録', onclick: function () { rec('withdrawn'); } }),
-      el('button', { class: 'btn btn-outline', style: 'margin:0;', text: '再入会を記録', onclick: function () { rec('rejoined'); } })
-    ]));
-    return card;
+    return card('退会・再入会の記録', [msg('退会後3年の保存期間の起算日になります。契約の期限切れとは別に、退会が決まったときだけ記録してください。'), d.row,
+      el('div', { style: 'display:flex;gap:6px;' }, [
+        el('button', { class: 'k-btn out small', text: '退会を記録', onclick: function () { rec('withdrawn'); } }),
+        el('button', { class: 'k-btn out small', text: '再入会を記録', onclick: function () { rec('rejoined'); } })])]);
   }
 
-  // ---------------------------------------------------------------- からだ
-  function lineChart(points, goal, unit) {
+  // ---------------------------------------------------------------- 体組成
+  function latestBody(rows) {
+    var out = {};
+    (rows || []).slice().sort(function (a, b) { return a.d < b.d ? -1 : 1; }).forEach(function (x) { METRICS.concat([['lean']]).forEach(function (m) { if (x[m[0]] != null) out[m[0]] = x[m[0]]; }); });
+    return out;
+  }
+  /** 値のある記録の、最後の2つ（前回比） */
+  function lastTwo(rows, key) {
+    var v = (rows || []).filter(function (x) { return x[key] != null; }).sort(function (a, b) { return a.d < b.d ? -1 : 1; });
+    return { first: v[0] || null, prev: v.length >= 2 ? v[v.length - 2] : null, last: v[v.length - 1] || null, n: v.length };
+  }
+  /**
+   * 見立ての一言（規則で決める・断定しない・設計31）。記録2件未満は null
+   *   返り値 { kind:'good'|'reverse'|'slow'|'mixed', text }
+   */
+  function assess(rows, purposes) {
+    var w = lastTwo(rows, 'w'), f = lastTwo(rows, 'pbf'), m = lastTwo(rows, 'smm');
+    if (!w.prev && !f.prev) return null;
+    var dw = w.prev ? w.last.w - w.prev.w : 0, df = f.prev ? f.last.pbf - f.prev.pbf : 0, dm = m.prev ? m.last.smm - m.prev.smm : 0;
+    var lose = (purposes || []).some(function (k) { return k === 'diet' || k === 'bodymake'; });
+    if (Math.abs(dw) < 0.3 && Math.abs(df) < 0.3) return { kind: 'slow', text: '前回からの変化はゆるやかです。食事・運動・生活のうち、続けやすい点を一つ決めて次回まで試してみましょう。' };
+    if (lose && dw > 0 && df > 0) return { kind: 'reverse', text: '目的とは逆の動きが見られます。下の「変化の理由を確かめる」で食事・運動・生活を整理し、次回の方針を決めましょう。' };
+    if (dw <= 0 && df <= 0 && !(dm < -0.2)) return { kind: 'good', text: '体重と体脂肪率が下がり、骨格筋量は保てています。いまの進め方で良さそうです。次回も同じ時間帯に測ると比べやすくなります。' };
+    return { kind: 'mixed', text: '指標によって動きが分かれています。測る時間帯や前日の食事でも変わるため、次回の測定と合わせて見ていきましょう。' };
+  }
+
+  function lineChart(points, goalPts, unit) {
     var pts = (points || []).filter(function (p) { return p.v != null; });
-    var W = 320, H = 150, P = 28;
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" style="display:block">';
-    if (pts.length < 1) return el('div', { class: 'muted', text: 'まだ記録がありません。' });
-    var all = pts.map(function (p) { return p.v; }).concat((goal || []).map(function (g) { return g.v; }));
+    if (pts.length < 1) return msg('まだ記録がありません。');
+    var W = 320, H = 160, P = 28;
+    var all = pts.map(function (p) { return p.v; }).concat((goalPts || []).map(function (g) { return g.v; }));
     var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
     if (hi === lo) { hi += 1; lo -= 1; }
-    var dates = pts.map(function (p) { return p.d; }).concat((goal || []).map(function (g) { return g.d; })).sort();
+    var dates = pts.map(function (p) { return p.d; }).concat((goalPts || []).map(function (g) { return g.d; })).sort();
     var t0 = Date.parse(dates[0]), t1 = Date.parse(dates[dates.length - 1]); if (t1 === t0) t1 = t0 + 86400000;
     function x(d) { return P + (W - P * 2) * (Date.parse(d) - t0) / (t1 - t0); }
     function y(v) { return H - P + 10 - (H - P * 2 + 10) * (v - lo) / (hi - lo); }
-    if (goal && goal.length >= 2) svg += '<polyline fill="none" stroke="#b8965a" stroke-dasharray="4 4" stroke-width="1.5" points="' + goal.map(function (g) { return x(g.d).toFixed(1) + ',' + y(g.v).toFixed(1); }).join(' ') + '"/>';
-    svg += '<polyline fill="none" stroke="#1b2a47" stroke-width="2" points="' + pts.map(function (p) { return x(p.d).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' ') + '"/>';
-    pts.forEach(function (p) { svg += '<circle cx="' + x(p.d).toFixed(1) + '" cy="' + y(p.v).toFixed(1) + '" r="3" fill="#1b2a47"/>'; });
-    svg += '<text x="4" y="12" font-size="10" fill="#57514a">' + hi.toFixed(1) + unit + '</text><text x="4" y="' + (H - 4) + '" font-size="10" fill="#57514a">' + lo.toFixed(1) + unit + '</text>';
-    svg += '</svg>';
-    var d = el('div'); d.innerHTML = svg;   // 数値と固定の文字列だけで組み立てている（入力は含めない）
-    return d;
+    var s = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%', role: 'img', 'aria-label': '推移 ' + pts[0].v + unit + ' から ' + pts[pts.length - 1].v + unit });
+    [0.25, 0.5, 0.75].forEach(function (r) { s.appendChild(sv('line', { x1: P, x2: W - 4, y1: (H * r).toFixed(1), y2: (H * r).toFixed(1), stroke: '#efe7d6' })); });
+    if (goalPts && goalPts.length >= 2) s.appendChild(sv('polyline', { fill: 'none', stroke: '#b8965a', 'stroke-dasharray': '5 4', 'stroke-width': 1.5,
+      points: goalPts.map(function (g) { return x(g.d).toFixed(1) + ',' + y(g.v).toFixed(1); }).join(' ') }));
+    s.appendChild(sv('polyline', { fill: 'none', stroke: '#1b2a47', 'stroke-width': 2.2, 'stroke-linejoin': 'round', points: pts.map(function (p) { return x(p.d).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' ') }));
+    pts.forEach(function (p) {
+      //   ● 本人の記録 ○ InBody
+      s.appendChild(sv('circle', p.src === 'i' ? { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.6, fill: '#ffffff', stroke: '#1b2a47', 'stroke-width': 2 }
+        : { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.2, fill: '#1b2a47' }));
+    });
+    s.appendChild(sv('text', { x: 2, y: 12, 'font-size': 10, fill: '#5d574e' }, hi.toFixed(1)));
+    s.appendChild(sv('text', { x: 2, y: H - 4, 'font-size': 10, fill: '#5d574e' }, lo.toFixed(1)));
+    s.appendChild(sv('text', { x: P, y: H - 2, 'font-size': 10, fill: '#5d574e' }, md(dates[0])));
+    s.appendChild(sv('text', { x: W - 34, y: H - 2, 'font-size': 10, fill: '#5d574e' }, md(dates[dates.length - 1])));
+    return s;
+  }
+
+  function delta(now, prev, unit, lowerIsGood) {
+    if (now == null || prev == null) return el('div', { class: 'k-sub', text: '前回比 —' });
+    var d = r1(now - prev);
+    if (Math.abs(d) < 0.05) return el('div', { class: 'k-sub', text: 'ほぼ同じ' });
+    var good = lowerIsGood ? d < 0 : d > 0;
+    return el('div', { style: 'font-size:13px;' }, [el('span', { class: good ? 'k-down' : 'k-up', text: (d < 0 ? '▼ ' : '▲ ') + Math.abs(d) + unit }), el('span', { class: 'k-sub', text: ' 前回比' })]);
   }
 
   function tabBody(box, draft) {
     box.appendChild(msg('読み込み中…'));
-    kRead('k_body', { customerId: cur.customerId }).then(function (r) {
+    Promise.all([kRead('k_body', { customerId: cur.customerId }), loadSummary()]).then(function (rs) {
+      var r = rs[0], s = rs[1];
       box.innerHTML = '';
       if (!r || !r.success) { box.appendChild(msg(errText(r), true)); return; }
-      if (!r.ready) { box.appendChild(msg('体の記録は切り替えの準備中です。それまでは予約画面の「InBodyを記録」を使ってください。')); return; }
-      CHARTS.forEach(function (c) {
-        var pts = (r.rows || []).map(function (x) { return { d: x.d, v: x[c[0]] != null ? x[c[0]] : null }; });
-        var goal = (c[0] === 'w' && r.goal) ? r.goal.points : null;
-        var card = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: c[1] + (goal ? '（点線＝目標）' : '') })]);
-        card.appendChild(lineChart(pts, goal, c[2]));
-        box.appendChild(card);
-      });
+      if (!r.ready) { box.appendChild(msg('体組成の記録は切り替えの準備中です。それまでは予約画面の「InBodyを記録」を使ってください。')); return; }
+      var rows = r.rows || [];
+      var hearing = (s && s.success && s.profile && s.profile.hearing) || {};
+      var W2 = lastTwo(rows, 'w'), F2 = lastTwo(rows, 'pbf'), M2 = lastTwo(rows, 'smm'), WA = lastTwo(rows, 'waist'), L2 = lastTwo(rows, 'lean');
+      var lastD = rows.length ? rows.slice().sort(function (a, b) { return a.d < b.d ? 1 : -1; })[0].d : null;
+      box.appendChild(el('div', { class: 'k-sub', text: lastD ? '最新 ' + md(lastD) : '' }));
+      function hero(name, t, key, unit) {
+        return el('div', { class: 'k-card', style: 'padding:14px;' }, [el('div', { class: 'k-sub', text: name }),
+          el('div', { class: 'k-num', style: 'font-size:30px;line-height:1.2;margin-top:4px;', text: t.last ? String(t.last[key]) : '—' }, []),
+          el('div', { class: 'k-sub', text: unit }), delta(t.last && t.last[key], t.prev && t.prev[key], unit, true)]);
+      }
+      function small(name, t, key, unit, lowerIsGood) {
+        return el('div', { class: 'k-card', style: 'padding:10px;' }, [el('div', { class: 'k-sub', text: name }),
+          el('div', { class: 'k-num', style: 'font-size:18px;margin-top:2px;', text: t.last ? t.last[key] + unit : '—' }),
+          delta(t.last && t.last[key], t.prev && t.prev[key], unit, lowerIsGood)]);
+      }
+      box.appendChild(el('div', { class: 'k-grid2' }, [hero('体重', W2, 'w', 'kg'), hero('体脂肪率', F2, 'pbf', '%')]));
+      box.appendChild(el('div', { class: 'k-grid3' }, [small('骨格筋量', M2, 'smm', 'kg', false), small('ウエスト', WA, 'waist', 'cm', true), small('除脂肪量', L2, 'lean', 'kg', false)]));
+
+      //   目標までの進み具合（最初の記録→目標）
+      function prog(name, t, key, target, unit) {
+        if (target == null || !t.first || !t.last) return null;
+        var total = t.first[key] - target, done = t.first[key] - t.last[key];
+        var pct = total === 0 ? 1 : Math.max(0, Math.min(1, done / total));
+        return el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [ring(pct, Math.round(pct * 100) + '%', 64),
+          el('div', { style: 'font-size:12px;line-height:1.6;' }, [el('b', { text: name }), el('br'), document.createTextNode(t.first[key] + ' → ' + target + unit), el('br'),
+            el('span', { style: 'color:var(--k-navy);font-weight:700;', text: 'あと ' + r1(Math.abs(t.last[key] - target)) + unit })])]);
+      }
+      var pw = prog('体重', W2, 'w', hearing.targetWeight, 'kg'), pf = prog('体脂肪率', F2, 'pbf', hearing.targetFat, '%');
+      box.appendChild(card('目標までの進み具合', (pw || pf) ? [el('div', { class: 'k-grid2' }, [pw, pf])] : [msg('ヒアリングで目標体重・目標体脂肪率を入れると表示されます。')]));
+
+      //   推移（指標と期間を切り替え）
+      var state0 = { m: 'w', days: 90 };
+      var chartBox = el('div');
+      var segM = el('div', { class: 'k-seg' }), segP = el('div', { class: 'k-seg', style: 'margin-top:10px;' });
+      function drawChart() {
+        chartBox.innerHTML = '';
+        var since = state0.days ? new Date(Date.now() + 9 * 3600000 - state0.days * 86400000).toISOString().slice(0, 10) : '0000';
+        var pts = rows.filter(function (x) { return x.d >= since; }).map(function (x) { return { d: x.d, v: x[state0.m] != null ? x[state0.m] : null, src: x.s ? x.s[state0.m] : null }; })
+          .sort(function (a, b) { return a.d < b.d ? -1 : 1; });
+        var goal = (state0.m === 'w' && r.goal && r.goal.points) ? r.goal.points : null;
+        var unit = label(METRICS.map(function (m) { return [m[0], m[2]]; }), state0.m);
+        chartBox.appendChild(lineChart(pts, goal, unit));
+        Array.prototype.forEach.call(segM.children, function (b, i) { b.className = METRICS[i][0] === state0.m ? 'on' : ''; });
+        Array.prototype.forEach.call(segP.children, function (b, i) { b.className = [30, 90, 0][i] === state0.days ? 'on' : ''; });
+      }
+      METRICS.forEach(function (m) { segM.appendChild(el('button', { type: 'button', text: m[1], onclick: function () { state0.m = m[0]; drawChart(); } })); });
+      [[30, '1ヶ月'], [90, '3ヶ月'], [0, '全部']].forEach(function (p) { segP.appendChild(el('button', { type: 'button', text: p[1], onclick: function () { state0.days = p[0]; drawChart(); } })); });
+      box.appendChild(card('推移', [segM, chartBox, segP, el('div', { class: 'k-sub', style: 'margin-top:6px;', text: '● 本人の記録　○ InBody　点線＝体重の目標線' })]));
+      drawChart();
+
+      var a = assess(rows, hearing.purposes);
+      if (a) box.appendChild(el('div', { class: 'k-card', style: 'background:var(--k-gold-l);border-color:#e3d3b0;' }, [
+        el('div', { class: 'k-h', text: '前回からの見立て（自動・目安）' }), el('div', { style: 'font-size:14px;line-height:1.75;', text: a.text }),
+        el('div', { class: 'k-sub', style: 'margin-top:6px;', text: '※ 数字の動きから出す目安で、診断ではありません。' })]));
+      box.appendChild(el('button', { class: 'k-btn out', text: '変化の理由を確かめる（指導の履歴へ）', onclick: function () { open(cur.customerId, cur.name, 'notes', { kind: 'reflect', data: {} }); } }));
+
       box.appendChild(measureForm(draft && draft.kind === 'measure' ? draft.data : null));
       box.appendChild(goalForm(r.goal));
-      var hist = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '最近の記録' })]);
+      var hist = card('最近の記録', []);
       (r.raw || []).forEach(function (m) {
         var parts = MEASURE.filter(function (f) { return m[f[0]] != null; }).map(function (f) { return f[1] + ' ' + m[f[0]] + f[2]; });
-        var row = el('div', { style: 'display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding:6px 0;font-size:13px;' }, [
-          el('div', { text: m.d + '　' + parts.join('・') })
+        var row = el('div', { style: 'display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--k-line);padding:8px 0;font-size:13px;' }, [
+          el('div', { text: md(m.d) + '　' + parts.join('・') })
         ]);
         var mine = m.origin === 'd1' && (String(m.enteredBy) === String(state.trainerId) || state._isOwner);
         if (mine || (state._isOwner && m.origin === 'sheet')) {
-          row.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:0;width:auto;padding:4px 8px;font-size:12px;', text: '削除', onclick: function () {
+          row.appendChild(el('button', { class: 'k-btn out small', text: '削除', onclick: function () {
             if (!window.confirm(m.d + ' の記録を削除しますか？')) return;
             kWrite('k_deleteMeasurement', { id: m.id, rev: m.rev }, newReqId()).then(function (w) {
               if (!w || !w.success) { window.alert(errText(w)); return; }
@@ -350,21 +712,19 @@
   }
 
   function measureForm(draftData) {
-    var card = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '測定を記録（InBody・周囲径）' })]);
-    card.appendChild(msg('測った項目だけ入れてください。体重と体脂肪率を入れれば除脂肪量は自動で計算します。'));
-    var d = input('測定日', (draftData && draftData.measuredDate) || today(), 'date'); d.el.max = today();
-    card.appendChild(d.row);
+    var c = card('測定を記録（InBody・周囲径）', [msg('測った項目だけ入れてください。体重と体脂肪率を入れれば除脂肪量は自動で計算します。')]);
+    var d = field('測定日', (draftData && draftData.measuredDate) || today(), 'date'); d.el.max = today();
+    c.appendChild(d.row);
     var inputs = {};
+    var g = el('div', { class: 'k-grid2' });
     MEASURE.forEach(function (f) {
-      var i = el('input', { type: 'number', step: String(f[3]), style: 'padding:9px;flex:1;min-width:0;' }); i.inputMode = 'decimal';
-      if (draftData && draftData.values && draftData.values[f[0]] != null) i.value = draftData.values[f[0]];
-      inputs[f[0]] = i;
-      card.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [
-        el('span', { style: 'flex:0 0 78px;font-size:13px;', text: f[1] }), i, el('span', { class: 'muted', style: 'flex:0 0 28px;font-size:12px;', text: f[2] })
-      ]));
+      var fl = field(f[1] + (f[2] ? '（' + f[2] + '）' : ''), draftData && draftData.values ? draftData.values[f[0]] : '', 'number');
+      fl.el.step = String(f[3]);
+      inputs[f[0]] = fl.el; g.appendChild(fl.row);
     });
+    c.appendChild(g);
     var reqId = newReqId();
-    card.appendChild(el('button', { class: 'btn', text: 'この内容で記録する', onclick: function () {
+    c.appendChild(el('button', { class: 'k-btn', text: 'この内容で記録する', onclick: function () {
       var values = {}, any = false;
       for (var k in inputs) { var v = inputs[k].value.trim(); if (v !== '') { values[k] = Number(v); any = true; } }
       if (!any) { window.alert('1つ以上入力してください。'); return; }
@@ -373,87 +733,147 @@
         window.alert('記録しました。'); open(cur.customerId, cur.name, 'body');
       });
     } }));
-    return card;
+    return c;
   }
 
   function goalForm(goal) {
-    var card = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: '体重の目標線' })]);
     var g = goal && goal.kind === 'line' ? goal.points : null;
-    var sd = input('開始日', g ? g[0].d : today(), 'date'), ed = input('目標の期限', g ? g[1].d : '', 'date');
-    var sw = input('開始体重（kg）', g ? g[0].v : '', 'number'), tw = input('目標体重（kg）', g ? g[1].v : '', 'number');
-    [sd, ed, sw, tw].forEach(function (x) { card.appendChild(x.row); });
-    if (goal && goal.kind === 'phases') card.appendChild(msg('いまは期ごとの目標（シートから写したもの）が使われています。ここで保存しても、期の目標が優先されます。'));
+    var sd = field('開始日', g ? g[0].d : today(), 'date'), ed = field('目標の期限', g ? g[1].d : '', 'date');
+    var sw = field('開始体重（kg）', g ? g[0].v : '', 'number'), tw = field('目標体重（kg）', g ? g[1].v : '', 'number');
+    var c = card('体重の目標線（グラフの点線）', [el('div', { class: 'k-grid2' }, [sd.row, ed.row, sw.row, tw.row])]);
+    if (goal && goal.kind === 'phases') c.appendChild(msg('いまは期ごとの目標（シートから写したもの）が使われています。ここで保存しても、期の目標が優先されます。'));
     var reqId = newReqId();
-    card.appendChild(el('button', { class: 'btn btn-outline', text: '目標線を保存', onclick: function () {
+    c.appendChild(el('button', { class: 'k-btn out', text: '目標線を保存', onclick: function () {
       kWrite('k_saveGoalLine', { customerId: cur.customerId, startDate: sd.get(), endDate: ed.get(), startWeight: sw.get(), targetWeight: tw.get() }, reqId).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
         window.alert('保存しました。'); open(cur.customerId, cur.name, 'body');
       });
     } }));
-    return card;
+    return c;
   }
 
   // ---------------------------------------------------------------- トレーニング
+  function partOf(ex) { for (var i = 0; i < PARTS.length; i++) if (PARTS[i][1].test(String(ex || ''))) return PARTS[i][0]; return 'その他'; }
+  /** 種目ごとのまとめ（自己ベスト＝重量が最大のセット・同じなら回数が多い方） */
+  function exerciseStats(sessions, ex) {
+    var sets = [], days = {};
+    (sessions || []).forEach(function (s) { (s.sets || []).forEach(function (st) { if (st.exercise === ex) { sets.push({ d: s.session_date, w: st.weight_kg, r: st.reps, e: st.e1rm }); (days[s.session_date] = days[s.session_date] || []).push(st); } }); });
+    if (!sets.length) return null;
+    var best = sets.slice().sort(function (a, b) { return b.w - a.w || b.r - a.r || (a.d < b.d ? 1 : -1); })[0];
+    var byDay = Object.keys(days).sort().map(function (d) { var m = null; days[d].forEach(function (st) { if (st.e1rm != null && (m == null || st.e1rm > m)) m = st.e1rm; }); return { d: d, v: m, sets: days[d] }; });
+    var withE = byDay.filter(function (x) { return x.v != null; });
+    return { best: best, maxE: withE.length ? Math.max.apply(null, withE.map(function (x) { return x.v; })) : null,
+      firstE: withE.length ? withE[0].v : null, reps: sets.reduce(function (a, b) { return a + b.r; }, 0), sets: sets.length, days: byDay };
+  }
+
   function tabTraining(box, draft) {
-    box.appendChild(trainingForm(draft && draft.kind === 'training' ? draft.data : null));
-    var list = el('div'); box.appendChild(list);
-    list.appendChild(msg('読み込み中…'));
+    var formBox = el('div');
+    var showForm = !!(draft && draft.kind === 'training');
+    box.appendChild(el('button', { class: 'k-btn', text: '＋ 今日の記録', onclick: function () { showForm = !showForm; formBox.innerHTML = ''; if (showForm) formBox.appendChild(trainingForm(null)); } }));
+    box.appendChild(formBox);
+    if (showForm) formBox.appendChild(trainingForm(draft.data));
+    var view = { mode: 'exercise', ex: null };
+    var seg = el('div', { class: 'k-seg' });
+    var area = el('div', { style: 'display:flex;flex-direction:column;gap:12px;' });
+    box.appendChild(seg); box.appendChild(area);
+    area.appendChild(msg('読み込み中…'));
     kRead('k_training', { customerId: cur.customerId }).then(function (r) {
-      list.innerHTML = '';
-      if (!r || !r.success) { list.appendChild(msg(errText(r), true)); return; }
-      //   主要種目の推定1RMのグラフ
-      EXERCISES.forEach(function (ex) {
-        var pts = (r.best || []).filter(function (b) { return b.exercise === ex; }).map(function (b) { return { d: b.d, v: b.e1rm }; })
-          .sort(function (a, b) { return a.d < b.d ? -1 : 1; });
-        if (pts.length) list.appendChild(el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: ex + '（推定1RM）' }), lineChart(pts, null, 'kg')]));
+      if (!r || !r.success) { area.innerHTML = ''; area.appendChild(msg(errText(r), true)); return; }
+      var sessions = r.sessions || [];
+      var exList = [];
+      sessions.forEach(function (s) { (s.sets || []).forEach(function (st) { if (exList.indexOf(st.exercise) < 0) exList.push(st.exercise); }); });
+      view.ex = exList[0] || null;
+      [['day', '日別'], ['exercise', '種目別'], ['part', '部位別']].forEach(function (m) {
+        seg.appendChild(el('button', { type: 'button', text: m[1], onclick: function () { view.mode = m[0]; draw(); } }));
       });
-      (r.sessions || []).forEach(function (s) {
-        var card = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: s.session_date + '・' + trainerName(s.author_trainer_id) })]);
-        var byEx = {};
-        (s.sets || []).forEach(function (st) { (byEx[st.exercise] = byEx[st.exercise] || []).push(st); });
-        Object.keys(byEx).forEach(function (ex) {
-          card.appendChild(el('div', { style: 'font-size:13px;margin-bottom:4px;', text: ex + '：' + byEx[ex].map(function (st) { return st.weight_kg + 'kg×' + st.reps + (st.e1rm != null ? '（' + st.e1rm + '）' : ''); }).join('　') }));
-        });
-        if (String(s.author_trainer_id) === String(state.trainerId) || state._isOwner) {
-          card.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:6px 0 0;width:auto;padding:4px 10px;font-size:12px;', text: '削除', onclick: function () {
-            if (!window.confirm(s.session_date + ' の記録を削除しますか？')) return;
-            kWrite('k_deleteTraining', { sessionId: s.session_id, rev: s.rev }, newReqId()).then(function (w) {
-              if (!w || !w.success) { window.alert(errText(w)); return; }
-              open(cur.customerId, cur.name, 'training');
+      function draw() {
+        Array.prototype.forEach.call(seg.children, function (b, i) { b.className = ['day', 'exercise', 'part'][i] === view.mode ? 'on' : ''; });
+        area.innerHTML = '';
+        if (!sessions.length) { area.appendChild(msg('まだ記録がありません。')); return; }
+        if (view.mode === 'exercise') {
+          var chips = el('div', { class: 'k-pills', style: 'gap:6px;' });
+          exList.forEach(function (ex) { chips.appendChild(el('button', { type: 'button', class: 'k-pill' + (ex === view.ex ? ' on' : ''), text: ex, onclick: function () { view.ex = ex; draw(); } })); });
+          area.appendChild(chips);
+          var st = exerciseStats(sessions, view.ex);
+          if (!st) return;
+          var g = el('div', { class: 'k-grid3' }, [
+            el('div', { style: 'background:var(--k-cream);border-radius:3px;padding:10px;' }, [el('div', { class: 'k-sub', text: '自己ベスト' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.best.w + 'kg×' + st.best.r }), el('div', { class: 'k-sub', text: md(st.best.d) })]),
+            el('div', { style: 'background:var(--k-cream);border-radius:3px;padding:10px;' }, [el('div', { class: 'k-sub', text: '推定MAX' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.maxE != null ? st.maxE + 'kg' : '—' }),
+              el('div', { style: 'font-size:11px;color:var(--k-navy2);font-weight:700;', text: (st.maxE != null && st.firstE != null && st.days.length > 1) ? '▲ ' + r1(st.maxE - st.firstE) + ' 開始から' : '' })]),
+            el('div', { style: 'background:var(--k-cream);border-radius:3px;padding:10px;' }, [el('div', { class: 'k-sub', text: '合計回数' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.reps + '回' }), el('div', { class: 'k-sub', text: st.sets + 'セット' })])
+          ]);
+          var c = card(view.ex, [g, lineChart(st.days.filter(function (x) { return x.v != null; }).map(function (x) { return { d: x.d, v: x.v }; }), null, 'kg'),
+            el('div', { class: 'k-sub', text: '推定MAX＝1回で挙げられる重さの目安（重量と回数から計算・13回以上は出しません）' })]);
+          area.appendChild(c);
+          var recent = card('直近3回', []);
+          st.days.slice(-3).reverse().forEach(function (dd) {
+            recent.appendChild(el('div', { style: 'display:grid;grid-template-columns:56px 1fr 56px;gap:8px;font-size:13px;padding:6px 0;border-top:1px solid var(--k-line);' }, [
+              el('div', { class: 'k-sub', text: md(dd.d) }), el('div', { text: dd.sets.map(function (x) { return x.weight_kg + 'kg×' + x.reps; }).join(' ・ ') }),
+              el('div', { class: 'k-num', style: 'text-align:right;', text: dd.v != null ? String(dd.v) : '' })]));
+          });
+          area.appendChild(recent);
+        } else if (view.mode === 'part') {
+          var since = new Date(Date.now() + 9 * 3600000 - 30 * 86400000).toISOString().slice(0, 10);
+          var cnt = {}, total = 0;
+          sessions.forEach(function (s) { if (s.session_date < since) return; (s.sets || []).forEach(function (st) { var p = partOf(st.exercise); cnt[p] = (cnt[p] || 0) + 1; total++; }); });
+          var c2 = card('部位別のセット配分（直近1ヶ月・' + total + 'セット）', []);
+          var keys = Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; });
+          if (!keys.length) c2.appendChild(msg('直近1ヶ月の記録がありません。'));
+          keys.forEach(function (k) {
+            var bar = el('div', { class: 'k-bar' }, [el('div', { style: 'width:' + Math.round(cnt[k] / total * 100) + '%;' })]);
+            c2.appendChild(el('div', { style: 'display:grid;grid-template-columns:52px 1fr 30px;gap:8px;align-items:center;font-size:12px;margin-bottom:8px;' }, [el('div', { text: k }), bar, el('div', { style: 'text-align:right;', text: String(cnt[k]) })]));
+          });
+          c2.appendChild(el('div', { class: 'k-sub', text: '種目名から自動で振り分けています（分からない種目は「その他」）' }));
+          area.appendChild(c2);
+        } else {
+          sessions.forEach(function (s) {
+            var c3 = card(md(s.session_date) + '・' + trainerName(s.author_trainer_id), []);
+            var byEx = {};
+            (s.sets || []).forEach(function (st) { (byEx[st.exercise] = byEx[st.exercise] || []).push(st); });
+            Object.keys(byEx).forEach(function (ex) {
+              c3.appendChild(el('div', { style: 'font-size:13px;margin-bottom:4px;', text: ex + '：' + byEx[ex].map(function (st) { return st.weight_kg + 'kg×' + st.reps + (st.e1rm != null ? '（' + st.e1rm + '）' : ''); }).join('　') }));
             });
-          } }));
+            if (String(s.author_trainer_id) === String(state.trainerId) || state._isOwner) {
+              c3.appendChild(el('button', { class: 'k-btn out small', style: 'margin-top:6px;', text: '削除', onclick: function () {
+                if (!window.confirm(s.session_date + ' の記録を削除しますか？')) return;
+                kWrite('k_deleteTraining', { sessionId: s.session_id, rev: s.rev }, newReqId()).then(function (w) {
+                  if (!w || !w.success) { window.alert(errText(w)); return; }
+                  open(cur.customerId, cur.name, 'training');
+                });
+              } }));
+            }
+            area.appendChild(c3);
+          });
         }
-        list.appendChild(card);
-      });
-      if (!(r.sessions || []).length) list.appendChild(msg('まだ記録がありません。'));
+      }
+      draw();
     });
   }
 
   function trainingForm(draftData) {
-    var card = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: 'トレーニングを記録' })]);
-    var d = input('日付', (draftData && draftData.sessionDate) || today(), 'date'); d.el.max = today();
-    card.appendChild(d.row);
-    var items = el('div'); card.appendChild(items);
+    var c = card('トレーニングを記録', []);
+    var d = field('日付', (draftData && draftData.sessionDate) || today(), 'date'); d.el.max = today();
+    c.appendChild(d.row);
+    var items = el('div'); c.appendChild(items);
     var rows = [];
     function addExercise(pre) {
-      var sel = el('select', { style: 'width:100%;padding:9px;margin-bottom:6px;' });
+      var sel = el('select', { style: 'width:100%;min-height:44px;margin-bottom:6px;border:1px solid #e6ddcd;border-radius:3px;font-size:15px;' });
       EXERCISES.concat(['その他']).forEach(function (x) { sel.appendChild(el('option', { value: x, text: x })); });
-      var other = el('input', { type: 'text', placeholder: '種目名', style: 'width:100%;padding:9px;box-sizing:border-box;display:none;margin-bottom:6px;' });
+      var other = el('input', { type: 'text', placeholder: '種目名', style: 'width:100%;min-height:44px;box-sizing:border-box;display:none;margin-bottom:6px;border:1px solid #e6ddcd;border-radius:3px;padding:0 10px;font-size:15px;' });
       sel.onchange = function () { other.style.display = sel.value === 'その他' ? '' : 'none'; };
       if (pre) { if (EXERCISES.indexOf(pre.exercise) >= 0) sel.value = pre.exercise; else { sel.value = 'その他'; other.value = pre.exercise; other.style.display = ''; } }
       var setsBox = el('div');
       var sets = [];
-      function addSet(sv) {
-        var w = el('input', { type: 'number', step: '0.5', placeholder: 'kg', style: 'padding:8px;width:80px;' }); w.inputMode = 'decimal';
-        var rp = el('input', { type: 'number', step: '1', placeholder: '回', style: 'padding:8px;width:64px;' }); rp.inputMode = 'numeric';
-        if (sv) { w.value = sv.weight; rp.value = sv.reps; }
-        var line = el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;font-size:13px;' }, [el('span', { text: (sets.length + 1) + 'セット' }), w, el('span', { text: '×' }), rp]);
-        setsBox.appendChild(line); sets.push({ w: w, r: rp });
+      function addSet(svv) {
+        var w = el('input', { type: 'number', step: '0.5', placeholder: 'kg', 'aria-label': '重量', style: 'min-height:40px;width:84px;border:1px solid #e6ddcd;border-radius:3px;padding:0 8px;font-size:15px;' }); w.inputMode = 'decimal';
+        var rp = el('input', { type: 'number', step: '1', placeholder: '回', 'aria-label': '回数', style: 'min-height:40px;width:68px;border:1px solid #e6ddcd;border-radius:3px;padding:0 8px;font-size:15px;' }); rp.inputMode = 'numeric';
+        if (svv) { w.value = svv.weight; rp.value = svv.reps; }
+        setsBox.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px;' }, [el('span', { style: 'width:52px;', text: (sets.length + 1) + 'セット' }), w, el('span', { text: '×' }), rp]));
+        sets.push({ w: w, r: rp });
       }
-      ((pre && pre.sets) || [null]).forEach(function (sv) { addSet(sv); });
-      var block = el('div', { style: 'border-top:1px solid var(--line);padding-top:8px;margin-top:6px;' }, [sel, other, setsBox,
-        el('button', { class: 'btn btn-outline', style: 'margin:0 0 6px;width:auto;padding:4px 10px;font-size:12px;', text: '＋ セット', onclick: function () { if (sets.length < 10) addSet(); } })]);
-      items.appendChild(block);
+      ((pre && pre.sets) || [null]).forEach(function (s0) { addSet(s0); });
+      items.appendChild(el('div', { style: 'border-top:1px solid var(--k-line);padding-top:10px;margin-top:6px;' }, [sel, other, setsBox,
+        el('button', { type: 'button', class: 'k-btn out small', text: '＋ セット', onclick: function () { if (sets.length < 10) addSet(); } })]));
       rows.push({ get: function () {
         var ex = sel.value === 'その他' ? other.value.trim() : sel.value;
         var ss = sets.map(function (s) { return { weight: s.w.value.trim(), reps: s.r.value.trim() }; }).filter(function (s) { return s.weight !== '' && s.reps !== ''; })
@@ -462,9 +882,9 @@
       } });
     }
     ((draftData && draftData.items) || [null]).forEach(function (it) { addExercise(it); });
-    card.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:6px 0;', text: '＋ 種目を追加', onclick: function () { if (rows.length < 20) addExercise(); } }));
+    c.appendChild(el('button', { type: 'button', class: 'k-btn out', text: '＋ 種目を追加', onclick: function () { if (rows.length < 20) addExercise(); } }));
     var reqId = newReqId();
-    card.appendChild(el('button', { class: 'btn', text: 'この内容で記録する', onclick: function () {
+    c.appendChild(el('button', { class: 'k-btn', text: 'この内容で記録する', onclick: function () {
       var its = rows.map(function (r) { return r.get(); }).filter(function (it) { return it.exercise && it.sets.length; });
       if (!its.length) { window.alert('種目と、重量・回数を1セット以上入れてください。'); return; }
       kWrite('k_addTraining', { customerId: cur.customerId, sessionDate: d.get(), items: its }, reqId, { kind: 'training', data: { sessionDate: d.get(), items: its } }).then(function (w) {
@@ -472,66 +892,126 @@
         window.alert('記録しました。'); open(cur.customerId, cur.name, 'training');
       });
     } }));
-    return card;
+    return c;
   }
 
-  // ---------------------------------------------------------------- メモ
+  // ---------------------------------------------------------------- 指導の履歴（メモ＋変化の理由）
+  function noteView(n) {
+    var box = el('div', { style: 'display:flex;flex-direction:column;gap:6px;' });
+    var tags = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' });
+    if (n.tag) tags.appendChild(el('span', { class: 'k-tag', text: label(TAGS, n.tag) }));
+    if (n.condition) tags.appendChild(el('span', { class: 'k-flag grey', text: '体調：' + (COND[n.condition] || n.condition) }));
+    if (tags.children.length) box.appendChild(tags);
+    if ((n.reasons || []).length) box.appendChild(el('div', { style: 'font-size:13px;', text: '理由：' + n.reasons.map(function (k) { return label(REASONS, k); }).join('・') }));
+    if (n.body) box.appendChild(el('div', { style: 'white-space:pre-wrap;font-size:14px;line-height:1.7;', text: n.body }));
+    if (n.next_check) box.appendChild(el('div', { style: 'font-size:13px;', text: '次回確かめること：' + n.next_check }));
+    if (n.next_plan) box.appendChild(el('div', { style: 'font-size:13px;background:var(--k-cream);border-radius:3px;padding:8px 10px;', text: '次回：' + n.next_plan }));
+    return box;
+  }
+
   function tabNotes(box, draft) {
+    var reflectOpen = !!(draft && (draft.kind === 'reflect' || draft.kind === 'reflectNote'));
     box.appendChild(noteForm(draft && draft.kind === 'note' ? draft.data : null));
-    var list = el('div'); box.appendChild(list);
+    var rbox = el('div');
+    box.appendChild(rbox);
+    function showReflect(data) { rbox.innerHTML = ''; rbox.appendChild(reflectForm(data)); }
+    if (reflectOpen) showReflect(draft.kind === 'reflectNote' ? draft.data : null);
+    else rbox.appendChild(el('button', { class: 'k-btn out', text: '変化の理由を確かめる', onclick: function () { showReflect(null); } }));
+    var filt = { tag: '' };
+    var chips = el('div', { class: 'k-pills', style: 'gap:6px;' });
+    var list = el('div', { class: 'k-tl' });
+    box.appendChild(el('div', { class: 'k-h', style: 'margin:6px 0 0;', text: '指導の履歴' }));
+    box.appendChild(chips); box.appendChild(list);
     list.appendChild(msg('読み込み中…'));
+    //   ★版は毎回読み直す（前に読んだ 31 を、今回の読み取りが失敗したときに信用しない・関門②）
+    cur.notesSchema = null;
+    var askedFor = cur.customerId;
     kRead('k_notes', { customerId: cur.customerId }).then(function (r) {
-      list.innerHTML = '';
-      if (!r || !r.success) { list.appendChild(msg(errText(r), true)); return; }
-      (r.notes || []).forEach(function (n) {
-        var card = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: n.session_date + '・' + trainerName(n.author_trainer_id) + (n.edited_at ? '（編集済み）' : '') })]);
-        if (n.condition) card.appendChild(el('div', { text: '体調：' + (COND[n.condition] || n.condition) }));
-        if (n.body) card.appendChild(el('div', { style: 'white-space:pre-wrap;', text: n.body }));
-        if (n.next_plan) card.appendChild(el('div', { text: '次回：' + n.next_plan }));
-        if (String(n.author_trainer_id) === String(state.trainerId) || state._isOwner) {
-          card.appendChild(el('button', { class: 'btn btn-outline', style: 'margin:6px 0 0;width:auto;padding:4px 10px;font-size:12px;', text: '削除', onclick: function () {
-            if (!window.confirm('このメモを削除しますか？')) return;
-            kWrite('k_deleteNote', { noteId: n.note_id, rev: n.rev }, newReqId()).then(function (w) {
-              if (!w || !w.success) { window.alert(errText(w)); return; }
-              open(cur.customerId, cur.name, 'notes');
-            });
-          } }));
-        }
-        list.appendChild(card);
+      if (!r || !r.success) { list.innerHTML = ''; list.appendChild(msg(errText(r), true)); return; }
+      if (cur.customerId === askedFor) cur.notesSchema = r.karteSchema;
+      var notes = r.notes || [];
+      [['', 'すべて']].concat(TAGS).forEach(function (t) {
+        chips.appendChild(el('button', { type: 'button', class: 'k-pill', text: t[1], onclick: function () { filt.tag = t[0]; draw(); } }));
       });
-      if (!(r.notes || []).length) list.appendChild(msg('まだメモがありません。'));
+      function draw() {
+        Array.prototype.forEach.call(chips.children, function (b, i) { b.className = 'k-pill' + ((i === 0 ? '' : TAGS[i - 1][0]) === filt.tag ? ' on' : ''); });
+        list.innerHTML = '';
+        var shown = notes.filter(function (n) { return !filt.tag || n.tag === filt.tag; });
+        shown.forEach(function (n) {
+          var item = el('div', { class: 'k-tl-item' }, [el('div', { class: 'k-tl-dot' }),
+            el('div', { class: 'k-sub', text: md(n.session_date) + '・' + trainerName(n.author_trainer_id) + (n.edited_at ? '（編集済み）' : '') })]);
+          var c = el('div', { class: 'k-card', style: 'padding:12px;margin-top:6px;' }, [noteView(n)]);
+          if (String(n.author_trainer_id) === String(state.trainerId) || state._isOwner) {
+            c.appendChild(el('button', { class: 'k-btn out small', style: 'margin-top:8px;', text: '削除', onclick: function () {
+              if (!window.confirm('このメモを削除しますか？')) return;
+              kWrite('k_deleteNote', { noteId: n.note_id, rev: n.rev }, newReqId()).then(function (w) {
+                if (!w || !w.success) { window.alert(errText(w)); return; }
+                open(cur.customerId, cur.name, 'notes');
+              });
+            } }));
+          }
+          item.appendChild(c);
+          list.appendChild(item);
+        });
+        if (!shown.length) list.appendChild(msg(notes.length ? 'このタグのメモはありません。' : 'まだメモがありません。'));
+      }
+      draw();
     });
   }
 
   function noteForm(draftData) {
-    var card = el('div', { class: 'card' }, [el('div', { class: 'sect-h', style: 'margin:0 0 6px;', text: 'セッションのメモ' })]);
-    var d = input('日付', (draftData && draftData.sessionDate) || today(), 'date'); d.el.max = today();
-    card.appendChild(d.row);
-    var cond = (draftData && draftData.condition) || '';
-    var cbox = el('div', { style: 'display:flex;gap:6px;margin-bottom:8px;' });
-    var btns = {};
-    Object.keys(COND).forEach(function (k) {
-      btns[k] = el('button', { class: 'btn ' + (cond === k ? '' : 'btn-outline'), style: 'margin:0;', text: '体調：' + COND[k], onclick: function () {
-        cond = (cond === k) ? '' : k;
-        Object.keys(btns).forEach(function (j) { btns[j].className = 'btn ' + (cond === j ? '' : 'btn-outline'); });
-      } });
-      cbox.appendChild(btns[k]);
-    });
-    card.appendChild(cbox);
-    var body = area('話した内容・やったこと', draftData && draftData.body, 2000);
-    var next = area('次回やること', draftData && draftData.nextPlan, 500);
-    card.appendChild(body.row); card.appendChild(next.row);
+    var c = card('メモを書く', [el('div', { class: 'k-note-hint', text: '痛み・診断・服薬はメモに書かず「注意すること」へ' })]);
+    var d = field('日付', (draftData && draftData.sessionDate) || today(), 'date'); d.el.max = today();
+    c.appendChild(d.row);
+    var tag = pills(TAGS.filter(function (t) { return t[0] !== 'body'; }), draftData && draftData.tag ? [draftData.tag] : [], { single: true });
+    c.appendChild(el('div', { class: 'k-sub', style: 'margin-bottom:6px;', text: 'タグ' })); c.appendChild(tag.el);
+    var cond = pills([['good', '体調：良い'], ['normal', '体調：普通'], ['bad', '体調：悪い']], draftData && draftData.condition ? [draftData.condition] : [], { single: true });
+    c.appendChild(el('div', { style: 'height:10px;' })); c.appendChild(cond.el); c.appendChild(el('div', { style: 'height:10px;' }));
+    var body = field('話した内容・やったこと', draftData && draftData.body, 'area', { maxlength: '2000' });
+    var next = field('次回やること', draftData && draftData.nextPlan, 'area', { maxlength: '500' });
+    c.appendChild(body.row); c.appendChild(next.row);
     var reqId = newReqId();
-    card.appendChild(el('button', { class: 'btn', text: 'メモを保存', onclick: function () {
-      var data = { sessionDate: d.get(), condition: cond, body: body.get(), nextPlan: next.get() };
+    c.appendChild(el('button', { class: 'k-btn', text: 'メモを保存', onclick: function () {
+      var data = { sessionDate: d.get(), tag: tag.get()[0] || '', condition: cond.get()[0] || '', body: body.get(), nextPlan: next.get() };
       if (!data.condition && !data.body && !data.nextPlan) { window.alert('体調か内容を入れてください。'); return; }
+      //   タグは新しい項目＝古い Worker では捨てられる。タグを付けたときだけ版を確かめる（タグなしのメモは古い Worker でも同じ意味で残る）
+      if (data.tag && !schemaOk({ karteSchema: cur.notesSchema })) { window.alert(SCHEMA_MSG); return; }
       var params = { customerId: cur.customerId }; for (var k in data) params[k] = data[k];
       kWrite('k_addNote', params, reqId, { kind: 'note', data: data }).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
         open(cur.customerId, cur.name, 'notes');
       });
     } }));
-    return card;
+    return c;
+  }
+
+  function reflectForm(draftData) {
+    var dd = draftData || {};
+    var c = card('変化の理由を確かめる', [msg('体組成の変化について、当てはまる理由を選び、次回の方針を残します。')]);
+    var groups = {};
+    REASON_GROUPS.forEach(function (g) {
+      var tbl = REASONS.filter(function (x) { return x[2] === g[0]; });
+      groups[g[0]] = pills(tbl, (dd.reasons || []).filter(function (k) { return tbl.some(function (x) { return x[0] === k; }); }));
+      c.appendChild(el('div', { class: 'k-sub', style: 'font-weight:700;margin:8px 0 6px;', text: g[1] }));
+      c.appendChild(groups[g[0]].el);
+    });
+    c.appendChild(el('div', { style: 'height:12px;' }));
+    var chk = field('次回確かめること', dd.nextCheck, 'text', { maxlength: '500' });
+    var plan = field('次回の方針', dd.nextPlan, 'text', { maxlength: '500' });
+    c.appendChild(chk.row); c.appendChild(plan.row);
+    var reqId = newReqId();
+    c.appendChild(el('button', { class: 'k-btn', text: '履歴に残す', onclick: function () {
+      var reasons = []; REASON_GROUPS.forEach(function (g) { reasons = reasons.concat(groups[g[0]].get()); });
+      var data = { sessionDate: today(), tag: 'body', reasons: reasons, nextCheck: chk.get(), nextPlan: plan.get() };
+      if (!reasons.length && !data.nextCheck && !data.nextPlan) { window.alert('理由か方針を入れてください。'); return; }
+      if (!schemaOk({ karteSchema: cur.notesSchema })) { window.alert(SCHEMA_MSG); return; }
+      var params = { customerId: cur.customerId }; for (var k in data) params[k] = data[k];
+      kWrite('k_addNote', params, reqId, { kind: 'reflectNote', data: data }).then(function (w) {
+        if (!w || !w.success) { window.alert(errText(w)); return; }
+        open(cur.customerId, cur.name, 'notes');
+      });
+    } }));
+    return c;
   }
 
   // ---------------------------------------------------------------- 契約
@@ -545,10 +1025,10 @@
       r.contracts.forEach(function (c) {
         var d0 = c.startMs ? new Date(c.startMs + 9 * 3600000).toISOString().slice(0, 10) : '?';
         var d1 = c.endMs ? new Date(c.endMs + 9 * 3600000).toISOString().slice(0, 10) : '';
-        box.appendChild(el('div', { class: 'card' }, [
-          el('div', { style: 'font-weight:700;', text: [c.type, c.course].filter(Boolean).join('・') || '契約' }),
-          el('div', { class: 'muted', text: d0 + ' 〜 ' + (d1 || '（期限なし）') }),
-          el('div', { text: (c.freq ? '月' + c.freq + '回　' : '') + (c.tickets ? 'チケット' + c.tickets + '枚　' : '') + (c.trainer ? '担当：' + c.trainer : '') })
+        box.appendChild(el('div', { class: 'k-card' }, [
+          el('div', { class: 'k-h', style: 'margin-bottom:4px;', text: [c.type, c.course].filter(Boolean).join('・') || '契約' }),
+          el('div', { class: 'k-sub', text: d0 + ' 〜 ' + (d1 || '（期限なし）') }),
+          el('div', { style: 'font-size:14px;margin-top:4px;', text: (c.freq ? '月' + c.freq + '回　' : '') + (c.tickets ? 'チケット' + c.tickets + '枚　' : '') + (c.trainer ? '担当：' + c.trainer : '') })
         ]));
       });
     });
@@ -556,41 +1036,60 @@
 
   // ---------------------------------------------------------------- 一覧
   var FLAG = {
+    caution: ['注意あり', null, 'soft'],
     noNextBooking: ['次の予約なし', '予約の同期を確認中'],
     recordStale: ['記録が30日以上ない', '記録の準備中'],
     contractEnding: ['契約の終了が近い', '契約を確認中'],
-    paymentPending: ['支払い待ち', '残数を確認中']
+    paymentPending: ['支払い待ち', '残数を確認中'],
+    hearingMissing: ['ヒアリング未記入', null, 'soft'],
+    consentPending: ['同意待ち', null, 'soft']
   };
+  //   声かけの印（並べ替えに使う）。注意・未記入・同意待ちは並べ替えに入れない（毎回上に来てしまう）
+  var CALL_FLAGS = ['noNextBooking', 'recordStale', 'contractEnding', 'paymentPending'];
   function openBoard(after, acc) {
     var root = ensureRoot(); root.innerHTML = '';
-    var wrap = el('div', { style: 'max-width:520px;margin:0 auto;padding:14px 14px 40px;' });
-    wrap.appendChild(el('div', { style: 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;' }, [
-      el('button', { class: 'btn btn-outline', style: 'margin:0;width:auto;padding:8px 12px;', text: '← 戻る', onclick: close }),
-      el('div', { style: 'font-weight:700;', text: 'カルテの一覧' })
-    ]));
-    var list = el('div'); wrap.appendChild(list); root.appendChild(wrap);
+    var wrap = el('div', { class: 'k-wrap' });
+    wrap.appendChild(el('div', { class: 'k-head' }, [el('div', { class: 'k-head-row' }, [
+      el('button', { class: 'k-back', 'aria-label': '戻る', text: '←', onclick: close }),
+      el('div', { class: 'k-name', style: 'flex:1;', text: 'カルテの一覧' })])]));
+    var filt = el('div', { class: 'k-pills', style: 'gap:6px;padding:12px 14px 0;' });
+    var list = el('div', { class: 'k-body' });
+    wrap.appendChild(filt); wrap.appendChild(list); root.appendChild(wrap);
     list.appendChild(msg('読み込み中…'));
     kRead('k_board', after ? { after: after } : {}).then(function (r) {
       list.innerHTML = '';
       if (!r || !r.success) { list.appendChild(msg(errText(r), true)); return; }
       var all = (acc || []).concat(r.customers || []);
-      //   印がある人を上に
       all.sort(function (a, b) { return score(b.flags) - score(a.flags); });
-      all.forEach(function (c) {
-        var tags = el('div', { style: 'display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;' });
-        Object.keys(FLAG).forEach(function (k) {
-          var v = c.flags[k];
-          if (v === true) tags.appendChild(el('span', { style: 'font-size:11px;padding:2px 6px;border-radius:10px;background:#f6e3df;color:var(--warn);', text: FLAG[k][0] }));
-          else if (typeof v === 'string' && v !== 'none') tags.appendChild(el('span', { style: 'font-size:11px;padding:2px 6px;border-radius:10px;background:#eee;color:#57514a;', text: FLAG[k][1] }));
-          else if (k === 'recordStale' && v === 'none') tags.appendChild(el('span', { style: 'font-size:11px;padding:2px 6px;border-radius:10px;background:#f6e3df;color:var(--warn);', text: '体の記録なし' }));
-        });
-        list.appendChild(el('div', { class: 'card', style: 'cursor:pointer;', onclick: function () { open(c.customerId, c.name, 'summary'); } }, [el('b', { text: c.name + ' 様' }), tags]));
+      var mode = 'call';
+      [['call', '声かけが要る'], ['hearing', 'ヒアリング未記入'], ['all', 'すべて']].forEach(function (m) {
+        filt.appendChild(el('button', { type: 'button', class: 'k-pill', text: m[1], onclick: function () { mode = m[0]; draw(); } }));
       });
-      if (r.next) list.appendChild(el('button', { class: 'btn btn-outline', text: 'さらに表示', onclick: function () { openBoard(r.next, all); } }));
-      if (!all.length) list.appendChild(msg('対象のお客様がいません。'));
+      function draw() {
+        Array.prototype.forEach.call(filt.children, function (b, i) { b.className = 'k-pill' + (['call', 'hearing', 'all'][i] === mode ? ' on' : ''); });
+        Array.prototype.slice.call(list.querySelectorAll('.k-card,.k-msg,.k-btn')).forEach(function (n) { n.remove(); });
+        var shown = all.filter(function (c) { return mode === 'all' || (mode === 'call' ? score(c.flags) > 0 : c.flags.hearingMissing === true); });
+        shown.forEach(function (c) {
+          var tags = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;' });
+          Object.keys(FLAG).forEach(function (k) {
+            var v = c.flags[k];
+            if (v === true) tags.appendChild(el('span', { class: 'k-flag' + (FLAG[k][2] ? ' ' + FLAG[k][2] : ''), text: FLAG[k][0] }));
+            else if (k === 'recordStale' && v === 'none') tags.appendChild(el('span', { class: 'k-flag', text: '体組成の記録なし' }));
+            else if (typeof v === 'string' && v !== 'none' && FLAG[k][1]) tags.appendChild(el('span', { class: 'k-flag grey', text: FLAG[k][1] }));
+          });
+          var initial = String(c.name || '').slice(0, 1);
+          list.appendChild(el('div', { class: 'k-card', style: 'cursor:pointer;', role: 'button', tabindex: '0', onclick: function () { open(c.customerId, c.name, 'summary'); } }, [
+            el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [
+              el('div', { style: 'width:40px;height:40px;border-radius:20px;background:var(--k-gold-l);color:var(--k-navy);display:flex;align-items:center;justify-content:center;font-family:"Shippori Mincho",serif;font-weight:600;', text: initial }),
+              el('b', { style: 'font-size:15px;', text: c.name + ' 様' })]), tags]));
+        });
+        if (!shown.length) list.appendChild(msg(all.length ? 'この条件のお客様はいません。' : '対象のお客様がいません。'));
+        if (r.next) list.appendChild(el('button', { class: 'k-btn out', text: 'さらに表示', onclick: function () { openBoard(r.next, all); } }));
+      }
+      draw();
     });
   }
-  function score(f) { var s = 0; for (var k in f) if (f[k] === true || (k === 'recordStale' && f[k] === 'none')) s++; return s; }
+  function score(f) { var s = 0; CALL_FLAGS.forEach(function (k) { if (f[k] === true || (k === 'recordStale' && f[k] === 'none')) s++; }); return s; }
 
   // ---------------------------------------------------------------- 読み直した後に戻す
   function resume() {
@@ -615,6 +1114,8 @@
     })();
   }
 
-  window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD };
+  window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
+    //   検査用（純粋な部分だけ）
+    _t: { NEED_SCHEMA: NEED_SCHEMA, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
 })();

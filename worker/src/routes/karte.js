@@ -15,6 +15,7 @@
 
 import { canSeeCustomer } from '../perms.js';
 import { synthesizeBody, pickGoalLine } from '../lib/body-series.js';
+import { normalizeHearing, normalizePainMap, normalizeReasons, normalizeTag, parseJsonCol, has, HEARING_REVISION_SQL } from '../lib/karte-hearing.js';
 
 export const KARTE_LIMITS = {
   BODY_BYTES: 16 * 1024,
@@ -28,6 +29,10 @@ export const KARTE_LIMITS = {
   PAGE: 20,
   BOARD_PAGE: 50,
 };
+
+//   カルテの窓口の版（設計31）。画面はこれが自分の想定以上のときだけ新しい項目を保存する
+//   （新しい画面が古い Worker に当たると、新しい項目が黙って捨てられ「保存しました」と出るため・関門②）
+export const KARTE_SCHEMA = 31;
 
 export function isKarteWrite(action) {
   return /^k_(save|add|edit|delete|record)/.test(String(action || ''));
@@ -233,40 +238,81 @@ async function runWrite(c, spec) {
 function cidOf(body) { return String(body.customerId || ''); }
 
 // ================================================================ 書き込み
+//   ★要求に鍵が無い列は変えない（古い画面＝キャッシュからの保存で、新しい項目を消さない・設計31 関門①1）
+//     null・空は「消す」。鍵が無いときだけ「そのまま」
+function dateOrNull(v) {
+  if (v == null || v === '') return null;
+  if (!isRealDate(v)) throw new RangeError('BAD_DATE');
+  return String(v);
+}
+const PROFILE_COLS = [
+  ['goal_text', 'goalText', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['goal_value', 'goalValue', (v) => numOrNull(v, -1000, 1000, 1)],
+  ['goal_unit', 'goalUnit', (v) => text(v, 20)],
+  ['goal_deadline', 'goalDeadline', dateOrNull],
+  ['motive', 'motive', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['history', 'history', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['hearing_json', 'hearing', normalizeHearing],
+];
+const SAFETY_COLS = [
+  ['conditions', 'conditions', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['injuries', 'injuries', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['pain_sites', 'painSites', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['medication', 'medication', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['restrictions', 'restrictions', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+  ['pain_json', 'painMap', normalizePainMap],
+  ['diagnosis', 'diagnosis', (v) => text(v, KARTE_LIMITS.TEXT_CHARS)],
+];
+/** 要求から、鍵がある列だけ読む。{ values:{col:値}, present:{col:true} } */
+export function readPresent(body, cols) {
+  const values = {}, present = {};
+  for (const [col, key, fn] of cols) {
+    if (!has(body, key)) continue;
+    values[col] = fn(body[key]);
+    present[col] = true;
+  }
+  if (!Object.keys(present).length) throw new RangeError('EMPTY');
+  return { values, present };
+}
+/** INSERT の値・ON CONFLICT で「鍵があった列だけ置き換える」SET 句 */
+function upsertParts(table, cols, f) {
+  const names = cols.map((x) => x[0]);
+  return {
+    names: names.join(', '),
+    marks: names.map(() => '?').join(', '),
+    vals: names.map((n) => (f.present[n] ? f.values[n] : null)),
+    sets: names.map((n) => `${n} = CASE WHEN ? = 1 THEN excluded.${n} ELSE ${table}.${n} END`).join(', '),
+    flags: names.map((n) => (f.present[n] ? 1 : 0)),
+  };
+}
+
 async function saveProfile(c) {
   const cid = cidOf(c.body);
   if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
-  const b = c.body, L = KARTE_LIMITS;
+  const b = c.body;
   let f;
-  try {
-    f = {
-      goal_text: text(b.goalText, L.TEXT_CHARS),
-      goal_value: numOrNull(b.goalValue, -1000, 1000, 1),
-      goal_unit: text(b.goalUnit, 20),
-      goal_deadline: (b.goalDeadline == null || b.goalDeadline === '') ? null : (isRealDate(b.goalDeadline) ? String(b.goalDeadline) : (() => { throw new RangeError('BAD_DATE'); })()),
-      motive: text(b.motive, L.TEXT_CHARS),
-      history: text(b.history, L.TEXT_CHARS),
-    };
-  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  try { f = readPresent(b, PROFILE_COLS); } catch (e) { return err('BAD_REQUEST', 400, e.message); }
   const rev = Number(b.rev || 0);
   const tid = String(c.who.trainerId || '');
+  const u = upsertParts('karte_profile', PROFILE_COLS, f);
   return runWrite(c, {
     action: 'k_saveProfile', section: 'profile', customerId: cid, payload: { cid, f, rev },
     plan: (now) => ({
       stmts: [
         G.target(cid),
         G.rev('karte_profile', 'customer_id', cid, rev),
+        //   ★控えにヒアリングの自由文は入れない（選択肢と数値だけ・関門①4）
         S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at)
            SELECT 'karte_profile', customer_id, rev,
                   json_object('goal_text', goal_text, 'goal_value', goal_value, 'goal_unit', goal_unit,
-                              'goal_deadline', goal_deadline, 'motive', motive, 'history', history), ?, ?
+                              'goal_deadline', goal_deadline, 'motive', motive, 'history', history,
+                              'hearing', ${HEARING_REVISION_SQL}), ?, ?
              FROM karte_profile WHERE customer_id = ?`, tid, now, cid),
-        S(`INSERT INTO karte_profile (customer_id, goal_text, goal_value, goal_unit, goal_deadline, motive, history, rev, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-           ON CONFLICT(customer_id) DO UPDATE SET goal_text = excluded.goal_text, goal_value = excluded.goal_value,
-             goal_unit = excluded.goal_unit, goal_deadline = excluded.goal_deadline, motive = excluded.motive,
-             history = excluded.history, rev = karte_profile.rev + 1, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-          cid, f.goal_text, f.goal_value, f.goal_unit, f.goal_deadline, f.motive, f.history, tid, now),
+        S(`INSERT INTO karte_profile (customer_id, ${u.names}, rev, updated_by, updated_at)
+           VALUES (?, ${u.marks}, 1, ?, ?)
+           ON CONFLICT(customer_id) DO UPDATE SET ${u.sets},
+             rev = karte_profile.rev + 1, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+          cid, ...u.vals, tid, now, ...u.flags),
       ],
       result: { rev: rev + 1 },
     }),
@@ -303,17 +349,14 @@ async function saveConsent(c) {
 async function saveSafety(c) {
   const cid = cidOf(c.body);
   if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
-  const b = c.body, L = KARTE_LIMITS;
+  const b = c.body;
   let f;
-  try {
-    f = { conditions: text(b.conditions, L.TEXT_CHARS), injuries: text(b.injuries, L.TEXT_CHARS),
-          pain_sites: text(b.painSites, L.TEXT_CHARS), medication: text(b.medication, L.TEXT_CHARS),
-          restrictions: text(b.restrictions, L.TEXT_CHARS) };
-  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  try { f = readPresent(b, SAFETY_COLS); } catch (e) { return err('BAD_REQUEST', 400, e.message); }
   const rev = Number(b.rev || 0);
   const tid = String(c.who.trainerId || '');
+  const u = upsertParts('karte_safety', SAFETY_COLS, f);
   return runWrite(c, {
-    //   ★payload の hash には中身が入るが、karte_requests に保存するのは hash と rev だけ
+    //   ★payload の hash には中身が入るが、karte_requests に保存するのは hash と rev だけ。控え（revisions）にも入れない
     action: 'k_saveSafety', section: 'safety', customerId: cid, payload: { cid, f, rev },
     plan: (now) => ({
       stmts: [
@@ -321,13 +364,12 @@ async function saveSafety(c) {
         G.consent(cid),
         G.rev('karte_safety', 'customer_id', cid, rev),
         //   ★書く文そのものにも同意を条件にする（見張りと二重。どちらかが抜けても書かない）
-        S(`INSERT INTO karte_safety (customer_id, conditions, injuries, pain_sites, medication, restrictions, source, rev, updated_by, updated_at)
-           SELECT ?, ?, ?, ?, ?, ?, 'trainer', 1, ?, ?
+        S(`INSERT INTO karte_safety (customer_id, ${u.names}, source, rev, updated_by, updated_at)
+           SELECT ?, ${u.marks}, 'trainer', 1, ?, ?
             WHERE EXISTS (SELECT 1 FROM karte_consent WHERE customer_id = ? AND kind = 'health' AND state = 'agreed')
-           ON CONFLICT(customer_id) DO UPDATE SET conditions = excluded.conditions, injuries = excluded.injuries,
-             pain_sites = excluded.pain_sites, medication = excluded.medication, restrictions = excluded.restrictions,
+           ON CONFLICT(customer_id) DO UPDATE SET ${u.sets},
              source = 'trainer', rev = karte_safety.rev + 1, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-          cid, f.conditions, f.injuries, f.pain_sites, f.medication, f.restrictions, tid, now, cid),
+          cid, ...u.vals, tid, now, cid, ...u.flags),
       ],
       result: { rev: rev + 1 },
     }),
@@ -343,8 +385,9 @@ async function addNote(c) {
     if (!isPastOrToday(b.sessionDate)) throw new RangeError('BAD_DATE');
     const cond = b.condition == null || b.condition === '' ? null : String(b.condition);
     if (cond !== null && !['good', 'normal', 'bad'].includes(cond)) throw new RangeError('BAD_CONDITION');
-    f = { session_date: String(b.sessionDate), condition: cond, body: text(b.body, L.NOTE_CHARS), next_plan: text(b.nextPlan, L.TEXT_CHARS) };
-    if (!f.body && !f.next_plan && !f.condition) throw new RangeError('EMPTY');
+    f = { session_date: String(b.sessionDate), condition: cond, body: text(b.body, L.NOTE_CHARS), next_plan: text(b.nextPlan, L.TEXT_CHARS),
+          tag: normalizeTag(b.tag), reasons_json: normalizeReasons(b.reasons), next_check: text(b.nextCheck, L.TEXT_CHARS) };
+    if (!f.body && !f.next_plan && !f.condition && !f.reasons_json && !f.next_check) throw new RangeError('EMPTY');
   } catch (e) { return err('BAD_REQUEST', 400, e.message); }
   const tid = String(c.who.trainerId || '');
   const id = newId();
@@ -353,8 +396,8 @@ async function addNote(c) {
     plan: (now) => ({
       stmts: [
         G.target(cid),
-        S(`INSERT INTO karte_notes (note_id, customer_id, session_date, condition, body, next_plan, author_trainer_id, rev, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`, id, cid, f.session_date, f.condition, f.body, f.next_plan, tid, now),
+        S(`INSERT INTO karte_notes (note_id, customer_id, session_date, condition, body, next_plan, tag, reasons_json, next_check, author_trainer_id, rev, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`, id, cid, f.session_date, f.condition, f.body, f.next_plan, f.tag, f.reasons_json, f.next_check, tid, now),
       ],
       result: { noteId: id, rev: 1 },
     }),
@@ -375,10 +418,15 @@ async function editNote(c) {
   try {
     const cond = b.condition == null || b.condition === '' ? null : String(b.condition);
     if (cond !== null && !['good', 'normal', 'bad'].includes(cond)) throw new RangeError('BAD_CONDITION');
-    f = { condition: cond, body: text(b.body, L.NOTE_CHARS), next_plan: text(b.nextPlan, L.TEXT_CHARS) };
+    f = { condition: cond, body: text(b.body, L.NOTE_CHARS), next_plan: text(b.nextPlan, L.TEXT_CHARS),
+          //   ★新しい列は鍵があるときだけ変える（古い画面の編集で消さない）
+          tag: has(b, 'tag') ? normalizeTag(b.tag) : undefined,
+          reasons_json: has(b, 'reasons') ? normalizeReasons(b.reasons) : undefined,
+          next_check: has(b, 'nextCheck') ? text(b.nextCheck, L.TEXT_CHARS) : undefined };
   } catch (e) { return err('BAD_REQUEST', 400, e.message); }
   const rev = Number(b.rev || 0);
   if (!(rev > 0)) return err('BAD_REQUEST', 400, 'rev');
+  const keep = (k) => (f[k] === undefined ? 0 : 1);
   const tid = String(c.who.trainerId || '');
   const reason = c.who.role === 'owner' ? text(b.reason, L.TEXT_CHARS) : null;
   return runWrite(c, {
@@ -389,10 +437,16 @@ async function editNote(c) {
         G.author('karte_notes', 'note_id', noteId, 'author_trainer_id', c.who),
         G.rev('karte_notes', 'note_id', noteId, rev),
         S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at, reason)
-           SELECT 'karte_notes', note_id, rev, json_object('condition', condition, 'body', body, 'next_plan', next_plan), ?, ?, ?
+           SELECT 'karte_notes', note_id, rev, json_object('condition', condition, 'body', body, 'next_plan', next_plan, 'tag', tag, 'reasons', reasons_json, 'next_check', next_check), ?, ?, ?
              FROM karte_notes WHERE note_id = ?`, tid, now, reason, noteId),
-        S(`UPDATE karte_notes SET condition = ?, body = ?, next_plan = ?, rev = rev + 1, edited_at = ?, edited_by = ?
-            WHERE note_id = ? AND rev = ? AND deleted_at IS NULL`, f.condition, f.body, f.next_plan, now, tid, noteId, rev),
+        S(`UPDATE karte_notes SET condition = ?, body = ?, next_plan = ?,
+              tag = CASE WHEN ? = 1 THEN ? ELSE tag END,
+              reasons_json = CASE WHEN ? = 1 THEN ? ELSE reasons_json END,
+              next_check = CASE WHEN ? = 1 THEN ? ELSE next_check END,
+              rev = rev + 1, edited_at = ?, edited_by = ?
+            WHERE note_id = ? AND rev = ? AND deleted_at IS NULL`, f.condition, f.body, f.next_plan,
+          keep('tag'), f.tag === undefined ? null : f.tag, keep('reasons_json'), f.reasons_json === undefined ? null : f.reasons_json,
+          keep('next_check'), f.next_check === undefined ? null : f.next_check, now, tid, noteId, rev),
       ],
       result: { noteId, rev: rev + 1 },
     }),
@@ -417,7 +471,7 @@ async function deleteNote(c) {
         G.author('karte_notes', 'note_id', noteId, 'author_trainer_id', c.who),
         G.rev('karte_notes', 'note_id', noteId, rev),
         S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at, reason)
-           SELECT 'karte_notes', note_id, rev, json_object('condition', condition, 'body', body, 'next_plan', next_plan), ?, ?, ?
+           SELECT 'karte_notes', note_id, rev, json_object('condition', condition, 'body', body, 'next_plan', next_plan, 'tag', tag, 'reasons', reasons_json, 'next_check', next_check), ?, ?, ?
              FROM karte_notes WHERE note_id = ?`, tid, now, reason, noteId),
         S(`UPDATE karte_notes SET deleted_at = ?, deleted_by = ?, rev = rev + 1 WHERE note_id = ? AND rev = ?`, now, tid, noteId, rev),
       ],
@@ -685,34 +739,42 @@ async function goalRows(env, cid, freezeId) {
   return r.results || [];
 }
 
+function noteOut(n) {
+  const o = Object.assign({}, n, { reasons: parseJsonCol(n.reasons_json) || [] });
+  delete o.reasons_json;
+  return o;
+}
+
 async function summary(c) {
   return readSection(c, 'summary', async (cid) => {
     const env = c.env, now = Date.now();
     const assigned = await canSeeCustomer(env, c.who, cid);
     const [cust, profile, consent, safety, lastNote, nextResv] = await Promise.all([
       env.DB.prepare(`SELECT customer_id, name, birthday, default_trainer_id, contract_status FROM customers WHERE customer_id = ?`).bind(cid).first(),
-      env.DB.prepare(`SELECT goal_text, goal_value, goal_unit, goal_deadline, motive, history, rev, updated_at FROM karte_profile WHERE customer_id = ?`).bind(cid).first(),
+      env.DB.prepare(`SELECT goal_text, goal_value, goal_unit, goal_deadline, motive, history, hearing_json, rev, updated_at FROM karte_profile WHERE customer_id = ?`).bind(cid).first(),
       env.DB.prepare(`SELECT state, changed_at, method FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first(),
       //   ★安全面は同意があるときだけ（JOIN を SQL に置く）。概要には要点（制限と痛む部位）だけ
-      env.DB.prepare(`SELECT s.restrictions, s.pain_sites FROM karte_safety s JOIN karte_consent k
+      env.DB.prepare(`SELECT s.restrictions, s.pain_sites, s.pain_json, s.diagnosis, s.medication FROM karte_safety s JOIN karte_consent k
                         ON k.customer_id = s.customer_id AND k.kind = 'health' AND k.state = 'agreed'
                        WHERE s.customer_id = ?`).bind(cid).first(),
-      env.DB.prepare(`SELECT note_id, session_date, condition, body, next_plan, author_trainer_id FROM karte_notes
+      env.DB.prepare(`SELECT note_id, session_date, condition, body, next_plan, tag, reasons_json, next_check, author_trainer_id FROM karte_notes
                        WHERE customer_id = ? AND deleted_at IS NULL ORDER BY session_date DESC, created_at DESC LIMIT 1`).bind(cid).first(),
       env.DB.prepare(`SELECT start_at, trainer_id FROM reservations WHERE customer_id = ? AND status = 'booked' AND start_at >= ?
                        ORDER BY start_at LIMIT 1`).bind(cid, now).first(),
     ]);
     if (!cust) return err('NOT_FOUND', 404);
     return {
+      karteSchema: KARTE_SCHEMA,
       customer: { customerId: cust.customer_id, name: cust.name, age: ageOf(cust.birthday, now),
                   trainerId: cust.default_trainer_id || null,
                   //   ★契約の状態は担当（＋担当なし・オーナー）だけ（設計28 4-2）
                   ...(assigned ? { contractStatus: cust.contract_status || null } : {}) },
       assigned,
-      profile: profile || null,
+      profile: profile ? Object.assign({}, profile, { hearing: parseJsonCol(profile.hearing_json), hearing_json: undefined }) : null,
       consent: consent ? { state: consent.state, changedAt: consent.changed_at, method: consent.method } : { state: 'none' },
-      safetyBrief: safety ? { restrictions: safety.restrictions, painSites: safety.pain_sites } : null,
-      lastNote: lastNote || null,
+      safetyBrief: safety ? { restrictions: safety.restrictions, painSites: safety.pain_sites, pain: parseJsonCol(safety.pain_json) || [],
+                              diagnosis: safety.diagnosis, medication: safety.medication } : null,
+      lastNote: lastNote ? noteOut(lastNote) : null,
       nextReservation: nextResv ? { startAt: nextResv.start_at, trainerId: nextResv.trainer_id } : null,
     };
   });
@@ -722,11 +784,11 @@ async function notes(c) {
   return readSection(c, 'notes', async (cid) => {
     const before = String(c.body.before || '');
     const r = await c.env.DB.prepare(
-      `SELECT note_id, session_date, condition, body, next_plan, author_trainer_id, rev, created_at, edited_at
+      `SELECT note_id, session_date, condition, body, next_plan, tag, reasons_json, next_check, author_trainer_id, rev, created_at, edited_at
          FROM karte_notes WHERE customer_id = ? AND deleted_at IS NULL ${before ? 'AND session_date < ?' : ''}
         ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
     ).bind(...(before ? [cid, before] : [cid])).all();
-    return { notes: r.results || [] };
+    return { karteSchema: KARTE_SCHEMA, notes: (r.results || []).map(noteOut) };
   });
 }
 
@@ -761,12 +823,12 @@ async function training(c) {
 async function safety(c) {
   return readSection(c, 'safety', async (cid) => {
     const r = await c.env.DB.prepare(
-      `SELECT s.conditions, s.injuries, s.pain_sites, s.medication, s.restrictions, s.source, s.rev, s.updated_at
+      `SELECT s.conditions, s.injuries, s.pain_sites, s.medication, s.restrictions, s.pain_json, s.diagnosis, s.source, s.rev, s.updated_at
          FROM karte_safety s JOIN karte_consent k ON k.customer_id = s.customer_id AND k.kind = 'health' AND k.state = 'agreed'
         WHERE s.customer_id = ?`
     ).bind(cid).first();
     const k = await c.env.DB.prepare(`SELECT state FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first();
-    return { consent: k ? k.state : 'none', safety: r || null };
+    return { karteSchema: KARTE_SCHEMA, consent: k ? k.state : 'none', safety: r ? Object.assign({}, r, { pain: parseJsonCol(r.pain_json) || [], pain_json: undefined }) : null };
   });
 }
 
@@ -809,7 +871,7 @@ async function contract(c) {
   return { contracts: out };
 }
 
-//   一覧（担当＋担当なし・オーナーは全員）。印と名前だけ（金額・種別・健康情報は出さない）
+//   一覧（担当＋担当なし・オーナーは全員）。印と名前だけ（金額・種別は出さない。健康は「注意あり」の真偽だけ・設計31）
 async function board(c) {
   const env = c.env, who = c.who, now = Date.now();
   const scope = who.role === 'owner' ? { where: '', args: [] }
@@ -825,7 +887,7 @@ async function board(c) {
   if (!page.length) return { customers: [], next: null };
   const ids = page.map((x) => x.customer_id);
   const ph = ids.map(() => '?').join(',');
-  const [sync, nextR, lastM, ends, homes, fz] = await Promise.all([
+  const [sync, nextR, lastM, ends, homes, fz, kp] = await Promise.all([
     env.DB.prepare(`SELECT key, synced_at FROM sync_state WHERE key IN ('reservations', 'calcContracts')`).all(),
     env.DB.prepare(`SELECT customer_id, MIN(start_at) AS t FROM reservations WHERE customer_id IN (${ph}) AND status = 'booked' AND start_at >= ? GROUP BY customer_id`).bind(...ids, now).all(),
     //   ★最終測定日も「verified の凍結から写した行＋d1」だけ（未確認の写しを混ぜない・I51）
@@ -836,7 +898,18 @@ async function board(c) {
                      WHERE r.customer_id IN (${ph}) AND v.source_version = v.built_version AND v.built_version > 0 GROUP BY r.customer_id`).bind(...ids).all(),
     env.DB.prepare(`SELECT customer_id, payload, computed_at FROM member_home WHERE customer_id IN (${ph})`).bind(...ids).all(),
     bodyReady(env),
+    //   ★ヒアリング・同意・注意あり（設計31）。注意ありは健康由来の印＝同意の JOIN の中で SQL が決める（部位や強さは返さない）
+    env.DB.prepare(
+      `SELECT c.customer_id,
+              (SELECT p.hearing_json IS NOT NULL FROM karte_profile p WHERE p.customer_id = c.customer_id) AS hearing,
+              (SELECT k.state FROM karte_consent k WHERE k.customer_id = c.customer_id AND k.kind = 'health') AS consent,
+              EXISTS (SELECT 1 FROM karte_safety s JOIN karte_consent k2
+                        ON k2.customer_id = s.customer_id AND k2.kind = 'health' AND k2.state = 'agreed'
+                       WHERE s.customer_id = c.customer_id
+                         AND (s.pain_json IS NOT NULL OR (s.restrictions IS NOT NULL AND s.restrictions <> ''))) AS caution
+         FROM customers c WHERE c.customer_id IN (${ph})`).bind(...ids).all(),
   ]);
+  const kBy = {}; for (const r of (kp.results || [])) kBy[r.customer_id] = r;
   const syncAt = {}; for (const s of (sync.results || [])) syncAt[s.key] = Number(s.synced_at || 0);
   const resvFresh = now - (syncAt.reservations || 0) <= 30 * 60 * 1000;
   const contractsFresh = now - (syncAt.calcContracts || 0) <= 26 * 3600 * 1000;
@@ -865,6 +938,10 @@ async function board(c) {
       try { const p = JSON.parse(h.payload); flags.paymentPending = !!(p && p.current && p.current.paymentRequired); }
       catch (_) { flags.paymentPending = 'unknown'; }
     }
+    const k = kBy[id] || {};
+    flags.hearingMissing = !k.hearing;
+    flags.consentPending = k.consent !== 'agreed';
+    flags.caution = !!k.caution;
     return { customerId: id, name: cu.name, flags };
   });
   await logAccess(env, who, null, 'board', 'k_board', 'ok');

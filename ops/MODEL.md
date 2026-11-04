@@ -150,6 +150,9 @@ trg_alloc_return_pack       同
 | I51 | **体の記録の新しい書き込みは凍結（body_freeze）の後だけ**。sheet の行は書き換えない（体脂肪率は d1 の行だけ・無ければ known_weight で作る）。読むのは verified の凍結＋d1 | `karte.test.js` 5-1〜5-6、`body-d1.test.js` 2-1・2-4〜2-6・3-1〜3-12 |
 | I52 | 退会の起算日は追記だけの表。交互（withdrawn↔rejoined）・最後の行以降・cancel は最後の1行だけ・オーナーだけ・実在する今日以前の日付 | `karte.test.js` 7-1〜7-12 |
 | I53 | **D1 から残数を答えるのは、計算の材料4つ（calcContracts・calcMeta・calcReservations・opening）の sync_state が同じ batchId で、45分未満のときだけ**。欠け・数でない・未来5分超・回の不一致・45分以上は写し（copy:calc_input_*）。会員ごとの作り直し（/quota/rebuild）は全体の印を押さない（設計30） | `read-on.test.js` ⑧-1〜⑧-6・⑧-e1〜⑧-e6 |
+| I54 | **カルテの保存は、要求に鍵がある列だけを置き換える**（hearing・painMap・diagnosis と既存の列。null・空は消す、鍵が無ければそのまま）＝古い画面からの保存で新しい項目を消さない（設計31） | `karte.test.js` 10-3・10-9・10-20 |
+| I55 | **健康情報は karte_safety にだけ置く**：変化の理由（REASONS）に健康の選択肢を入れない・知らない鍵は400。一覧の「注意あり」は同意の JOIN の中で SQL が決め、部位や強さは返さない。改訂の控えにヒアリングの自由文を入れない（設計31） | `karte.test.js` 10-6・10-7・10-12・10-14・10-15・10-18、`liff-karte.test.js` 8-5・8-7 |
+| I56 | **画面の固定表（目的・部位・痛み・タグ・理由）の鍵と表示名は Worker（lib/karte-hearing.js）と同じ** | `liff-karte.test.js` 7-1 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。

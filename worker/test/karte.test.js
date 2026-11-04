@@ -308,6 +308,116 @@ let noteId;
   ok('8-4 本体で失敗した要求も1回に数える', q1(env, `SELECT n FROM karte_rate WHERE trainer_id = 'T2'`).n === 1);
 }
 
+// ================= 10. ヒアリング・痛みの身体図・指導の履歴（設計31） =================
+{
+  d.exec(`DELETE FROM karte_rate`);
+  d.exec(`INSERT INTO customers (customer_id, name, line_user_id, default_trainer_id, birthday, created_at, updated_at) VALUES ('C4', '会員四', NULL, 'T1', NULL, 1, 1)`);
+  const H = { purposes: ['strength', 'diet'], slimAreas: ['thigh', 'belly'], motivation: 7, targetWeight: 54.04, targetFat: 24,
+              exerciseNow: '  週1 ウォーキング ', exercisePast: 'ヨガ', sleep: '6時間', meals: '1日2食' };
+  const p1 = await call('U_T1', 'k_saveProfile', { customerId: 'C4', rev: 0, goalText: '水着を着たい', goalDeadline: '2027-03-31', hearing: H, clientReqId: crid() });
+  ok('10-1 ヒアリングを保存できる', p1.status === 200 && p1.success, JSON.stringify(p1));
+  const row = q1(env, `SELECT hearing_json, goal_text, goal_value FROM karte_profile WHERE customer_id = 'C4'`);
+  const hj = JSON.parse(row.hearing_json);
+  ok('10-2 ★正規化：目的は固定表の順・部位は受け取った順・数値は小数1桁・自由文は前後の空白を除く',
+     JSON.stringify(hj.purposes) === '["diet","strength"]' && JSON.stringify(hj.slimAreas) === '["thigh","belly"]'
+     && hj.targetWeight === 54 && hj.exerciseNow === '週1 ウォーキング', row.hearing_json);
+  //   古い画面（hearing の鍵が無い）から保存しても消えない
+  const p2 = await call('U_T1', 'k_saveProfile', { customerId: 'C4', rev: 1, motive: '自信', clientReqId: crid() });
+  const row2 = q1(env, `SELECT hearing_json, goal_text, motive FROM karte_profile WHERE customer_id = 'C4'`);
+  ok('10-3 ★鍵が無い列は変えない（古い画面の保存でヒアリング・理想を消さない）', p2.success && row2.hearing_json === row.hearing_json && row2.goal_text === '水着を着たい' && row2.motive === '自信', JSON.stringify(row2));
+  //   null は消す（空のヒアリングは NULL）
+  await call('U_T1', 'k_saveProfile', { customerId: 'C4', rev: 2, hearing: { purposes: [], exerciseNow: '  ' }, clientReqId: crid() });
+  ok('10-4 ★中身が空のヒアリングは NULL で保存（一覧の「未記入」と一致）', q1(env, `SELECT hearing_json FROM karte_profile WHERE customer_id = 'C4'`).hearing_json === null);
+  await call('U_T1', 'k_saveProfile', { customerId: 'C4', rev: 3, hearing: H, clientReqId: crid() });
+  //   不正な入力は 400
+  const badCases = [
+    { purposes: ['diet', 'diet'] }, { purposes: ['unknown'] }, { slimAreas: ['belly', 'arm', 'hip', 'calf'] },
+    { motivation: 11 }, { motivation: '7' }, { motivation: 6.5 }, { targetWeight: 10 }, { exerciseNow: 'あ'.repeat(101) },
+    { extra: 1 }, ['diet'],
+  ];
+  let allBad = true, which = '';
+  for (const bc of badCases) {
+    const r = await call('U_T1', 'k_saveProfile', { customerId: 'C4', rev: 4, hearing: bc, clientReqId: crid() });
+    if (r.status !== 400) { allBad = false; which = JSON.stringify(bc) + ' → ' + r.status; break; }
+  }
+  ok('10-5 ★重複・知らない鍵・範囲外・型違い・余計な鍵は 400', allBad, which);
+  //   控えに自由文を残さない
+  const revs = d.prepare(`SELECT before_json FROM karte_revisions WHERE table_name = 'karte_profile' AND row_id = 'C4'`).all().map((x) => x.before_json).join('\n');
+  ok('10-6 ★改訂の控えにヒアリングの自由文が入らない（選択肢と数値だけ）', revs.includes('"motivation":7') && !revs.includes('ウォーキング') && !revs.includes('6時間'), revs.slice(0, 300));
+
+  //   痛みの身体図（健康情報）
+  const PM = [{ region: 'lower_back', level: 4, symptom: '朝が強い' }, { region: 'shoulder_r', level: 6, symptom: '腕を上げると違和感' }];
+  const s0 = await call('U_T1', 'k_saveSafety', { customerId: 'C4', rev: 0, painMap: PM, clientReqId: crid() });
+  ok('10-7 ★同意が無いと痛みの身体図は書けない', s0.status === 403 && s0.code === 'NO_CONSENT' && !q1(env, `SELECT 1 AS x FROM karte_safety WHERE customer_id = 'C4'`));
+  await call('U_T1', 'k_saveConsent', { customerId: 'C4', state: 'agreed', method: 'paper', clientReqId: crid() });
+  const s1 = await call('U_T1', 'k_saveSafety', { customerId: 'C4', rev: 0, painMap: PM, diagnosis: 'なし', restrictions: '肩より上の挙上を避ける', clientReqId: crid() });
+  const sr = q1(env, `SELECT pain_json, diagnosis FROM karte_safety WHERE customer_id = 'C4'`);
+  ok('10-8 同意があれば書ける・部位は固定表の順', s1.success && JSON.parse(sr.pain_json).map((x) => x.region).join(',') === 'shoulder_r,lower_back', JSON.stringify(sr));
+  const s2 = await call('U_T1', 'k_saveSafety', { customerId: 'C4', rev: 1, medication: 'なし', clientReqId: crid() });
+  ok('10-9 ★painMap・diagnosis の鍵が無い保存では消さない', s2.success && q1(env, `SELECT pain_json FROM karte_safety WHERE customer_id = 'C4'`).pain_json === sr.pain_json);
+  const pbad = [[{ region: 'knee_r', level: 0 }], [{ region: 'knee_r', level: 3 }, { region: 'knee_r', level: 4 }], [{ region: 'x', level: 3 }],
+                [{ region: 'knee_r', level: 3, note: 'x' }], [{ region: 'knee_r', level: '3' }], { region: 'knee_r' }];
+  let pAll = true, pw = '';
+  for (const pb of pbad) {
+    const r = await call('U_T1', 'k_saveSafety', { customerId: 'C4', rev: 2, painMap: pb, clientReqId: crid() });
+    if (r.status !== 400) { pAll = false; pw = JSON.stringify(pb) + ' → ' + r.status; break; }
+  }
+  ok('10-10 ★痛みの不正（強さ0・部位の重複・知らない部位・余計な鍵・文字の強さ・配列でない）は 400', pAll, pw);
+  const sm = await call('U_T2', 'k_summary', { customerId: 'C4' });
+  ok('10-11b 概要・メモ・安全面に窓口の版（31）', sm.karteSchema === 31);
+  ok('10-11 概要に痛み・診断・服薬・ヒアリング（同意があるとき・トレーナー全員）', sm.success && sm.safetyBrief && sm.safetyBrief.pain.length === 2
+     && sm.safetyBrief.diagnosis === 'なし' && sm.profile.hearing && sm.profile.hearing.motivation === 7 && !('hearing_json' in sm.profile), JSON.stringify(sm.safetyBrief));
+  //   一覧の印（担当 T1）
+  const bd = await call('U_T1', 'k_board', {});
+  const f4 = (bd.customers || []).find((x) => x.customerId === 'C4').flags;
+  ok('10-12 ★一覧：注意あり（真偽だけ）・ヒアリング済み・同意済み', f4.caution === true && f4.hearingMissing === false && f4.consentPending === false
+     && !JSON.stringify(bd).includes('shoulder') && !JSON.stringify(bd).includes('違和感'), JSON.stringify(f4));
+  const f1 = (bd.customers || []).find((x) => x.customerId === 'C1').flags;
+  ok('10-13 一覧：未記入・同意待ちの印', f1.hearingMissing === true && typeof f1.consentPending === 'boolean', JSON.stringify(f1));
+  //   撤回で痛みも消え、一覧の注意も消える
+  await call('U_T1', 'k_saveConsent', { customerId: 'C4', state: 'revoked', clientReqId: crid() });
+  const bd2 = await call('U_T1', 'k_board', {});
+  ok('10-14 ★撤回で痛み・診断ごと消え、注意ありも消える', !q1(env, `SELECT 1 AS x FROM karte_safety WHERE customer_id = 'C4'`)
+     && (bd2.customers || []).find((x) => x.customerId === 'C4').flags.caution === false);
+  //   同意の撤回後に安全面を残したまま同意行だけ戻しても、注意ありは同意の JOIN の中で決まる
+  d.exec(`INSERT INTO karte_safety (customer_id, pain_json, rev, updated_by, updated_at) VALUES ('C4', '[{"region":"neck","level":2,"symptom":null}]', 1, 'T1', 1)`);
+  const bd3 = await call('U_T1', 'k_board', {});
+  ok('10-15 ★同意が agreed でなければ、行があっても注意ありにしない', (bd3.customers || []).find((x) => x.customerId === 'C4').flags.caution === false);
+  d.exec(`DELETE FROM karte_safety WHERE customer_id = 'C4'`);
+
+  //   指導の履歴
+  const n1 = await call('U_T1', 'k_addNote', { customerId: 'C4', sessionDate: today, tag: 'body', reasons: ['self_training_up', 'snack_down'], nextCheck: '夕食のタンパク質', nextPlan: '月-1kg', clientReqId: crid() });
+  ok('10-16 タグ・理由・次回確かめることだけでも保存できる', n1.success, JSON.stringify(n1));
+  const nl = await call('U_T2', 'k_notes', { customerId: 'C4' });
+  const nn = (nl.notes || [])[0] || {};
+  const sf = await call('U_T1', 'k_safety', { customerId: 'C4' });
+  ok('10-17b メモ・安全面の応答にも窓口の版（31）', nl.karteSchema === 31 && sf.karteSchema === 31);
+  ok('10-17 ★理由は固定表の順で返す・生の JSON 列は返さない', nn.tag === 'body' && JSON.stringify(nn.reasons) === '["snack_down","self_training_up"]' && nn.next_check === '夕食のタンパク質' && !('reasons_json' in nn), JSON.stringify(nn));
+  const nb = await call('U_T1', 'k_addNote', { customerId: 'C4', sessionDate: today, reasons: ['medication_changed'], clientReqId: crid() });
+  ok('10-18 ★健康の理由（固定表に無い）は 400', nb.status === 400);
+  const nt = await call('U_T1', 'k_addNote', { customerId: 'C4', sessionDate: today, tag: 'health', body: 'x', clientReqId: crid() });
+  ok('10-19 知らないタグは 400', nt.status === 400);
+  //   古い画面の編集でタグ・理由を消さない
+  const ed = await call('U_T1', 'k_editNote', { noteId: n1.noteId, rev: 1, body: '追記', nextPlan: '月-1kg', clientReqId: crid() });
+  const er = q1(env, `SELECT tag, reasons_json, next_check, body FROM karte_notes WHERE note_id = ?`, n1.noteId);
+  ok('10-20 ★鍵が無い編集ではタグ・理由・次回確かめることを消さない', ed.success && er.tag === 'body' && er.reasons_json && er.next_check === '夕食のタンパク質' && er.body === '追記', JSON.stringify(er));
+  const nrev = d.prepare(`SELECT before_json FROM karte_revisions WHERE table_name = 'karte_notes' AND row_id = ?`).all(n1.noteId).map((x) => x.before_json).join('');
+  ok('10-21 編集の控えにタグ・理由も残る', nrev.includes('"tag":"body"') && nrev.includes('snack_down'), nrev);
+  //   DB の CHECK（Worker を通らない書き込みでも、知らないタグは入らない）
+  let threw = false; try { d.exec(`UPDATE karte_notes SET tag = 'health' WHERE note_id = '${n1.noteId}'`); } catch (_) { threw = true; }
+  ok('10-22 ★表の CHECK が知らないタグを弾く', threw);
+
+  //   本文16KB：全項目を最大にした正規の要求が収まる
+  const big = { purposes: ['diet', 'bodymake', 'strength', 'posture', 'condition', 'stamina', 'health', 'sports'], slimAreas: ['face', 'arm', 'chest'],
+                motivation: 10, targetWeight: 250, targetFat: 60, exerciseNow: '漢'.repeat(100), exercisePast: '漢'.repeat(100), sleep: '漢'.repeat(100), meals: '漢'.repeat(100) };
+  const bigReq = JSON.stringify({ action: 'k_saveProfile', idToken: 'x'.repeat(1200), customerId: 'C4', rev: 9, clientReqId: 'k'.repeat(64),
+    goalText: '漢'.repeat(500), goalDeadline: '2027-03-31', goalValue: 999, goalUnit: '漢'.repeat(20), motive: '漢'.repeat(500), history: '漢'.repeat(500), hearing: big });
+  const bigPain = JSON.stringify({ action: 'k_saveSafety', idToken: 'x'.repeat(1200), customerId: 'C4', rev: 9, clientReqId: 'k'.repeat(64),
+    conditions: '漢'.repeat(500), injuries: '漢'.repeat(500), painSites: '漢'.repeat(500), medication: '漢'.repeat(500), restrictions: '漢'.repeat(500), diagnosis: '漢'.repeat(500),
+    painMap: Array.from({ length: 12 }, (_, i) => ({ region: ['neck', 'shoulder_r', 'shoulder_l', 'upper_back', 'lower_back', 'elbow_r', 'elbow_l', 'wrist_r', 'wrist_l', 'hip_r', 'hip_l', 'knee_r'][i], level: 10, symptom: '漢'.repeat(80) })) });
+  ok('10-23 ★最大の正規の要求が本文16KB以内（UTF-8 のバイト数）', Buffer.byteLength(bigReq) <= 16384 && Buffer.byteLength(bigPain) <= 16384, `${Buffer.byteLength(bigReq)} / ${Buffer.byteLength(bigPain)}`);
+}
+
 // ================= 9. 日付の道具 =================
 ok('9-1 実在しない日付を繰り上げで受けない', !isRealDate('2026-13-01') && !isRealDate('2026-02-30') && isRealDate('2028-02-29') && !isRealDate('2027-02-29'));
 ok('9-2 今日以前（JST）', isPastOrToday(today) && !isPastOrToday(dayOffset(1)));

@@ -168,5 +168,149 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   ok('6-2 GAS の api() を呼ばない（カルテの正本は D1）', !/\bapi\(/.test(SRC));
 }
 
+// ================= 7. 設計31：タブ名・固定表・見立て・部位・配色 =================
+{
+  const H = await import('../src/lib/karte-hearing.js');
+  const { w } = boot(async () => ({ success: true }));
+  const T = w.KarteUI._t;
+  const keys = (tbl) => JSON.stringify(Array.from(tbl, (x) => [x[0], x[1]]));
+  ok('7-1 ★画面の固定表の鍵・表示名は Worker と同じ（目的・部位・痛み・タグ・理由）',
+     keys(T.PURPOSES) === keys(H.PURPOSES) && keys(T.SLIM_AREAS) === keys(H.SLIM_AREAS) && keys(T.REGIONS) === keys(H.REGIONS)
+     && keys(T.TAGS) === keys(H.TAGS) && JSON.stringify(Array.from(T.REASONS, (x) => [x[0], x[1], x[2]])) === JSON.stringify(H.REASONS));
+  ok('7-2 ★タブは「体組成」（「からだ」を使わない）', SRC.includes("['body', '体組成']") && !/['"]からだ['"]/.test(SRC));
+  ok('7-3 TOKOWAKA の配色（ネイビー・ゴールド・クリーム・注意の赤）', /#1b2a47/.test(SRC) && /#b8965a/.test(SRC) && /#f7f4ee/.test(SRC) && /#a8524a/.test(SRC));
+  const rows = (a) => a.map(([d, wv, f, m]) => ({ d, w: wv, pbf: f, smm: m, s: {} }));
+  ok('7-4 見立て：記録1件なら出さない', T.assess(rows([['2026-10-01', 60, 30, 20]]), []) === null);
+  ok('7-5 見立て：体重・体脂肪率が下がり筋量を保つ → 良い方向', T.assess(rows([['2026-10-01', 60, 30, 20], ['2026-11-01', 59.2, 29.4, 20.1]]), ['diet']).kind === 'good');
+  ok('7-6 ★見立て：減量が目的で両方上がる → 目的と逆', T.assess(rows([['2026-10-01', 60, 30, 20], ['2026-11-01', 61, 31, 20]]), ['diet']).kind === 'reverse');
+  ok('7-7 見立て：差が小さい → ゆるやか', T.assess(rows([['2026-10-01', 60, 30, 20], ['2026-11-01', 60.2, 30.1, 20]]), ['diet']).kind === 'slow');
+  ok('7-8 見立ての文は断定しない（「診断」「必ず」を使わない）', ['good', 'reverse', 'slow', 'mixed'].every(() => true)
+     && !/必ず|確実に/.test(SRC.slice(SRC.indexOf('function assess'), SRC.indexOf('function lineChart'))));
+  ok('7-9 ★部位：ショルダープレス＝肩・プレスダウン＝腕・レッグレイズ＝体幹・ヒップスラスト＝脚・尻・知らない種目＝その他',
+     T.partOf('ショルダープレス') === '肩' && T.partOf('トライセプスプレスダウン') === '腕' && T.partOf('レッグレイズ') === '体幹'
+     && T.partOf('ヒップスラスト') === '脚・尻' && T.partOf('ベンチプレス') === '胸' && T.partOf('バトルロープ') === 'その他');
+  const st = T.exerciseStats([{ session_date: '2026-10-01', sets: [{ exercise: 'A', weight_kg: 40, reps: 10, e1rm: 53.3 }] },
+                              { session_date: '2026-11-01', sets: [{ exercise: 'A', weight_kg: 50, reps: 8, e1rm: 63.3 }, { exercise: 'A', weight_kg: 50, reps: 10, e1rm: 66.7 }] }], 'A');
+  ok('7-10 種目のまとめ：自己ベストは重量→回数の順・推定MAX・合計回数', st.best.w === 50 && st.best.r === 10 && st.maxE === 66.7 && st.reps === 28 && st.sets === 3);
+}
+
+// ================= 8. ヒアリングの保存・身体図・一覧の印 =================
+{
+  const evil = '<img src=x onerror="window.pwned=1">';
+  const { w, sent } = boot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員', trainerId: 'T1' }, assigned: true,
+      consent: { state: 'agreed' }, profile: { rev: 3, goal_text: evil, goal_deadline: '2027-03-31', hearing: { purposes: ['diet'], slimAreas: ['belly'], motivation: 7, targetWeight: 54, exerciseNow: evil } },
+      safetyBrief: { pain: [{ region: 'shoulder_r', level: 6, symptom: evil }], diagnosis: null, medication: null, restrictions: null }, lastNote: null, nextReservation: null };
+    if (b.action === 'k_body') return { success: true, ready: true, rows: [{ d: '2026-10-01', w: 60, pbf: 30, s: {} }, { d: '2026-11-01', w: 58.4, pbf: 29.1, s: { w: 'i' } }], goal: null, raw: [] };
+    if (b.action === 'k_saveProfile') return { success: true, rev: 4 };
+    return { success: true };
+  });
+  w.KarteUI.open('C1', '会員', 'summary');
+  await settle();
+  const root = w.document.getElementById('karteRoot');
+  ok('8-1 ★理想・ヒアリングの自由文・痛みの症状を HTML として解釈しない', !root.querySelector('img') && !w.pwned && root.textContent.includes('<img'));
+  ok('8-2 注意すること：身体図に右肩 6 が載る（読み上げの名前にも）', !!root.querySelector('svg[aria-label*="右肩 6"]') && root.textContent.includes('右肩 6/10'));
+  ok('8-3 目標の3列（現在 58.4kg → 54kg・あと 4.4kg）', root.textContent.includes('58.4kg') && root.textContent.includes('あと 4.4kg'));
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを編集').click();
+  await settle();
+  const pill = (t) => [...root.querySelectorAll('button')].find((x) => x.textContent.replace(/^\d+ /, '') === t);
+  pill('筋力アップ').click(); pill('太もも').click(); pill('二の腕').click(); pill('背中').click();   // 3つまで（背中は入らない）
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを保存').click();
+  await settle();
+  const sp = sent.filter((x) => x.action === 'k_saveProfile').pop();
+  ok('8-4 ★保存する中身：目的は配列・部位は押した順で3つまで・数値は数値型', sp && JSON.stringify(sp.hearing.purposes) === '["diet","strength"]'
+     && JSON.stringify(sp.hearing.slimAreas) === '["belly","thigh","arm"]' && sp.hearing.motivation === 7 && sp.hearing.targetWeight === 54 && sp.rev === 3, JSON.stringify(sp && sp.hearing));
+  ok('8-5 ★ヒアリングの保存に健康情報の鍵（painMap・diagnosis・medication）を載せない', sp && !('painMap' in sp) && !('diagnosis' in sp) && !('medication' in sp));
+}
+{
+  //   安全面の保存：painMap を送り、端末に退避しない
+  const { w, sent } = boot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' }, safetyBrief: null, profile: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_safety') return { success: true, karteSchema: 31, consent: 'agreed', safety: { rev: 2, pain: [{ region: 'lower_back', level: 4, symptom: '朝' }] } };
+    if (b.action === 'k_saveSafety') return { success: false, code: 'UNAUTHORIZED', detail: 'STALE_TOKEN' };
+    return { success: true };
+  });
+  w.KarteUI.open('C1', '会員', 'summary');
+  await settle();
+  const root = w.document.getElementById('karteRoot');
+  [...root.querySelectorAll('button')].find((x) => x.textContent === '安全面を見る・書く').click();
+  await settle();
+  [...root.querySelectorAll('button')].find((x) => x.textContent === '右膝').click();
+  [...root.querySelectorAll('button')].filter((x) => x.textContent === '7').pop().click();
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'この部位を入れる').click();
+  [...root.querySelectorAll('button')].find((x) => x.textContent === '保存する').click();
+  await settle();
+  const ss = sent.filter((x) => x.action === 'k_saveSafety').pop();
+  ok('8-6 痛みの身体図を送る（既存の腰＋足した右膝・強さは数値）', ss && ss.painMap.length === 2 && ss.painMap.some((p) => p.region === 'knee_r' && p.level === 7) && ss.rev === 2, JSON.stringify(ss && ss.painMap));
+  const saved = w.sessionStorage.getItem('karte_draft_v1') || '';
+  ok('8-7 ★安全面（痛み）は端末に退避しない', !saved.includes('knee_r') && !saved.includes('lower_back'), saved);
+}
+{
+  const { w } = boot(async (b) => {
+    if (b.action === 'k_board') return { success: true, next: null, customers: [
+      { customerId: 'C1', name: '会員一', flags: { noNextBooking: true, recordStale: false, contractEnding: false, paymentPending: false, caution: true, hearingMissing: false, consentPending: false } },
+      { customerId: 'C2', name: '会員二', flags: { noNextBooking: false, recordStale: false, contractEnding: false, paymentPending: false, caution: false, hearingMissing: true, consentPending: true } }] };
+    return { success: true };
+  });
+  w.KarteUI.openBoard();
+  await settle();
+  const root = w.document.getElementById('karteRoot');
+  ok('8-8 一覧：声かけが要る人だけを最初に出す（注意あり・未記入は並べ替えに使わない）', root.textContent.includes('会員一') && !root.textContent.includes('会員二') && root.textContent.includes('注意あり'));
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリング未記入').click();
+  ok('8-9 一覧：ヒアリング未記入で絞る・同意待ちの印', root.textContent.includes('会員二') && root.textContent.includes('同意待ち') && !root.textContent.includes('会員一'));
+}
+
+// ================= 9. 古い Worker には新しい項目を送らない（関門②） =================
+{
+  const K = await import('../src/routes/karte.js');
+  const { w } = boot(async () => ({ success: true }));
+  ok('9-1 ★画面が必要とする版と Worker の版が同じ', w.KarteUI._t.NEED_SCHEMA === K.KARTE_SCHEMA);
+  const { w: w2, sent } = boot(async (b) => {
+    if (b.action === 'k_summary') return { success: true, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' },
+      profile: { rev: 1, hearing: { purposes: ['diet'] } }, safetyBrief: null, lastNote: null, nextReservation: null };   // 版なし＝古い Worker
+    if (b.action === 'k_safety') return { success: true, consent: 'agreed', safety: { rev: 1, pain: [] } };
+    if (b.action === 'k_notes') return { success: true, notes: [] };
+    return { success: true };
+  });
+  w2.KarteUI.open('C1', '会員', 'summary');
+  await settle();
+  const root = w2.document.getElementById('karteRoot');
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを編集').click();
+  await settle();
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを保存').click();
+  await settle();
+  ok('9-2 ★版の無い Worker にはヒアリングを送らず、更新中と案内する', !sent.some((x) => x.action === 'k_saveProfile') && w2.alerts.some((a) => a.includes('更新中')));
+  w2.KarteUI.open('C1', '会員', 'notes');
+  await settle();
+  const r2 = w2.document.getElementById('karteRoot');
+  const tagPill = () => [...r2.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'トレーニング');
+  tagPill().click();
+  r2.querySelectorAll('textarea')[0].value = 'タグ付きのメモ';
+  [...r2.querySelectorAll('button')].find((x) => x.textContent === 'メモを保存').click();
+  await settle();
+  ok('9-3 ★版の無い Worker にはタグ付きのメモを送らない', !sent.some((x) => x.action === 'k_addNote'));
+  tagPill().click();   // タグを外す
+  [...r2.querySelectorAll('button')].find((x) => x.textContent === 'メモを保存').click();
+  await settle();
+  ok('9-4 タグなしのメモは古い Worker でも送れる（意味が変わらない）', sent.some((x) => x.action === 'k_addNote' && !x.tag));
+}
+
+{
+  //   一度 31 を読んだ後、次の読み取りが失敗したら信用しない
+  let n = 0;
+  const { w, sent } = boot(async (b) => {
+    if (b.action === 'k_notes') { n++; return n === 1 ? { success: true, karteSchema: 31, notes: [] } : { success: false, code: 'INTERNAL' }; }
+    return { success: true };
+  });
+  w.KarteUI.open('C1', '会員', 'notes'); await settle();
+  w.KarteUI.open('C1', '会員', 'notes'); await settle();
+  const r = w.document.getElementById('karteRoot');
+  [...r.querySelectorAll('button.k-pill')].find((x) => x.textContent === '食事').click();
+  r.querySelectorAll('textarea')[0].value = 'x';
+  [...r.querySelectorAll('button')].find((x) => x.textContent === 'メモを保存').click();
+  await settle();
+  ok('9-5 ★前に読んだ版を、今回の読み取りが失敗したときに信用しない', !sent.some((x) => x.action === 'k_addNote'));
+}
+
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
