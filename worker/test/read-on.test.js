@@ -83,6 +83,10 @@ async function seed(env, cid, o = {}) {
     paymentRequired: false, total: 0, used: 0, expire: '', expireMs: null, copyOnlyKey: 'keep-me' };
   if (o.reviewRequired) cur.reviewRequired = true;
   const payload = { current: cur, currentMonth: o.month || monthKey(NOW), transferCredits: { available: 2 } };
+  //   計算の材料の印（設計30）：4つを同じ回・いまの時刻でそろえる
+  for (const k of ['calcContracts', 'calcMeta', 'calcReservations', 'opening']) {
+    db.prepare('INSERT OR REPLACE INTO sync_state (key, synced_at, rows, ok) VALUES (?, ?, 1, 1)').run(k, o.calcAt != null ? o.calcAt : NOW);
+  }
   db.prepare('INSERT OR REPLACE INTO member_home (customer_id, payload, computed_at, synced_at) VALUES (?, ?, ?, 1)')
     .run(cid, JSON.stringify(payload), NOW - 60000);
 }
@@ -297,6 +301,53 @@ async function ingest(env, b) { const r = await handleIngest(new Request('https:
   ok('⑦-1 ★wrangler.toml に会員 ID（C+数字）が無い', !/\bC\d{8,}\b/.test(toml));
   ok('⑦-2 LB_D1_REMAIN_MODE は shadow か on だけ（段階0から on）', /LB_D1_REMAIN_MODE\s*=\s*"(shadow|on)"/.test(toml));
   ok('⑦-3 全員（LB_D1_REMAIN_ALL）はまだ入れていない（段階2はオーナー承認）', !/LB_D1_REMAIN_ALL\s*=\s*"1"/.test(toml));
+}
+
+// ---------- ⑧ 計算の材料が届いていなければ写し（設計30） ----------
+{
+  const { calcInputStatus, CALC_INPUT_KEYS, CALC_INPUT_MAX_AGE_MS, CALC_INPUT_FUTURE_MS } = await import('../src/lib/remain-read-on.js');
+  const T = 1793771490063;
+  const rows = (o = {}) => CALC_INPUT_KEYS.map((k) => ({ key: k, synced_at: (k in o) ? o[k] : T }));
+  ok('⑧-1 4つが同じ回・いまの時刻なら ok', calcInputStatus(rows(), T + 60000) === 'ok');
+  ok('⑧-2 ★45分ちょうどで stale（境界は倒す側）', calcInputStatus(rows(), T + CALC_INPUT_MAX_AGE_MS) === 'calc_input_stale'
+     && calcInputStatus(rows(), T + CALC_INPUT_MAX_AGE_MS - 1) === 'ok');
+  ok('⑧-3 ★1つでも欠けたら unknown', CALC_INPUT_KEYS.every((k) => calcInputStatus(rows().filter((r) => r.key !== k), T) === 'calc_input_unknown'));
+  ok('⑧-4 ★値が数でない（null・空・文字・0・負・小数・Infinity）は unknown',
+     [null, '', '1793771490063', 0, -1, 1.5, Infinity, NaN].every((v) => calcInputStatus(rows({ opening: v }), T) === 'calc_input_unknown'));
+  ok('⑧-5 ★4つの回が違えば split（契約だけ新しく、予約が古い）', calcInputStatus(rows({ calcReservations: T - 900000 }), T) === 'calc_input_split'
+     && calcInputStatus(rows({ calcMeta: T - 900000 }), T) === 'calc_input_split');
+  ok('⑧-6 未来すぎる印は unknown（5分までは許す）', calcInputStatus(rows(), T - CALC_INPUT_FUTURE_MS - 1) === 'calc_input_unknown'
+     && calcInputStatus(rows(), T - CALC_INPUT_FUTURE_MS) === 'ok');
+
+  //   入口から通す：表示（compat_member・boot）と予約の選択肢（booking_options・route_booking_options）
+  const cust = { role: 'customer', customerId: CID, name: '山田太郎' };
+  const mk = async (calcAt) => {
+    const env = makeEnv({ LB_D1_REMAIN_MODE: 'on' }); await seed(env, CID, { calcAt }); allow(env, CID);
+    for (const k of ['customers', 'reservations', 'recurring', 'trainers']) {
+      env._db.prepare('INSERT OR REPLACE INTO sync_state (key, synced_at, rows, ok) VALUES (?, ?, 1, 1)').run(k, Date.now());
+    }
+    return env;
+  };
+  const envOld = await mk(Date.now() - 46 * 60000);
+  const m = await compatMemberStatus({ env: envOld, who: cust, ctx: ctxOf() });
+  ok('⑧-e1 ★材料が46分前なら compat_member は写し', m.home && m.home.remainSource === 'copy' && m.home.remaining === 3, JSON.stringify(m.home && { s: m.home.remainSource, r: m.home.remaining }));
+  const bt = await routeBoot({ env: envOld, who: cust, ctx: ctxOf() });
+  ok('⑧-e2 ★boot も写し', bt && bt.home && bt.home.remainSource === 'copy');
+  await compatBookingOptions({ env: envOld, who: cust, body: { customerId: CID, startMs: NOW + 3600000 }, ctx: ctxOf() });
+  await routeBookingOptions({ env: envOld, who: cust, body: { customerId: CID, startMs: NOW + 3600000 }, ctx: ctxOf() });
+  await new Promise((r) => setTimeout(r, 20));
+  const c = counts(envOld);
+  const src = (e) => c.filter((x) => x.entry === e).map((x) => x.source).join(',');
+  ok('⑧-e3 ★予約の選択肢の2入口も写しで答えている（数え方で確かめる）',
+     src('booking_options') === 'copy:calc_input_stale' && src('route_booking_options') === 'copy:calc_input_stale', JSON.stringify(c));
+  const envSplit = await mk(Date.now());
+  envSplit._db.prepare("UPDATE sync_state SET synced_at = synced_at - 900000 WHERE key = 'opening'").run();
+  ok('⑧-e4 ★棚卸しだけ前の回なら写し', (await readHome(envSplit, CID)).remainSource === 'copy');
+  const envBrk = await mk(Date.now());
+  envBrk._break = /FROM sync_state WHERE key IN/;
+  ok('⑧-e5 ★印が読めなければ写し', (await readHome(envBrk, CID)).remainSource === 'copy');
+  const envNew = await mk(Date.now() - 10 * 60000);
+  ok('⑧-e6 10分前なら D1', (await readHome(envNew, CID)).remainSource === 'd1');
 }
 
 console.log(`\n${fail ? '❌' : '✅'} D1 から出す（設計21） 検証: ${pass} passed / ${fail} failed`);

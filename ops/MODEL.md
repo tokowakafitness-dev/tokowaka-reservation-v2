@@ -149,6 +149,7 @@ trg_alloc_return_pack       同
 | I50 | **体の記録の合成は GAS の maReadBody_／maReadGoal_ と同じ答え**（元のコードを vm で動かしてランダムに突き合わせる）。d1 の行はシートの行より後 | `body-d1.test.js` 1-1〜1-3 |
 | I51 | **体の記録の新しい書き込みは凍結（body_freeze）の後だけ**。sheet の行は書き換えない（体脂肪率は d1 の行だけ・無ければ known_weight で作る）。読むのは verified の凍結＋d1 | `karte.test.js` 5-1〜5-6、`body-d1.test.js` 2-1・2-4〜2-6・3-1〜3-12 |
 | I52 | 退会の起算日は追記だけの表。交互（withdrawn↔rejoined）・最後の行以降・cancel は最後の1行だけ・オーナーだけ・実在する今日以前の日付 | `karte.test.js` 7-1〜7-12 |
+| I53 | **D1 から残数を答えるのは、計算の材料4つ（calcContracts・calcMeta・calcReservations・opening）の sync_state が同じ batchId で、45分未満のときだけ**。欠け・数でない・未来5分超・回の不一致・45分以上は写し（copy:calc_input_*）。会員ごとの作り直し（/quota/rebuild）は全体の印を押さない（設計30） | `read-on.test.js` ⑧-1〜⑧-6・⑧-e1〜⑧-e6 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。

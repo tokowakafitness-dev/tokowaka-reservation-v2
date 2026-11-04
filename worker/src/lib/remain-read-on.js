@@ -20,6 +20,14 @@ export const VERIFY_CUSTOMER_ID = 'CVERIFY0000001';
 export const READ_ENTRIES = ['compat_member', 'compat_home', 'booking_options', 'boot', 'customer_detail', 'route_booking_options'];
 export const DAILY_CAP = 500;
 
+//   ★計算の材料が「同じ回で全部届いている」ことの門（設計30・Codex 関門③の指摘1）
+//     GAS は15分ごとに4つを順に全件送り（同じ batchId）、Worker は届くたびに sync_state を押す。
+//     どれかの送信が止まると D1 は古い材料のまま「新しい」と名乗る（世代は進まない）＝写しに倒す。
+//     4つが同じ batchId でそろっていない（途中で止まった回）も倒す。
+export const CALC_INPUT_KEYS = ['calcContracts', 'calcMeta', 'calcReservations', 'opening'];
+export const CALC_INPUT_MAX_AGE_MS = 45 * 60 * 1000;    // 15分周期×3
+export const CALC_INPUT_FUTURE_MS = 5 * 60 * 1000;      // 時計のずれの許し
+
 /** mode が 'on' か（厳密な文字列一致） */
 export function modeOn(env) {
   return String((env && env.LB_D1_REMAIN_MODE) || '') === 'on';
@@ -43,12 +51,44 @@ export async function isSelected(env, customerId) {
 }
 
 /**
+ * 計算の材料の印を判定する（純粋）。rows＝sync_state の {key, synced_at} の配列
+ *   'ok' / 'calc_input_unknown'（欠け・値が数でない・未来すぎる） / 'calc_input_split'（4つの batchId が違う）
+ *   / 'calc_input_stale'（45分以上前）
+ */
+export function calcInputStatus(rows, nowMs) {
+  const by = {};
+  for (const r of (rows || [])) if (r && typeof r.key === 'string') by[r.key] = r.synced_at;
+  let at = null;
+  for (const k of CALC_INPUT_KEYS) {
+    const v = by[k];
+    if (typeof v !== 'number' || !Number.isSafeInteger(v) || v <= 0) return 'calc_input_unknown';
+    if (at == null) at = v;
+    else if (v !== at) return 'calc_input_split';
+  }
+  if (!(typeof nowMs === 'number' && Number.isFinite(nowMs))) return 'calc_input_unknown';
+  if (at > nowMs + CALC_INPUT_FUTURE_MS) return 'calc_input_unknown';
+  if (nowMs - at >= CALC_INPUT_MAX_AGE_MS) return 'calc_input_stale';
+  return 'ok';
+}
+
+async function readCalcInputStatus(env, nowMs) {
+  try {
+    const r = await env.DB.prepare(
+      `SELECT key, synced_at FROM sync_state WHERE key IN (${CALC_INPUT_KEYS.map(() => '?').join(', ')})`
+    ).bind(...CALC_INPUT_KEYS).all();
+    return calcInputStatus((r && r.results) || [], nowMs);
+  } catch (_) {
+    return 'calc_input_unknown';
+  }
+}
+
+/**
  * 写し（copyDiag＝readHomeDiag の結果）に D1 の値を上書きするかを決めて、返す答えを作る。
  *   返り値 { value, source, status }  ※value は顧客に返すもの（null なら GAS へ）
  *   source  'copy_unchanged'（mode/選択の外＝変更前と同じ） / 'd1' / 'copy:<理由>'
  *   ★mode 'on' かつ選ばれた会員だけ remainSource を付ける
  */
-export async function decideHome(env, customerId, targetMs, copyDiag) {
+export async function decideHome(env, customerId, targetMs, copyDiag, nowMs) {
   const copy = copyDiag ? copyDiag.value : null;
   if (!modeOn(env)) return { value: copy, source: 'copy_unchanged', status: 'mode_off', selected: false };
   const sel = await isSelected(env, customerId);
@@ -57,6 +97,9 @@ export async function decideHome(env, customerId, targetMs, copyDiag) {
   const mark = (why) => ({ value: Object.assign({}, copy, { remainSource: 'copy' }), source: 'copy:' + why, status: why, selected: true });
   //   ★GAS が「残数を出せない」と言う会員は D1 でも出さない（設計21 F3）
   if (copy.reviewRequired === true) return mark('review');
+  //   ★材料の送信が止まっていれば、D1 の世代が「新しい」でも答えない（設計30）
+  const ci = await readCalcInputStatus(env, (typeof nowMs === 'number') ? nowMs : Date.now());
+  if (ci !== 'ok') return mark(ci);
   let d;
   try { d = await readRemainDiag(env, customerId, targetMs); }
   catch (_) { return mark('read_failed'); }
