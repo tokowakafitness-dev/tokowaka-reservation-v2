@@ -151,8 +151,12 @@ const call = async (env, b, secret) => { const r = await quotaRebuild(req(b, sec
   ok('2-9 dirty_since は追いついたので NULL', v.dirtySince === null);
 
   // 2-10 契約を減らして作り直す（行の入れ替え）
+  await new Promise((r) => setTimeout(r, 3));   // 同じミリ秒に重ねない（2-11 の★と同じ理由）
   const [, b2] = await call(env, body({ seq: 8, contracts: [contractRow(0, 2)] }));
   ok('2-10 入れ替えた契約で作り直す', b2.ok && q1(env, 'SELECT total FROM ticket_packs WHERE customer_id=? AND built_version=7', CID).total === 2);
+  //   ★作り直しは「この回の時刻（ミリ秒）より前の行を消す」。同じミリ秒に2回走ると前の回の行が消えない＝
+  //     検査で間を置かずに呼ぶとたまに落ちていた（2026-11-04 特定）。本番は別々の要求なので同じミリ秒に重ならない。間を空けて呼ぶ
+  await new Promise((r) => setTimeout(r, 3));
   const [, b3] = await call(env, body({ seq: 9, reservations: [] }));
   ok('2-11 ★予約が0件になったら入力の行も消える（取消が伝わる）', b3.ok
      && q1(env, 'SELECT COUNT(*) AS n FROM calc_reservation_rows WHERE customer_id=?', CID).n === 0
