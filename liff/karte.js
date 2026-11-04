@@ -1093,7 +1093,7 @@
   }
   function restStop() { rest.endAt = 0; if (rest.iv) clearInterval(rest.iv); rest.iv = null; if (rest.box) restTick(); }
   function restTick() {
-    if (!rest.box || !rest.box.isConnected) { if (rest.iv) clearInterval(rest.iv); rest.iv = null; return; }
+    if (!rest.box || !rest.box.isConnected) { if (rest.iv) clearInterval(rest.iv); rest.iv = null; return; }   // 画面から外れたら止める（戻ったら trainingForm が続きを始める）
     var left = Math.ceil((rest.endAt - Date.now()) / 1000);
     rest.box.innerHTML = '';
     if (!rest.endAt) { rest.box.style.display = 'none'; return; }
@@ -1168,8 +1168,15 @@
     var prevBtnBox = el('div');
     c.appendChild(prevBtnBox);
     var restBar = el('div', { class: 'k-restbar', style: 'display:none;' });   // ★見た目は CSS の .k-restbar（inline に display を2つ書くと後の flex が勝ち、空の帯が出ていた）
-    rest.box = restBar; restTick();
     c.appendChild(restBar);
+    rest.box = restBar;
+    //   ★休憩中に上の「記録の入力」をもう一度押すと、この欄ごと作り直される。この時点の欄はまだ画面に無い（返してから置かれる）ので、
+    //     ここで数えると「外れた帯」と見なして止まる。画面に置かれた後に、残り時間があれば新しい帯で続ける（関門②）
+    setTimeout(function () {
+      if (rest.box !== restBar || !restBar.isConnected) return;
+      if (rest.endAt && !rest.buzzed && !rest.iv) rest.iv = setInterval(restTick, 500);
+      restTick();
+    }, 0);
     var list = el('div'); c.appendChild(list);
     var remain = el('div', { class: 'k-sub', style: 'margin-top:6px;' });
 

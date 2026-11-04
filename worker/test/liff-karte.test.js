@@ -822,6 +822,13 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   const rb2 = root.querySelector('.k-restbar');
   ok('15-8 ✓で休憩の帯が出る（横並び＝「止める」が右端）', !!rb2 && rb2.textContent.includes('休憩') && w.getComputedStyle(rb2).display === 'flex', rb2 && w.getComputedStyle(rb2).display);
   ok('15-9 長い英数字（種目名・メモ）は途中で折り返す', /#karteRoot\{overflow-wrap:anywhere;/.test(SRC));
+  //   ★休憩中に上の「記録の入力」をもう一度押す＝記録の欄が作り直される。帯を置く前に進めると、外れた帯と見なして黙って止まっていた（関門②）
+  //     （タブを移ったときに消すのは設計33 §9-7 の仕様）
+  const again = [...root.querySelectorAll('button')].find((x) => /今日の記録|記録の入力/.test(x.textContent));
+  if (again) again.click(); await settle();
+  await new Promise((r) => setTimeout(r, 650));
+  const rb3 = root.querySelector('.k-restbar');
+  ok('15-11 ★休憩中に記録の欄が作り直されても、休憩の帯が出たまま数え続ける', !!again && !!rb3 && rb3.isConnected && rb3.textContent.includes('休憩 ') && w.getComputedStyle(rb3).display === 'flex', rb3 && (rb3.textContent + ' ' + w.getComputedStyle(rb3).display));
   ok('15-10 ★予約画面全体の viewport は変えない（会員の画面に効くため）', HTML.includes('<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'));
 }
 
