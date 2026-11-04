@@ -726,5 +726,74 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   ok('13-16 ★戻した位置の当て直しは、別の画面には当てない', root.scrollTop === 0);
 }
 
+// ================= 14. セットごとのメモ =================
+{
+  const HIST2 = [{ session_id: 'S5', session_date: '2026-11-01', created_at: 1, author_trainer_id: 'T1', rev: 1, sets: [
+    { exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10, e1rm: 53.3, note: null }, { exercise: 'スクワット', set_no: 2, weight_kg: 40, reps: 8, e1rm: 50.7, note: '最後の2回は補助' }] }];
+  const { w, sent } = trBoot(async (b) => {
+    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: HIST2, best: [] };
+    if (b.action === 'k_addTraining') return { success: true, sessionId: 'N2' };
+    return { success: true };
+  });
+  w.confirm = () => true;
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  let root = w.document.getElementById('karteRoot');
+  ok('14-1 日別・種目別に、保存したセットのメモが出る（前回の表示にも）', root.textContent.includes('2セット目：最後の2回は補助'));
+  btn(root, '＋ 今日の記録').click(); await settle();
+  btn(root, '前回（').click(); await settle();
+  ok('14-1b 種目の「前回」の表示に前回のメモ', root.textContent.includes('（メモ：最後の2回は補助）'));
+  ok('14-2 ★前回の内容で始めてもメモは写さない（その日の出来事なので）', !root.querySelector('input[data-memo]'));
+  root.querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
+  const mi = root.querySelector('input[data-memo="0:0"]');
+  ok('14-3 ✎でそのセットのメモ欄が開き、そこに入力できる', !!mi && w.document.activeElement === mi);
+  mi.value = 'フォーム良好'; mi.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const dr = JSON.parse(w.localStorage.getItem('karte_tr_draft_v1:T1:C1'));
+  ok('14-4 ★メモも端末の下書きに残る', dr.items[0].sets[0].note === 'フォーム良好');
+  btn(root, '＋ セット（前のセットを複製）').click(); await settle();
+  ok('14-5 セットを複製してもメモは写さない', !root.querySelector('input[data-memo="0:2"]'));
+  [...root.querySelectorAll('button[aria-label$="実施済みにする"]')][0].click(); await settle();
+  [...root.querySelectorAll('button[aria-label$="実施済みにする"]')][1].click(); await settle();
+  btn(root, '✓のセットを記録する').click(); await settle();
+  const p = sent.filter((x) => x.action === 'k_addTraining').pop();
+  ok('14-6 ★メモは✓のセットに付けて送る（空のメモは送らない）', p && p.items[0].sets[0].note === 'フォーム良好' && !('note' in p.items[0].sets[1]), JSON.stringify(p && p.items));
+  ok('14-7 メモ欄は200字まで・16px', /maxlength: '200'/.test(SRC) && /k-setnote input\{[^}]*font-size:16px/.test(SRC));
+}
+
+{
+  //   メモ欄の真下に注記・よく使うメモ・記録されない入力の警告
+  const { w, sent } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true, sessionId: 'N3' }));
+  let msgs = []; w.confirm = (m) => { msgs.push(String(m)); return false; };
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, '＋ 今日の記録').click(); await settle();
+  btn(root, '前回（').click(); await settle();
+  //   2セット目は数字を消して「メモだけ」にする
+  for (const lab of ['2セット目の重量', '2セット目の回数']) { const x = root.querySelector('input[aria-label="' + lab + '"]'); x.value = ''; x.dispatchEvent(new w.Event('input', { bubbles: true })); }
+  root.querySelector('button[aria-label="2セット目のメモ"]').click(); await settle();
+  const note = root.querySelector('.k-setnote');
+  ok('14-8 ★メモ欄の真下に「痛み・診断・服薬は注意することへ」', note && note.textContent.includes('痛み・診断・服薬はここに書かず'));
+  [...note.querySelectorAll('.k-memochips button')].find((x) => x.textContent === '補助あり').click();
+  [...note.querySelectorAll('.k-memochips button')].find((x) => x.textContent === 'フォーム崩れ').click();
+  ok('14-9 よく使うメモを押すだけで入る（重ねられる）', root.querySelector('input[data-memo="0:1"]').value === '補助あり・フォーム崩れ');
+  ok('14-10 よく使うメモに健康の言葉を入れない', !/痛|しびれ|服薬|薬|診断|怪我|ケガ/.test(SRC.slice(SRC.indexOf('var MEMO_PRESETS'), SRC.indexOf('var MEMO_PRESETS') + 200)));
+  root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
+  btn(root, '✓のセットを記録する').click(); await settle();
+  ok('14-11 ★メモだけ書いて✓の無いセットも「記録されない入力」として保存の前に知らせる（やめたら送らない）', msgs.some((m) => m.includes('記録されない入力が 1 セット')) && !sent.some((x) => x.action === 'k_addTraining'), msgs.join(' / '));
+  ok('14-12 幅の狭い端末では、セットを消すボタンをメモ欄へ移して数字の欄を広く取る', /@media \(max-width:360px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 48px 44px/.test(SRC) && /k-setdel\{display:none;\}/.test(SRC));
+}
+
+{
+  //   計算後の見た目で確かめる（CSS の強さの取り違えは文字列の検査では見つからない）
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  w.confirm = () => true;
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, '＋ 今日の記録').click(); await settle();
+  btn(root, '前回（').click(); await settle();
+  root.querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
+  const del2 = root.querySelector('.k-setdel2');
+  ok('14-13 ★広い画面では「このセットを消す」は出さない（×だけ）', del2 && w.getComputedStyle(del2).display === 'none', del2 && w.getComputedStyle(del2).display);
+}
+
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

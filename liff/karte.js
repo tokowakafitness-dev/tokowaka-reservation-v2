@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-04e カルテ スワイプで戻る・進む（LIFF を閉じない・関門②）';
+  var KARTE_BUILD = '2026-11-04f カルテ セットごとのメモ（よく使うメモ・狭い画面）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -107,7 +107,14 @@
     '#karteRoot .k-tl-item{position:relative;}',
     '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-acc);}',
     '#karteRoot .k-bar{height:12px;border-radius:6px;background:#eeeeec;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-acc);}',
-    '#karteRoot .k-setrow{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr) 48px 44px;gap:6px;align-items:center;margin-bottom:6px;}',
+    '#karteRoot .k-setrow{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr) 48px 44px 44px;gap:6px;align-items:center;margin-bottom:6px;}',
+    '#karteRoot .k-setnote{margin:-2px 0 8px 28px;}',
+    '#karteRoot .k-btn.k-setdel2{display:none;}',   // .k-btn.small（inline-block）より強くする
+    '#karteRoot .k-memochips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}',
+    '#karteRoot .k-memochips button{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;font-size:14px;font-family:inherit;color:#3f4550;}',
+    //   幅の狭い端末（360px 以下）：セットを消すボタンはメモ欄の中へ移し、数字の欄を広く取る
+    '@media (max-width:360px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 48px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setdel{display:none;} #karteRoot .k-btn.k-setdel2{display:inline-block;} #karteRoot .k-setnote{margin-left:24px;}}',
+    '#karteRoot .k-setnote input{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;}',
     '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:48px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:17px;}',
     '#karteRoot .k-picker-go{position:sticky;bottom:76px;z-index:2;}',
     //   キーパッドが出ているあいだ（k-kb）：下のタブを隠し、決定ボタンは下に詰める
@@ -382,7 +389,7 @@
   }
   function onDirty(e) {
     var t = e.target;
-    if (t && t.closest && t.closest('.k-setrow,.k-picker-go')) return;   // トレーニングの記録は端末の下書きがあるので確かめない
+    if (t && t.closest && t.closest('.k-setrow,.k-setnote,.k-picker-go')) return;   // トレーニングの記録は端末の下書きがあるので確かめない
     if (t && t.closest && t.closest('[data-nodirty]')) return;
     cur.dirty = true;
   }
@@ -987,6 +994,8 @@
   var TR_DRAFT_PREFIX = 'karte_tr_draft_v1:';
   var TR_DRAFT_TTL = 24 * 3600 * 1000;
   var TR_TOTAL = 60;
+  //   よく使う短いメモ（押すだけで入る）。健康の言葉は入れない（I55）
+  var MEMO_PRESETS = ['補助あり', 'フォーム崩れ', '余裕あり', 'ギリギリ', '可動域を狭めた', 'テンポ遅め'];
   function trKey() { return TR_DRAFT_PREFIX + String((window.state && state.trainerId) || '') + ':' + cur.customerId; }
   function lsGet(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
@@ -1026,10 +1035,19 @@
   function buildPayload(items) {
     return items.map(function (it) {
       return { exercise: String(it.exercise || '').trim(), sets: (it.sets || []).filter(function (s) { return s.done === true && s.w !== '' && s.r !== '' && s.w != null && s.r != null; })
-        .map(function (s) { return { weight: Number(s.w), reps: Number(s.r) }; }) };
+        .map(function (s) { var o = { weight: Number(s.w), reps: Number(s.r) }; var n = String(s.note || '').trim(); if (n) o.note = n.slice(0, 200); return o; }) };
     }).filter(function (it) { return it.exercise && it.sets.length; });
   }
-  function uncheckedCount(items) { var n = 0; items.forEach(function (it) { (it.sets || []).forEach(function (s) { if (s.done !== true && s.w !== '' && s.r !== '' && s.w != null && s.r != null) n++; }); }); return n; }
+  //   記録されない入力：✓が無い・重量か回数が欠けている、のどちらかで、重量・回数・メモのどれかが入っているセット
+  function uncheckedCount(items) {
+    var n = 0;
+    items.forEach(function (it) { (it.sets || []).forEach(function (s) {
+      var hasW = s.w !== '' && s.w != null, hasR = s.r !== '' && s.r != null, hasN = String(s.note || '').trim() !== '';
+      var recorded = s.done === true && hasW && hasR;
+      if (!recorded && (hasW || hasR || hasN)) n++;
+    }); });
+    return n;
+  }
   function totalSets(items) { var n = 0; items.forEach(function (it) { n += (it.sets || []).length; }); return n; }
 
   //   休憩タイマー（端末内だけ・記録しない・1つだけ・終了予定の時刻から残りを出す）
@@ -1144,7 +1162,8 @@
       var p = prevOfExercise(sessions, ex, D.sessionDate);
       if (!p) return '前回の記録なし（直近20回の中）';
       var top = p.sets.slice().sort(function (a, b) { return b.weight_kg - a.weight_kg || b.reps - a.reps; })[0];
-      return '前回 ' + md(p.s.session_date) + '・' + top.weight_kg + 'kg×' + top.reps + '×' + p.sets.length + 'セット';
+      var pn = p.sets.filter(function (x) { return x.note; }).map(function (x) { return x.note; });
+      return '前回 ' + md(p.s.session_date) + '・' + top.weight_kg + 'kg×' + top.reps + '×' + p.sets.length + 'セット' + (pn.length ? '（メモ：' + pn[pn.length - 1].slice(0, 30) + (pn[pn.length - 1].length > 30 ? '…' : '') + '）' : '');
     }
     function refreshTop() {
       var ps = partsSince(sessions, D.sessionDate);
@@ -1189,7 +1208,7 @@
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
           el('button', { type: 'button', class: 'k-btn out small', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { D.items.splice(ei, 1); save(); draw(); } })]));
         blk.appendChild(el('div', { class: 'k-sub', style: 'margin:2px 0 8px;', text: prevLabel(it.exercise) }));
-        blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span')]));
+        blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;', text: 'メモ' }), el('span')]));
         it.sets.forEach(function (s, si) {
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
             style: 'min-width:48px;min-height:48px;border-radius:12px;font-size:20px;font-weight:700;' + (s.done ? 'background:#0e6b5c;color:#fff;border:1px solid #0e6b5c;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
@@ -1199,8 +1218,30 @@
             numInput(s.w, 'kg', (si + 1) + 'セット目の重量', function (v) { s.w = v; }),
             numInput(s.r, '回', (si + 1) + 'セット目の回数', function (v) { s.r = v; }),
             chk,
-            el('button', { type: 'button', 'aria-label': (si + 1) + 'セット目を消す', style: 'min-width:44px;min-height:44px;border:none;background:transparent;color:#9a9ea6;font-size:16px;', text: '×',
+            el('button', { type: 'button', 'aria-label': (si + 1) + 'セット目のメモ', 'aria-expanded': (s.note || s.memoOpen) ? 'true' : 'false',
+              style: 'min-width:44px;min-height:44px;border-radius:10px;font-size:16px;' + (s.note ? 'background:var(--k-acc-l);color:var(--k-acc);border:1px solid var(--k-acc);' : 'background:#fff;color:#9a9ea6;border:1px solid #c9ccd3;'),
+              text: '✎', onclick: function () { s.memoOpen = !(s.memoOpen || s.note); if (!s.memoOpen && !s.note) { save(); draw(); return; } save(); draw(); focusMemo(ei, si); } }),
+            el('button', { type: 'button', class: 'k-setdel', 'aria-label': (si + 1) + 'セット目を消す', style: 'min-width:44px;min-height:44px;border:none;background:transparent;color:#9a9ea6;font-size:16px;', text: '×',
               onclick: function () { it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
+          //   セットのメモ（✎ で開く・入っていれば開いたまま）。痛み・診断は書かない（注意すること へ）
+          if (s.note || s.memoOpen) {
+            var mi = el('input', { type: 'text', maxlength: '200', placeholder: '例：最後の2回は補助', 'aria-label': (si + 1) + 'セット目のメモ（200字まで）', 'data-memo': ei + ':' + si, enterkeyhint: 'done', autocomplete: 'off' });
+            if (s.note) mi.value = s.note;
+            mi.oninput = function () { s.note = mi.value; save(); };
+            mi.onkeydown = function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); mi.blur(); } };
+            var chips = el('div', { class: 'k-memochips' });
+            MEMO_PRESETS.forEach(function (tx) {
+              chips.appendChild(el('button', { type: 'button', text: tx, onclick: function () {
+                var v = String(s.note || '').trim();
+                if (v.indexOf(tx) >= 0) return;
+                s.note = (v ? v + '・' : '') + tx; if (s.note.length > 200) s.note = s.note.slice(0, 200);
+                mi.value = s.note; save();
+              } }));
+            });
+            blk.appendChild(el('div', { class: 'k-setnote' }, [mi, chips,
+              el('div', { class: 'k-sub', style: 'margin-top:4px;color:var(--k-warn);', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }),
+              el('button', { type: 'button', class: 'k-btn out small k-setdel2', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
+          }
         });
         //   セットを足す＝直前のセットを複製（✓は外す）
         blk.appendChild(el('button', { type: 'button', class: 'k-btn out small', text: '＋ セット（前のセットを複製）', onclick: function () {
@@ -1216,6 +1257,7 @@
       buildPayload(D.items).forEach(function (x) { rec += x.sets.length; });
       remain.textContent = '記録する ' + rec + 'セット・記録しない ' + uncheckedCount(D.items) + 'セット（合計 ' + t + '／' + TR_TOTAL + '）';
     }
+    function focusMemo(ei, si) { var m = list.querySelector('input[data-memo="' + ei + ':' + si + '"]'); if (m) { try { m.focus(); } catch (e) {} } }
     function addExercises(names) {
       names.forEach(function (ex) {
         if (D.items.length >= 20 || totalSets(D.items) >= TR_TOTAL) return;
@@ -1282,7 +1324,7 @@
       var items = buildPayload(D.items);
       if (!items.length) { window.alert('実施したセットに✓を付けてください。'); return; }
       var n = uncheckedCount(D.items);
-      if (n && !window.confirm('✓の無い ' + n + ' セットは記録しません。よいですか？')) return;
+      if (n && !window.confirm('記録されない入力が ' + n + ' セットあります（✓が無い・重量か回数が空）。保存すると、その入力は消えます。よいですか？')) return;
       var total = 0; items.forEach(function (it) { total += it.sets.length; });
       if (total > TR_TOTAL) { window.alert('1回の記録は合計60セットまでです。'); return; }
       send({ customerId: cur.customerId, sessionDate: D.sessionDate, items: items }, D.reqId);
@@ -1363,7 +1405,8 @@
         var recent = card('直近3回', []);
         st.days.slice(-3).reverse().forEach(function (dd) {
           recent.appendChild(el('div', { style: 'display:grid;grid-template-columns:56px 1fr 56px;gap:8px;font-size:13px;padding:6px 0;border-top:1px solid var(--k-line);' }, [
-            el('div', { class: 'k-sub', text: md(dd.d) }), el('div', { text: dd.sets.map(function (x) { return x.weight_kg + 'kg×' + x.reps; }).join(' ・ ') }),
+            el('div', { class: 'k-sub', text: md(dd.d) }), el('div', {}, [document.createTextNode(dd.sets.map(function (x) { return x.weight_kg + 'kg×' + x.reps; }).join(' ・ '))].concat(
+              dd.sets.filter(function (x) { return x.note; }).map(function (x) { return el('div', { class: 'k-sub', text: x.set_no + 'セット目：' + x.note }); }))),
             el('div', { class: 'k-num', style: 'text-align:right;', text: dd.v != null ? String(dd.v) : '' })]));
         });
         area.appendChild(recent);
@@ -1389,6 +1432,7 @@
           (s.sets || []).forEach(function (st) { (byEx[st.exercise] = byEx[st.exercise] || []).push(st); });
           Object.keys(byEx).forEach(function (ex) {
             c3.appendChild(el('div', { style: 'font-size:13px;margin-bottom:4px;', text: ex + '：' + byEx[ex].map(function (st) { return st.weight_kg + 'kg×' + st.reps + (st.e1rm != null ? '（' + st.e1rm + '）' : ''); }).join('　') }));
+            byEx[ex].forEach(function (st) { if (st.note) c3.appendChild(el('div', { class: 'k-sub', style: 'margin:-2px 0 4px 10px;', text: st.set_no + 'セット目：' + st.note })); });
           });
           if (String(s.author_trainer_id) === String(state.trainerId) || state._isOwner) {
             c3.appendChild(el('button', { class: 'k-btn out small', style: 'margin-top:6px;', text: '削除', onclick: function () {
