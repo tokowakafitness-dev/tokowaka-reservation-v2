@@ -178,7 +178,9 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
      keys(T.PURPOSES) === keys(H.PURPOSES) && keys(T.SLIM_AREAS) === keys(H.SLIM_AREAS) && keys(T.REGIONS) === keys(H.REGIONS)
      && keys(T.TAGS) === keys(H.TAGS) && JSON.stringify(Array.from(T.REASONS, (x) => [x[0], x[1], x[2]])) === JSON.stringify(H.REASONS));
   ok('7-2 ★タブは「体組成」（「からだ」を使わない）', SRC.includes("['body', '体組成']") && !/['"]からだ['"]/.test(SRC));
-  ok('7-3 TOKOWAKA の配色（ネイビー・ゴールド・クリーム・注意の赤）', /#1b2a47/.test(SRC) && /#b8965a/.test(SRC) && /#f7f4ee/.test(SRC) && /#a8524a/.test(SRC));
+  ok('7-3 TOKOWAKA のネイビーを主に、モックと同じ作り（ゴシック体・角丸のカード・下のタブ）', /#1b2a47/.test(SRC) && /#f4f3ef/.test(SRC)
+     && /border-radius:14px/.test(SRC) && /k-tabs\{[^}]*bottom:0/.test(SRC));
+  ok('7-3b ★明朝体を使わない（スマホで線が細く読みにくい・2026-11-04 オーナー指摘「見にくさ」）', !/Shippori|Mincho|serif;/.test(SRC.replace(/sans-serif/g, '')));
   const rows = (a) => a.map(([d, wv, f, m]) => ({ d, w: wv, pbf: f, smm: m, s: {} }));
   ok('7-4 見立て：記録1件なら出さない', T.assess(rows([['2026-10-01', 60, 30, 20]]), []) === null);
   ok('7-5 見立て：体重・体脂肪率が下がり筋量を保つ → 良い方向', T.assess(rows([['2026-10-01', 60, 30, 20], ['2026-11-01', 59.2, 29.4, 20.1]]), ['diet']).kind === 'good');

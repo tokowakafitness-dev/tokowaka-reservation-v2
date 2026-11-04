@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-04a カルテ 設計31（ヒアリング・体組成・指導の履歴）';
+  var KARTE_BUILD = '2026-11-04b カルテ 設計31（モックの見た目に寄せた：ゴシック体・白いカード・下のタブ）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -61,51 +61,52 @@
 
   // ---------------------------------------------------------------- 見た目（固定の CSS。会員のデータは入れない）
   var CSS = [
-    '#karteRoot{--k-navy:#1b2a47;--k-navy2:#37527e;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#f7f4ee;--k-ink:#22201c;--k-sub:#5d574e;--k-line:#e6ddcd;--k-warn:#a8524a;--k-warn-l:#f6e7e3;',
-    'position:fixed;inset:0;z-index:9000;background:var(--k-cream);overflow:auto;-webkit-overflow-scrolling:touch;color:var(--k-ink);font-family:"Noto Sans JP",sans-serif;}',
-    '#karteRoot .k-wrap{max-width:520px;margin:0 auto;padding:0 0 48px;}',
-    '#karteRoot .k-head{background:var(--k-navy);color:#fff;padding:12px 14px 12px;}',
+    //   モック（承認済み）と同じ作り：ゴシック体・白いカード・角丸・下のタブ。色は TOKOWAKA のネイビー（design-system.md §4）
+    '#karteRoot{--k-navy:#1b2a47;--k-navy2:#37527e;--k-navy-l:#e7ebf2;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#f4f3ef;--k-ground:#f4f3ef;--k-ink:#1c1f26;--k-sub:#5b5f66;--k-line:#e3e1da;--k-warn:#8e3b34;--k-warn-l:#f8ece9;',
+    'position:fixed;inset:0;z-index:9000;background:var(--k-ground);overflow:auto;-webkit-overflow-scrolling:touch;color:var(--k-ink);font-family:"Noto Sans JP",-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;font-size:14px;line-height:1.6;}',
+    '#karteRoot .k-wrap{max-width:520px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;}',
+    '#karteRoot .k-head{background:#fff;color:var(--k-ink);padding:12px 16px;border-bottom:1px solid var(--k-line);}',
     '#karteRoot .k-head-row{display:flex;align-items:center;gap:10px;}',
-    '#karteRoot .k-back{min-width:44px;min-height:44px;border:1px solid rgba(255,255,255,.35);background:transparent;color:#fff;border-radius:3px;font-size:14px;}',
-    '#karteRoot .k-name{font-family:"Shippori Mincho",serif;font-size:20px;font-weight:600;letter-spacing:.04em;}',
-    '#karteRoot .k-meta{font-size:12px;color:#d9dfea;margin-top:2px;}',
+    '#karteRoot .k-back{min-width:44px;min-height:44px;border:none;background:transparent;color:var(--k-ink);border-radius:10px;font-size:20px;}',
+    '#karteRoot .k-name{font-size:20px;font-weight:700;letter-spacing:.02em;}',
+    '#karteRoot .k-meta{font-size:12px;color:var(--k-sub);margin-top:2px;}',
     '#karteRoot .k-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}',
-    '#karteRoot .k-chip-h{font-size:12px;padding:3px 10px;border:1px solid rgba(205,168,108,.6);color:#f3ecdc;border-radius:999px;}',
-    '#karteRoot .k-tabs{display:flex;background:#fff;border-bottom:1px solid var(--k-line);overflow-x:auto;position:sticky;top:0;z-index:2;}',
-    '#karteRoot .k-tab{flex:1 0 auto;min-height:46px;padding:0 12px;border:none;background:transparent;font-size:13px;color:var(--k-sub);border-bottom:3px solid transparent;font-family:inherit;}',
-    '#karteRoot .k-tab.on{color:var(--k-navy);font-weight:700;border-bottom-color:var(--k-gold);}',
-    '#karteRoot .k-body{padding:14px;display:flex;flex-direction:column;gap:12px;}',
-    '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:3px;padding:16px;}',
-    '#karteRoot .k-h{font-family:"Shippori Mincho",serif;font-size:15px;font-weight:600;color:var(--k-navy);margin:0 0 10px;letter-spacing:.03em;}',
+    '#karteRoot .k-chip-h{font-size:12px;padding:4px 10px;background:#eeeeec;color:#3f4550;border-radius:999px;}',
+    '#karteRoot .k-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:#fff;border-top:1px solid var(--k-line);position:sticky;bottom:0;z-index:2;padding:4px 4px calc(8px + env(safe-area-inset-bottom));margin-top:auto;}',
+    '#karteRoot .k-tab{min-height:48px;padding:0 2px;border:none;background:transparent;font-size:12px;color:var(--k-sub);border-top:3px solid transparent;font-family:inherit;}',
+    '#karteRoot .k-tab.on{color:var(--k-navy);font-weight:700;border-top-color:var(--k-navy);}',
+    '#karteRoot .k-body{padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px;flex:1;}',
+    '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:14px;padding:16px;}',
+    '#karteRoot .k-h{font-size:13px;font-weight:700;color:#3f4550;margin:0 0 10px;}',
     '#karteRoot .k-sub{font-size:12px;color:var(--k-sub);}',
     '#karteRoot .k-msg{font-size:13px;color:var(--k-sub);margin:6px 0;}',
     '#karteRoot .k-msg.bad{color:var(--k-warn);}',
-    '#karteRoot .k-caution{background:var(--k-warn-l);border:1px solid #e4c3bc;border-radius:3px;padding:14px;}',
+    '#karteRoot .k-caution{background:var(--k-warn-l);border:1px solid #e9c9c2;border-radius:14px;padding:14px;}',
     '#karteRoot .k-caution .k-h{color:var(--k-warn);}',
-    '#karteRoot .k-btn{display:block;width:100%;min-height:46px;border:none;border-radius:3px;background:var(--k-navy);color:#fff;font-size:15px;font-weight:600;margin-top:12px;font-family:inherit;}',
-    '#karteRoot .k-btn.out{background:#fff;color:var(--k-navy);border:1px solid var(--k-line);}',
-    '#karteRoot .k-btn.small{display:inline-block;width:auto;min-height:38px;padding:0 12px;font-size:13px;margin:0;}',
-    '#karteRoot .k-pill{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--k-line);background:#fff;color:var(--k-ink);font-size:13px;font-family:inherit;}',
-    '#karteRoot .k-pill.on{border:1.5px solid var(--k-navy);background:var(--k-navy);color:#fff;font-weight:600;}',
+    '#karteRoot .k-btn{display:block;width:100%;min-height:46px;border:none;border-radius:10px;background:var(--k-navy);color:#fff;font-size:15px;font-weight:700;margin-top:4px;font-family:inherit;}',
+    '#karteRoot .k-btn.out{background:#fff;color:var(--k-navy);border:1px solid #c9ccd3;font-weight:500;}',
+    '#karteRoot .k-btn.small{display:inline-block;width:auto;min-height:40px;padding:0 14px;font-size:13px;margin:0;}',
+    '#karteRoot .k-pill{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
+    '#karteRoot .k-pill.on{border:1.5px solid var(--k-navy);background:var(--k-navy-l);color:var(--k-navy);font-weight:700;}',
     '#karteRoot .k-pills{display:flex;flex-wrap:wrap;gap:8px;}',
-    '#karteRoot .k-seg{display:flex;background:var(--k-gold-l);border-radius:3px;padding:3px;gap:2px;}',
-    '#karteRoot .k-seg button{flex:1;min-height:38px;border:none;border-radius:3px;background:transparent;font-size:13px;color:var(--k-sub);font-family:inherit;}',
-    '#karteRoot .k-seg button.on{background:#fff;color:var(--k-navy);font-weight:700;}',
+    '#karteRoot .k-seg{display:flex;background:#ecedef;border-radius:10px;padding:3px;gap:2px;}',
+    '#karteRoot .k-seg button{flex:1;min-height:38px;border:none;border-radius:8px;background:transparent;font-size:13px;color:#3f4550;font-family:inherit;}',
+    '#karteRoot .k-seg button.on{background:#fff;color:var(--k-ink);font-weight:700;box-shadow:0 1px 2px rgba(0,0,0,.06);}',
     '#karteRoot .k-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}',
     '#karteRoot .k-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}',
-    '#karteRoot .k-num{font-family:"Shippori Mincho",serif;font-weight:600;color:var(--k-navy);}',
-    '#karteRoot .k-up{color:var(--k-warn);font-weight:700;} #karteRoot .k-down{color:var(--k-navy2);font-weight:700;}',
+    '#karteRoot .k-num{font-weight:700;color:var(--k-ink);}',
+    '#karteRoot .k-up{color:var(--k-warn);font-weight:700;} #karteRoot .k-down{color:var(--k-navy);font-weight:700;}',
     '#karteRoot .k-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--k-sub);margin-bottom:10px;}',
-    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{min-height:44px;border:1px solid var(--k-line);border-radius:3px;padding:8px 10px;font-size:15px;font-family:inherit;color:var(--k-ink);background:#fff;box-sizing:border-box;width:100%;}',
-    '#karteRoot .k-tag{font-size:11px;padding:3px 8px;border-radius:3px;background:var(--k-gold-l);color:#6b5530;}',
-    '#karteRoot .k-flag{font-size:11px;padding:3px 8px;border-radius:3px;background:var(--k-warn-l);color:var(--k-warn);font-weight:600;}',
-    '#karteRoot .k-flag.soft{background:var(--k-gold-l);color:#6b5530;font-weight:500;}',
-    '#karteRoot .k-flag.grey{background:#efebe3;color:var(--k-sub);font-weight:400;}',
-    '#karteRoot .k-tl{border-left:2px solid var(--k-line);margin-left:6px;padding-left:14px;display:flex;flex-direction:column;gap:12px;}',
+    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:8px 10px;font-size:15px;font-family:inherit;color:var(--k-ink);background:#fff;box-sizing:border-box;width:100%;}',
+    '#karteRoot .k-tag{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--k-navy-l);color:var(--k-navy);}',
+    '#karteRoot .k-flag{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--k-warn-l);color:var(--k-warn);font-weight:500;}',
+    '#karteRoot .k-flag.soft{background:var(--k-gold-l);color:#6b5530;}',
+    '#karteRoot .k-flag.grey{background:#eeeeec;color:#3f4550;font-weight:400;}',
+    '#karteRoot .k-tl{border-left:2px solid #d5d8de;margin-left:6px;padding-left:14px;display:flex;flex-direction:column;gap:14px;}',
     '#karteRoot .k-tl-item{position:relative;}',
-    '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-gold);}',
-    '#karteRoot .k-bar{height:12px;border-radius:6px;background:#efebe3;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-navy);}',
-    '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:3px;padding:6px 10px;margin-bottom:10px;}'
+    '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-navy);}',
+    '#karteRoot .k-bar{height:12px;border-radius:6px;background:#eeeeec;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-navy);}',
+    '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}'
   ].join('\n');
   function ensureStyle() {
     if (document.getElementById('karteStyle')) return;
@@ -236,7 +237,7 @@
         onclick: function () { open(cur.customerId, cur.name, t[0]); } }));
     });
     var body = el('div', { class: 'k-body' });
-    wrap.appendChild(head); wrap.appendChild(tabs); wrap.appendChild(body);
+    wrap.appendChild(head); wrap.appendChild(body); wrap.appendChild(tabs);   // タブは下（モックと同じ）
     root.appendChild(wrap);
     cur.body = body; cur.headMeta = meta; cur.headChips = chips;
     fillHead();
@@ -257,12 +258,12 @@
   }
 
   // ---------------------------------------------------------------- 身体図（数値と固定の文字だけ）
-  function painColor(level) { return level >= 7 ? '#8e3b34' : (level >= 4 ? '#a8524a' : '#c9a27a'); }
+  function painColor(level) { return level >= 7 ? '#8e3b34' : (level >= 4 ? '#b8603f' : '#d9a066'); }
   function bodyFigure(pain, side, size) {
     var w = size || 110, h = Math.round(w * 200 / 120);
     var s = sv('svg', { viewBox: '0 0 120 200', width: w, height: h, role: 'img' });
     var names = [];
-    var fill = '#efe7d6', line = '#d8ccb4';
+    var fill = '#eceae4', line = '#cfccc4';
     s.appendChild(sv('circle', { cx: 60, cy: 22, r: 16, fill: fill, stroke: line }));
     s.appendChild(sv('rect', { x: 34, y: 44, width: 52, height: 66, rx: 14, fill: fill, stroke: line }));
     s.appendChild(sv('rect', { x: 14, y: 48, width: 16, height: 60, rx: 8, fill: fill, stroke: line }));
@@ -274,7 +275,7 @@
       if (!pos || pos[0] !== side) return;
       var lv = Number(p.level) || 0;
       s.appendChild(sv('circle', { cx: pos[1], cy: pos[2], r: 11, fill: painColor(lv), opacity: 0.9 }));
-      s.appendChild(sv('text', { x: pos[1], y: pos[2] + 4.5, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: lv >= 4 ? '#ffffff' : '#22201c' }, lv));
+      s.appendChild(sv('text', { x: pos[1], y: pos[2] + 4.5, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: lv >= 4 ? '#ffffff' : '#1c1f26' }, lv));
       names.push(label(REGIONS, p.region) + ' ' + lv);
     });
     s.setAttribute('aria-label', (side === 'f' ? '身体図（前）' : '身体図（後ろ）') + (names.length ? '：' + names.join('・') : '：記録なし'));
@@ -283,10 +284,10 @@
   function ring(pct, text, size) {
     var z = size || 64, r = z / 2 - 5, c = 2 * Math.PI * r, p = Math.max(0, Math.min(1, Number(pct) || 0));
     var s = sv('svg', { viewBox: '0 0 ' + z + ' ' + z, width: z, height: z, role: 'img', 'aria-label': text });
-    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#efe7d6', 'stroke-width': 8 }));
+    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#e7ebf2', 'stroke-width': 8 }));
     s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#1b2a47', 'stroke-width': 8, 'stroke-linecap': 'round',
       'stroke-dasharray': (c * p).toFixed(1) + ' ' + c.toFixed(1), transform: 'rotate(-90 ' + z / 2 + ' ' + z / 2 + ')' }));
-    s.appendChild(sv('text', { x: z / 2, y: z / 2 + 5, 'text-anchor': 'middle', 'font-size': Math.round(z / 4.4), 'font-weight': 700, fill: '#22201c' }, text));
+    s.appendChild(sv('text', { x: z / 2, y: z / 2 + 5, 'text-anchor': 'middle', 'font-size': Math.round(z / 4.4), 'font-weight': 700, fill: '#1c1f26' }, text));
     return s;
   }
 
@@ -335,7 +336,7 @@
         el('div', { class: 'k-sub', text: p.goal_deadline ? p.goal_deadline.slice(0, 4) + '年' : '' }),
         el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-navy);margin-top:4px;', text: dl == null ? '' : (dl >= 0 ? '残り ' + dl + '日' : '期日を過ぎています') })]));
       var goalCard = card('目標', [g]);
-      if (p.goal_text) goalCard.appendChild(el('div', { style: 'font-size:13px;line-height:1.7;background:var(--k-cream);border-radius:3px;padding:10px 12px;margin-top:12px;', text: '理想：' + p.goal_text }));
+      if (p.goal_text) goalCard.appendChild(el('div', { style: 'font-size:13px;line-height:1.7;background:var(--k-cream);border-radius:10px;padding:10px 12px;margin-top:12px;', text: '理想：' + p.goal_text }));
       box.appendChild(goalCard);
 
       //   やる気＋目的
@@ -351,7 +352,7 @@
       if ((hearing.slimAreas || []).length) {
         var sa = el('div', { style: 'display:flex;gap:8px;' });
         hearing.slimAreas.forEach(function (k, i) {
-          sa.appendChild(el('div', { style: 'flex:1;text-align:center;padding:10px 0;border-radius:3px;background:' + (i === 0 ? 'var(--k-gold-l)' : 'var(--k-cream)') + ';' }, [
+          sa.appendChild(el('div', { style: 'flex:1;text-align:center;padding:10px 0;border-radius:10px;background:' + (i === 0 ? 'var(--k-navy-l)' : 'var(--k-cream)') + ';' }, [
             el('div', { class: 'k-sub', text: String(i + 1) }), el('div', { style: 'font-size:15px;font-weight:700;', text: label(SLIM_AREAS, k) })]));
         });
         box.appendChild(card('引き締めたい部位', [sa]));
@@ -438,10 +439,10 @@
     var box = el('div', { style: 'display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:3px;' });
     var bs = [];
     for (var n = 1; n <= 10; n++) (function (n) {
-      var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:3px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { v = (v === n ? null : n); paint(); } });
+      var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { v = (v === n ? null : n); paint(); } });
       bs.push(b); box.appendChild(b);
     })(n);
-    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:3px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #1b2a47;background:#1b2a47;color:#fff;font-weight:700' : '1px solid #e6ddcd;background:#fff;color:#22201c'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
+    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #1b2a47;background:#1b2a47;color:#fff;font-weight:700' : '1px solid #c9ccd3;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
     paint();
     return { el: box, get: function () { return v; } };
   }
@@ -599,7 +600,7 @@
     function x(d) { return P + (W - P * 2) * (Date.parse(d) - t0) / (t1 - t0); }
     function y(v) { return H - P + 10 - (H - P * 2 + 10) * (v - lo) / (hi - lo); }
     var s = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%', role: 'img', 'aria-label': '推移 ' + pts[0].v + unit + ' から ' + pts[pts.length - 1].v + unit });
-    [0.25, 0.5, 0.75].forEach(function (r) { s.appendChild(sv('line', { x1: P, x2: W - 4, y1: (H * r).toFixed(1), y2: (H * r).toFixed(1), stroke: '#efe7d6' })); });
+    [0.25, 0.5, 0.75].forEach(function (r) { s.appendChild(sv('line', { x1: P, x2: W - 4, y1: (H * r).toFixed(1), y2: (H * r).toFixed(1), stroke: '#eceae4' })); });
     if (goalPts && goalPts.length >= 2) s.appendChild(sv('polyline', { fill: 'none', stroke: '#b8965a', 'stroke-dasharray': '5 4', 'stroke-width': 1.5,
       points: goalPts.map(function (g) { return x(g.d).toFixed(1) + ',' + y(g.v).toFixed(1); }).join(' ') }));
     s.appendChild(sv('polyline', { fill: 'none', stroke: '#1b2a47', 'stroke-width': 2.2, 'stroke-linejoin': 'round', points: pts.map(function (p) { return x(p.d).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' ') }));
@@ -681,7 +682,7 @@
       drawChart();
 
       var a = assess(rows, hearing.purposes);
-      if (a) box.appendChild(el('div', { class: 'k-card', style: 'background:var(--k-gold-l);border-color:#e3d3b0;' }, [
+      if (a) box.appendChild(el('div', { class: 'k-card', style: 'background:var(--k-navy-l);border-color:#d3dae6;' }, [
         el('div', { class: 'k-h', text: '前回からの見立て（自動・目安）' }), el('div', { style: 'font-size:14px;line-height:1.75;', text: a.text }),
         el('div', { class: 'k-sub', style: 'margin-top:6px;', text: '※ 数字の動きから出す目安で、診断ではありません。' })]));
       box.appendChild(el('button', { class: 'k-btn out', text: '変化の理由を確かめる（指導の履歴へ）', onclick: function () { open(cur.customerId, cur.name, 'notes', { kind: 'reflect', data: {} }); } }));
@@ -797,10 +798,10 @@
           var st = exerciseStats(sessions, view.ex);
           if (!st) return;
           var g = el('div', { class: 'k-grid3' }, [
-            el('div', { style: 'background:var(--k-cream);border-radius:3px;padding:10px;' }, [el('div', { class: 'k-sub', text: '自己ベスト' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.best.w + 'kg×' + st.best.r }), el('div', { class: 'k-sub', text: md(st.best.d) })]),
-            el('div', { style: 'background:var(--k-cream);border-radius:3px;padding:10px;' }, [el('div', { class: 'k-sub', text: '推定MAX' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.maxE != null ? st.maxE + 'kg' : '—' }),
+            el('div', { style: 'background:var(--k-cream);border-radius:10px;padding:10px;' }, [el('div', { class: 'k-sub', text: '自己ベスト' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.best.w + 'kg×' + st.best.r }), el('div', { class: 'k-sub', text: md(st.best.d) })]),
+            el('div', { style: 'background:var(--k-cream);border-radius:10px;padding:10px;' }, [el('div', { class: 'k-sub', text: '推定MAX' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.maxE != null ? st.maxE + 'kg' : '—' }),
               el('div', { style: 'font-size:11px;color:var(--k-navy2);font-weight:700;', text: (st.maxE != null && st.firstE != null && st.days.length > 1) ? '▲ ' + r1(st.maxE - st.firstE) + ' 開始から' : '' })]),
-            el('div', { style: 'background:var(--k-cream);border-radius:3px;padding:10px;' }, [el('div', { class: 'k-sub', text: '合計回数' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.reps + '回' }), el('div', { class: 'k-sub', text: st.sets + 'セット' })])
+            el('div', { style: 'background:var(--k-cream);border-radius:10px;padding:10px;' }, [el('div', { class: 'k-sub', text: '合計回数' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.reps + '回' }), el('div', { class: 'k-sub', text: st.sets + 'セット' })])
           ]);
           var c = card(view.ex, [g, lineChart(st.days.filter(function (x) { return x.v != null; }).map(function (x) { return { d: x.d, v: x.v }; }), null, 'kg'),
             el('div', { class: 'k-sub', text: '推定MAX＝1回で挙げられる重さの目安（重量と回数から計算・13回以上は出しません）' })]);
@@ -857,16 +858,16 @@
     var items = el('div'); c.appendChild(items);
     var rows = [];
     function addExercise(pre) {
-      var sel = el('select', { style: 'width:100%;min-height:44px;margin-bottom:6px;border:1px solid #e6ddcd;border-radius:3px;font-size:15px;' });
+      var sel = el('select', { style: 'width:100%;min-height:44px;margin-bottom:6px;border:1px solid #c9ccd3;border-radius:10px;font-size:15px;' });
       EXERCISES.concat(['その他']).forEach(function (x) { sel.appendChild(el('option', { value: x, text: x })); });
-      var other = el('input', { type: 'text', placeholder: '種目名', style: 'width:100%;min-height:44px;box-sizing:border-box;display:none;margin-bottom:6px;border:1px solid #e6ddcd;border-radius:3px;padding:0 10px;font-size:15px;' });
+      var other = el('input', { type: 'text', placeholder: '種目名', style: 'width:100%;min-height:44px;box-sizing:border-box;display:none;margin-bottom:6px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:15px;' });
       sel.onchange = function () { other.style.display = sel.value === 'その他' ? '' : 'none'; };
       if (pre) { if (EXERCISES.indexOf(pre.exercise) >= 0) sel.value = pre.exercise; else { sel.value = 'その他'; other.value = pre.exercise; other.style.display = ''; } }
       var setsBox = el('div');
       var sets = [];
       function addSet(svv) {
-        var w = el('input', { type: 'number', step: '0.5', placeholder: 'kg', 'aria-label': '重量', style: 'min-height:40px;width:84px;border:1px solid #e6ddcd;border-radius:3px;padding:0 8px;font-size:15px;' }); w.inputMode = 'decimal';
-        var rp = el('input', { type: 'number', step: '1', placeholder: '回', 'aria-label': '回数', style: 'min-height:40px;width:68px;border:1px solid #e6ddcd;border-radius:3px;padding:0 8px;font-size:15px;' }); rp.inputMode = 'numeric';
+        var w = el('input', { type: 'number', step: '0.5', placeholder: 'kg', 'aria-label': '重量', style: 'min-height:40px;width:84px;border:1px solid #c9ccd3;border-radius:10px;padding:0 8px;font-size:15px;' }); w.inputMode = 'decimal';
+        var rp = el('input', { type: 'number', step: '1', placeholder: '回', 'aria-label': '回数', style: 'min-height:40px;width:68px;border:1px solid #c9ccd3;border-radius:10px;padding:0 8px;font-size:15px;' }); rp.inputMode = 'numeric';
         if (svv) { w.value = svv.weight; rp.value = svv.reps; }
         setsBox.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px;' }, [el('span', { style: 'width:52px;', text: (sets.length + 1) + 'セット' }), w, el('span', { text: '×' }), rp]));
         sets.push({ w: w, r: rp });
@@ -905,7 +906,7 @@
     if ((n.reasons || []).length) box.appendChild(el('div', { style: 'font-size:13px;', text: '理由：' + n.reasons.map(function (k) { return label(REASONS, k); }).join('・') }));
     if (n.body) box.appendChild(el('div', { style: 'white-space:pre-wrap;font-size:14px;line-height:1.7;', text: n.body }));
     if (n.next_check) box.appendChild(el('div', { style: 'font-size:13px;', text: '次回確かめること：' + n.next_check }));
-    if (n.next_plan) box.appendChild(el('div', { style: 'font-size:13px;background:var(--k-cream);border-radius:3px;padding:8px 10px;', text: '次回：' + n.next_plan }));
+    if (n.next_plan) box.appendChild(el('div', { style: 'font-size:13px;background:var(--k-cream);border-radius:10px;padding:8px 10px;', text: '次回：' + n.next_plan }));
     return box;
   }
 
@@ -1080,7 +1081,7 @@
           var initial = String(c.name || '').slice(0, 1);
           list.appendChild(el('div', { class: 'k-card', style: 'cursor:pointer;', role: 'button', tabindex: '0', onclick: function () { open(c.customerId, c.name, 'summary'); } }, [
             el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [
-              el('div', { style: 'width:40px;height:40px;border-radius:20px;background:var(--k-gold-l);color:var(--k-navy);display:flex;align-items:center;justify-content:center;font-family:"Shippori Mincho",serif;font-weight:600;', text: initial }),
+              el('div', { style: 'width:40px;height:40px;border-radius:20px;background:var(--k-navy-l);color:var(--k-navy);display:flex;align-items:center;justify-content:center;font-weight:700;', text: initial }),
               el('b', { style: 'font-size:15px;', text: c.name + ' 様' })]), tags]));
         });
         if (!shown.length) list.appendChild(msg(all.length ? 'この条件のお客様はいません。' : '対象のお客様がいません。'));
