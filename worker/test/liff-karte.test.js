@@ -178,7 +178,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
      keys(T.PURPOSES) === keys(H.PURPOSES) && keys(T.SLIM_AREAS) === keys(H.SLIM_AREAS) && keys(T.REGIONS) === keys(H.REGIONS)
      && keys(T.TAGS) === keys(H.TAGS) && JSON.stringify(Array.from(T.REASONS, (x) => [x[0], x[1], x[2]])) === JSON.stringify(H.REASONS));
   ok('7-2 ★タブは「体組成」（「からだ」を使わない）', SRC.includes("['body', '体組成']") && !/['"]からだ['"]/.test(SRC));
-  ok('7-3 TOKOWAKA のネイビーを主に、モックと同じ作り（ゴシック体・角丸のカード・下のタブ）', /#1b2a47/.test(SRC) && /#f4f3ef/.test(SRC)
+  ok('7-3 モックA案のグリーン（オーナー指示 2026-11-04）・モックと同じ作り（ゴシック体・角丸のカード・下のタブ）', /--k-acc:#0e6b5c/.test(SRC) && /--k-acc-l:#e3f1ee/.test(SRC) && !/#1b2a47/.test(SRC)
      && /border-radius:14px/.test(SRC) && /k-tabs\{[^}]*bottom:0/.test(SRC));
   ok('7-3b ★明朝体を使わない（スマホで線が細く読みにくい・2026-11-04 オーナー指摘「見にくさ」）', !/Shippori|Mincho|serif;/.test(SRC.replace(/sans-serif/g, '')));
   const rows = (a) => a.map(([d, wv, f, m]) => ({ d, w: wv, pbf: f, smm: m, s: {} }));
@@ -534,6 +534,71 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   const chips = w.document.querySelector('#karteRoot .k-chips').textContent;
   ok('11-8 ★前の顧客の概要が遅れて届いても、いまの顧客の見出しに入れない（名前・次回の予約）', head === '会員二 様' && chips.includes('次回の予約なし') && !chips.includes('11/9'), head + ' / ' + chips);
 }
+
+// ================= 12. キーパッド・休憩の知らせ（2026-11-04 オーナー指示） =================
+{
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  //   見える範囲（visualViewport）の身代わり
+  const listeners = {};
+  const vv = { height: 800, width: 390, offsetTop: 0, addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); }, removeEventListener() {} };
+  Object.defineProperty(w, 'visualViewport', { value: vv, configurable: true });
+  Object.defineProperty(w, 'innerHeight', { value: 800, configurable: true });
+  w.confirm = () => true;
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, '＋ 今日の記録').click(); await settle();
+  btn(root, '前回（').click(); await settle();
+  ok('12-1 開いたときは見える範囲の高さに合わせ、キーパッドの印は無い', root.style.height === '800px' && !root.classList.contains('k-kb'));
+  vv.height = 460; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 40));
+  ok('12-2 ★キーパッドが出たら（見える範囲が縮んだら）画面をその上に収め、下のタブを隠す印を付ける', root.style.height === '460px' && root.classList.contains('k-kb') && /#karteRoot\.k-kb \.k-tabs\{display:none;\}/.test(SRC));
+  vv.height = 800; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 40));
+  ok('12-3 キーパッドが閉じたら戻す', !root.classList.contains('k-kb'));
+  const ins = [...root.querySelectorAll('.k-setrow input')];
+  ins[0].focus();
+  ins[0].dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  ok('12-4 ★キーパッドの「次へ」で重量→回数へ進む', w.document.activeElement === ins[1] && ins[0].getAttribute('enterkeyhint') === 'next');
+  //   キーパッドが出ているとき、入力欄の上に「前へ／次へ／完了」（iPhone の数字キーパッドには「次へ」が無い）
+  vv.height = 460; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 40));
+  ins[1].focus(); await settle();
+  const acc = root.querySelector('#kAccessory');
+  ok('12-4b ★キーパッドが出て入力中は「前へ／次へ／完了」の帯を出す', !!acc && acc.textContent.includes('次へ') && acc.textContent.includes('完了'));
+  const nextB = [...acc.querySelectorAll('button')].find((x) => x.textContent === '次へ');
+  nextB.focus();   // ★押した瞬間にボタンへフォーカスが移る端末を再現
+  nextB.click();
+  ok('12-4c ★帯の「次へ」で次のセットの重量へ進む（ボタンにフォーカスが移っても）', w.document.activeElement === ins[2]);
+  //   端末を回した（幅が変わった）ら基準を採り直す＝キーパッドと見誤らない
+  vv.height = 800; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 40));
+  //   回転の途中：先に見える範囲だけが横向きの値になり、innerHeight はまだ古い
+  vv.width = 800; vv.height = 360; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 60));
+  Object.defineProperty(w, 'innerHeight', { value: 360, configurable: true }); (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 60));
+  ok('12-4d ★端末を回して縮んだのはキーパッドと見なさない（下のタブを隠さない）', !root.classList.contains('k-kb'), root.className);
+  vv.width = 390; Object.defineProperty(w, 'innerHeight', { value: 800, configurable: true }); vv.height = 800; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 600));
+  vv.height = 460; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 40));
+  ok('12-4e ★回転を戻した後でも、キーパッドは正しく見分ける', root.classList.contains('k-kb'));
+  vv.height = 800; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 40));
+  //   回転の直後（0.5秒以内）に入力欄を触ってキーパッドが出た
+  ins[0].blur();
+  vv.width = 800; vv.height = 360; Object.defineProperty(w, 'innerHeight', { value: 360, configurable: true }); (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 60));
+  ins[0].focus(); vv.height = 200; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 60));
+  ok('12-4f ★回転の直後にキーパッドが出ても見分ける（帯も出る）', root.classList.contains('k-kb') && !!root.querySelector('#kAccessory'), root.className);
+  vv.width = 390; vv.height = 800; Object.defineProperty(w, 'innerHeight', { value: 800, configurable: true }); ins[0].blur(); (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 600));
+  ok('12-5 入力欄は16px以上（iPhone で触った瞬間に拡大しない）', /k-setrow input\{[^}]*font-size:17px/.test(SRC) && /k-field input[^{]*\{[^}]*font-size:16px/.test(SRC) && !/font-size:15px;font-family:inherit;color:var\(--k-ink\)/.test(SRC));
+  //   休憩おわり：長い振動・音・点滅
+  let vib = null; w.navigator.vibrate = (p) => { vib = p; return true; };
+  root.querySelector('button[aria-label$="実施済みにする"]').click(); await settle();
+  const restBox = [...root.querySelectorAll('div')].find((x) => x.textContent.startsWith('休憩 '));
+  ok('12-6 ✓で休憩タイマーが出る', !!restBox);
+  //   時刻を進めて終わらせる：振動は1回だけ・点滅の印・「休憩おわり」は残る
+  const realNow = w.Date.now; let vibN = 0; w.navigator.vibrate = (p) => { vib = p; vibN++; return true; };
+  w.Date.now = () => realNow() + 200000;
+  await new Promise((r) => setTimeout(r, 1300));
+  const doneBox = [...root.querySelectorAll('div')].find((x) => x.textContent.startsWith('休憩おわり'));
+  ok('12-6b ★休憩が終わると長い振動を1回・点滅・「休憩おわり」を残す', JSON.stringify(vib) === '[600,200,600,200,600]' && vibN === 1 && doneBox && doneBox.classList.contains('k-rest-done'), JSON.stringify(vib) + ' n=' + vibN);
+  w.Date.now = realNow;
+  w.KarteUI.close && w.KarteUI.close();
+}
+ok('12-7 ★休憩おわりの振動は長め（0.6秒×3回）・音と点滅もある（iPhone は振動できないため）', /navigator\.vibrate\(\[600, 200, 600, 200, 600\]\)/.test(SRC) && /function beep\(\)/.test(SRC) && /k-rest-done/.test(SRC));
+ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に効くため）', !/interactive-widget/.test(HTML));
 
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-04c カルテ 設計33 第1回（前回を呼ぶ・✓・下書き・種目の選び方・休憩タイマー・関門②）';
+  var KARTE_BUILD = '2026-11-04d カルテ グリーン・キーパッドの上に入力欄（前へ／次へ／完了）・休憩の振動と音';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -61,8 +61,9 @@
 
   // ---------------------------------------------------------------- 見た目（固定の CSS。会員のデータは入れない）
   var CSS = [
-    //   モック（承認済み）と同じ作り：ゴシック体・白いカード・角丸・下のタブ。色は TOKOWAKA のネイビー（design-system.md §4）
-    '#karteRoot{--k-navy:#1b2a47;--k-navy2:#37527e;--k-navy-l:#e7ebf2;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#f4f3ef;--k-ground:#f4f3ef;--k-ink:#1c1f26;--k-sub:#5b5f66;--k-line:#e3e1da;--k-warn:#8e3b34;--k-warn-l:#f8ece9;',
+    //   モック（承認済み）と同じ作り：ゴシック体・白いカード・角丸・下のタブ。
+    //   色は2026-11-04 オーナー指示でモックA案のグリーン（ネイビー案は --k-acc:#0e6b5c・--k-acc-l:#e3f1ee に戻せば同じ作り）
+    '#karteRoot{--k-acc:#0e6b5c;--k-acc2:#0a5246;--k-acc-l:#e3f1ee;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#f5f6f4;--k-ground:#f5f6f4;--k-ink:#1c2321;--k-sub:#5b6661;--k-line:#e2e6e3;--k-warn:#8a3f0a;--k-warn-l:#fdf0e4;',
     'position:fixed;inset:0;z-index:9000;background:var(--k-ground);overflow:auto;-webkit-overflow-scrolling:touch;color:var(--k-ink);font-family:"Noto Sans JP",-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;font-size:14px;line-height:1.6;}',
     '#karteRoot .k-wrap{max-width:520px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;}',
     '#karteRoot .k-head{background:#fff;color:var(--k-ink);padding:12px 16px;border-bottom:1px solid var(--k-line);}',
@@ -74,20 +75,20 @@
     '#karteRoot .k-chip-h{font-size:12px;padding:4px 10px;background:#eeeeec;color:#3f4550;border-radius:999px;}',
     '#karteRoot .k-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:#fff;border-top:1px solid var(--k-line);position:sticky;bottom:0;z-index:2;padding:4px 4px calc(8px + env(safe-area-inset-bottom));margin-top:auto;}',
     '#karteRoot .k-tab{min-height:48px;padding:0 2px;border:none;background:transparent;font-size:12px;color:var(--k-sub);border-top:3px solid transparent;font-family:inherit;}',
-    '#karteRoot .k-tab.on{color:var(--k-navy);font-weight:700;border-top-color:var(--k-navy);}',
+    '#karteRoot .k-tab.on{color:var(--k-acc);font-weight:700;border-top-color:var(--k-acc);}',
     '#karteRoot .k-body{padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px;flex:1;}',
     '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:14px;padding:16px;}',
     '#karteRoot .k-h{font-size:13px;font-weight:700;color:#3f4550;margin:0 0 10px;}',
     '#karteRoot .k-sub{font-size:12px;color:var(--k-sub);}',
     '#karteRoot .k-msg{font-size:13px;color:var(--k-sub);margin:6px 0;}',
     '#karteRoot .k-msg.bad{color:var(--k-warn);}',
-    '#karteRoot .k-caution{background:var(--k-warn-l);border:1px solid #e9c9c2;border-radius:14px;padding:14px;}',
+    '#karteRoot .k-caution{background:var(--k-warn-l);border:1px solid #f1c9a3;border-radius:14px;padding:14px;}',
     '#karteRoot .k-caution .k-h{color:var(--k-warn);}',
-    '#karteRoot .k-btn{display:block;width:100%;min-height:46px;border:none;border-radius:10px;background:var(--k-navy);color:#fff;font-size:15px;font-weight:700;margin-top:4px;font-family:inherit;}',
-    '#karteRoot .k-btn.out{background:#fff;color:var(--k-navy);border:1px solid #c9ccd3;font-weight:500;}',
+    '#karteRoot .k-btn{display:block;width:100%;min-height:46px;border:none;border-radius:10px;background:var(--k-acc);color:#fff;font-size:15px;font-weight:700;margin-top:4px;font-family:inherit;}',
+    '#karteRoot .k-btn.out{background:#fff;color:var(--k-acc);border:1px solid #c9ccd3;font-weight:500;}',
     '#karteRoot .k-btn.small{display:inline-block;width:auto;min-height:44px;padding:0 14px;font-size:13px;margin:0;}',
     '#karteRoot .k-pill{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
-    '#karteRoot .k-pill.on{border:1.5px solid var(--k-navy);background:var(--k-navy-l);color:var(--k-navy);font-weight:700;}',
+    '#karteRoot .k-pill.on{border:1.5px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-pills{display:flex;flex-wrap:wrap;gap:8px;}',
     '#karteRoot .k-seg{display:flex;background:#ecedef;border-radius:10px;padding:3px;gap:2px;}',
     '#karteRoot .k-seg button{flex:1;min-height:44px;border:none;border-radius:8px;background:transparent;font-size:13px;color:#3f4550;font-family:inherit;}',
@@ -95,20 +96,29 @@
     '#karteRoot .k-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}',
     '#karteRoot .k-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}',
     '#karteRoot .k-num{font-weight:700;color:var(--k-ink);}',
-    '#karteRoot .k-up{color:var(--k-warn);font-weight:700;} #karteRoot .k-down{color:var(--k-navy);font-weight:700;}',
+    '#karteRoot .k-up{color:var(--k-warn);font-weight:700;} #karteRoot .k-down{color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--k-sub);margin-bottom:10px;}',
-    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:8px 10px;font-size:15px;font-family:inherit;color:var(--k-ink);background:#fff;box-sizing:border-box;width:100%;}',
-    '#karteRoot .k-tag{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--k-navy-l);color:var(--k-navy);}',
+    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:8px 10px;font-size:16px;font-family:inherit;color:var(--k-ink);background:#fff;box-sizing:border-box;width:100%;}',
+    '#karteRoot .k-tag{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--k-acc-l);color:var(--k-acc);}',
     '#karteRoot .k-flag{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--k-warn-l);color:var(--k-warn);font-weight:500;}',
-    '#karteRoot .k-flag.soft{background:var(--k-gold-l);color:#6b5530;}',
+    '#karteRoot .k-flag.soft{background:#fbefd9;color:#7a4a06;}',
     '#karteRoot .k-flag.grey{background:#eeeeec;color:#3f4550;font-weight:400;}',
     '#karteRoot .k-tl{border-left:2px solid #d5d8de;margin-left:6px;padding-left:14px;display:flex;flex-direction:column;gap:14px;}',
     '#karteRoot .k-tl-item{position:relative;}',
-    '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-navy);}',
-    '#karteRoot .k-bar{height:12px;border-radius:6px;background:#eeeeec;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-navy);}',
+    '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-acc);}',
+    '#karteRoot .k-bar{height:12px;border-radius:6px;background:#eeeeec;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-acc);}',
     '#karteRoot .k-setrow{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr) 48px 44px;gap:6px;align-items:center;margin-bottom:6px;}',
     '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:48px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:17px;}',
     '#karteRoot .k-picker-go{position:sticky;bottom:76px;z-index:2;}',
+    //   キーパッドが出ているあいだ（k-kb）：下のタブを隠し、決定ボタンは下に詰める
+    '#karteRoot.k-kb .k-tabs{display:none;}',
+    '#karteRoot.k-kb .k-picker-go{bottom:0;}',
+    '#karteRoot .k-accessory{position:sticky;bottom:0;z-index:5;display:flex;gap:8px;align-items:center;padding:6px 10px;background:#eef0ee;border-top:1px solid var(--k-line);}',
+    '#karteRoot .k-accessory button{min-height:44px;min-width:64px;border:1px solid #c9ccd3;border-radius:10px;background:#fff;font-size:16px;font-family:inherit;color:var(--k-ink);}',
+    '#karteRoot .k-accessory button.done{background:var(--k-acc);color:#fff;border-color:var(--k-acc);font-weight:700;}',
+    '#karteRoot .k-rest-done{animation:kflash 0.6s ease-in-out 0s 6 alternate;}',
+    '@keyframes kflash{from{background:#fdf0e4;}to{background:#f6c58f;}}',
+    'html.karte-open,html.karte-open body{overflow:hidden;}',
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}'
   ].join('\n');
   function ensureStyle() {
@@ -214,15 +224,99 @@
   function reloadPage() { if (typeof window.__karteReload === 'function') window.__karteReload(); else location.reload(); }
 
   // ---------------------------------------------------------------- 画面の枠
+  //   ★キーパッド（2026-11-04 オーナー指示「入力欄は必ずキーパッドの上に」）
+  //     iPhone はキーパッドが出ても画面（layout viewport）が縮まず、見える範囲（visual viewport）だけが縮む＝
+  //     下に固定したものや入力欄がキーパッドの裏に隠れる。見える範囲の高さと位置に画面を合わせ、触った欄をその中へ動かす。
+  //     Android は画面ごと縮むので、同じ計算で崩れない。
+  var kb = { base: 0, w: 0, on: false, raf: 0, revealT: 0, resampleUntil: 0, lastInput: null };
+  function fitViewport() {   // 何度呼ばれても1フレームに1回だけ計算する
+    if (kb.raf) return;
+    kb.raf = (window.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(function () { kb.raf = 0; fitNow(); });
+  }
+  function fitNow() {
+    var root = cur.root; if (!root) return;
+    var vv = window.visualViewport;
+    var h = vv ? vv.height : window.innerHeight, top = vv ? vv.offsetTop : 0, w = vv ? vv.width : window.innerWidth;
+    //   ★基準の高さは「キーパッドが無いときの高さ」。端末を回して幅が変わったら採り直す（回転で縮んだのをキーパッドと見誤らない）
+    //   ★回転の途中は innerHeight が古いことがある＝混ぜない。回転のあと0.5秒のあいだだけ採り直す
+    //     （出来事の回数で数えると、次の出来事がキーパッドの表示だったときにその高さを基準にしてしまう）
+    if (!kb.base) { kb.base = h; kb.w = w; }
+    else if (Math.abs(w - kb.w) > 80) { kb.base = h; kb.w = w; kb.resampleUntil = Date.now() + 500; }
+    else if (Date.now() < (kb.resampleUntil || 0)) {
+      //   採り直しの間でも、入力中に大きく縮んだのはキーパッド＝基準にしない
+      var a0 = document.activeElement;
+      var editing = a0 && root.contains(a0) && /^(INPUT|TEXTAREA|SELECT)$/.test(a0.tagName);
+      if (editing && (kb.base - h) > 120) kb.resampleUntil = 0; else kb.base = h;
+    }
+    else if (h > kb.base) kb.base = h;
+    root.style.top = top + 'px'; root.style.height = h + 'px'; root.style.bottom = 'auto';
+    var open = (kb.base - h) > 120;   // 120px 以上縮んだ＝キーパッドが出ている
+    if (open !== kb.on) {
+      kb.on = open; root.classList.toggle('k-kb', open);
+      if (open) revealFocused();   // ★動かすのは「閉→開」に変わった瞬間の1回だけ（スクロールの連鎖でちらつかない）
+    }
+    accessory();
+  }
+  function revealFocused() {
+    if (kb.revealT) clearTimeout(kb.revealT);
+    kb.revealT = setTimeout(function () {
+      kb.revealT = 0;
+      var a = document.activeElement;
+      if (!a || !cur.root || !cur.root.contains(a) || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+      try { a.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch (e) { try { a.scrollIntoView(); } catch (e2) {} }
+    }, 80);
+  }
+  //   キーパッドの上の「前へ／次へ／完了」（iPhone の数字のキーパッドには「次へ」のキーが無いため）
+  function setInputs() { return cur.root ? Array.prototype.slice.call(cur.root.querySelectorAll('.k-setrow input')).filter(function (x) { return !x.disabled; }) : []; }
+  function accessory() {
+    var root = cur.root; if (!root) return;
+    var bar = root.querySelector('#kAccessory');
+    var a = document.activeElement;
+    var show = kb.on && ((a && a.closest && a.closest('.k-setrow')) || (a && a.closest && a.closest('#kAccessory')));
+    if (!show) { if (bar) bar.remove(); return; }
+    if (bar) return;
+    //   ★いまの欄は focusin で覚えた欄を使う（ボタンを押した瞬間にフォーカスが移る端末でも動く）
+    function move(d) { var all = setInputs(), cur0 = kb.lastInput, k = all.indexOf(cur0); if (k < 0) return; var n = all[k + d]; if (n) n.focus(); else cur0.blur(); }
+    function keep(e) { e.preventDefault(); }
+    bar = el('div', { id: 'kAccessory', class: 'k-accessory' }, [
+      el('button', { type: 'button', text: '前へ', onpointerdown: keep, onmousedown: keep, onclick: function () { move(-1); } }),
+      el('button', { type: 'button', text: '次へ', onpointerdown: keep, onmousedown: keep, onclick: function () { move(1); } }),
+      el('div', { style: 'flex:1;' }),
+      el('button', { type: 'button', class: 'done', text: '完了', onpointerdown: keep, onmousedown: keep, onclick: function () { if (kb.lastInput) kb.lastInput.blur(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } })]);
+    var wrap = root.querySelector('.k-wrap') || root;
+    wrap.appendChild(bar);
+  }
+  function onFocusIn(e) {
+    var t = e.target;
+    if (t && t.closest && t.closest('.k-setrow')) kb.lastInput = t;
+    if (t && t.tagName === 'INPUT' && t.type === 'number') { try { t.select(); } catch (er) {} }   // 数字は触ったら全選択＝そのまま打ち直せる
+    if (kb.on) revealFocused();   // すでにキーパッドが出ているときは、ここで1回だけ動かす（出る前なら「閉→開」で動かす）
+    accessory();
+  }
+  function onFocusOut() { setTimeout(accessory, 0); }
   function ensureRoot() {
     ensureStyle();
     if (cur.root) return cur.root;
     var root = el('div', { id: 'karteRoot' });
     document.body.appendChild(root);
     cur.root = root;
+    document.documentElement.classList.add('karte-open');   // 後ろの予約画面がつられて動かないように
+    root.addEventListener('focusin', onFocusIn);
+    root.addEventListener('focusout', onFocusOut);
+    if (window.visualViewport) { window.visualViewport.addEventListener('resize', fitViewport); window.visualViewport.addEventListener('scroll', fitViewport); }
+    window.addEventListener('resize', fitViewport);
+    fitNow();
     return root;
   }
-  function close() { restStop(); if (cur.root) { cur.root.remove(); cur.root = null; } }
+  function close() {
+    restStop();
+    if (window.visualViewport) { window.visualViewport.removeEventListener('resize', fitViewport); window.visualViewport.removeEventListener('scroll', fitViewport); }
+    window.removeEventListener('resize', fitViewport);
+    document.documentElement.classList.remove('karte-open');
+    kb.on = false; kb.base = 0; kb.w = 0; kb.resampleUntil = 0; kb.lastInput = null;
+    if (kb.revealT) { clearTimeout(kb.revealT); kb.revealT = 0; }
+    if (cur.root) { cur.root.remove(); cur.root = null; }
+  }
 
   function open(customerId, name, tab, draft) {
     restStop();   // ★画面を移ったら休憩タイマーは消す（設計33 §9-7）
@@ -295,8 +389,8 @@
   function ring(pct, text, size) {
     var z = size || 64, r = z / 2 - 5, c = 2 * Math.PI * r, p = Math.max(0, Math.min(1, Number(pct) || 0));
     var s = sv('svg', { viewBox: '0 0 ' + z + ' ' + z, width: z, height: z, role: 'img', 'aria-label': text });
-    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#e7ebf2', 'stroke-width': 8 }));
-    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#1b2a47', 'stroke-width': 8, 'stroke-linecap': 'round',
+    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#e3f1ee', 'stroke-width': 8 }));
+    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#0e6b5c', 'stroke-width': 8, 'stroke-linecap': 'round',
       'stroke-dasharray': (c * p).toFixed(1) + ' ' + c.toFixed(1), transform: 'rotate(-90 ' + z / 2 + ' ' + z / 2 + ')' }));
     s.appendChild(sv('text', { x: z / 2, y: z / 2 + 5, 'text-anchor': 'middle', 'font-size': Math.round(z / 4.4), 'font-weight': 700, fill: '#1c1f26' }, text));
     return s;
@@ -345,7 +439,7 @@
       g.appendChild(el('div', {}, [el('div', { class: 'k-sub', text: '期日' }),
         el('div', { class: 'k-num', style: 'font-size:20px;margin-top:4px;', text: p.goal_deadline ? md(p.goal_deadline) : '—' }),
         el('div', { class: 'k-sub', text: p.goal_deadline ? p.goal_deadline.slice(0, 4) + '年' : '' }),
-        el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-navy);margin-top:4px;', text: dl == null ? '' : (dl >= 0 ? '残り ' + dl + '日' : '期日を過ぎています') })]));
+        el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-acc);margin-top:4px;', text: dl == null ? '' : (dl >= 0 ? '残り ' + dl + '日' : '期日を過ぎています') })]));
       var goalCard = card('目標', [g]);
       if (p.goal_text) goalCard.appendChild(el('div', { style: 'font-size:13px;line-height:1.7;background:var(--k-cream);border-radius:10px;padding:10px 12px;margin-top:12px;', text: '理想：' + p.goal_text }));
       box.appendChild(goalCard);
@@ -363,7 +457,7 @@
       if ((hearing.slimAreas || []).length) {
         var sa = el('div', { style: 'display:flex;gap:8px;' });
         hearing.slimAreas.forEach(function (k, i) {
-          sa.appendChild(el('div', { style: 'flex:1;text-align:center;padding:10px 0;border-radius:10px;background:' + (i === 0 ? 'var(--k-navy-l)' : 'var(--k-cream)') + ';' }, [
+          sa.appendChild(el('div', { style: 'flex:1;text-align:center;padding:10px 0;border-radius:10px;background:' + (i === 0 ? 'var(--k-acc-l)' : 'var(--k-cream)') + ';' }, [
             el('div', { class: 'k-sub', text: String(i + 1) }), el('div', { style: 'font-size:15px;font-weight:700;', text: label(SLIM_AREAS, k) })]));
         });
         box.appendChild(card('引き締めたい部位', [sa]));
@@ -390,7 +484,7 @@
     return el('div', {}, [el('div', { class: 'k-sub', text: name }),
       el('div', { class: 'k-num', style: 'font-size:20px;margin-top:4px;', text: now != null ? String(now) + unit : '—' }),
       el('div', { class: 'k-sub', text: target != null ? '→ ' + target + unit : '目標 未設定' }),
-      el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-navy);margin-top:4px;', text: rest != null ? 'あと ' + rest + unit : '' })]);
+      el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-acc);margin-top:4px;', text: rest != null ? 'あと ' + rest + unit : '' })]);
   }
 
   function consentRow(consent) {
@@ -453,7 +547,7 @@
       var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { v = (v === n ? null : n); paint(); } });
       bs.push(b); box.appendChild(b);
     })(n);
-    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #1b2a47;background:#1b2a47;color:#fff;font-weight:700' : '1px solid #c9ccd3;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
+    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #0e6b5c;background:#0e6b5c;color:#fff;font-weight:700' : '1px solid #c9ccd3;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
     paint();
     return { el: box, get: function () { return v; } };
   }
@@ -614,11 +708,11 @@
     [0.25, 0.5, 0.75].forEach(function (r) { s.appendChild(sv('line', { x1: P, x2: W - 4, y1: (H * r).toFixed(1), y2: (H * r).toFixed(1), stroke: '#eceae4' })); });
     if (goalPts && goalPts.length >= 2) s.appendChild(sv('polyline', { fill: 'none', stroke: '#b8965a', 'stroke-dasharray': '5 4', 'stroke-width': 1.5,
       points: goalPts.map(function (g) { return x(g.d).toFixed(1) + ',' + y(g.v).toFixed(1); }).join(' ') }));
-    s.appendChild(sv('polyline', { fill: 'none', stroke: '#1b2a47', 'stroke-width': 2.2, 'stroke-linejoin': 'round', points: pts.map(function (p) { return x(p.d).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' ') }));
+    s.appendChild(sv('polyline', { fill: 'none', stroke: '#0e6b5c', 'stroke-width': 2.2, 'stroke-linejoin': 'round', points: pts.map(function (p) { return x(p.d).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' ') }));
     pts.forEach(function (p) {
       //   ● 本人の記録 ○ InBody
-      s.appendChild(sv('circle', p.src === 'i' ? { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.6, fill: '#ffffff', stroke: '#1b2a47', 'stroke-width': 2 }
-        : { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.2, fill: '#1b2a47' }));
+      s.appendChild(sv('circle', p.src === 'i' ? { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.6, fill: '#ffffff', stroke: '#0e6b5c', 'stroke-width': 2 }
+        : { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.2, fill: '#0e6b5c' }));
     });
     s.appendChild(sv('text', { x: 2, y: 12, 'font-size': 10, fill: '#5d574e' }, hi.toFixed(1)));
     s.appendChild(sv('text', { x: 2, y: H - 4, 'font-size': 10, fill: '#5d574e' }, lo.toFixed(1)));
@@ -667,7 +761,7 @@
         var pct = total === 0 ? 1 : Math.max(0, Math.min(1, done / total));
         return el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [ring(pct, Math.round(pct * 100) + '%', 64),
           el('div', { style: 'font-size:12px;line-height:1.6;' }, [el('b', { text: name }), el('br'), document.createTextNode(t.first[key] + ' → ' + target + unit), el('br'),
-            el('span', { style: 'color:var(--k-navy);font-weight:700;', text: 'あと ' + r1(Math.abs(t.last[key] - target)) + unit })])]);
+            el('span', { style: 'color:var(--k-acc);font-weight:700;', text: 'あと ' + r1(Math.abs(t.last[key] - target)) + unit })])]);
       }
       var pw = prog('体重', W2, 'w', hearing.targetWeight, 'kg'), pf = prog('体脂肪率', F2, 'pbf', hearing.targetFat, '%');
       box.appendChild(card('目標までの進み具合', (pw || pf) ? [el('div', { class: 'k-grid2' }, [pw, pf])] : [msg('ヒアリングで目標体重・目標体脂肪率を入れると表示されます。')]));
@@ -693,7 +787,7 @@
       drawChart();
 
       var a = assess(rows, hearing.purposes);
-      if (a) box.appendChild(el('div', { class: 'k-card', style: 'background:var(--k-navy-l);border-color:#d3dae6;' }, [
+      if (a) box.appendChild(el('div', { class: 'k-card', style: 'background:var(--k-acc-l);border-color:#cfe5df;' }, [
         el('div', { class: 'k-h', text: '前回からの見立て（自動・目安）' }), el('div', { style: 'font-size:14px;line-height:1.75;', text: a.text }),
         el('div', { class: 'k-sub', style: 'margin-top:6px;', text: '※ 数字の動きから出す目安で、診断ではありません。' })]));
       box.appendChild(el('button', { class: 'k-btn out', text: '変化の理由を確かめる（指導の履歴へ）', onclick: function () { open(cur.customerId, cur.name, 'notes', { kind: 'reflect', data: {} }); } }));
@@ -832,10 +926,28 @@
   function totalSets(items) { var n = 0; items.forEach(function (it) { n += (it.sets || []).length; }); return n; }
 
   //   休憩タイマー（端末内だけ・記録しない・1つだけ・終了予定の時刻から残りを出す）
-  var rest = { endAt: 0, iv: null, box: null, buzzed: false };
+  var rest = { endAt: 0, iv: null, box: null, buzzed: false, ac: null };
+  //   iPhone はウェブの画面から振動できない（Safari・LINE の中のブラウザとも）。気づけるように音と点滅を足す
+  function restSound() { try { return localStorage.getItem('karte_rest_sound') !== 'off'; } catch (e) { return true; } }
+  function audioUnlock() {   // ✓を押した（＝利用者の操作の）瞬間に用意しておかないと、iPhone は後から音を出せない
+    if (!restSound()) return;
+    try { var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; if (!rest.ac) rest.ac = new AC(); if (rest.ac.state === 'suspended') rest.ac.resume(); } catch (e) {}
+  }
+  function beep() {
+    if (!restSound() || !rest.ac) return;
+    try {
+      [0, 0.35, 0.7].forEach(function (t) {
+        var o = rest.ac.createOscillator(), g = rest.ac.createGain();
+        o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(rest.ac.destination);
+        var s0 = rest.ac.currentTime + t; g.gain.setValueAtTime(0.0001, s0); g.gain.exponentialRampToValueAtTime(0.4, s0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, s0 + 0.25);
+        o.start(s0); o.stop(s0 + 0.27);
+      });
+    } catch (e) {}
+  }
   function restSeconds() { var v = Number((function () { try { return localStorage.getItem('karte_rest_s'); } catch (e) { return null; } })()); return [60, 90, 120, 180].indexOf(v) >= 0 ? v : 90; }
   function restStart() {
-    rest.endAt = Date.now() + restSeconds() * 1000; rest.buzzed = false;
+    rest.endAt = Date.now() + restSeconds() * 1000; rest.buzzed = false; audioUnlock();
+    if (rest.box) rest.box.classList.remove('k-rest-done');
     if (rest.iv) clearInterval(rest.iv);
     rest.iv = setInterval(restTick, 500); restTick();
   }
@@ -848,7 +960,13 @@
     rest.box.style.display = '';
     if (left <= 0) {
       rest.box.appendChild(el('span', { style: 'font-weight:700;', text: '休憩おわり' }));
-      if (!rest.buzzed) { rest.buzzed = true; try { if (navigator.vibrate) navigator.vibrate(300); } catch (e) {} }
+      if (!rest.buzzed) {
+        rest.buzzed = true;
+        //   長めの振動（Android）：0.6秒×3回（間を入れて約2.2秒）
+        try { if (navigator.vibrate) navigator.vibrate([600, 200, 600, 200, 600]); } catch (e) {}
+        beep();
+        rest.box.classList.add('k-rest-done');
+      }
       if (rest.iv) { clearInterval(rest.iv); rest.iv = null; }   // 「休憩おわり」は次の✓か「止める」まで残す
     } else rest.box.appendChild(el('span', { style: 'font-weight:700;font-size:18px;', text: '休憩 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') }));
     rest.box.appendChild(el('button', { type: 'button', class: 'k-btn out small', style: 'margin-left:auto;', text: '止める', onclick: restStop }));
@@ -909,7 +1027,7 @@
     c.appendChild(partsLine);
     var prevBtnBox = el('div');
     c.appendChild(prevBtnBox);
-    var restBar = el('div', { style: 'display:none;position:sticky;top:0;z-index:3;background:var(--k-navy-l);border:1px solid #d3dae6;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:10px;' });
+    var restBar = el('div', { style: 'display:none;position:sticky;top:0;z-index:3;background:var(--k-acc-l);border:1px solid #cfe5df;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:10px;' });
     rest.box = restBar; restTick();
     c.appendChild(restBar);
     var list = el('div'); c.appendChild(list);
@@ -939,7 +1057,15 @@
     d.el.onchange = function () { D.sessionDate = d.get() || today(); save(); refreshTop(); draw(); };
 
     function numInput(val, ph, label, onv) {
-      var i = el('input', { type: 'number', step: ph === 'kg' ? '0.5' : '1', placeholder: ph, 'aria-label': label });
+      var i = el('input', { type: 'number', step: ph === 'kg' ? '0.5' : '1', placeholder: ph, 'aria-label': label, enterkeyhint: 'next', autocomplete: 'off' });
+      //   キーパッドの「次へ」で、重量→回数→次のセットの重量…と進む（最後はキーパッドを閉じる）
+      i.onkeydown = function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        var all = Array.prototype.slice.call(list.querySelectorAll('.k-setrow input'));
+        var k = all.indexOf(i);
+        if (k >= 0 && k < all.length - 1) all[k + 1].focus(); else i.blur();
+      };
       i.inputMode = ph === 'kg' ? 'decimal' : 'numeric';
       if (val !== '' && val != null) i.value = val;
       i.oninput = function () { onv(i.value.trim()); save(); };
@@ -950,7 +1076,7 @@
       D.items.forEach(function (it, ei) {
         var hasVal = it.sets.some(function (s) { return s.w !== '' && s.r !== '' && s.w != null && s.r != null; });
         var noneDone = !it.sets.some(function (s) { return s.done === true; });
-        var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#e9c9c2' : 'var(--k-line)') + ';border-radius:12px;padding:12px;margin-bottom:10px;' + (hasVal && noneDone ? 'background:#fdf7f6;' : '') });
+        var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#f1c9a3' : 'var(--k-line)') + ';border-radius:12px;padding:12px;margin-bottom:10px;' + (hasVal && noneDone ? 'background:#fffaf4;' : '') });
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
           el('div', { style: 'flex:1;font-weight:700;font-size:15px;', text: it.exercise }),
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
@@ -959,7 +1085,7 @@
         blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span')]));
         it.sets.forEach(function (s, si) {
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
-            style: 'min-width:48px;min-height:48px;border-radius:12px;font-size:20px;font-weight:700;' + (s.done ? 'background:#1b2a47;color:#fff;border:1px solid #1b2a47;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
+            style: 'min-width:48px;min-height:48px;border-radius:12px;font-size:20px;font-weight:700;' + (s.done ? 'background:#0e6b5c;color:#fff;border:1px solid #0e6b5c;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
             text: '✓', onclick: function () { s.done = !s.done; save(); draw(); if (s.done) restStart(); } });
           blk.appendChild(el('div', { class: 'k-setrow' }, [
             el('span', { style: 'color:var(--k-sub);font-size:13px;text-align:center;', text: String(si + 1) }),
@@ -998,10 +1124,15 @@
     picker.style.display = 'none';
     c.appendChild(picker);
     c.appendChild(remain);
-    var rs = el('select', { 'aria-label': '休憩の秒数', style: 'min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 8px;font-size:14px;' });
+    var rs = el('select', { 'aria-label': '休憩の秒数', style: 'min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 8px;font-size:16px;' });
     [60, 90, 120, 180].forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSeconds()) o.selected = true; rs.appendChild(o); });
     rs.onchange = function () { try { localStorage.setItem('karte_rest_s', rs.value); } catch (e) {} };
-    c.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin-top:10px;' }, [rs, el('span', { class: 'k-sub', text: '✓を押すと休憩タイマーが始まります（記録には保存されません）' })]));
+    var snd = el('button', { type: 'button', class: 'k-pill' + (restSound() ? ' on' : ''), 'aria-pressed': restSound() ? 'true' : 'false', text: restSound() ? '終了音：あり' : '終了音：なし', onclick: function () {
+      var on = !restSound(); try { localStorage.setItem('karte_rest_sound', on ? 'on' : 'off'); } catch (e) {}
+      if (on) audioUnlock();   // ★この操作の中で用意する（後からでは iPhone は鳴らせない）
+      snd.className = 'k-pill' + (on ? ' on' : ''); snd.textContent = on ? '終了音：あり' : '終了音：なし'; snd.setAttribute('aria-pressed', on ? 'true' : 'false');
+    } });
+    c.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;' }, [rs, snd, el('span', { class: 'k-sub', text: '✓を押すと休憩タイマーが始まります（記録には保存されません）。終了音は端末の消音設定でも鳴る場合があります' })]));
     c.appendChild(el('div', { class: 'k-note-hint', style: 'margin-top:10px;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }));
 
     function send(payload, reqId) {
@@ -1062,7 +1193,7 @@
     var all = recent.concat(EXERCISES.filter(function (x) { return recent.indexOf(x) < 0; }));
     var picked = [];
     var box = el('div', { class: 'k-card', style: 'margin-top:8px;background:var(--k-cream);' });
-    var q = el('input', { type: 'search', placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', style: 'width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 10px;font-size:15px;box-sizing:border-box;' });
+    var q = el('input', { type: 'search', placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
     var area = el('div');
     var go = el('button', { type: 'button', class: 'k-btn k-picker-go', text: '選んだ種目を足す' });
     function chip(ex) {
@@ -1117,7 +1248,7 @@
         var g = el('div', { class: 'k-grid3' }, [
           el('div', { style: 'background:var(--k-cream);border-radius:10px;padding:10px;' }, [el('div', { class: 'k-sub', text: '自己ベスト' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.best.w + 'kg×' + st.best.r }), el('div', { class: 'k-sub', text: md(st.best.d) })]),
           el('div', { style: 'background:var(--k-cream);border-radius:10px;padding:10px;' }, [el('div', { class: 'k-sub', text: '推定MAX' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.maxE != null ? st.maxE + 'kg' : '—' }),
-            el('div', { style: 'font-size:11px;color:var(--k-navy2);font-weight:700;', text: (st.maxE != null && st.firstE != null && st.days.length > 1) ? '▲ ' + r1(st.maxE - st.firstE) + ' 開始から' : '' })]),
+            el('div', { style: 'font-size:11px;color:var(--k-acc2);font-weight:700;', text: (st.maxE != null && st.firstE != null && st.days.length > 1) ? '▲ ' + r1(st.maxE - st.firstE) + ' 開始から' : '' })]),
           el('div', { style: 'background:var(--k-cream);border-radius:10px;padding:10px;' }, [el('div', { class: 'k-sub', text: '合計回数' }), el('div', { class: 'k-num', style: 'font-size:17px;', text: st.reps + '回' }), el('div', { class: 'k-sub', text: st.sets + 'セット' })])
         ]);
         area.appendChild(card(view.ex, [g, lineChart(st.days.filter(function (x) { return x.v != null; }).map(function (x) { return { d: x.d, v: x.v }; }), null, 'kg'),
@@ -1353,7 +1484,7 @@
           var initial = String(c.name || '').slice(0, 1);
           list.appendChild(el('div', { class: 'k-card', style: 'cursor:pointer;', role: 'button', tabindex: '0', onclick: function () { open(c.customerId, c.name, 'summary'); } }, [
             el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [
-              el('div', { style: 'width:40px;height:40px;border-radius:20px;background:var(--k-navy-l);color:var(--k-navy);display:flex;align-items:center;justify-content:center;font-weight:700;', text: initial }),
+              el('div', { style: 'width:40px;height:40px;border-radius:20px;background:var(--k-acc-l);color:var(--k-acc);display:flex;align-items:center;justify-content:center;font-weight:700;', text: initial }),
               el('b', { style: 'font-size:15px;', text: c.name + ' 様' })]), tags]));
         });
         if (!shown.length) list.appendChild(msg(all.length ? 'この条件のお客様はいません。' : '対象のお客様がいません。'));
