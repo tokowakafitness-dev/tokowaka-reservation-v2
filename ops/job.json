@@ -1,1 +1,1 @@
-{"op":"quotaBuild","requestId":"job-20261104114829-14a50bb9","args":{"write":true,"alloc":true,"limit":8,"maxPages":12,"_rk":"90148c21097d1af02184fbf1e6d0d2dd7e192f448429e67e2955acd72c36fef1"}}
+{"op":"remaining","requestId":"job-20261104121051-cd67bf64","args":{"shadow":"status","from":"2026-11-04","_rk":"ec41138d07bba0db1536552a3f0f397d4490457eb87e9f3a2388dc31a79a4ed7"}}
