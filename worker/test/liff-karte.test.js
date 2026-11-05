@@ -615,7 +615,7 @@ async function fromPrev(root) {
   ins[0].focus(); vv.height = 200; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 60));
   ok('12-4f ★回転の直後にキーパッドが出ても見分ける（帯も出る）', root.classList.contains('k-kb') && !!root.querySelector('#kAccessory'), root.className);
   vv.width = 390; vv.height = 800; Object.defineProperty(w, 'innerHeight', { value: 800, configurable: true }); ins[0].blur(); (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 600));
-  ok('12-5 入力欄は16px以上（iPhone で触った瞬間に拡大しない）', /k-setrow input\{[^}]*font-size:17px/.test(SRC) && /k-field input[^{]*\{[^}]*font-size:16px/.test(SRC) && !/font-size:15px;font-family:inherit;color:var\(--k-ink\)/.test(SRC));
+  ok('12-5 入力欄は16px以上（iPhone で触った瞬間に拡大しない）', /k-setrow input\{[^}]*font-size:1[6-9]px/.test(SRC) && /k-field input[^{]*\{[^}]*font-size:16px/.test(SRC) && !/font-size:15px;font-family:inherit;color:var\(--k-ink\)/.test(SRC));
   //   休憩おわり：長い振動・音・点滅
   let vib = null; w.navigator.vibrate = (p) => { vib = p; return true; };
   root.querySelector('button[aria-label$="実施済みにする"]').click(); await settle();
@@ -813,7 +813,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
   btn(root, '保存する').click(); await settle();
   ok('14-11 ★メモだけ書いて✓の無いセットも「記録されない入力」として保存の前に知らせる（やめたら送らない）', msgs.some((m) => m.includes('記録されない入力が 1 セット')) && !sent.some((x) => x.action === 'k_addTraining'), msgs.join(' / '));
-  ok('14-12 幅の狭い端末（380px 以下＝SE・mini を含む）では、セットを消すボタンをメモ欄へ移して数字の欄を広く取る', /@media \(max-width:380px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 48px 44px/.test(SRC) && /k-setdel\{display:none;\}/.test(SRC));
+  ok('14-12 幅の狭い端末（380px 以下＝SE・mini を含む）では、セットを消すボタンをメモ欄へ移して数字の欄を広く取る', /@media \(max-width:380px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 44px 44px/.test(SRC) && /k-setdel\{display:none;\}/.test(SRC));
 }
 
 {
@@ -1071,6 +1071,9 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   ok('19-13 ★別のお客様のトレーニングでは日別の記録を勝手に開かない', !root.querySelector('.k-daycard.focus') && !root.querySelector('.k-dayrow[aria-expanded="true"]'));
   w.KarteUI.close && w.KarteUI.close();
 }
+
+ok('20-1 ★文字と余白は画面に合わせる（2026-11-05：カード余白12・間10・左右14・見出し14・主ボタン44/14・入力16/44）', /\.k-card\{[^}]*padding:12px;/.test(SRC) && /\.k-body\{padding:12px 14px 18px;[^}]*gap:10px;/.test(SRC) && /\.k-h\{font-size:14px;/.test(SRC) && /\.k-btn\{[^}]*min-height:44px;[^}]*font-size:14px;/.test(SRC) && /k-setrow input\{[^}]*min-height:44px;[^}]*font-size:16px;/.test(SRC));
+ok('20-2 ★下のタブは小さくしない（11-04 に「小さすぎる」で大きくした・56px・14px）', /\.k-tab\{min-height:56px;[^}]*font-size:14px;/.test(SRC));
 
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

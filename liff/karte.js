@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-05e どの画面もモックどおり（今日の記録・写す・指導メモ・測定は専用画面／概要・トレーニング・契約の見た目）・下スワイプの対策';
+  var KARTE_BUILD = '2026-11-05f 文字と余白を画面に合わせて小さく（カード余白12・間10・見出し14・入力16/44）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -67,30 +67,30 @@
     '#karteRoot{--k-acc:#243b66;--k-acc2:#1a2d50;--k-acc-l:#edf2fb;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#fafbfc;--k-ground:#fafbfc;--k-ink:#1c2321;--k-sub:#5b6661;--k-line:#e7ebf0;--k-warn:#bb4630;--k-warn-l:#fff0ea;',
     'position:fixed;inset:0;z-index:9000;background:var(--k-ground);overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;color:var(--k-ink);font-family:"Noto Sans JP",-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;font-size:14px;line-height:1.6;}',
     '#karteRoot .k-wrap{max-width:520px;margin:0 auto;min-height:calc(100% + 2px);display:flex;flex-direction:column;}',
-    '#karteRoot .k-head{background:#fff;color:var(--k-ink);padding:12px 16px;border-bottom:1px solid var(--k-line);}',
+    '#karteRoot .k-head{background:#fff;color:var(--k-ink);padding:10px 14px;border-bottom:1px solid var(--k-line);}',
     '#karteRoot .k-head-row{display:flex;align-items:center;gap:10px;}',
     '#karteRoot .k-back{min-width:44px;min-height:44px;border:1px solid var(--k-line);background:#fff;color:var(--k-ink);border-radius:12px;font-size:18px;}',
-    '#karteRoot .k-name{font-size:18px;font-weight:700;letter-spacing:.02em;}',
+    '#karteRoot .k-name{font-size:17px;font-weight:700;letter-spacing:.02em;}',
     '#karteRoot .k-meta{font-size:12px;color:var(--k-sub);margin-top:2px;}',
-    '#karteRoot .k-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}',
+    '#karteRoot .k-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}',
     '#karteRoot .k-chip-h{font-size:12px;padding:4px 10px;background:var(--k-acc-l);color:var(--k-acc);border-radius:999px;}',
     '#karteRoot .k-gtag{font-size:12px;padding:3px 10px;background:var(--k-gold-l);color:#6b5427;border-radius:999px;}',
     '#karteRoot .k-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:#fff;border-top:1px solid var(--k-line);position:sticky;bottom:0;z-index:2;padding:4px 4px calc(8px + env(safe-area-inset-bottom));margin-top:auto;}',
     '#karteRoot .k-tab{min-height:56px;padding:4px 2px;border:none;background:transparent;font-size:14px;line-height:1.25;color:var(--k-sub);border-top:3px solid transparent;font-family:inherit;}',   // ★iPhone で小さすぎた（12px・48px → 14px・56px、2026-11-04h）
     '@media (min-width:400px){#karteRoot .k-tab{font-size:15px;}}',
     '#karteRoot .k-tab.on{color:var(--k-acc);font-weight:700;border-top-color:var(--k-acc);}',
-    '#karteRoot .k-body{padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px;flex:1;}',
-    '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:14px;padding:16px;}',
-    '#karteRoot .k-h{font-size:15px;font-weight:700;color:var(--k-ink);margin:0 0 10px;}',
+    '#karteRoot .k-body{padding:12px 14px 18px;display:flex;flex-direction:column;gap:10px;flex:1;}',
+    '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:14px;padding:12px;}',
+    '#karteRoot .k-h{font-size:14px;font-weight:700;color:var(--k-ink);margin:0 0 8px;}',
     '#karteRoot .k-sub{font-size:12px;color:var(--k-sub);}',
     '#karteRoot .k-msg{font-size:13px;color:var(--k-sub);margin:6px 0;}',
     '#karteRoot .k-msg.bad{color:var(--k-warn);}',
-    '#karteRoot .k-caution{background:var(--k-warn-l);border-radius:14px;padding:14px;}',
-    '#karteRoot .k-caution .k-h{color:var(--k-warn);font-size:15px;}',
-    '#karteRoot .k-btn{display:block;width:100%;min-height:46px;border:none;border-radius:10px;background:var(--k-acc);color:#fff;font-size:15px;font-weight:700;margin-top:4px;font-family:inherit;}',
+    '#karteRoot .k-caution{background:var(--k-warn-l);border-radius:14px;padding:12px;}',
+    '#karteRoot .k-caution .k-h{color:var(--k-warn);font-size:14px;}',
+    '#karteRoot .k-btn{display:block;width:100%;min-height:44px;border:none;border-radius:10px;background:var(--k-acc);color:#fff;font-size:14px;font-weight:700;margin-top:4px;font-family:inherit;}',
     '#karteRoot .k-btn.out{background:#fff;color:var(--k-acc);border:1px solid #c9ccd3;font-weight:500;}',
     '#karteRoot .k-btn.small{display:inline-block;width:auto;min-height:44px;padding:0 14px;font-size:13px;margin:0;}',
-    '#karteRoot .k-pill{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
+    '#karteRoot .k-pill{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
     '#karteRoot .k-pill.on{border:1.5px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-pills{display:flex;flex-wrap:wrap;gap:8px;}',
     '#karteRoot .k-seg{display:flex;background:#ecedef;border-radius:10px;padding:3px;gap:2px;}',
@@ -110,16 +110,16 @@
     '#karteRoot .k-tl-item{position:relative;}',
     '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-acc);}',
     '#karteRoot .k-bar{height:12px;border-radius:6px;background:#eeeeec;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-acc);}',
-    '#karteRoot .k-setrow{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr) 48px 44px 44px;gap:6px;align-items:center;margin-bottom:6px;}',
+    '#karteRoot .k-setrow{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr) 44px 44px 44px;gap:6px;align-items:center;margin-bottom:6px;}',
     '#karteRoot .k-setnote{margin:-2px 0 8px 28px;}',
     '#karteRoot .k-btn.k-setdel2{display:none;}',   // .k-btn.small（inline-block）より強くする
     '#karteRoot .k-memochips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}',
     '#karteRoot .k-memochips button{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;font-size:14px;font-family:inherit;color:#3f4550;}',
     //   幅の狭い端末（380px 以下＝iPhone SE・mini を含む）：セットを消すボタンはメモ欄の中へ移し、数字の欄を広く取る
     //   （375px で6列のままだと数字の欄が約47px＝「102.5」が欠ける）
-    '@media (max-width:380px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 48px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setdel{display:none;} #karteRoot .k-btn.k-setdel2{display:inline-block;} #karteRoot .k-setnote{margin-left:24px;}}',
+    '@media (max-width:380px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 44px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setdel{display:none;} #karteRoot .k-btn.k-setdel2{display:inline-block;} #karteRoot .k-setnote{margin-left:24px;}}',
     '#karteRoot .k-setnote input{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;}',
-    '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:48px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:17px;}',
+    '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:16px;}',
     '#karteRoot .k-picker-go{position:sticky;bottom:76px;z-index:2;}',
     //   キーパッドが出ているあいだ（k-kb）：下のタブを隠し、決定ボタンは下に詰める
     '#karteRoot.k-kb .k-tabs{display:none;}',
@@ -145,22 +145,22 @@
     '#karteRoot .k-restbar{background:var(--k-acc-l);border:1px solid #d2ddf0;border-radius:10px;padding:6px 6px 6px 12px;display:flex;align-items:center;gap:8px;margin:0 0 8px 28px;}',
     '#karteRoot .k-restbar:empty{display:none !important;}',
     '#karteRoot.k-entry .k-head,#karteRoot.k-entry .k-tabs{display:none;}',
-    '#karteRoot .k-entryhead{background:var(--k-acc);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:4;}',
+    '#karteRoot .k-entryhead{background:var(--k-acc);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:4;}',
     '#karteRoot .k-entryhead .k-back{color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:12px;}',
-    '#karteRoot .k-entrytitle{font-size:17px;font-weight:700;} #karteRoot .k-entrysub{font-size:12px;opacity:.85;}',
-    '#karteRoot .k-savebar{position:sticky;bottom:0;z-index:3;background:#fff;border-top:1px solid var(--k-line);margin:12px -16px -20px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));}',
+    '#karteRoot .k-entrytitle{font-size:16px;font-weight:700;} #karteRoot .k-entrysub{font-size:12px;opacity:.85;}',
+    '#karteRoot .k-savebar{position:sticky;bottom:0;z-index:3;background:#fff;border-top:1px solid var(--k-line);margin:10px -14px -18px;padding:10px 14px calc(10px + env(safe-area-inset-bottom));}',
     '#karteRoot.k-kb .k-savebar{position:static;}',
     '#karteRoot .k-entrytext{position:relative;min-height:44px;}',
     '#karteRoot .k-dateover{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:44px;border:0;}',
-    '#karteRoot .k-btn.k-btn-line{background:#fff;color:var(--k-acc);border:1px solid var(--k-acc);min-height:48px;margin:0 0 12px;}',
-    '#karteRoot .k-excol{display:flex;align-items:center;gap:8px;width:100%;min-height:52px;background:#fff;border:1px solid var(--k-line);border-radius:12px;padding:0 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
+    '#karteRoot .k-btn.k-btn-line{background:#fff;color:var(--k-acc);border:1px solid var(--k-acc);min-height:44px;margin:0 0 10px;}',
+    '#karteRoot .k-excol{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;background:#fff;border:1px solid var(--k-line);border-radius:12px;padding:0 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
     '#karteRoot .k-addset{display:block;width:100%;min-height:44px;border:1px dashed var(--k-acc);border-radius:10px;background:#fff;color:var(--k-acc);font-size:14px;font-family:inherit;margin-top:4px;}',
     '#karteRoot .k-pick{display:flex;flex-direction:column;gap:8px;width:100%;text-align:left;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-pick.on{border:2px solid var(--k-acc);}',
     '#karteRoot .k-dayrow{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:44px;border:0;background:transparent;padding:0;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-daycard.focus{border-color:var(--k-acc);}',
-    '#karteRoot .k-admin{background:#f0f3f7;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;margin-top:8px;}',
-    '#karteRoot .k-headrow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-8px 0 6px;}',
+    '#karteRoot .k-admin{background:#f0f3f7;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;margin-top:6px;}',
+    '#karteRoot .k-headrow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-10px 0 2px;}',
     '#karteRoot .k-link{min-height:44px;padding:0 2px 0 8px;border:none;background:transparent;color:var(--k-acc);font-size:13px;font-family:inherit;white-space:nowrap;}',
     '#karteRoot .k-caution .k-link{color:var(--k-warn);}',
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}'
@@ -598,10 +598,10 @@
       var wFirst = wRows.length ? wRows[0].w : null, wNow = latest.w != null ? latest.w : null, wTarget = hearing.targetWeight != null && hearing.targetWeight !== '' ? Number(hearing.targetWeight) : null;
       var pct = (wFirst != null && wNow != null && wTarget != null) ? (wFirst === wTarget ? 1 : Math.max(0, Math.min(1, (wFirst - wNow) / (wFirst - wTarget)))) : null;
       var dl = p.goal_deadline ? Math.ceil((Date.parse(p.goal_deadline) - Date.parse(today())) / 86400000) : null;
-      function col(name, big, small) { return el('div', {}, [el('div', { class: 'k-sub', text: name }), el('div', { class: 'k-num', style: 'font-size:17px;', text: big }), el('div', { class: 'k-sub', text: small })]); }
+      function col(name, big, small) { return el('div', {}, [el('div', { class: 'k-sub', text: name }), el('div', { class: 'k-num', style: 'font-size:16px;', text: big }), el('div', { class: 'k-sub', text: small })]); }
       var goalCard = el('div', { class: 'k-card' }, [headRow('目標と進み具合', '体組成へ ›', function () { open(cur.customerId, cur.name, 'body'); }),
         el('div', { style: 'display:flex;gap:14px;align-items:center;' }, [
-          pct != null ? ring(pct, Math.round(pct * 100) + '%', 72) : el('div', { class: 'k-sub', style: 'width:72px;text-align:center;', text: '目標 未設定' }),
+          pct != null ? ring(pct, Math.round(pct * 100) + '%', 60) : el('div', { class: 'k-sub', style: 'width:60px;text-align:center;', text: '目標 未設定' }),
           el('div', { class: 'k-grid3', style: 'flex:1;font-size:12px;' }, [
             col('いま', wNow != null ? String(wNow) : '—', 'kg'),
             col('目標', wTarget != null ? String(wTarget) : '—', 'kg'),
@@ -912,12 +912,12 @@
       box.appendChild(el('div', { class: 'k-sub', text: lastD ? '最新 ' + md(lastD) : '' }));
       function hero(name, t, key, unit) {
         return el('div', { class: 'k-card', style: 'padding:14px;' }, [el('div', { class: 'k-sub', text: name }),
-          el('div', { class: 'k-num', style: 'font-size:30px;line-height:1.2;margin-top:4px;', text: t.last ? String(t.last[key]) : '—' }, []),
+          el('div', { class: 'k-num', style: 'font-size:24px;line-height:1.2;margin-top:4px;', text: t.last ? String(t.last[key]) : '—' }, []),
           el('div', { class: 'k-sub', text: unit }), delta(t.last && t.last[key], t.prev && t.prev[key], unit, true)]);
       }
       function small(name, t, key, unit, lowerIsGood) {
         return el('div', { class: 'k-card', style: 'padding:10px;' }, [el('div', { class: 'k-sub', text: name }),
-          el('div', { class: 'k-num', style: 'font-size:18px;margin-top:2px;', text: t.last ? t.last[key] + unit : '—' }),
+          el('div', { class: 'k-num', style: 'font-size:16px;margin-top:2px;', text: t.last ? t.last[key] + unit : '—' }),
           delta(t.last && t.last[key], t.prev && t.prev[key], unit, lowerIsGood)]);
       }
       box.appendChild(el('div', { class: 'k-grid2' }, [hero('体重', W2, 'w', 'kg'), hero('体脂肪率', F2, 'pbf', '%')]));
@@ -1387,7 +1387,7 @@
         }
         var hasVal = it.sets.some(function (s) { return s.w !== '' && s.r !== '' && s.w != null && s.r != null; });
         var noneDone = !it.sets.some(function (s) { return s.done === true; });
-        var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#f5c9bb' : 'var(--k-line)') + ';border-radius:12px;padding:12px;margin-bottom:10px;background:' + (hasVal && noneDone ? '#fff7f4' : '#fff') + ';' });
+        var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#f5c9bb' : 'var(--k-line)') + ';border-radius:12px;padding:10px;margin-bottom:10px;background:' + (hasVal && noneDone ? '#fff7f4' : '#fff') + ';' });
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
           el('div', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
@@ -1396,7 +1396,7 @@
         blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;', text: 'メモ' }), el('span')]));
         it.sets.forEach(function (s, si) {
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
-            style: 'min-width:48px;min-height:48px;border-radius:12px;font-size:20px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
+            style: 'min-width:44px;min-height:44px;border-radius:12px;font-size:18px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
             text: '✓', onclick: function () { s.done = !s.done; if (s.done) rest.pos = { ei: ei, si: si }; save(); draw(); if (s.done) restStart(restSecondsFor(it.exercise)); } });
           blk.appendChild(el('div', { class: 'k-setrow' }, [
             el('span', { style: 'color:var(--k-sub);font-size:13px;text-align:center;', text: String(si + 1) }),
