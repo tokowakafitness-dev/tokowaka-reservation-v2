@@ -624,11 +624,11 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   touch('touchstart', 60, 300); touch('touchend', 220, 310); await pop(); await settle();
   ok('13-4 ★画面の中で左→右にスワイプすると戻る', w.document.querySelector('#karteRoot .k-tab.on').textContent === 'トレーニング');
   touch('touchstart', 300, 300); touch('touchend', 120, 305); await pop(); await settle();
-  ok('13-5 ★右→左にスワイプしても戻る（2026-11-05 から・予約画面と揃える）', w.document.querySelector('#karteRoot .k-tab.on').textContent === '概要');
+  ok('13-5 ★右→左にスワイプすると進む（2026-11-05 オーナー確認）', w.document.querySelector('#karteRoot .k-tab.on').textContent === '契約');
   touch('touchstart', 60, 300); touch('touchend', 120, 420); await pop(); await settle();
-  ok('13-6 縦に大きく動いたもの（スクロール）は戻らない', w.document.querySelector('#karteRoot .k-tab.on').textContent === '概要');
+  ok('13-6 縦に大きく動いたもの（スクロール）は戻らない', w.document.querySelector('#karteRoot .k-tab.on').textContent === '契約');
   //   いちばん前まで戻るとカルテを閉じる（予約画面に戻る・LIFF は閉じない）
-  w.history.go(-1); await pop(); await settle();
+  w.history.go(-3); await pop(); await settle();
   ok('13-7 ★カルテに入る前まで戻るとカルテを閉じる（LIFF は閉じない）', !w.document.getElementById('karteRoot'));
 }
 {

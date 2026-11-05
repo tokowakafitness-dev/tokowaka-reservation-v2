@@ -173,7 +173,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-05b 戻る：LIFFを閉じない・横スワイプは左右どちらでも戻る';
+  var LIFF_BUILD = '2026-11-05c 戻る：LIFFを閉じない・左→右で戻る・右→左で進む（予約画面は閉じた直後のカルテへだけ）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -607,7 +607,9 @@
   }
 
   var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
+  var _showGen = 0;   // 画面が切り替わった回数（右→左で進んでよいかの判定に使う）
   function show(id){
+    _showGen++;
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
   }
   function showError(msg){ var el = document.getElementById('errMsg'); if (el) el.textContent = msg; show('s-error'); }
@@ -619,11 +621,14 @@
   //   ★LIFF は右上の閉じるでだけ閉じる。iPhone の左端スワイプ・Android の戻るボタンは、履歴が尽きると LIFF ごと閉じる。
   //     だから予約画面の上に「見張りの1段」を常に積んでおき、それが外れたら画面の「戻る」を押したのと同じ動きをして積み直す。
   //     最初の画面（会員ホーム・顧客一覧）では何もしない＝閉じずにその場に留まる
-  //   ★画面の中の横スワイプは、左→右・右→左のどちらでも戻る
+  //   ★画面の中の横スワイプは左→右で戻る、右→左で進む（2026-11-05 オーナー確認）。予約画面の画面は選んだ内容から作るので履歴に積まない。
+  //     進む先があるのは閉じたカルテ（履歴の前方に残る）だけ。★閉じてから予約画面が一度も切り替わっていないときだけ進む
+  //     （その後に別の顧客を開いた・代行を始めた画面で進むと、前の顧客のカルテが出る＝取り違えの元・Codex 関門②）。送信中は進まない
   //   ★戻る先は各画面の data-back の付いたボタン（見えている最初の1つ）。ボタンの動きをそのまま使う＝画面ごとの後始末を二重に持たない
   //   ★カルテが開いている間はカルテが自分の履歴で戻る（karte.js）。ここは触らない
   //   ★見張りは liff.init の直後と、指で触ったときに積む（触る前に積んだ履歴は Android で飛ばされることがあるので、触ったときにも確かめる）
   //   ★フォームに入力があるときは、スワイプ・端末の戻るで消す前に確かめる（ボタンの「戻る」は従来どおり確かめない）
+  var _fwdGen = -1;
   function _karteOpen(){ return document.documentElement.classList.contains('karte-open'); }
   function _navArm(){
     if (_karteOpen() || !window.history || !history.pushState) return;
@@ -657,6 +662,7 @@
   document.addEventListener('change', _markTouched, true);
   window.addEventListener('popstate', function(e){
     var st = e.state;
+    if (st && st.rsvGuard && _karteOpen()) _fwdGen = _showGen;   // カルテを閉じて見張りの段へ戻った＝この画面のままなら進める
     if (st && (st.rsvGuard || st.karte)) return;   // カルテの出入り・見張りの段へ戻っただけ
     if (_karteOpen()) { setTimeout(_navArm, 0); return; }   // カルテが閉じる途中（karte.js が閉じたあとに積み直す）
     _navArm();
@@ -686,7 +692,8 @@
     if (!s || _karteOpen() || !e.changedTouches || e.changedTouches.length !== 1 || (e.touches && e.touches.length)) return;
     var t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
     if (Date.now() - s.at > 700 || Math.abs(dx) < 80 || Math.abs(dy) > 50 || Math.abs(dx) < Math.abs(dy) * 2) return;
-    rsvBack();
+    if (dx > 0) rsvBack();
+    else if (_fwdGen === _showGen && !(_busyEl && !_busyEl.hidden)) { try { history.forward(); } catch (er) {} }
   }, { passive: true });
   // ---------------------------------------------------------------- 戻る ここまで（worker/test/liff-back-nav.test.js が取り出して動かす）
 
@@ -2908,6 +2915,6 @@
   boot();
 </script>
 <!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
-<script src="karte.js?v=2026-11-05b"></script>
+<script src="karte.js?v=2026-11-05c"></script>
 </body>
 </html>

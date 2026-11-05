@@ -6,7 +6,7 @@
 //     1. 指で触ると見張りの1段が積まれる（端末の戻るが LIFF を閉じない）
 //     2. 端末の戻る → 画面の「戻る」ボタンと同じ動き ＋ 見張りを積み直す
 //     3. 最初の画面（戻る先が無い）では何もしない＝留まる・見張りは残る
-//     4. 横スワイプは左→右・右→左のどちらでも戻る。縦・入力欄の上・左端・横に動く表の上では戻らない
+//     4. 横スワイプは左→右で戻る・右→左で進む（進む先は閉じた直後のカルテだけ）。縦・入力欄の上・左端・横に動く表の上では戻らない
 //     5. カルテが開いている間は何もしない（カルテの履歴の上に見張りを積まない）
 //     6. 送信中は戻らない・隠れている戻るボタンは飛ばす
 //     8. 関門②：liff.init の直後にも見張り・入力中のフォームは確かめる・ピンチは戻らない
@@ -31,7 +31,7 @@ const BODY = HTML.slice(HTML.indexOf('<body>') + 6, HTML.indexOf('<script'));
 const A = HTML.indexOf('  // ---------------------------------------------------------------- 戻る（2026-11-05');
 const Z = HTML.indexOf('  // ---------------------------------------------------------------- 戻る ここまで');
 const NAV = HTML.slice(A, Z);
-const SCREENS_LINE = (HTML.match(/  var SCREENS = \[[^\]]+\];\n  function show\(id\)\{[^\n]*\n[^\n]*\n  \}/) || [])[0] || '';
+const SCREENS_LINE = (HTML.match(/  var SCREENS = \[[^\]]+\];\n[\s\S]*?\n  function show\(id\)\{[\s\S]*?\n  \}/) || [])[0] || '';
 ok('0-1 本番の HTML から「戻る」の部分と画面の切り替えを取り出せる', A > 0 && Z > A && SCREENS_LINE.length > 0 && BODY.includes('id="s-home"'));
 
 function boot() {
@@ -86,7 +86,7 @@ function swipe(w, x0, y0, x1, y1, target) {
   w.show('s-confirm'); swipe(w, 60, 300, 220, 310);
   ok('4-1 ★左→右で戻る', cur(w) === 's-week', cur(w));
   w.show('s-confirm'); swipe(w, 300, 300, 120, 305);
-  ok('4-2 ★右→左でも戻る', cur(w) === 's-week', cur(w));
+  ok('4-2 ★右→左は戻らない（進む＝予約画面の画面には進む先が無い）', cur(w) === 's-confirm', cur(w));
   w.show('s-confirm'); swipe(w, 60, 300, 120, 420);
   ok('4-3 縦に大きく動いたもの（スクロール）は戻らない', cur(w) === 's-confirm');
   w.show('s-confirm'); swipe(w, 60, 300, 100, 305);
@@ -109,6 +109,8 @@ function swipe(w, x0, y0, x1, y1, target) {
 // ================= 5〜6. カルテ・送信中・隠れたボタン =================
 {
   const w = boot();
+  //   karte.js の身代わり（後から登録＝予約画面の処理の後に動く）：カルテの履歴なら開く・それ以外なら閉じる
+  w.addEventListener('popstate', (e) => { w.document.documentElement.classList.toggle('karte-open', !!(e.state && e.state.karte)); });
   w.show('s-confirm');
   tap(w);   // 見張りを積んでからカルテを開く（本番もカルテを開くボタンの押下で先に積む）
   w.document.documentElement.classList.add('karte-open');
@@ -118,9 +120,16 @@ function swipe(w, x0, y0, x1, y1, target) {
   const len = w.history.length;
   tap(w);
   ok('5-2 ★カルテの履歴の上に見張りを積まない', w.history.length === len && w.history.state.karte === 1);
-  w.document.documentElement.classList.remove('karte-open');   // カルテを閉じた（見張りの段へ戻る）
-  w.history.back(); await wait();
+  w.history.back(); await wait();   // カルテを閉じた（見張りの段へ戻る）
   ok('5-3 カルテから予約画面へ戻っただけのときは画面を動かさない', cur(w) === 's-confirm', cur(w));
+  swipe(w, 300, 300, 120, 305); await wait();
+  ok('5-3b ★閉じた直後に右→左で進む＝カルテの履歴へ（端末の進むと同じ）', w.history.state && w.history.state.karte === 1 && cur(w) === 's-confirm', JSON.stringify(w.history.state));
+  w.history.back(); await wait();   // もう一度閉じる（見張りの段へ）
+  w.setBusy(true); swipe(w, 300, 300, 120, 305); await wait(); w.setBusy(false);
+  ok('5-3d ★送信中は右→左でも進まない', w.history.state && w.history.state.rsvGuard === 1, JSON.stringify(w.history.state));
+  w.show('s-week');   // 閉じたあと予約画面を進めた（別の顧客・代行など）
+  swipe(w, 300, 300, 120, 305); await wait();
+  ok('5-3c ★閉じたあと画面が切り替わっていたら進まない（前の顧客のカルテを出さない）', w.history.state && w.history.state.rsvGuard === 1 && cur(w) === 's-week', JSON.stringify(w.history.state));
   //   見張りより前にカルテを開いていた（読み直しの後の復元）：閉じる途中の戻りでは画面を動かさず、閉じた後に見張りを積む
 }
 {
