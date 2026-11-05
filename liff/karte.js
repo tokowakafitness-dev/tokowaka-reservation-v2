@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-05a カルテ InBodyカード撤去に伴う案内';
+  var KARTE_BUILD = '2026-11-05b 横スワイプは左右どちらでも戻る';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -320,7 +320,7 @@
   // ---------------------------------------------------------------- 戻る・進む（2026-11-04 オーナー指示）
   //   ★カルテの画面を移るたびにブラウザの履歴へ1つ積む＝iPhone の左端スワイプ・Android の戻るボタンが
   //     LIFF を閉じずにカルテの前の画面へ戻る。履歴には顧客ID・タブだけ（氏名は入れない）
-  //   ★画面の中の横スワイプ：左→右で戻る、右→左で進む（入力欄・選択肢・グラフの上やキーパッド表示中は反応しない）
+  //   ★画面の中の横スワイプ：左→右・右→左のどちらでも戻る（2026-11-05 までは右→左で進んでいた）（入力欄・選択肢・グラフの上やキーパッド表示中は反応しない）
   var nav = { i: 0, restoring: false, canceling: false };
   function navState() { return (window.history && history.state && history.state.karte) ? history.state : null; }
   function navPush(st, mode) {
@@ -400,8 +400,7 @@
     var t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y, dt = Date.now() - swipe.at;
     swipe = null;
     if (dt > 700 || Math.abs(dx) < 80 || Math.abs(dy) > 50 || Math.abs(dx) < Math.abs(dy) * 2) return;
-    if (dx > 0) { if (navState()) history.back(); }
-    else { try { history.forward(); } catch (er) {} }
+    if (navState()) history.back();   // ★左右どちら向きでも戻る（2026-11-05 オーナー指示・予約画面と揃える）
   }
   function onDirty(e) {
     var t = e.target;

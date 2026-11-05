@@ -92,7 +92,7 @@
   </div>
 
   <div id="s-trainer" class="screen" hidden>
-    <button id="toHome" class="btn btn-outline" style="margin-top:0;" data-i18n="back_home">← ホームに戻る</button>
+    <button id="toHome" data-back class="btn btn-outline" style="margin-top:0;" data-i18n="back_home">← ホームに戻る</button>
     <p class="muted" style="margin-top:18px;" data-i18n="trainer_prompt">担当トレーナーを選んでください。</p>
     <div id="trainerList"></div>
   </div>
@@ -100,7 +100,7 @@
   <div id="s-myres" class="screen" hidden>
     <div class="big" style="margin-bottom:12px;" data-i18n="myres_title">あなたの予約</div>
     <div id="myResList"></div>
-    <button id="myResBack" class="btn btn-outline" data-i18n="back">戻る</button>
+    <button id="myResBack" data-back class="btn btn-outline" data-i18n="back">戻る</button>
   </div>
 
   <div id="s-week" class="screen" hidden>
@@ -118,8 +118,8 @@
     </div>
     <div id="gridWrap"></div>
     <p class="muted" style="margin-top:8px;" id="weekHint" data-i18n="week_hint">○ をタップすると予約確認へ進みます。</p>
-    <button id="backToTrainer" class="btn btn-outline" data-i18n="week_reselect">トレーナーを選び直す</button>
-    <button id="weekHome" class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
+    <button id="backToTrainer" data-back class="btn btn-outline" data-i18n="week_reselect">トレーナーを選び直す</button>
+    <button id="weekHome" data-back class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
   </div>
 
   <div id="s-confirm" class="screen" hidden>
@@ -130,7 +130,7 @@
     </div>
     <div id="confirmErr" class="err" hidden></div>
     <button id="confirmBtn" class="btn" data-i18n="cf_submit">予約を確定する</button>
-    <button id="confirmCancel" class="btn btn-outline" data-i18n="back">戻る</button>
+    <button id="confirmCancel" data-back class="btn btn-outline" data-i18n="back">戻る</button>
     <button id="confirmHome" class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
   </div>
 
@@ -141,7 +141,7 @@
       <p id="doneDetail" class="muted"></p>
       <p class="muted" data-i18n="done_note">前日にリマインドをお送りします。キャンセルは前日17時まで無料です。</p>
     </div>
-    <button id="doneClose" class="btn" data-i18n="done_close">ホームに戻る</button>
+    <button id="doneClose" data-back class="btn" data-i18n="done_close">ホームに戻る</button>
   </div>
 
   <div id="s-whoami" class="screen" hidden>
@@ -173,7 +173,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-05a InBody記録のカードを外す・カルテを開くをグリーンに';
+  var LIFF_BUILD = '2026-11-05b 戻る：LIFFを閉じない・横スワイプは左右どちらでも戻る';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -614,6 +614,81 @@
   function dbg(msg){ var el = document.getElementById('loadMsg'); if (el) el.textContent = msg; }
   function showWhoami(w){ var el = document.getElementById('whoamiId'); if (el) el.textContent = (w && w.lineUserId) ? w.lineUserId : '取得できませんでした'; show('s-whoami'); }
   function on(id, fn){ var el = document.getElementById(id); if (el) el.onclick = fn; }
+
+  // ---------------------------------------------------------------- 戻る（2026-11-05 オーナー指示）
+  //   ★LIFF は右上の閉じるでだけ閉じる。iPhone の左端スワイプ・Android の戻るボタンは、履歴が尽きると LIFF ごと閉じる。
+  //     だから予約画面の上に「見張りの1段」を常に積んでおき、それが外れたら画面の「戻る」を押したのと同じ動きをして積み直す。
+  //     最初の画面（会員ホーム・顧客一覧）では何もしない＝閉じずにその場に留まる
+  //   ★画面の中の横スワイプは、左→右・右→左のどちらでも戻る
+  //   ★戻る先は各画面の data-back の付いたボタン（見えている最初の1つ）。ボタンの動きをそのまま使う＝画面ごとの後始末を二重に持たない
+  //   ★カルテが開いている間はカルテが自分の履歴で戻る（karte.js）。ここは触らない
+  //   ★見張りは liff.init の直後と、指で触ったときに積む（触る前に積んだ履歴は Android で飛ばされることがあるので、触ったときにも確かめる）
+  //   ★フォームに入力があるときは、スワイプ・端末の戻るで消す前に確かめる（ボタンの「戻る」は従来どおり確かめない）
+  function _karteOpen(){ return document.documentElement.classList.contains('karte-open'); }
+  function _navArm(){
+    if (_karteOpen() || !window.history || !history.pushState) return;
+    var st = history.state;
+    if (st && (st.rsvGuard || st.karte)) return;
+    try { history.pushState({ rsvGuard: 1 }, ''); } catch (e) {}
+  }
+  function rsvBack(){
+    if (_karteOpen()) return;
+    if (_busyEl && !_busyEl.hidden) return;   // 送信中は動かさない
+    var scr = null;
+    SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el && !el.hidden) scr = el; });
+    if (!scr) return;
+    var bs = scr.querySelectorAll('[data-back]');
+    for (var i = 0; i < bs.length; i++) {
+      var b = bs[i];
+      if (!b.disabled && !b.hidden && b.style.display !== 'none' && b.getClientRects().length) {
+        if (_formTouched(scr) && !window.confirm('入力中の内容は消えます。前の画面に戻りますか？')) return;
+        b.click(); return;
+      }
+    }
+  }
+  //   ★「人が入力・変更した欄」だけを数える（値の比較だと、選択欄の先頭が自動で選ばれる画面で毎回確認が出る＝Codex 関門②）
+  function _formTouched(scr){
+    var fs = scr.querySelectorAll('input,textarea,select');
+    for (var i = 0; i < fs.length; i++) if (fs[i]._rsvTouched) return true;
+    return false;
+  }
+  function _markTouched(e){ var t = e.target; if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) t._rsvTouched = true; }
+  document.addEventListener('input', _markTouched, true);
+  document.addEventListener('change', _markTouched, true);
+  window.addEventListener('popstate', function(e){
+    var st = e.state;
+    if (st && (st.rsvGuard || st.karte)) return;   // カルテの出入り・見張りの段へ戻っただけ
+    if (_karteOpen()) { setTimeout(_navArm, 0); return; }   // カルテが閉じる途中（karte.js が閉じたあとに積み直す）
+    _navArm();
+    rsvBack();
+  });
+  document.addEventListener('click', _navArm, true);   // ボタンの動き（カルテを開く等）より先に積む
+  document.addEventListener('touchend', _navArm, { capture: true, passive: true });
+  var _swipe = null;
+  function _hScrollable(n){
+    for (; n && n !== document.body; n = n.parentElement) {
+      if (n.scrollWidth > n.clientWidth + 2) { var ox = getComputedStyle(n).overflowX; if (ox === 'auto' || ox === 'scroll') return true; }
+    }
+    return false;
+  }
+  document.addEventListener('touchstart', function(e){
+    _swipe = null;
+    if (_karteOpen() || !e.touches || e.touches.length !== 1) return;
+    var t = e.touches[0], tg = e.target;
+    //   左端20pxは端末の戻るに任せる（上の見張りで同じ戻るになる）。入力欄・横に動く表の上では反応しない
+    if (t.clientX < 20 || (tg && tg.closest && tg.closest('input,textarea,select')) || _hScrollable(tg)) return;
+    _swipe = { x: t.clientX, y: t.clientY, at: Date.now() };
+  }, { passive: true });
+  //   途中で指が増えた（ピンチ）ものは戻らない（Codex 関門②）
+  document.addEventListener('touchmove', function(e){ if (_swipe && e.touches && e.touches.length > 1) _swipe = null; }, { passive: true });
+  document.addEventListener('touchend', function(e){
+    var s = _swipe; _swipe = null;
+    if (!s || _karteOpen() || !e.changedTouches || e.changedTouches.length !== 1 || (e.touches && e.touches.length)) return;
+    var t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (Date.now() - s.at > 700 || Math.abs(dx) < 80 || Math.abs(dy) > 50 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    rsvBack();
+  }, { passive: true });
+  // ---------------------------------------------------------------- 戻る ここまで（worker/test/liff-back-nav.test.js が取り出して動かす）
 
   function _rawApi(params){
     params.idToken = idToken;
@@ -1192,6 +1267,7 @@
       var _tInit = _nowMs();
       liff.init({ liffId: LIFF_ID }).then(function(){
         _perfAdd('liff.init', _nowMs() - _tInit);
+        _navArm();   // ★一度も触らずに端末の戻るを押しても LIFF を閉じない（Codex 関門②）。liff.init が履歴を書き換えた後に積む
         dbg('ログイン確認中…');
         if (!liff.isLoggedIn()) { dbg('ログインへ移動…'); liff.login(); return; }
         idToken = liff.getIDToken();
@@ -1384,7 +1460,7 @@
   function renderSameDayCancels(items){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = '全体｜当日キャンセルの取り消し';
-    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
     var note = document.createElement('div'); note.className='card';
     note.innerHTML = '<p class="muted" style="font-size:13px;line-height:1.6;">間違えて当日キャンセル（1回消化）にした予約を、無料キャンセルに直します。<br>'
@@ -1481,7 +1557,7 @@
   function renderAdminHoldForm(){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜未登録客の予約枠を作る';
-    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
     var kinds = ['体験','通常','モニター','レンタル'];
     var d = document.createElement('div'); d.className='card';
@@ -1522,7 +1598,7 @@
   function renderBlockForm(){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜ブロック（枠を塞ぐ）';
-    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
     var d = document.createElement('div'); d.className='card';
     d.innerHTML =
@@ -1564,7 +1640,7 @@
   function renderAdminSlots(res){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (res.isOwner ? '全体' : (state.trainerName||'トレーナー') + ' 様') + '｜作成した枠・ブロック';
-    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
 
     var note = document.createElement('p'); note.className='muted'; note.style.cssText='margin-top:10px;line-height:1.7;font-size:13px;';
@@ -1609,7 +1685,7 @@
   function renderHealthBoard(res){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = 'システム状態';
-    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
 
     var head = document.createElement('div'); head.className='card';
@@ -1658,7 +1734,7 @@
   function renderPaceBoard(res){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (res.isOwner ? '全体' : res.trainerName + ' 様') + '｜消化ペース';
-    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
 
     // 集計がまだ無い場合は、原因と次の一手だけを出して終わる
@@ -1754,7 +1830,7 @@
   function renderUnlinked(list){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = '未紐付け予約の紐付け';
-    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る';
+    var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
     if (!list.length) { var p=document.createElement('p'); p.className='muted'; p.textContent='未紐付けの予約はありません。'; box.appendChild(p); show('s-tadmin'); return; }
@@ -1800,7 +1876,7 @@
     fetchCustomerCard(customerId);
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = name + ' 様のご予約';
-    var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る';
+    var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
     // 顧客カルテ（設計28・段1）
@@ -2832,6 +2908,6 @@
   boot();
 </script>
 <!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
-<script src="karte.js?v=2026-11-05a"></script>
+<script src="karte.js?v=2026-11-05b"></script>
 </body>
 </html>
