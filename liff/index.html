@@ -56,6 +56,60 @@
   .lang-off { background:transparent; color:rgba(255,255,255,.85); }
 .btn.btn-karte{background:#243b66;border-color:#243b66;color:#fff;}
 .btn.btn-karte:active{background:#1a2d50;border-color:#1a2d50;}
+/* ★トレーナーで開いたときだけ（body.staff）：カルテと同じ配色・文字・大きさ・見分け方（2026-11-06 オーナー承認のモック P1〜P6）。会員の画面には効かない */
+body.staff{background:#fafbfc;color:#1c2321;font-size:14px;}
+body.staff header{background:#fff;color:#1c2321;border-bottom:1px solid #e7ebf0;font-family:'Noto Sans JP',sans-serif;font-size:12px;font-weight:500;letter-spacing:.08em;padding:12px 14px;}
+body.staff .lang-toggle{display:none;}
+body.staff .screen{padding:12px 14px;}
+body.staff .big{font-family:'Noto Sans JP',sans-serif;font-size:17px;font-weight:700;color:#1c2321;letter-spacing:0;}
+body.staff .muted{color:#5b6661;font-size:12px;}
+body.staff .card{border:1px solid #dde3ea;border-radius:14px;padding:12px;margin-bottom:10px;box-shadow:0 1px 3px rgba(28,35,33,.07);}
+body.staff .btn{min-height:44px;padding:10px 14px;border-radius:10px;background:#243b66;font-size:14px;font-weight:700;margin-top:10px;font-family:inherit;}
+body.staff .btn-outline{background:#fff;color:#243b66;border:1.5px solid #243b66;}
+body.staff .btn.btn-danger{background:#fff;color:#bb4630;border:1px solid #e09a86;font-weight:500;}
+body.staff .btn:active{filter:brightness(.92);}
+body.staff .sect-h{font-family:'Noto Sans JP',sans-serif;font-size:12px;color:#5b6661;font-weight:500;letter-spacing:.08em;margin:14px 2px 6px;}
+body.staff #s-tadmin input:not([type=checkbox]):not([type=radio]),body.staff #s-tadmin select,body.staff #s-tadmin textarea{min-height:44px;border:1px solid #8692a6;border-radius:10px;font-size:16px;padding:0 10px;box-sizing:border-box;background:#fff;color:#1c2321;font-family:inherit;}
+body.staff #s-tadmin input:focus,body.staff #s-tadmin select:focus,body.staff #s-tadmin textarea:focus{outline:none;border-color:#243b66;box-shadow:0 0 0 3px rgba(36,59,102,.18);}
+body.staff .hlabel{border-radius:999px;padding:3px 10px;font-size:12px;}
+body.staff .home-row .v b{color:#243b66;}
+body.staff #s-tadmin.sub > .big,body.staff #s-tadmin.sub > #tadminName{display:none;}
+body.staff #s-tadmin.entry > #tadminReload{display:none;}
+.shead{display:flex;align-items:center;gap:10px;margin:-12px -14px 12px;padding:10px 14px;background:#fff;border-bottom:1px solid #e7ebf0;}
+.shead.entry{background:#243b66;color:#fff;border-bottom:0;}
+.sback{width:44px;height:44px;flex:none;border:1px solid #e7ebf0;border-radius:12px;background:#fff;color:#1c2321;font-size:18px;font-family:inherit;}
+.shead.entry .sback{background:transparent;color:#fff;border-color:rgba(255,255,255,.55);}
+.stx{flex:1;min-width:0;} .stt{font-size:17px;font-weight:700;} .shead.entry .stt{font-size:16px;} .sst{font-size:12px;color:#5b6661;} .shead.entry .sst{color:rgba(255,255,255,.85);}
+body.staff .trainer{border:1px solid #dde3ea;border-radius:14px;box-shadow:0 1px 3px rgba(28,35,33,.07);min-height:44px;align-items:center;}
+/* 一覧（顧客・管理）：1枚のカードに行を並べる */
+.slist{background:#fff;border:1px solid #dde3ea;border-radius:14px;box-shadow:0 1px 3px rgba(28,35,33,.07);padding:0 12px;margin-bottom:10px;}
+.slist.grey{background:#f0f3f7;border-color:#f0f3f7;box-shadow:none;}
+.srow{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;border:0;border-bottom:1px solid #e7ebf0;background:transparent;padding:0;font-family:inherit;font-size:14px;color:#1c2321;text-align:left;cursor:pointer;}
+.slist.grey .srow{border-bottom-color:#dde3ea;}
+.srow:last-child{border-bottom:0;}
+.srow .nm{flex:1;min-width:0;font-weight:700;}
+.srow .lb{flex:1;min-width:0;}
+.srow .av{width:32px;height:32px;border-radius:16px;background:#edf2fb;color:#243b66;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none;}
+.srow .go{color:#5b6661;}
+.schip{font-size:12px;border-radius:999px;padding:3px 10px;background:#edf2fb;color:#243b66;white-space:nowrap;}
+.schip.warn{background:#fff0ea;color:#bb4630;}
+.schip.gold{background:#f3ecdc;color:#6b5427;}
+.sgrid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.sgrid2 .btn{margin-top:0;}
+body.staff #s-tadmin .card label{font-weight:500;font-size:12px;color:#5b6661;}
+body.staff #s-tadmin .card input,body.staff #s-tadmin .card select{width:100%;margin:4px 0 12px;}
+body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padding:10px 12px;color:#243b66 !important;}
+.sseg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:4px 0 12px;}
+.sseg button{min-height:44px;border:1px solid #8692a6;border-radius:10px;background:#fff;font-size:13px;font-family:inherit;color:#1c2321;}
+.sseg button.on{border:1.5px solid #243b66;background:#243b66;color:#fff;font-weight:700;}
+.ssave{position:sticky;bottom:0;background:#fff;border-top:1px solid #e7ebf0;margin:10px -14px -12px;padding:10px 14px calc(10px + env(safe-area-inset-bottom));z-index:3;}
+.ssave .btn{margin-top:0;}
+.sbanner{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#f3ecdc;color:#6b5427;font-size:13px;font-weight:700;margin:-12px -14px 12px;padding:4px 6px 4px 14px;}
+.sbanner button{min-height:44px;border:0;background:transparent;color:#6b5427;font-size:13px;font-family:inherit;padding:0 8px;}
+.sgrid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+.slab{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#5b6661;min-width:0;}
+.slab input,.slab select{width:100%;min-width:0;}
+.sbtns .btn{flex:1 1 140px;}
 </style>
 </head>
 <body>
@@ -173,7 +227,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-06a 今日の記録に指導メモ・戻る矢印';
+  var LIFF_BUILD = '2026-11-06b トレーナーの予約ページをカルテと同じ作りに（P1〜P6・代行中の帯）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -611,6 +665,26 @@
   function show(id){
     _showGen++;
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
+    //   ★会員の画面（ホーム・登録・自分の予約）に入ったらトレーナーの見た目を外す（トレーナーの一覧に戻るとき付け直す）
+    if (['s-home', 's-register', 's-myres'].indexOf(id) >= 0) document.body.classList.remove('staff');
+    if (typeof _staffBanner === 'function') _staffBanner(id);
+  }
+  //   代行・変更の帯（モック P4・2026-11-06）：トレーナーが会員の予約画面を使い回すとき、誰の予約を扱っているかを常に出す
+  //   ★トレーナーで開いたときだけ（body.staff）。会員の画面には出ない。名前は文字として入れる
+  function _staffBanner(id){
+    var old = document.getElementById('staffBanner'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    if (!document.body.classList.contains('staff') || typeof state === 'undefined' || !state) return;
+    if (['s-trainer', 's-week', 's-confirm'].indexOf(id) < 0) return;
+    var txt = state.proxyMode ? '代行中：' + (state.proxyCustomerName || '') + ' 様'
+      : ((state.changeMode && state._fromTrainerAdmin) ? '予約の変更中：' + (state._changeCustName || '') + ' 様' : '');
+    if (!txt) return;
+    var sc = document.getElementById(id); if (!sc) return;
+    var b = document.createElement('div'); b.id = 'staffBanner'; b.className = 'sbanner';
+    var t0 = document.createElement('span'); t0.textContent = txt; b.appendChild(t0);
+    var x = document.createElement('button'); x.type = 'button'; x.textContent = 'やめる ×'; x.setAttribute('aria-label', '代行・変更をやめて顧客一覧に戻る');
+    x.onclick = function(){ if (typeof goHome === 'function') goHome(); };
+    b.appendChild(x);
+    sc.insertBefore(b, sc.firstChild);
   }
   function showError(msg){ var el = document.getElementById('errMsg'); if (el) el.textContent = msg; show('s-error'); }
   function dbg(msg){ var el = document.getElementById('loadMsg'); if (el) el.textContent = msg; }
@@ -1359,13 +1433,14 @@
     }).catch(function(e){ showError(t('comm_fail',{msg:e})); });
   }
 
-  on('toHome', function(){ show('s-home'); });
+  on('toHome', function(){ if (state._fromTrainerAdmin || state.proxyMode) { goHome(); return; } show('s-home'); });   // トレーナーの代行中は顧客一覧へ（会員ホームに落ちない）
   on('homeReserve', function(){ loadTrainers(); });
   on('homeMyRes', function(){ loadMyReservations(); });
   on('myResBack', function(){ show('s-home'); });
 
   // ===== トレーナー管理ページ（Google直接編集の代替・状態乖離の防止） =====
   function renderTrainerAdmin(res){
+    document.body.classList.add('staff');   // ★トレーナーの見た目はこの目印があるときだけ効く（会員の画面に効かせない）
     state.trainerId = res.trainerId || '';
     state.trainerName = res.trainerName || '';
     state._adminTrainerId = state.trainerId; state._adminTrainerName = state.trainerName;   // 管理画面の本人（変更で他の担当を見たあと戻すため・設計26）
@@ -1387,7 +1462,23 @@
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
   // 顧客名リスト（変更・取消の代行は顧客単位で発生するため、まず顧客を選ぶ）
+  //   トレーナーの各画面の見出しの行（モック P2〜P6）：最初の「戻る」ボタンを、左の戻る（枠付き 44px）＋題名の行に作り替える。
+  //   ★戻るの動き・data-back（端末の戻る・横スワイプ）はそのまま使う。entry＝記入画面（ネイビーの帯・P3）
+  function _sEsc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
+  function staffHead(box, title, sub, entry){
+    var sc = document.getElementById('s-tadmin'); if (sc) { sc.classList.add('sub'); sc.classList.toggle('entry', !!entry); }
+    var back = box.querySelector('[data-back]');
+    var hd = document.createElement('div'); hd.className = 'shead' + (entry ? ' entry' : '');
+    if (back) { back.className = 'sback'; back.style.cssText = ''; back.setAttribute('aria-label', back.textContent.replace(/^←\s*/, '') || '戻る'); back.textContent = '←'; hd.appendChild(back); }
+    var tx = document.createElement('div'); tx.className = 'stx';
+    var tt = document.createElement('div'); tt.className = 'stt'; tt.textContent = title; tx.appendChild(tt);
+    if (sub) { var ss = document.createElement('div'); ss.className = 'sst'; ss.textContent = sub; tx.appendChild(ss); }
+    hd.appendChild(tx);
+    box.insertBefore(hd, box.firstChild);
+  }
   function renderCustomerList(){
+    document.body.classList.add('staff');   // 一覧に戻るたびに付け直す（会員の画面に入って外れた後でも）
+    var sc0 = document.getElementById('s-tadmin'); if (sc0) { sc0.classList.remove('sub'); sc0.classList.remove('entry'); }
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜顧客を選んで予約を変更・取消';
     var resv = state._trainerResv || [], custs = state._trainerCustomers || [];
@@ -1395,6 +1486,16 @@
     var cntById = {}; resv.forEach(function(r){ cntById[r.customerId] = (cntById[r.customerId]||0)+1; });
     // 担当顧客（予約0でも表示）＋予約はあるが担当リスト外の顧客も統合（取りこぼし防止）
     var list = [], seen = {};
+    //   ★見た目はモック P1（2026-11-06）：お客様は1枚のリスト・枠を作るは2つのボタン・管理は1枚のリスト・オーナーだけは灰色。名前は文字として入れる（HTML にしない）
+    function sect(t0){ var h = document.createElement('div'); h.className = 'sect-h'; h.textContent = t0; box.appendChild(h); }
+    function row(parent, label, chip, chipCls, onclick, nameRow){
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'srow';
+      if (nameRow) { var av = document.createElement('span'); av.className = 'av'; av.textContent = String(label || '').slice(0, 1); b.appendChild(av); }
+      var l = document.createElement('span'); l.className = nameRow ? 'nm' : 'lb'; l.textContent = nameRow ? label + ' 様' : label; b.appendChild(l);
+      if (chip) { var c0 = document.createElement('span'); c0.className = 'schip' + (chipCls ? ' ' + chipCls : ''); c0.textContent = chip; b.appendChild(c0); }
+      var g = document.createElement('span'); g.className = 'go'; g.textContent = '›'; b.appendChild(g);
+      b.onclick = onclick; parent.appendChild(b); return b;
+    }
     // 顧客カルテの一覧（次の予約なし・記録停止・更新が近い・支払い待ち）。担当＋担当なし（オーナーは全員）
     //   ★担当が0名のトレーナーにも出す（担当なしの顧客は見られる）＝空の判定の外に置く
     if (window.KarteUI) {
@@ -1404,56 +1505,53 @@
     }
     custs.forEach(function(c){ if (c.customerId && !seen[c.customerId]) { seen[c.customerId]=true; list.push({ customerId:c.customerId, name:c.name, count: cntById[c.customerId]||0 }); } });
     resv.forEach(function(r){ if (r.customerId && !seen[r.customerId]) { seen[r.customerId]=true; list.push({ customerId:r.customerId, name:r.customerName, count: cntById[r.customerId]||0 }); } });
+    sect('担当のお客様');
     if (!list.length) {
-      box.innerHTML = '<p class="muted">担当のお客様がまだ登録されていません。</p>';
+      //   ★上の「カルテの一覧」を消さない（従来は innerHTML で上ごと消していた）
+      var none0 = document.createElement('p'); none0.className = 'muted'; none0.textContent = '担当のお客様がまだ登録されていません。'; box.appendChild(none0);
     } else {
-      var _search = document.createElement('input'); _search.type = 'text'; _search.placeholder = '顧客名で検索…'; _search.style.cssText = 'width:100%;padding:10px;margin-bottom:10px;box-sizing:border-box;border:1px solid #ccc;border-radius:8px;';
+      var _search = document.createElement('input'); _search.type = 'text'; _search.placeholder = '顧客名で検索…'; _search.setAttribute('aria-label', '顧客名で検索');
+      _search.style.cssText = 'width:100%;margin-bottom:10px;';
       box.appendChild(_search);
+      var custList = document.createElement('div'); custList.className = 'slist'; box.appendChild(custList);
       var _cards = [];
       list.forEach(function(c){
-        var d = document.createElement('div'); d.className = 'card'; d.style.cursor = 'pointer';
-        d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><b>' + c.name + ' 様</b><span class="muted">' + (c.count ? c.count+'件 ›' : '予約なし ›') + '</span></div>';
-        d.onclick = function(){ renderCustomerDetail(c.customerId, c.name); };
-        box.appendChild(d); _cards.push({ name: String(c.name || '').toLowerCase(), el: d });
+        var d = row(custList, String(c.name || ''), c.count ? c.count + '件' : '予約なし', c.count ? '' : 'warn', function(){ renderCustomerDetail(c.customerId, c.name); }, true);
+        _cards.push({ name: String(c.name || '').toLowerCase(), el: d });
       });
       _search.oninput = function(){ var q = this.value.trim().toLowerCase(); _cards.forEach(function(x){ x.el.style.display = (!q || x.name.indexOf(q) >= 0) ? '' : 'none'; }); };
     }
-    var hold = document.createElement('button'); hold.className = 'btn'; hold.textContent = '＋ 未登録客の予約枠を作る';
+    sect('枠を作る');
+    var mk = document.createElement('div'); mk.className = 'sgrid2'; box.appendChild(mk);
+    var hold = document.createElement('button'); hold.className = 'btn'; hold.textContent = '＋ 未登録客の予約枠';
     hold.onclick = function(){ _ensureAdminTrainers(renderAdminHoldForm); };
-    box.appendChild(hold);
+    mk.appendChild(hold);
     var block = document.createElement('button'); block.className = 'btn btn-outline'; block.textContent = '＋ ブロック（枠を塞ぐ）';
     block.onclick = function(){ _ensureAdminTrainers(renderBlockForm); };
-    box.appendChild(block);
+    mk.appendChild(block);
+    sect('管理');
+    var mg = document.createElement('div'); mg.className = 'slist'; box.appendChild(mg);
+    row(mg, '作成した枠・ブロック', '', '', function(){ loadAdminSlots(); });
+    row(mg, '消化ペース', '', '', function(){ loadPaceBoard(); });
+    row(mg, '未紐付け予約を紐付ける', '', '', function(){ loadUnlinked(); });
     // 契約（顧客マスタ）を直した直後に押す。契約は1時間キャッシュしているため、
     //   これを押さないと最大1時間お客様の残数表示が古いままになる。
-    var slots = document.createElement('button'); slots.className = 'btn btn-outline'; slots.textContent = '🗂 作成した枠・ブロックを管理';
-    slots.onclick = function(){ loadAdminSlots(); };
-    box.appendChild(slots);
-    var refresh = document.createElement('button'); refresh.className = 'btn btn-outline'; refresh.textContent = '🔄 契約情報を再読み込み';
+    var refresh = row(mg, '契約情報を再読み込み', '', '', null);
     refresh.onclick = function(){
       if (!window.confirm('契約フォームを直した後にお使いください。\n\nお客様の残数表示に最新の契約を反映します。よろしいですか？')) return;
-      var self = this; self.disabled = true; self.textContent = '反映中…';   // 実処理は一瞬（読み込みは裏で走る）
+      var self = this, lb = self.querySelector('.lb'); self.disabled = true; lb.textContent = '反映中…';   // 実処理は一瞬（読み込みは裏で走る）
       api({ action:'line_refreshContract' }).then(function(res){
-        self.disabled = false; self.textContent = '🔄 契約情報を再読み込み';
+        self.disabled = false; lb.textContent = '契約情報を再読み込み';
         window.alert((res && res.success) ? (res.message || '反映しました。') : ('反映できませんでした（' + ((res&&res.code)||'不明') + '）。'));
-      }).catch(function(e){ self.disabled = false; self.textContent = '🔄 契約情報を再読み込み'; showError('通信に失敗しました：'+e); });
+      }).catch(function(e){ self.disabled = false; lb.textContent = '契約情報を再読み込み'; showError('通信に失敗しました：'+e); });
     };
-    box.appendChild(refresh);
-    var pace = document.createElement('button'); pace.className = 'btn btn-outline'; pace.textContent = '📈 消化ペースを見る';
-    pace.onclick = function(){ loadPaceBoard(); };
-    box.appendChild(pace);
     if (state._isOwner) {   // 全体の不備・他担当の顧客名を含むためオーナー限定
-      var health = document.createElement('button'); health.className = 'btn btn-outline'; health.textContent = '🩺 システム状態を見る';
-      health.onclick = function(){ loadHealthBoard(); };
-      box.appendChild(health);
+      sect('オーナーだけ');
+      var ow = document.createElement('div'); ow.className = 'slist grey'; box.appendChild(ow);
+      row(ow, 'システム状態', '', '', function(){ loadHealthBoard(); });
       //   間違えた当日キャンセルを無料キャンセルに直す（設計24）。権限はGAS側でも止めている（ここは表示だけ）
-      var sdc = document.createElement('button'); sdc.className = 'btn btn-outline'; sdc.textContent = '↩️ 当日キャンセルを取り消す';
-      sdc.onclick = function(){ loadSameDayCancels(); };
-      box.appendChild(sdc);
+      row(ow, '当日キャンセルを取り消す', '', '', function(){ loadSameDayCancels(); });
     }
-    var unlink = document.createElement('button'); unlink.className = 'btn btn-outline'; unlink.textContent = '未紐付け予約を紐付ける';
-    unlink.onclick = function(){ loadUnlinked(); };
-    box.appendChild(unlink);
     show('s-tadmin');
   }
   // ===== 間違えた当日キャンセルを無料キャンセルに直す（オーナーのみ・設計24） =====
@@ -1469,6 +1567,7 @@
     document.getElementById('tadminName').textContent = '全体｜当日キャンセルの取り消し';
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    staffHead(box, '当日キャンセルの取り消し', 'オーナーだけ');
     var note = document.createElement('div'); note.className='card';
     note.innerHTML = '<p class="muted" style="font-size:13px;line-height:1.6;">間違えて当日キャンセル（1回消化）にした予約を、無料キャンセルに直します。<br>'
       + '残数が1回戻り、付与済みの振替権があれば無効になり、カレンダーの [消化] を消します。<br>'
@@ -1558,7 +1657,7 @@
   }
   function _adminTrainerSelect(elId){
     var trs = (state._isOwner && state._allTrainers && state._allTrainers.length) ? state._allTrainers : [{ id: state.trainerId, name: state.trainerName }];
-    var opts = trs.map(function(t){ return '<option value="'+t.id+'"'+(String(t.id)===String(state.trainerId)?' selected':'')+'>'+t.name+'</option>'; }).join('');
+    var opts = trs.map(function(t){ return '<option value="'+_sEsc(t.id)+'"'+(String(t.id)===String(state.trainerId)?' selected':'')+'>'+_sEsc(t.name)+'</option>'; }).join('');   // ★名前は文字として（関門②）
     return '<label style="font-weight:700;">担当</label><select id="'+elId+'" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+opts+'</select>';
   }
   function renderAdminHoldForm(){
@@ -1566,11 +1665,13 @@
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜未登録客の予約枠を作る';
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    staffHead(box, '未登録客の予約枠を作る', (state.trainerName||'トレーナー') + ' 様', true);
     var kinds = ['体験','通常','モニター','レンタル'];
     var d = document.createElement('div'); d.className='card';
     d.innerHTML =
       '<label style="font-weight:700;">種別</label>'+
-      '<select id="ahKind" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+kinds.map(function(k){return '<option value="'+k+'">'+k+'</option>';}).join('')+'</select>'+
+      '<div class="sseg" id="ahKindSeg">'+kinds.map(function(k, i){return '<button type="button" data-kind="'+k+'" class="'+(i===0?'on':'')+'" aria-pressed="'+(i===0?'true':'false')+'">'+k+'</button>';}).join('')+'</div>'+
+      '<select id="ahKind" aria-hidden="true" tabindex="-1" style="display:none;">'+kinds.map(function(k){return '<option value="'+k+'">'+k+'</option>';}).join('')+'</select>'+
       '<label style="font-weight:700;">お名前（フルネーム）</label>'+
       '<input id="ahName" type="text" placeholder="例：山田 太郎" style="width:100%;padding:9px;margin:6px 0 12px;box-sizing:border-box;">'+
       _adminTrainerSelect('ahTrainer')+
@@ -1580,8 +1681,14 @@
       '<input id="ahTime" type="time" step="900" style="width:100%;padding:9px;margin:6px 0 4px;box-sizing:border-box;">'+
       '<div id="ahWhen" style="margin-top:8px;font-weight:700;font-size:15px;"></div>';
     box.appendChild(d);
+    //   種別はボタンで選ぶ（モック P3）。値は今までの選択欄に入れる＝送る処理は変えない
+    Array.prototype.forEach.call(d.querySelectorAll('#ahKindSeg button'), function(b){ b.onclick = function(){
+      document.getElementById('ahKind').value = b.getAttribute('data-kind');
+      Array.prototype.forEach.call(d.querySelectorAll('#ahKindSeg button'), function(x){ var on = x === b; x.className = on ? 'on' : ''; x.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    }; });
     _adminBindWhen('ahDate', 'ahTime', 'ahWhen');
     var submit = document.createElement('button'); submit.className='btn'; submit.textContent='この内容で予約枠を作る';
+    var holdBar = document.createElement('div'); holdBar.className = 'ssave';
     submit.onclick = function(){
       var name = (document.getElementById('ahName').value||'').trim();
       var iso = _adminBuildISO(document.getElementById('ahDate').value, document.getElementById('ahTime').value);
@@ -1595,10 +1702,12 @@
         else { submit.disabled=false; submit.textContent='この内容で予約枠を作る'; window.alert('作成できませんでした（'+((res&&res.code)||'不明')+'）。'+((res&&res.message)?'\n'+res.message:'')); }
       }).catch(function(e){ submit.disabled=false; submit.textContent='この内容で予約枠を作る'; showError('通信に失敗しました：'+e); });
     };
-    box.appendChild(submit);
+    holdBar.appendChild(submit);
     var note = document.createElement('p'); note.className='muted'; note.style.marginTop='10px';
     note.textContent='※施設が空いていれば作成できます（出勤シフト外・翌月分も可）。会員登録＆同期で残数に反映されます。体験・カウンセリングは残数計上されません（枠確保のみ）。';
     box.appendChild(note);
+    var hn = document.createElement('div'); hn.className = 'muted'; hn.style.cssText = 'text-align:center;margin-top:6px;'; hn.textContent = '作ると「作成した枠・ブロック」に入ります'; holdBar.appendChild(hn);
+    box.appendChild(holdBar);
     show('s-tadmin');
   }
   // ブロック（施設/担当の枠を塞ぐ）。ラベルは任意（私用・仮押さえ等）。
@@ -1607,6 +1716,7 @@
     document.getElementById('tadminName').textContent = (state.trainerName||'トレーナー') + ' 様｜ブロック（枠を塞ぐ）';
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    staffHead(box, 'ブロック（枠を塞ぐ）', (state.trainerName||'トレーナー') + ' 様', true);
     var d = document.createElement('div'); d.className='card';
     d.innerHTML =
       '<label style="font-weight:700;">ラベル（任意）</label>'+
@@ -1620,6 +1730,7 @@
     box.appendChild(d);
     _adminBindWhen('bkDate', 'bkTime', 'bkWhen');
     var submit = document.createElement('button'); submit.className='btn'; submit.textContent='この時間を塞ぐ';
+    var blockBar = document.createElement('div'); blockBar.className = 'ssave';
     submit.onclick = function(){
       var iso = _adminBuildISO(document.getElementById('bkDate').value, document.getElementById('bkTime').value);
       if (!iso) { window.alert('日付・時刻をご入力ください。'); return; }
@@ -1631,7 +1742,8 @@
         else { submit.disabled=false; submit.textContent='この時間を塞ぐ'; window.alert('作成できませんでした（'+((res&&res.code)||'不明')+'）。'+((res&&res.message)?'\n'+res.message:'')); }
       }).catch(function(e){ submit.disabled=false; submit.textContent='この時間を塞ぐ'; showError('通信に失敗しました：'+e); });
     };
-    box.appendChild(submit);
+    blockBar.appendChild(submit);
+    box.appendChild(blockBar);
     show('s-tadmin');
   }
   // ===== 作成した枠・ブロックの管理 =====
@@ -1649,6 +1761,7 @@
     document.getElementById('tadminName').textContent = (res.isOwner ? '全体' : (state.trainerName||'トレーナー') + ' 様') + '｜作成した枠・ブロック';
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    staffHead(box, '作成した枠・ブロック', (res.isOwner ? '全体' : (state.trainerName||'トレーナー') + ' 様'));
 
     var note = document.createElement('p'); note.className='muted'; note.style.cssText='margin-top:10px;line-height:1.7;font-size:13px;';
     note.textContent = '未登録のお客様の枠と、枠を塞ぐブロックの一覧です。お客様のご予約はここには出ません（顧客の画面からキャンセルしてください）。';
@@ -1662,8 +1775,8 @@
       var d = document.createElement('div'); d.className='card';
       var badge = (sl.kind === 'block') ? '<span class="hlabel" style="background:#efe9dc;">ブロック</span>' : '<span class="hlabel" style="background:#eef1f6;">未登録客の枠</span>';
       d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
-        + '<b>' + sl.when + '</b>' + badge + '</div>'
-        + '<div class="muted" style="margin-top:6px;font-size:13px;word-break:break-all;">' + sl.title + '</div>';
+        + '<b>' + _sEsc(sl.when) + '</b>' + badge + '</div>'
+        + '<div class="muted" style="margin-top:6px;font-size:13px;word-break:break-all;">' + _sEsc(sl.title) + '</div>';
       var del = document.createElement('button'); del.className='btn btn-outline'; del.style.marginTop='10px'; del.textContent='削除する';
       del.onclick = function(){
         if (!window.confirm('この枠を削除します。\n\n' + sl.when + '\n' + sl.title + '\n\nよろしいですか？')) return;
@@ -1694,6 +1807,7 @@
     document.getElementById('tadminName').textContent = 'システム状態';
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    staffHead(box, 'システム状態', 'オーナーだけ ／ 毎朝7時に自動点検');
 
     var head = document.createElement('div'); head.className='card';
     if (!res.stamp) {
@@ -1702,25 +1816,28 @@
     }
     var c = res.counts || { high:0, warn:0, info:0 };
     var ok = (c.high + c.warn) === 0;
-    head.innerHTML = '<div style="font-weight:700;font-size:16px;color:' + (ok ? '#4a6b4a' : (c.high ? '#c0392b' : '#b8860b')) + ';">'
-      + (ok ? '✅ 問題は見つかっていません' : (c.high ? '🔴 至急の対応が ' + c.high + '件' : '⚠️ 要確認が ' + c.warn + '件')) + '</div>'
+    head.style.background = ok ? '#edf2fb' : (c.high ? '#fff0ea' : '#f3ecdc'); head.style.borderColor = 'transparent';
+    head.innerHTML = '<div style="font-weight:700;font-size:16px;color:' + (ok ? '#243b66' : (c.high ? '#bb4630' : '#6b5427')) + ';">'
+      + (ok ? '問題は見つかっていません' : (c.high ? '至急の対応が ' + c.high + '件' : '要確認が ' + c.warn + '件')) + '</div>'
       + '<div class="muted" style="margin-top:6px;font-size:12px;">点検時刻：' + res.stamp + '（毎朝7時に自動点検）</div>'
-      + '<p class="muted" style="margin-top:6px;font-size:13px;line-height:1.6;">お客様やトレーナーから報告が来る前に気づくための画面です。<br>🔴は顧客体験や売上に直結します。優先して対応してください。</p>';
+      + '<p class="muted" style="margin-top:6px;font-size:13px;line-height:1.6;">お客様やトレーナーから報告が来る前に気づくための画面です。<br>至急は顧客体験や売上に直結します。優先して対応してください。</p>';
     box.appendChild(head);
 
     if (!res.issues.length) { show('s-tadmin'); return; }
-    var sevLabel = { high: '🔴 至急', warn: '⚠️ 要確認', info: 'ℹ️ 参考' };
-    var sevColor = { high: '#c0392b', warn: '#b8860b', info: '#666' };
+    var sevLabel = { high: '至急', warn: '要確認', info: '参考' };
+    var sevColor = { high: '#bb4630', warn: '#6b5427', info: '#5b6661' };
+    var sevChip = { high: 'warn', warn: 'gold', info: '' };
     var lastSev = '';
     res.issues.forEach(function(it){
       if (it.severity !== lastSev) {
-        var h = document.createElement('div'); h.className='sect-h'; h.textContent = sevLabel[it.severity] || it.severity;
+        var h = document.createElement('div'); h.className='sect-h'; h.textContent = sevLabel[it.severity] || it.severity; h.style.color = sevColor[it.severity] || ''; h.style.fontWeight = '700';
         box.appendChild(h); lastSev = it.severity;
       }
       var d = document.createElement('div'); d.className='card';
       d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
-        + '<b>' + it.area + '</b><span style="color:' + (sevColor[it.severity]||'#666') + ';font-weight:700;">' + it.count + '件</span></div>'
-        + '<div style="margin-top:6px;font-size:13px;line-height:1.7;word-break:break-all;">' + it.detail + '</div>';
+        + '<b>' + _sEsc(it.area) + '</b><span class="schip ' + (sevChip[it.severity]||'') + '" style="font-weight:700;">' + _sEsc(it.count) + '件</span></div>'
+        + '<div style="margin-top:6px;font-size:13px;line-height:1.7;word-break:break-all;">' + _sEsc(it.detail) + '</div>';
+      if (it.severity === 'info') { d.style.background = '#f0f3f7'; d.style.boxShadow = 'none'; d.style.borderColor = '#f0f3f7'; }
       box.appendChild(d);
     });
     show('s-tadmin');
@@ -1736,13 +1853,15 @@
       renderPaceBoard(res);
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
-  function _paceColor(level){ return level === 'alert' ? '#c0392b' : (level === 'warn' ? '#b8860b' : '#4a6b4a'); }
-  function _paceIcon(level){ return level === 'alert' ? '🔴' : (level === 'warn' ? '⚠️' : '✅'); }
+  function _paceColor(level){ return level === 'alert' ? '#bb4630' : (level === 'warn' ? '#c8a25a' : '#243b66'); }
+  function _paceChip(level){ return level === 'alert' ? 'warn' : (level === 'warn' ? 'gold' : ''); }
+  function _paceIcon(level){ return ''; }   // 2026-11-06：絵文字をやめ、右の印の色で示す（モック P5）
   function renderPaceBoard(res){
     var box = document.getElementById('tadminList'); box.innerHTML = '';
     document.getElementById('tadminName').textContent = (res.isOwner ? '全体' : res.trainerName + ' 様') + '｜消化ペース';
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); }; box.appendChild(back);
+    staffHead(box, '消化ペース', (res.isOwner ? '全体' : res.trainerName + ' 様の担当') + ' ／ 毎朝6時に更新');
 
     // 集計がまだ無い場合は、原因と次の一手だけを出して終わる
     if (!res.month) {
@@ -1772,19 +1891,19 @@
       var d = document.createElement('div'); d.className='card';
       var pct = x.should > 0 ? Math.min(100, Math.round(x.used / x.should * 100)) : 100;
       d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
-        + '<b>' + _paceIcon(x.level) + ' ' + x.name + ' 様</b>'
-        + '<span style="color:' + _paceColor(x.level) + ';font-weight:700;">' + (x.behind > 0 ? x.behind + '回の遅れ' : '予定どおり') + '</span></div>'
+        + '<b>' + _sEsc(x.name) + ' 様</b>'
+        + '<span class="schip ' + _paceChip(x.level) + '" style="font-weight:700;">' + (x.behind > 0 ? x.behind + '回の遅れ' : '予定どおり') + '</span></div>'
         + '<div class="muted" style="margin-top:6px;font-size:13px;">月' + x.quota + '回（週' + x.weekly + '回ペース）' + (x.carry ? '＋繰越' + x.carry + '回' : '') + '</div>'
         + '<div style="margin-top:8px;font-size:14px;">今月 <b>' + x.used + '</b> 回 ／ 本来 ' + x.should + ' 回　<span class="muted">残' + x.rem + '回</span></div>'
-        + '<div style="margin-top:6px;height:8px;background:#e8e4da;border-radius:4px;overflow:hidden;">'
+        + '<div style="margin-top:6px;height:8px;background:#edf2fb;border-radius:4px;overflow:hidden;">'
         + '<div style="height:100%;width:' + pct + '%;background:' + _paceColor(x.level) + ';"></div></div>';
       return d;
     }
     function ticketCard(y){
       var d = document.createElement('div'); d.className='card';
       d.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">'
-        + '<b>' + _paceIcon(y.level) + ' ' + y.name + ' 様</b>'
-        + '<span style="color:' + _paceColor(y.level) + ';font-weight:700;">残' + y.rem + '回</span></div>'
+        + '<b>' + _sEsc(y.name) + ' 様</b>'
+        + '<span class="schip ' + _paceChip(y.level) + '" style="font-weight:700;">残' + y.rem + '回</span></div>'
         + '<div class="muted" style="margin-top:6px;font-size:13px;">期限 ' + y.expire + (y.daysLeft != null ? '（あと' + y.daysLeft + '日）' : '') + '</div>'
         + '<div style="margin-top:6px;font-size:14px;">月 <b>' + y.needPerMonth + '</b> 回ペースが必要'
         + (y.needPerMonth > 1 ? '<span style="color:#c0392b;">（月1回では使い切れません）</span>' : '') + '</div>';
@@ -1814,7 +1933,7 @@
       if (st.noContractCount) lines.push('・契約が見つからない：' + st.noContractCount + '名（退会・契約切れなら正常です）');
       if (st.brokenCount) {
         lines.push('<span style="color:#c0392b;">・残数を確定できない：' + st.brokenCount + '名'
-          + (st.brokenNames && st.brokenNames.length ? '（' + st.brokenNames.join('、') + '）' : '')
+          + (st.brokenNames && st.brokenNames.length ? '（' + st.brokenNames.map(_sEsc).join('、') + '）' : '')
           + ' ← 契約データの不備です。オーナーにご確認ください。</span>');
       }
     } else {
@@ -1840,13 +1959,14 @@
     var back = document.createElement('button'); back.className='btn btn-outline'; back.style.marginTop='0'; back.textContent='← 戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
+    staffHead(box, '未紐付け予約の紐付け', '');
     if (!list.length) { var p=document.createElement('p'); p.className='muted'; p.textContent='未紐付けの予約はありません。'; box.appendChild(p); show('s-tadmin'); return; }
     var members = state._members || [];
     list.forEach(function(u){
       var d = document.createElement('div'); d.className='card';
-      d.innerHTML = '<div><b>' + u.dateLabel + '</b>（' + u.kind + '）</div><div class="muted">カレンダー名：' + u.customerName + '／担当：' + u.trainerName + '</div>';
+      d.innerHTML = '<div><b>' + _sEsc(u.dateLabel) + '</b>（' + _sEsc(u.kind) + '）</div><div class="muted">カレンダー名：' + _sEsc(u.customerName) + '／担当：' + _sEsc(u.trainerName) + '</div>';
       var sel = document.createElement('select'); sel.style.cssText='width:100%;padding:9px;margin:8px 0;box-sizing:border-box;';
-      sel.innerHTML = '<option value="">会員を選択…</option>' + members.map(function(m){ return '<option value="'+m.customerId+'">'+m.name+'</option>'; }).join('');
+      sel.innerHTML = '<option value="">会員を選択…</option>' + members.map(function(m){ return '<option value="'+_sEsc(m.customerId)+'">'+_sEsc(m.name)+'</option>'; }).join('');
       var b = document.createElement('button'); b.className='btn'; b.style.margin='0'; b.textContent='この会員に紐付け';
       b.onclick = function(){
         if (!sel.value) { window.alert('会員を選択してください。'); return; }
@@ -1886,23 +2006,33 @@
     var back = document.createElement('button'); back.className = 'btn btn-outline'; back.style.marginTop = '0'; back.textContent = '← 顧客一覧に戻る'; back.setAttribute('data-back', '');
     back.onclick = function(){ renderCustomerList(); };
     box.appendChild(back);
+    staffHead(box, name + ' 様', '顧客一覧 › 顧客の詳細');
+    function sectD(t0){ var h = document.createElement('div'); h.className = 'sect-h'; h.textContent = t0; box.appendChild(h); }
+    //   上に「カルテを開く」「＋ 予約を代行」を並べる（モック P2）
+    var top2 = document.createElement('div'); top2.className = 'sgrid2'; box.appendChild(top2);
     // 顧客カルテ（設計28・段1）
     if (window.KarteUI) {
-      var kbtn = document.createElement('button'); kbtn.className = 'btn btn-karte'; kbtn.textContent = 'カルテを開く';   // ★カルテと同じグリーン（2026-11-05 オーナー指示）
+      var kbtn = document.createElement('button'); kbtn.className = 'btn btn-karte'; kbtn.textContent = 'カルテを開く';   // ★カルテと同じ色（2026-11-05 オーナー指示）
       kbtn.onclick = function(){ KarteUI.open(customerId, name, 'summary'); };
-      box.appendChild(kbtn);
+      top2.appendChild(kbtn);
     }
     // お客様の残数（トレーナーが確認できるよう表示）— 選択時に取得。チケット補充後も同関数で最新化。
+    sectD('残り回数');
     var homeCard = document.createElement('div'); homeCard.className = 'card';
     box.appendChild(homeCard);
     refreshCustomerHome(customerId, homeCard);
     var _list = (state._trainerResv || []).filter(function(r){ return r.customerId === customerId; });
     var _cId = customerId;   // 予約が無くても顧客IDが確定＝代行/チケット補充が可能
+    sectD('今後のご予約' + (_list.length ? '（' + _list.length + '件）' : ''));
     if (!_list.length) { var none = document.createElement('p'); none.className = 'muted'; none.textContent = '今後のご予約はありません。'; box.appendChild(none); }
     _list.forEach(function(r){
       var d = document.createElement('div'); d.className = 'card';
-      d.innerHTML = '<div><b>' + r.dateLabel + '</b>' + (r.transfer ? '　<span style="color:var(--acc);">振替</span>' : '') + '</div>';
-      var btns = document.createElement('div'); btns.style.cssText = 'margin-top:10px;display:flex;gap:8px;';
+      //   ★日時は文字として入れる（HTML にしない）・種別の印（通常／振替）
+      var hd0 = document.createElement('div'); hd0.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;';
+      var dl = document.createElement('b'); dl.style.cssText = 'font-size:15px;color:#243b66;'; dl.textContent = String(r.dateLabel || ''); hd0.appendChild(dl);
+      var tp = document.createElement('span'); tp.className = 'schip' + (r.transfer ? ' gold' : ''); tp.textContent = r.transfer ? '振替' : '通常'; hd0.appendChild(tp);
+      d.appendChild(hd0);
+      var btns = document.createElement('div'); btns.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;'; btns.className = 'sbtns';
       // ★変更・取消は「その予約の担当」しかできない（サーバー側がそう判定する）。
       //   一覧には「自分の担当顧客が、別のトレーナーで取った予約」も出るので、
       //   そのままボタンを出すと**押せるのに断られる**。誰の予約かで出し分ける。
@@ -1919,7 +2049,7 @@
           chg.onclick = function(){ startTrainerChange(r); };
           btns.appendChild(chg);
         }
-        var cxl = document.createElement('button'); cxl.className = 'btn btn-outline'; cxl.style.margin = '0';
+        var cxl = document.createElement('button'); cxl.className = 'btn btn-danger'; cxl.style.margin = '0';
         cxl.textContent = (state._isOwner && !r.freeCancel) ? 'キャンセル（当日消化）' : 'キャンセル';
         cxl.onclick = function(){ trainerCancel(r); };
         btns.appendChild(cxl);
@@ -1930,7 +2060,7 @@
           btns.appendChild(ochg);
         }
         if (state._isOwner && !r.freeCancel) {
-          var ocxl = document.createElement('button'); ocxl.className = 'btn btn-outline'; ocxl.style.margin = '0'; ocxl.textContent = '無料で取り消す（オーナー）';
+          var ocxl = document.createElement('button'); ocxl.className = 'btn btn-danger'; ocxl.style.margin = '0'; ocxl.textContent = '無料で取り消す（オーナー）';
           ocxl.onclick = function(){ ownerFreeCancel(r); };
           btns.appendChild(ocxl);
         }
@@ -1943,9 +2073,9 @@
       box.appendChild(d);
     });
     if (_cId) {
-      var add = document.createElement('button'); add.className = 'btn'; add.textContent = '＋ この方の予約を代行';
+      var add = document.createElement('button'); add.className = 'btn btn-outline'; add.textContent = '＋ 予約を代行'; add.setAttribute('aria-label', 'この方の予約を代行');
       add.onclick = function(){ startProxyReservation(_cId, name); };
-      box.appendChild(add);
+      top2.appendChild(add);   // 上の「カルテを開く」の隣（モック P2）
       // チケット補充（枚数1〜／単価はトレーナー入力・必須／有効期限は任意＝空なら今日＋⌈枚数/2⌉ヶ月・購入パックごと独立）
       var rw = document.createElement('div'); rw.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
       var tsel = document.createElement('select'); tsel.style.cssText = 'padding:9px;';
@@ -1955,7 +2085,7 @@
       var tbtn = document.createElement('button'); tbtn.className = 'btn btn-outline'; tbtn.style.cssText = 'margin:0;flex:1;min-width:120px;';
       tbtn.textContent = 'チケット補充';
       // ペアチケット：チェックで通常単価欄を出す（1名来店の差額算定用）。qtyは回数×2の人数回でbackendが積む。
-      var prow = document.createElement('div'); prow.style.cssText = 'width:100%;display:flex;gap:8px;align-items:center;';
+      var prow = document.createElement('div'); prow.style.cssText = 'width:100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;';
       var pchk = document.createElement('input'); pchk.type = 'checkbox'; pchk.id = 'refillPair';
       var plab = document.createElement('label'); plab.htmlFor = 'refillPair'; plab.textContent = 'ペアチケット'; plab.className = 'muted';
       var ninp = document.createElement('input'); ninp.type = 'number'; ninp.min = '0'; ninp.placeholder = '通常単価(円)'; ninp.style.cssText = 'padding:9px;width:120px;display:none;';
@@ -1981,8 +2111,16 @@
           else { showError('補充に失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
         }).catch(function(e){ showError('通信に失敗しました：'+e); });
       };
-      rw.appendChild(tsel); rw.appendChild(pinp); rw.appendChild(einp); rw.appendChild(tbtn);
-      box.appendChild(rw); box.appendChild(prow);
+      //   チケット補充はカードにまとめ、欄に名前を付ける（モック P2）
+      sectD('チケット補充');
+      var tcard = document.createElement('div'); tcard.className = 'card'; box.appendChild(tcard);
+      function lab(text, el0){ var l = document.createElement('label'); l.className = 'slab'; var sp = document.createElement('span'); sp.textContent = text; l.appendChild(sp); l.appendChild(el0); return l; }
+      tsel.style.cssText = ''; pinp.style.cssText = ''; einp.style.cssText = '';
+      var g3 = document.createElement('div'); g3.className = 'sgrid3';
+      g3.appendChild(lab('回数', tsel)); g3.appendChild(lab('単価（円）', pinp)); g3.appendChild(lab('有効期限（任意）', einp));
+      tcard.appendChild(g3); tcard.appendChild(prow);
+      tbtn.textContent = 'チケットを補充する'; tbtn.style.cssText = 'width:100%;margin-top:10px;';
+      tcard.appendChild(tbtn);
       // 固定枠の自動予約（担当代行・毎月25日に翌月分を自動予約）
       var recurH = document.createElement('div'); recurH.className = 'sect-h'; recurH.textContent = t('recur_title'); box.appendChild(recurH);
       var recurDesc = document.createElement('p'); recurDesc.className = 'muted'; recurDesc.textContent = t('recur_desc'); box.appendChild(recurDesc);
@@ -2047,6 +2185,7 @@
     _startTrainerChangeGo(r);
   }
   function _startTrainerChangeGo(r){
+    state._changeCustName = r.customerName || '';   // 「予約の変更中：〇〇様」の帯に出す（モック P4）
     state.changeMode = true;
     state.changeReservationId = r.reservationId;
     state.excludeStartISO = r.startISO || '';   // 代行変更時も旧予定を空き枠から除外（問題2）
