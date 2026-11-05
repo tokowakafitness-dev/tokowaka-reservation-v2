@@ -172,6 +172,30 @@ trg_alloc_return_pack       同
 | 変更 | `changed` | `changed` | 同 |
 ★2026-10-09、台帳の語彙で数えたため**通常の予約を1件も数えていなかった**。
 
+### 流入元（`utm_source`）の値の意味（★2026-11-05 に確定）
+
+| 値 | 意味 |
+|---|---|
+| `tr_nakano` / `tr_suzuki` / `tr_oki` | **トレーナーの紹介**。どのトレーナーの口・名刺・SNSから来たか |
+| `instagram` / `google` / `line` / `facebook` | 広告・公式アカウント |
+| `mail` | モニターの選考通過メールの中継（`tokowaka-gym.com/r/`） |
+| `direct` | UTMが付いていない。**紹介から来て途中で別ページへ出た人もここに落ちる** |
+
+★**`utm_source`（誰経由）と「担当トレーナー」（誰の枠を取ったか）は別の列。**
+　`reservations` の8列目が流入元、5・6列目が担当。
+　「鈴木の紹介で沖の枠を取った」を区別して残すために分けている。混ぜてはならない。
+
+紹介URLの形（唯一の定義は `worker/test/utm-referral.test.js`）：
+
+```
+https://reservation.tokowaka-gym.com/?utm_source=tr_<slug>&utm_medium=referral_trainer&utm_campaign=trial_referral[&utm_content=<貼り先>]
+```
+
+- **`utm_campaign` に月を入れない。** 名刺・QRを刷り直さずに使い続けるため。いつ来たかは台帳の日時で分かる
+- **`traffic_type=internal` を付けない。** 付けるとGA4の自社トラフィック除外に当たり、紹介が1件も計測されない
+  （`traffic_type=internal` は `utm_source=staff`＝スタッフ確認用だけに付く形）
+- `tr_` の形は `worker/src/routes/pagehits.js` の `SOURCE_RE` に合わせる。合わないとLP側の到達が `none` に落ちる
+
 ### `pack_id` の作られ方（★2026-10-09 に実態を確定した）
 
 ```
