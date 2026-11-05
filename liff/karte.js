@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-05f 文字と余白を画面に合わせて小さく（カード余白12・間10・見出し14・入力16/44）';
+  var KARTE_BUILD = '2026-11-05g 枠とボタンを見分けやすく（カードの影・入力の枠・2番目はネイビー枠・消すはコーラル・選択は塗り）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -80,7 +80,7 @@
     '@media (min-width:400px){#karteRoot .k-tab{font-size:15px;}}',
     '#karteRoot .k-tab.on{color:var(--k-acc);font-weight:700;border-top-color:var(--k-acc);}',
     '#karteRoot .k-body{padding:12px 14px 18px;display:flex;flex-direction:column;gap:10px;flex:1;}',
-    '#karteRoot .k-card{background:#fff;border:1px solid var(--k-line);border-radius:14px;padding:12px;}',
+    '#karteRoot .k-card{background:#fff;border:1px solid #dde3ea;border-radius:14px;padding:12px;box-shadow:0 1px 3px rgba(28,35,33,.07);}',
     '#karteRoot .k-h{font-size:14px;font-weight:700;color:var(--k-ink);margin:0 0 8px;}',
     '#karteRoot .k-sub{font-size:12px;color:var(--k-sub);}',
     '#karteRoot .k-msg{font-size:13px;color:var(--k-sub);margin:6px 0;}',
@@ -88,10 +88,12 @@
     '#karteRoot .k-caution{background:var(--k-warn-l);border-radius:14px;padding:12px;}',
     '#karteRoot .k-caution .k-h{color:var(--k-warn);font-size:14px;}',
     '#karteRoot .k-btn{display:block;width:100%;min-height:44px;border:none;border-radius:10px;background:var(--k-acc);color:#fff;font-size:14px;font-weight:700;margin-top:4px;font-family:inherit;}',
-    '#karteRoot .k-btn.out{background:#fff;color:var(--k-acc);border:1px solid #c9ccd3;font-weight:500;}',
+    '#karteRoot .k-btn.out{background:#fff;color:var(--k-acc);border:1.5px solid var(--k-acc);font-weight:700;}',
+    '#karteRoot .k-btn.out.k-danger{color:var(--k-warn);border-color:#e09a86;font-weight:500;}',
+    '#karteRoot .k-btn:active{filter:brightness(.92);}',
     '#karteRoot .k-btn.small{display:inline-block;width:auto;min-height:44px;padding:0 14px;font-size:13px;margin:0;}',
-    '#karteRoot .k-pill{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
-    '#karteRoot .k-pill.on{border:1.5px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-weight:700;}',
+    '#karteRoot .k-pill{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #8692a6;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
+    '#karteRoot .k-pill.on{border:1.5px solid var(--k-acc);background:var(--k-acc);color:#fff;font-weight:700;}',
     '#karteRoot .k-pills{display:flex;flex-wrap:wrap;gap:8px;}',
     '#karteRoot .k-seg{display:flex;background:#ecedef;border-radius:10px;padding:3px;gap:2px;}',
     '#karteRoot .k-seg button{flex:1;min-height:44px;border:none;border-radius:8px;background:transparent;font-size:13px;color:#3f4550;font-family:inherit;}',
@@ -101,7 +103,7 @@
     '#karteRoot .k-num{font-weight:700;color:var(--k-ink);}',
     '#karteRoot .k-up{color:var(--k-warn);font-weight:700;} #karteRoot .k-down{color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--k-sub);margin-bottom:10px;}',
-    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:8px 10px;font-size:16px;font-family:inherit;color:var(--k-ink);background:#fff;box-sizing:border-box;width:100%;}',
+    '#karteRoot .k-field input,#karteRoot .k-field textarea,#karteRoot .k-field select{min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:8px 10px;font-size:16px;font-family:inherit;color:var(--k-ink);background:#fff;box-sizing:border-box;width:100%;}',
     '#karteRoot .k-tag{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--k-acc-l);color:var(--k-acc);}',
     '#karteRoot .k-flag{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--k-warn-l);color:var(--k-warn);font-weight:500;}',
     '#karteRoot .k-flag.soft{background:#fbefd9;color:#7a4a06;}',
@@ -114,18 +116,18 @@
     '#karteRoot .k-setnote{margin:-2px 0 8px 28px;}',
     '#karteRoot .k-btn.k-setdel2{display:none;}',   // .k-btn.small（inline-block）より強くする
     '#karteRoot .k-memochips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}',
-    '#karteRoot .k-memochips button{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #c9ccd3;background:#fff;font-size:14px;font-family:inherit;color:#3f4550;}',
+    '#karteRoot .k-memochips button{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #8692a6;background:#fff;font-size:14px;font-family:inherit;color:#3f4550;}',
     //   幅の狭い端末（380px 以下＝iPhone SE・mini を含む）：セットを消すボタンはメモ欄の中へ移し、数字の欄を広く取る
     //   （375px で6列のままだと数字の欄が約47px＝「102.5」が欠ける）
     '@media (max-width:380px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 44px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setdel{display:none;} #karteRoot .k-btn.k-setdel2{display:inline-block;} #karteRoot .k-setnote{margin-left:24px;}}',
-    '#karteRoot .k-setnote input{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;}',
-    '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;border:1px solid #c9ccd3;border-radius:10px;padding:0 10px;font-size:16px;}',
+    '#karteRoot .k-setnote input{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #8692a6;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;}',
+    '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;border:1px solid #8692a6;border-radius:10px;padding:0 10px;font-size:16px;}',
     '#karteRoot .k-picker-go{position:sticky;bottom:76px;z-index:2;}',
     //   キーパッドが出ているあいだ（k-kb）：下のタブを隠し、決定ボタンは下に詰める
     '#karteRoot.k-kb .k-tabs{display:none;}',
     '#karteRoot.k-kb .k-picker-go{bottom:0;}',
     '#karteRoot .k-accessory{position:sticky;bottom:0;z-index:5;display:flex;gap:8px;align-items:center;padding:6px 10px;background:#eef0ee;border-top:1px solid var(--k-line);}',
-    '#karteRoot .k-accessory button{min-height:44px;min-width:64px;border:1px solid #c9ccd3;border-radius:10px;background:#fff;font-size:16px;font-family:inherit;color:var(--k-ink);}',
+    '#karteRoot .k-accessory button{min-height:44px;min-width:64px;border:1px solid #8692a6;border-radius:10px;background:#fff;font-size:16px;font-family:inherit;color:var(--k-ink);}',
     '#karteRoot .k-accessory button.done{background:var(--k-acc);color:#fff;border-color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-rest-done{animation:kflash 0.6s ease-in-out 0s 6 alternate;}',
     '@keyframes kflash{from{background:#fff0ea;}to{background:#f7b7a3;}}',
@@ -153,12 +155,14 @@
     '#karteRoot .k-entrytext{position:relative;min-height:44px;}',
     '#karteRoot .k-dateover{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:44px;border:0;}',
     '#karteRoot .k-btn.k-btn-line{background:#fff;color:var(--k-acc);border:1px solid var(--k-acc);min-height:44px;margin:0 0 10px;}',
-    '#karteRoot .k-excol{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;background:#fff;border:1px solid var(--k-line);border-radius:12px;padding:0 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
+    '#karteRoot .k-excol{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;background:#fff;border:1px solid #dde3ea;box-shadow:0 1px 3px rgba(28,35,33,.07);border-radius:12px;padding:0 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
     '#karteRoot .k-addset{display:block;width:100%;min-height:44px;border:1px dashed var(--k-acc);border-radius:10px;background:#fff;color:var(--k-acc);font-size:14px;font-family:inherit;margin-top:4px;}',
     '#karteRoot .k-pick{display:flex;flex-direction:column;gap:8px;width:100%;text-align:left;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-pick.on{border:2px solid var(--k-acc);}',
     '#karteRoot .k-dayrow{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:44px;border:0;background:transparent;padding:0;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-daycard.focus{border-color:var(--k-acc);}',
+    '#karteRoot input:focus,#karteRoot textarea:focus,#karteRoot select:focus{outline:none;border-color:var(--k-acc) !important;box-shadow:0 0 0 3px rgba(36,59,102,.18);}',
+    '#karteRoot .k-link{font-weight:700;}',
     '#karteRoot .k-admin{background:#f0f3f7;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;margin-top:6px;}',
     '#karteRoot .k-headrow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-10px 0 2px;}',
     '#karteRoot .k-link{min-height:44px;padding:0 2px 0 8px;border:none;background:transparent;color:var(--k-acc);font-size:13px;font-family:inherit;white-space:nowrap;}',
@@ -664,7 +668,7 @@
       row.appendChild(el('button', { class: 'k-btn out small', text: '同意を記録（紙）', onclick: function () { rec('agreed', 'paper'); } }));
       row.appendChild(el('button', { class: 'k-btn out small', text: '同意を記録（LINE）', onclick: function () { rec('agreed', 'line'); } }));
     } else {
-      row.appendChild(el('button', { class: 'k-btn out small', style: 'color:var(--k-warn);', text: '撤回を記録', onclick: function () { rec('revoked', null); } }));
+      row.appendChild(el('button', { class: 'k-btn out small k-danger', text: '撤回を記録', onclick: function () { rec('revoked', null); } }));
     }
     return row;
   }
@@ -710,7 +714,7 @@
       var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { cur.dirty = true; v = (v === n ? null : n); paint(); } });
       bs.push(b); box.appendChild(b);
     })(n);
-    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #243b66;background:#243b66;color:#fff;font-weight:700' : '1px solid #c9ccd3;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
+    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #243b66;background:#243b66;color:#fff;font-weight:700' : '1px solid #8692a6;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
     paint();
     return { el: box, get: function () { return v; } };
   }
@@ -775,7 +779,7 @@
           list.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;font-size:14px;' }, [
             el('span', { style: 'flex:1;min-width:0;', text: label(REGIONS, p.region) + ' ' + p.level + '/10' + (p.symptom ? '（' + p.symptom + '）' : '') }),
             el('button', { type: 'button', class: 'k-btn out small', text: '直す', onclick: function () { edit(p.region); } }),
-            el('button', { type: 'button', class: 'k-btn out small', text: '外す', onclick: function () { cur.dirty = true; pain.splice(i, 1); redraw(); } })]));
+            el('button', { type: 'button', class: 'k-btn out small k-danger', text: '外す', onclick: function () { cur.dirty = true; pain.splice(i, 1); redraw(); } })]));
         });
       }
       function edit(region) {
@@ -970,7 +974,7 @@
         ]);
         var mine = m.origin === 'd1' && (String(m.enteredBy) === String(state.trainerId) || state._isOwner);
         if (mine || (state._isOwner && m.origin === 'sheet')) {
-          row.appendChild(el('button', { class: 'k-btn out small', text: '削除', onclick: function () {
+          row.appendChild(el('button', { class: 'k-btn out small k-danger', text: '削除', onclick: function () {
             if (!window.confirm(m.d + ' の記録を削除しますか？')) return;
             kWrite('k_deleteMeasurement', { id: m.id, rev: m.rev }, newReqId()).then(function (w) {
               if (!w || !w.success) { window.alert(errText(w)); return; }
@@ -1314,7 +1318,7 @@
         el('div', { style: 'font-size:13px;', text: md(D.pending.payload.sessionDate) + '・' + D.pending.payload.items.map(function (it) { return it.exercise + ' ' + it.sets.length + 'セット'; }).join('・') })]));
       c.appendChild(el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { send(D.pending.payload, D.pending.reqId); } }));
       c.appendChild(el('button', { class: 'k-btn out', text: '日別の記録を確かめる', onclick: function () { cur.wantDayView = cid; goBack(); } }));   // ★お客様に紐づける（別のお客様に持ち越さない・関門②）   // 専用画面→トレーニングの画面に戻って日別を開く
-      c.appendChild(el('button', { class: 'k-btn out', text: '破棄して入れ直す', onclick: function () {
+      c.appendChild(el('button', { class: 'k-btn out k-danger', text: '破棄して入れ直す', onclick: function () {
         if (!window.confirm('送り直さずに破棄しますか？（記録されていたかは「日別の記録を確かめる」で見られます）')) return;
         lsDel(draftKey); open(cid, cname, 'training', null, 'replace');
       } }));
@@ -1391,12 +1395,12 @@
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
           el('div', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
-          el('button', { type: 'button', class: 'k-btn out small', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { restShift(ei); D.items.splice(ei, 1); save(); draw(); } })]));
+          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { restShift(ei); D.items.splice(ei, 1); save(); draw(); } })]));
         blk.appendChild(el('div', { class: 'k-sub', style: 'margin:2px 0 8px;', text: prevLabel(it.exercise) }));
         blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;', text: 'メモ' }), el('span')]));
         it.sets.forEach(function (s, si) {
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
-            style: 'min-width:44px;min-height:44px;border-radius:12px;font-size:18px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
+            style: 'min-width:44px;min-height:44px;border-radius:12px;font-size:18px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#8692a6;border:1px solid #8692a6;'),
             text: '✓', onclick: function () { s.done = !s.done; if (s.done) rest.pos = { ei: ei, si: si }; save(); draw(); if (s.done) restStart(restSecondsFor(it.exercise)); } });
           blk.appendChild(el('div', { class: 'k-setrow' }, [
             el('span', { style: 'color:var(--k-sub);font-size:13px;text-align:center;', text: String(si + 1) }),
@@ -1404,9 +1408,9 @@
             numInput(s.r, '回', (si + 1) + 'セット目の回数', function (v) { s.r = v; }),
             chk,
             el('button', { type: 'button', 'aria-label': (si + 1) + 'セット目のメモ', 'aria-expanded': (s.note || s.memoOpen) ? 'true' : 'false',
-              style: 'min-width:44px;min-height:44px;border-radius:10px;font-size:16px;' + (s.note ? 'background:var(--k-acc-l);color:var(--k-acc);border:1px solid var(--k-acc);' : 'background:#fff;color:#9a9ea6;border:1px solid #c9ccd3;'),
+              style: 'min-width:44px;min-height:44px;border-radius:10px;font-size:16px;' + (s.note ? 'background:var(--k-acc-l);color:var(--k-acc);border:1px solid var(--k-acc);' : 'background:#fff;color:#9a9ea6;border:1px solid #8692a6;'),
               text: '✎', onclick: function () { s.memoOpen = !(s.memoOpen || s.note); if (!s.memoOpen && !s.note) { save(); draw(); return; } save(); draw(); focusMemo(ei, si); } }),
-            el('button', { type: 'button', class: 'k-setdel', 'aria-label': (si + 1) + 'セット目を消す', style: 'min-width:44px;min-height:44px;border:none;background:transparent;color:#9a9ea6;font-size:16px;', text: '×',
+            el('button', { type: 'button', class: 'k-setdel', 'aria-label': (si + 1) + 'セット目を消す', style: 'min-width:44px;min-height:44px;border:none;background:transparent;color:var(--k-warn);font-size:16px;', text: '×',
               onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
           //   セットのメモ（✎ で開く・入っていれば開いたまま）。痛み・診断は書かない（注意すること へ）
           if (s.note || s.memoOpen) {
@@ -1425,7 +1429,7 @@
             });
             blk.appendChild(el('div', { class: 'k-setnote' }, [mi, chips,
               el('div', { class: 'k-sub', style: 'margin-top:4px;color:var(--k-warn);', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }),
-              el('button', { type: 'button', class: 'k-btn out small k-setdel2', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
+              el('button', { type: 'button', class: 'k-btn out small k-danger k-setdel2', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
           }
           if (rest.pos && rest.pos.ei === ei && rest.pos.si === si) { blk.appendChild(restBar); placed = true; }   // ★休憩の帯は✓を押したセットの真下（2026-11-05 オーナー：スクロールが煩わしい）
         });
@@ -1437,7 +1441,7 @@
           it.sets.push({ w: last.w, r: last.r, done: false }); save(); draw();
         } }));
         //   休憩の行（従来の見た目のまま種目ごとに置く・2026-11-05 オーナー）。秒数はこの種目に覚える
-        var rs = el('select', { 'data-nodirty': '1', 'aria-label': it.exercise + 'の休憩の秒数', style: 'min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 8px;font-size:16px;background:#fff;' });
+        var rs = el('select', { 'data-nodirty': '1', 'aria-label': it.exercise + 'の休憩の秒数', style: 'min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 8px;font-size:16px;background:#fff;' });
         REST_CHOICES.forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSecondsFor(it.exercise)) o.selected = true; rs.appendChild(o); });
         rs.onchange = function () { setRestSecondsFor(it.exercise, rs.value); };
         var snd = el('button', { type: 'button', class: 'k-pill' + (restSound() ? ' on' : ''), 'aria-pressed': restSound() ? 'true' : 'false', text: restSound() ? '終了音：あり' : '終了音：なし', onclick: function () {
@@ -1533,7 +1537,7 @@
     var all = recent.concat(EXERCISES.filter(function (x) { return recent.indexOf(x) < 0; }));
     var picked = [];
     var box = el('div', { class: 'k-card', style: 'margin-top:8px;background:var(--k-cream);' });
-    var q = el('input', { 'data-nodirty': '1', type: 'search', placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
+    var q = el('input', { 'data-nodirty': '1', type: 'search', placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
     var area = el('div');
     var go = el('button', { type: 'button', class: 'k-btn k-picker-go', text: '選んだ種目を足す' });
     function chip(ex) {
@@ -1625,7 +1629,7 @@
           row.appendChild(el('div', { class: 'k-sub', text: '担当 ' + trainerName(x.author_trainer_id) }));
           row.appendChild(exRows(x, true));
           if (String(x.author_trainer_id) === String(state.trainerId) || state._isOwner) {
-            row.appendChild(el('button', { class: 'k-btn out small', style: 'align-self:flex-start;', text: '削除', onclick: function () {
+            row.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'align-self:flex-start;', text: '削除', onclick: function () {
               if (!window.confirm(x.session_date + ' の記録を削除しますか？')) return;
               kWrite('k_deleteTraining', { sessionId: x.session_id, rev: x.rev }, newReqId()).then(function (w) {
                 if (!w || !w.success) { window.alert(errText(w)); return; }
@@ -1702,7 +1706,7 @@
             el('div', { class: 'k-sub', text: md(n.session_date) + '・' + trainerName(n.author_trainer_id) + (n.edited_at ? '（編集済み）' : '') })]);
           var c = el('div', { class: 'k-card', style: 'padding:12px;margin-top:6px;' }, [noteView(n)]);
           if (String(n.author_trainer_id) === String(state.trainerId) || state._isOwner) {
-            c.appendChild(el('button', { class: 'k-btn out small', style: 'margin-top:8px;', text: '削除', onclick: function () {
+            c.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'margin-top:8px;', text: '削除', onclick: function () {
               if (!window.confirm('このメモを削除しますか？')) return;
               kWrite('k_deleteNote', { noteId: n.note_id, rev: n.rev }, newReqId()).then(function (w) {
                 if (!w || !w.success) { window.alert(errText(w)); return; }

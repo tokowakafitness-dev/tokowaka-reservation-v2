@@ -1075,5 +1075,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 ok('20-1 ★文字と余白は画面に合わせる（2026-11-05：カード余白12・間10・左右14・見出し14・主ボタン44/14・入力16/44）', /\.k-card\{[^}]*padding:12px;/.test(SRC) && /\.k-body\{padding:12px 14px 18px;[^}]*gap:10px;/.test(SRC) && /\.k-h\{font-size:14px;/.test(SRC) && /\.k-btn\{[^}]*min-height:44px;[^}]*font-size:14px;/.test(SRC) && /k-setrow input\{[^}]*min-height:44px;[^}]*font-size:16px;/.test(SRC));
 ok('20-2 ★下のタブは小さくしない（11-04 に「小さすぎる」で大きくした・56px・14px）', /\.k-tab\{min-height:56px;[^}]*font-size:14px;/.test(SRC));
 
+ok('20-3 ★見分けやすさ：入力・✓の枠は白地に3:1以上（#8692a6）・カードは影で浮かす・2番目のボタンはネイビーの枠・消す操作はコーラル・選んだ選択肢は塗りつぶし', !/#c9ccd3|#aab4c3/.test(SRC) && /#8692a6/.test(SRC) && /\.k-card\{[^}]*box-shadow:/.test(SRC) && /\.k-btn\.out\{[^}]*border:1\.5px solid var\(--k-acc\)/.test(SRC) && /\.k-btn\.out\.k-danger\{color:var\(--k-warn\)/.test(SRC) && /\.k-pill\.on\{[^}]*background:var\(--k-acc\);color:#fff/.test(SRC) && (SRC.match(/k-danger/g) || []).length >= 9 && /'k-btn out k-danger', text: '破棄して入れ直す'/.test(SRC) && /k-setdel'[^}]*color:var\(--k-warn\)/.test(SRC));
+
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
