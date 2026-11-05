@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-04h カルテ 下のタブを大きく';
+  var KARTE_BUILD = '2026-11-05a カルテ InBodyカード撤去に伴う案内';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -190,7 +190,7 @@
     NO_CONSENT: '健康情報の同意が記録されていません。先に「同意を記録」してください。',
     CONFLICT: 'ほかの人が先に更新しました。画面を開き直して最新の内容を確認してください。',
     RATE_LIMITED: '短い時間に保存が続いたため、少し時間をおいてください。',
-    BODY_NOT_READY: '体組成の記録はまだ切り替え前です（従来の InBody 入力を使ってください）。',
+    BODY_NOT_READY: '体組成の記録を利用できません。しばらくしてから開き直してください（続くときはオーナーへ）。',
     BAD_STATE: 'この記録はできません（退会・再入会の順序、または取り消せるのは最後の記録だけです）。',
     FORBIDDEN: 'この操作の権限がありません。', NOT_FOUND: '見つかりませんでした。', REQ_REUSED: '送信が重なりました。開き直してください。',
     TOTAL_SETS: '1回の記録は合計60セットまでです。',
@@ -865,7 +865,7 @@
       var r = rs[0], s = rs[1];
       box.innerHTML = '';
       if (!r || !r.success) { box.appendChild(msg(errText(r), true)); return; }
-      if (!r.ready) { box.appendChild(msg('体組成の記録は切り替えの準備中です。それまでは予約画面の「InBodyを記録」を使ってください。')); return; }
+      if (!r.ready) { box.appendChild(msg('体組成の記録を読み込めませんでした。しばらくしてから開き直してください（続くときはオーナーへ）。')); return; }
       var rows = r.rows || [];
       var hearing = (s && s.success && s.profile && s.profile.hearing) || {};
       var W2 = lastTwo(rows, 'w'), F2 = lastTwo(rows, 'pbf'), M2 = lastTwo(rows, 'smm'), WA = lastTwo(rows, 'waist'), L2 = lastTwo(rows, 'lean');

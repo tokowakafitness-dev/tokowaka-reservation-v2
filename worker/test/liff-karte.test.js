@@ -52,8 +52,9 @@ function boot(responder) {
 
 // ================= 1. 入口 =================
 ok('1-1 予約画面が karte.js を読み込む', /<script src="karte\.js\?v=[^"]+"><\/script>/.test(HTML));
-ok('1-2 顧客詳細に「カルテを開く」（InBody カードの外）', /KarteUI\.open\(customerId, name, 'summary'\)/.test(HTML)
-   && HTML.indexOf("KarteUI.open(customerId, name, 'summary')") < HTML.indexOf('buildInBodyCard(customerId, name)); } catch'));
+ok('1-2 顧客詳細に「カルテを開く」（カルテと同じグリーン）', /KarteUI\.open\(customerId, name, 'summary'\)/.test(HTML)
+   && /kbtn\.className = 'btn btn-karte'/.test(HTML) && /\.btn\.btn-karte\{background:#0e6b5c;/.test(HTML));
+ok('1-2b ★予約画面に InBody の記録カードを出さない（2026-11-05 撤去・体組成はカルテで記録）', !/buildInBodyCard|InBodyを記録/.test(HTML) && !/予約画面の「InBodyを記録」|従来の InBody/.test(SRC));
 ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(HTML));
 {
   //   ★担当が0名のトレーナーにも出す＝「まだ登録されていません」の分岐より前に置く
