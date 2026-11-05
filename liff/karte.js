@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-05g 枠とボタンを見分けやすく（カードの影・入力の枠・2番目はネイビー枠・消すはコーラル・選択は塗り）';
+  var KARTE_BUILD = '2026-11-06a 今日の記録の中に指導メモ（社内メモ）・見出しの戻る矢印を見えるように';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -148,7 +148,7 @@
     '#karteRoot .k-restbar:empty{display:none !important;}',
     '#karteRoot.k-entry .k-head,#karteRoot.k-entry .k-tabs{display:none;}',
     '#karteRoot .k-entryhead{background:var(--k-acc);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:4;}',
-    '#karteRoot .k-entryhead .k-back{color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:12px;}',
+    '#karteRoot .k-entryhead .k-back{color:#fff;background:transparent;border:1px solid rgba(255,255,255,.55);border-radius:12px;}',
     '#karteRoot .k-entrytitle{font-size:16px;font-weight:700;} #karteRoot .k-entrysub{font-size:12px;opacity:.85;}',
     '#karteRoot .k-savebar{position:sticky;bottom:0;z-index:3;background:#fff;border-top:1px solid var(--k-line);margin:10px -14px -18px;padding:10px 14px calc(10px + env(safe-area-inset-bottom));}',
     '#karteRoot.k-kb .k-savebar{position:static;}',
@@ -163,6 +163,7 @@
     '#karteRoot .k-daycard.focus{border-color:var(--k-acc);}',
     '#karteRoot input:focus,#karteRoot textarea:focus,#karteRoot select:focus{outline:none;border-color:var(--k-acc) !important;box-shadow:0 0 0 3px rgba(36,59,102,.18);}',
     '#karteRoot .k-link{font-weight:700;}',
+    '#karteRoot .k-memo{box-sizing:border-box;width:100%;border:1px solid #8692a6;border-radius:10px;padding:10px;font-size:16px;font-family:inherit;line-height:1.6;resize:vertical;background:#fff;color:var(--k-ink);}',
     '#karteRoot .k-admin{background:#f0f3f7;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;margin-top:6px;}',
     '#karteRoot .k-headrow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-10px 0 2px;}',
     '#karteRoot .k-link{min-height:44px;padding:0 2px 0 8px;border:none;background:transparent;color:var(--k-acc);font-size:13px;font-family:inherit;white-space:nowrap;}',
@@ -1184,13 +1185,14 @@
       if (cur.customerId !== askedFor || cur.tab !== 'training') return;   // ★頼んだ顧客＝いまの顧客のときだけ
       box.innerHTML = '';
       if (!r || !r.success) { cur.wantDayView = null; box.appendChild(msg(errText(r), true)); return; }
+      cur.trSchema = r.karteSchema;   // 指導メモのタグを送ってよいか（今日の記録の中の指導メモ）
       var sessions = r.sessions || [];
       //   ★今日の記録は専用の画面（2026-11-05 モックどおり）。読み直し後の復元・戻る/進むでも専用画面を開き直す
       if (draft && (draft.kind === 'training' || (draft.kind === 'sub' && draft.sub === 'trform'))) { trainingSub(box, sessions, draft.navMode); return; }
       if (draft && draft.kind === 'sub' && draft.sub === 'trpick') { trPickSub(sessions, draft.navMode); return; }
       var d0 = lsGet(trKey());
       //   ★「途中」は種目が入っている（または送り直し待ち）ときだけ。開いただけの空の下書きで毎回自動で開かない
-      if (d0 && !(d0.pending || (d0.items || []).length)) d0 = null;
+      if (d0 && !(d0.pending || d0.memoPending || (d0.items || []).length || String(d0.memo || '').trim())) d0 = null;
       box.appendChild(el('button', { class: 'k-btn', text: d0 ? '記録の入力（途中）を開く' : '＋ 今日の記録', onclick: function () { trainingSub(box, sessions); } }));
       if (d0) box.appendChild(el('div', { class: 'k-sub', text: '入力の途中の記録があります（この端末に最大24時間残ります）。' }));
       trainingViews(box, sessions);
@@ -1320,6 +1322,20 @@
       c.appendChild(el('button', { class: 'k-btn out', text: '日別の記録を確かめる', onclick: function () { cur.wantDayView = cid; goBack(); } }));   // ★お客様に紐づける（別のお客様に持ち越さない・関門②）   // 専用画面→トレーニングの画面に戻って日別を開く
       c.appendChild(el('button', { class: 'k-btn out k-danger', text: '破棄して入れ直す', onclick: function () {
         if (!window.confirm('送り直さずに破棄しますか？（記録されていたかは「日別の記録を確かめる」で見られます）')) return;
+        lsDel(draftKey); open(cid, cname, 'training', null, 'replace');
+      } }));
+      return c;
+    }
+    if (D.memoPending) {
+      var mp0 = D.memoPending;
+      c.appendChild(el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: '指導メモの保存の結果を確かめられませんでした' }),
+        msg((mp0.withTraining ? 'トレーニングの記録は保存済みです。' : '') + '指導メモは同じ内容で送り直しても、二重には残りません。'),
+        el('div', { style: 'font-size:13px;white-space:pre-wrap;', text: md(mp0.date) + '：' + mp0.body.slice(0, 120) + (mp0.body.length > 120 ? '…' : '') })]));
+      var resend = el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { if (!sending) submitMemo(mp0.date, mp0.body, ''); } });
+      saveBtn = resend; c.appendChild(resend);
+      c.appendChild(el('button', { class: 'k-btn out', text: '指導の履歴を確かめる', onclick: function () { open(cid, cname, 'notes'); } }));
+      c.appendChild(el('button', { class: 'k-btn out k-danger', text: '送り直さずに破棄', onclick: function () {
+        if (!window.confirm('この指導メモを送り直さずに破棄しますか？（残っていたかは「指導の履歴を確かめる」で見られます）')) return;
         lsDel(draftKey); open(cid, cname, 'training', null, 'replace');
       } }));
       return c;
@@ -1474,7 +1490,56 @@
     var picker = exercisePicker(sessions, function (names) { addExercises(names); picker.style.display = 'none'; });
     picker.style.display = 'none';
     c.appendChild(picker);
-    c.appendChild(el('div', { class: 'k-note-hint', style: 'margin-top:10px;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }));
+    //   指導メモ（2026-11-05 モック K3：セッション中にそのまま書く）。社内メモ＝既存の指導メモ（k_addNote）にそのまま残す
+    //   ★書きかけは記録の下書き（D.memo）に残す＝セットと同じく画面を離れても消えない。「お客様へ」は第2弾（保存先を作る）
+    if (!D.memoReqId) D.memoReqId = newReqId();
+    if (D.memoTag == null) D.memoTag = 'training';
+    c.appendChild(el('div', { class: 'k-sub', style: 'letter-spacing:.08em;padding:10px 2px 6px;', text: '指導メモ（セッション中にそのまま書けます）' }));
+    var memoTa = el('textarea', { rows: '3', maxlength: '2000', 'aria-label': '社内メモ', placeholder: '話した内容・やったこと・次回の課題', 'data-nodirty': '1', class: 'k-memo' });
+    memoTa.value = D.memo || '';
+    memoTa.oninput = function () { D.memo = memoTa.value; save(); };
+    var memoTags = el('div', { class: 'k-pills', style: 'gap:6px;' });
+    function drawMemoTags() {
+      memoTags.innerHTML = '';
+      TAGS.filter(function (t) { return t[0] !== 'body'; }).forEach(function (t) {
+        memoTags.appendChild(el('button', { type: 'button', class: 'k-pill' + (D.memoTag === t[0] ? ' on' : ''), 'aria-pressed': D.memoTag === t[0] ? 'true' : 'false', text: t[1], onclick: function () { D.memoTag = D.memoTag === t[0] ? '' : t[0]; save(); drawMemoTags(); } }));
+      });
+    }
+    drawMemoTags();
+    c.appendChild(el('div', { class: 'k-card', style: 'display:flex;flex-direction:column;gap:8px;' }, [
+      el('div', { class: 'k-headrow', style: 'margin:0;' }, [el('div', { style: 'font-size:14px;font-weight:700;', text: '社内メモ' }), el('span', { class: 'k-chip-h', style: 'background:#f0f3f7;color:var(--k-sub);', text: 'お客様には見えません' })]),
+      memoTa, memoTags,
+      el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' })]));
+    //   指導メモを送る。★結果が確定するまで、本文と送信番号を記録の下書き（D.memoPending）に残す（関門② High×3）
+    //     ・結果が分からない（通信切れ・応答が読めない）＝同じ送信番号で「同じ内容で送り直す」＝二重にならない
+    //     ・送信中に別のお客様を開いても、元のお客様の下書きに残る（鍵は開いた時点で固定）
+    //     ・ログインが古いときは記録の下書きとして退避（お客様の番号を固定・別のお客様を開いていたら読み直さない）
+    function submitMemo(date, body, trainingLine) {
+      if (!D.memoPending) D.memoPending = { date: date, body: body, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: !!trainingLine };
+      var mp = D.memoPending;
+      if (!save()) { window.alert('この端末に送信の控えを残せないため、指導メモを送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
+      sending = true;
+      if (saveBtn) saveBtn.textContent = '送信中…';
+      function again() { if (same()) open(cid, cname, 'training', null, 'replace'); }
+      function unknownMemo() { sending = false; if (same()) { window.alert('指導メモの保存の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); again(); } }
+      kWrite('k_addNote', { customerId: cid, sessionDate: mp.date, tag: mp.tag, condition: '', body: mp.body, nextPlan: '' }, mp.reqId, { kind: 'training', customerId: cid }).then(function (w) {
+        if (!w || w.code === 'BAD_RESPONSE' || w.code === 'STALE') { unknownMemo(); return; }
+        sending = false;
+        if (w.success) { lsDel(draftKey); if (same()) doneScreen(trainingLine, true, mp.body, mp.date); return; }
+        //   はっきり断られた＝残っていない。本文は下書きに残したまま、次は新しい送信番号
+        D.memoPending = null; D.memoReqId = newReqId(); save();
+        if (same()) { window.alert('指導メモは保存できませんでした（' + errText(w) + '）。内容は残っています。もう一度「保存する」を押してください。'); again(); }
+      }, unknownMemo);
+    }
+    function doneScreen(trainingLine, memoSaved, memoBody, date) {
+      c.innerHTML = '';
+      c.appendChild(el('div', { class: 'k-h', text: '記録しました' }));
+      if (trainingLine) c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:4px;', text: trainingLine }));
+      if (memoSaved) c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:8px;', text: '指導メモも保存しました' }));
+      if (!memoBody) c.appendChild(el('button', { class: 'k-btn', text: '続けて指導メモを書く', onclick: function () { open(cid, cname, 'notes', { kind: 'note', data: { sessionDate: date, tag: 'training', condition: '', body: '', nextPlan: '' } }); } }));
+      c.appendChild(el('button', { class: 'k-btn out', text: '記録の一覧を見る', onclick: function () { if (same()) open(cid, cname, 'training', null, 'replace'); } }));
+    }
+
 
     function send(payload, reqId) {
       if (sending) return;   // ★連打・送信中の再保存を止める（関門②）
@@ -1492,14 +1557,16 @@
         if (!w || w.code === 'BAD_RESPONSE') { unknown(); return; }
         sending = false;
         if (w.success) {
-          lsDel(draftKey);
+          var memoBody = String(D.memo || '').trim();
+          //   ★メモがあるなら下書きは消さない：セットだけを外し、メモは送信待ちとして残す（別のお客様を開いていても元のお客様の下書きに残る）
+          if (memoBody) { D.items = []; D.pending = null; D.reqId = newReqId(); D.memoPending = { date: payload.sessionDate, body: memoBody, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: true }; save(); }
+          else lsDel(draftKey);
           if (!same()) return;   // 別の顧客を開いていたら画面は触らない
           var n = 0; payload.items.forEach(function (x) { n += x.sets.length; });
-          c.innerHTML = '';
-          c.appendChild(el('div', { class: 'k-h', text: '記録しました' }));
-          c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:8px;', text: md(payload.sessionDate) + '・' + payload.items.length + '種目・' + n + 'セット' }));
-          c.appendChild(el('button', { class: 'k-btn', text: '続けて指導メモを書く', onclick: function () { open(cid, cname, 'notes', { kind: 'note', data: { sessionDate: payload.sessionDate, tag: 'training' } }); } }));
-          c.appendChild(el('button', { class: 'k-btn out', text: '記録の一覧を見る', onclick: back }));
+          var line = md(payload.sessionDate) + '・' + payload.items.length + '種目・' + n + 'セット';
+          if (!memoBody) { doneScreen(line, false, '', payload.sessionDate); return; }
+          c.innerHTML = ''; c.appendChild(msg('記録しました。指導メモを保存しています…'));
+          submitMemo(payload.sessionDate, memoBody, line);
           return;
         }
         //   はっきり断られた＝記録されていない。pending を解き、次は新しい送信番号（鍵は固定したもの）
@@ -1516,14 +1583,23 @@
     c.appendChild(saveBar);
     saveBar.appendChild(saveBtn = el('button', { class: 'k-btn', text: '保存する', onclick: function () {
       var items = buildPayload(D.items);
-      if (!items.length) { window.alert('実施したセットに✓を付けてください。'); return; }
+      var memo = String(D.memo || '').trim();
+      if (!items.length) {
+        if (!memo) { window.alert('実施したセットに✓を付けるか、指導メモを書いてください。'); return; }
+        var n0 = uncheckedCount(D.items);
+        if (n0 && !window.confirm('✓の付いたセットが無いため、指導メモだけを保存します。入力中の ' + n0 + ' セットは消えます。よいですか？')) return;
+        if (sending) return;
+        D.items = []; save();
+        submitMemo(D.sessionDate, memo, '');
+        return;
+      }
       var n = uncheckedCount(D.items);
       if (n && !window.confirm('記録されない入力が ' + n + ' セットあります（✓が無い・重量か回数が空）。保存すると、その入力は消えます。よいですか？')) return;
       var total = 0; items.forEach(function (it) { total += it.sets.length; });
       if (total > TR_TOTAL) { window.alert('1回の記録は合計60セットまでです。'); return; }
       send({ customerId: cur.customerId, sessionDate: D.sessionDate, items: items }, D.reqId);
     } }));
-    saveBar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: '✓のセットを保存して「トレーニング」の画面に戻ります' }));
+    saveBar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: '記録と指導メモをまとめて保存し、「トレーニング」の画面に戻ります' }));
     refreshTop(); draw();
     if (!restored) save();
     return c;

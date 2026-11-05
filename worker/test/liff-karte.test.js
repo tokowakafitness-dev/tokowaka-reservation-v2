@@ -1077,5 +1077,89 @@ ok('20-2 ★下のタブは小さくしない（11-04 に「小さすぎる」�
 
 ok('20-3 ★見分けやすさ：入力・✓の枠は白地に3:1以上（#8692a6）・カードは影で浮かす・2番目のボタンはネイビーの枠・消す操作はコーラル・選んだ選択肢は塗りつぶし', !/#c9ccd3|#aab4c3/.test(SRC) && /#8692a6/.test(SRC) && /\.k-card\{[^}]*box-shadow:/.test(SRC) && /\.k-btn\.out\{[^}]*border:1\.5px solid var\(--k-acc\)/.test(SRC) && /\.k-btn\.out\.k-danger\{color:var\(--k-warn\)/.test(SRC) && /\.k-pill\.on\{[^}]*background:var\(--k-acc\);color:#fff/.test(SRC) && (SRC.match(/k-danger/g) || []).length >= 9 && /'k-btn out k-danger', text: '破棄して入れ直す'/.test(SRC) && /k-setdel'[^}]*color:var\(--k-warn\)/.test(SRC));
 
+// ================= 21. 今日の記録の中の指導メモ・見出しの戻る（2026-11-06 オーナー） =================
+{
+  let noteResp = { success: true, noteId: 'n1', rev: 1 };
+  const { w, sent } = trBoot(async (b) => {
+    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_addTraining') return { success: true, sessionId: 'N1' };
+    if (b.action === 'k_addNote') return noteResp;
+    if (b.action === 'k_notes') return { success: true, karteSchema: 31, notes: [] };
+    return { success: true };
+  });
+  w.confirm = () => true;
+  try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
+  const pop = () => new Promise((r) => setTimeout(r, 40));
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, '＋ 今日の記録').click(); await settle();
+  const back = root.querySelector('.k-entryhead .k-back');
+  const bcs = back && w.getComputedStyle(back);
+  ok('21-1 ★見出しの左に戻る矢印（ネイビーの帯の上で見える＝背景は透明・矢印は白）', !!back && back.textContent === '←' && bcs.backgroundColor !== 'rgb(255, 255, 255)' && bcs.color === 'rgb(255, 255, 255)', bcs && (bcs.backgroundColor + ' / ' + bcs.color));
+  ok('21-2 ★今日の記録の中に指導メモ（社内メモ・お客様には見えません・タグは最初「トレーニング」）', root.textContent.includes('指導メモ（セッション中にそのまま書けます）') && !!root.querySelector('textarea[aria-label="社内メモ"]') && root.textContent.includes('お客様には見えません') && root.querySelector('.k-pill.on').textContent === 'トレーニング');
+  await fromPrev(root);
+  root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
+  const ta = root.querySelector('textarea[aria-label="社内メモ"]');
+  ta.value = 'しゃがみが浅い'; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
+  ok('21-3 書きかけのメモは下書きに残る（画面を離れても消えない）', draftOf(w).memo === 'しゃがみが浅い');
+  btn(root, '保存する').click(); await settle(); await settle();
+  const tr = sent.filter((x) => x.action === 'k_addTraining'), nt = sent.filter((x) => x.action === 'k_addNote');
+  ok('21-4 ★保存1回で記録と指導メモを両方送る（メモは同じ日付・タグ トレーニング）', tr.length === 1 && nt.length === 1 && nt[0].body === 'しゃがみが浅い' && nt[0].tag === 'training' && nt[0].sessionDate === tr[0].sessionDate && nt[0].customerId === 'C1', JSON.stringify(nt[0]));
+  ok('21-5 完了の画面に「指導メモも保存しました」・「続けて指導メモを書く」は出さない', root.textContent.includes('指導メモも保存しました') && !btn(root, '続けて指導メモを書く') && !draftOf(w));
+  //   メモだけ
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  btn(root, '＋ 今日の記録').click(); await settle();
+  const ta2 = root.querySelector('textarea[aria-label="社内メモ"]');
+  ta2.value = 'メモだけ'; ta2.dispatchEvent(new w.Event('input', { bubbles: true }));
+  btn(root, '保存する').click(); await settle(); await settle();
+  ok('21-6 ★✓が無くてもメモだけ保存できる（記録は送らない）', sent.filter((x) => x.action === 'k_addTraining').length === 1 && sent.filter((x) => x.action === 'k_addNote').length === 2 && root.textContent.includes('指導メモも保存しました'));
+  //   メモがはっきり断られた：記録は保存済み・メモは記録の画面に残る（次は新しい送信番号）
+  noteResp = { success: false, code: 'INTERNAL' };
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  btn(root, '＋ 今日の記録').click(); await settle();
+  await fromPrev(root);
+  root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
+  const ta3 = root.querySelector('textarea[aria-label="社内メモ"]');
+  ta3.value = '消したくない'; ta3.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const nBefore = sent.filter((x) => x.action === 'k_addNote').length;
+  btn(root, '保存する').click(); await settle(); await settle(); await pop(); await settle();
+  const d7 = draftOf(w);
+  ok('21-7 ★メモがはっきり断られたら、記録は保存済み・メモは記録の画面に残る（セットは外れている）', w.alerts.some((m) => m.includes('指導メモは保存できませんでした')) && !!d7 && d7.memo === '消したくない' && d7.items.length === 0 && !d7.memoPending && root.querySelector('textarea[aria-label="社内メモ"]').value === '消したくない', JSON.stringify(d7));
+  //   結果が分からない：同じ送信番号で送り直す
+  noteResp = { success: false, code: 'BAD_RESPONSE' };
+  btn(root, '保存する').click(); await settle(); await settle(); await pop(); await settle();
+  ok('21-8a ★結果が分からないときは「同じ内容で送り直す」画面（メモは下書きに残る・メモだけ送った時は「記録は保存済み」と言わない）', !!btn(root, '同じ内容で送り直す') && root.textContent.includes('指導メモの保存の結果を確かめられませんでした') && !!draftOf(w).memoPending && draftOf(w).memoPending.withTraining === false && !root.textContent.includes('トレーニングの記録は保存済み'));
+  noteResp = { success: true, noteId: 'n9', rev: 1 };
+  btn(root, '同じ内容で送り直す').click(); await settle(); await settle();
+  const ns = sent.filter((x) => x.action === 'k_addNote').slice(nBefore);
+  ok('21-8b ★送り直しは同じ送信番号・同じ本文（二重にならない）・成功で下書きを消す', ns.length === 3 && ns[1].clientReqId === ns[2].clientReqId && ns[1].clientReqId !== ns[0].clientReqId && ns[2].body === '消したくない' && !draftOf(w) && root.textContent.includes('指導メモも保存しました'), JSON.stringify(ns.map((x) => x.clientReqId)));
+  w.KarteUI.close && w.KarteUI.close();
+}
+
+{
+  //   記録の送信中に別のお客様を開いた：元のお客様のメモは、そのお客様の下書きに送信待ちとして残る（関門② High）
+  let release = null;
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_addTraining') return new Promise((r) => { release = () => r({ success: true, sessionId: 'N1' }); });
+    return { success: true };
+  });
+  w.confirm = () => true;
+  try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, '＋ 今日の記録').click(); await settle();
+  await fromPrev(root);
+  root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
+  const ta = root.querySelector('textarea[aria-label="社内メモ"]');
+  ta.value = 'C1のメモ'; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
+  btn(root, '保存する').click(); await settle();
+  w.KarteUI.open('C2', '別の会員', 'summary'); await settle();
+  release(); await settle(); await settle();
+  const d = draftOf(w);
+  ok('21-9 ★送信中に別のお客様を開いても、元のお客様のメモは下書きに送信待ちで残る（消えない・別のお客様に移らない）', !!d && d.cid === 'C1' && d.items.length === 0 && d.memoPending && d.memoPending.body === 'C1のメモ', JSON.stringify(d));
+  w.KarteUI.close && w.KarteUI.close();
+}
+
 console.log(`\n${fail ? '❌' : '✅'} カルテの画面 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
