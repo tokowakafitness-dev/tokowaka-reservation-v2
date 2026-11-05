@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-05c 右→左は進むに戻す';
+  var KARTE_BUILD = '2026-11-05d 整理案 第1弾（確定配色・概要は読むだけ・書くのは専用画面・休憩はセットの真下と種目ごと・過去の記録から写す）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 31;
@@ -55,15 +55,16 @@
   ];
   var METRICS = [['w', '体重', 'kg'], ['pbf', '体脂肪率', '%'], ['smm', '骨格筋量', 'kg'], ['waist', 'ウエスト', 'cm']];
   var COND = { good: '良い', normal: '普通', bad: '悪い' };
-  var TABS = [['summary', '概要'], ['body', '体組成'], ['training', 'トレーニング'], ['notes', '指導の履歴'], ['contract', '契約']];
+  var TABS = [['summary', '概要'], ['body', '体組成'], ['training', 'トレーニング'], ['notes', '指導の履歴'], ['contract', '契約・会員']];
 
   var cur = { customerId: '', name: '', tab: 'summary', root: null, body: null, summary: null };
 
   // ---------------------------------------------------------------- 見た目（固定の CSS。会員のデータは入れない）
   var CSS = [
     //   モック（承認済み）と同じ作り：ゴシック体・白いカード・角丸・下のタブ。
-    //   色は2026-11-04 オーナー指示でモックA案のグリーン（ネイビー案は --k-acc:#0e6b5c・--k-acc-l:#e3f1ee に戻せば同じ作り）
-    '#karteRoot{--k-acc:#0e6b5c;--k-acc2:#0a5246;--k-acc-l:#e3f1ee;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#f5f6f4;--k-ground:#f5f6f4;--k-ink:#1c2321;--k-sub:#5b6661;--k-line:#e2e6e3;--k-warn:#8a3f0a;--k-warn-l:#fdf0e4;',
+    //   色は2026-11-05 オーナー確定の配色（会員画面と共通）：地 #fafbfc・主ネイビー #243b66・淡 #edf2fb・注意はコーラル #bb4630／ピーチ #fff0ea
+    //   （11-04 のグリーン版の値：主 0e6b5c・押下 0a5246・淡 e3f1ee）
+    '#karteRoot{--k-acc:#243b66;--k-acc2:#1a2d50;--k-acc-l:#edf2fb;--k-gold:#b8965a;--k-gold-l:#f3ecdc;--k-cream:#fafbfc;--k-ground:#fafbfc;--k-ink:#1c2321;--k-sub:#5b6661;--k-line:#e7ebf0;--k-warn:#bb4630;--k-warn-l:#fff0ea;',
     'position:fixed;inset:0;z-index:9000;background:var(--k-ground);overflow:auto;-webkit-overflow-scrolling:touch;color:var(--k-ink);font-family:"Noto Sans JP",-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;font-size:14px;line-height:1.6;}',
     '#karteRoot .k-wrap{max-width:520px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;}',
     '#karteRoot .k-head{background:#fff;color:var(--k-ink);padding:12px 16px;border-bottom:1px solid var(--k-line);}',
@@ -83,7 +84,7 @@
     '#karteRoot .k-sub{font-size:12px;color:var(--k-sub);}',
     '#karteRoot .k-msg{font-size:13px;color:var(--k-sub);margin:6px 0;}',
     '#karteRoot .k-msg.bad{color:var(--k-warn);}',
-    '#karteRoot .k-caution{background:var(--k-warn-l);border:1px solid #f1c9a3;border-radius:14px;padding:14px;}',
+    '#karteRoot .k-caution{background:var(--k-warn-l);border:1px solid #f5c9bb;border-radius:14px;padding:14px;}',
     '#karteRoot .k-caution .k-h{color:var(--k-warn);}',
     '#karteRoot .k-btn{display:block;width:100%;min-height:46px;border:none;border-radius:10px;background:var(--k-acc);color:#fff;font-size:15px;font-weight:700;margin-top:4px;font-family:inherit;}',
     '#karteRoot .k-btn.out{background:#fff;color:var(--k-acc);border:1px solid #c9ccd3;font-weight:500;}',
@@ -126,7 +127,7 @@
     '#karteRoot .k-accessory button{min-height:44px;min-width:64px;border:1px solid #c9ccd3;border-radius:10px;background:#fff;font-size:16px;font-family:inherit;color:var(--k-ink);}',
     '#karteRoot .k-accessory button.done{background:var(--k-acc);color:#fff;border-color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-rest-done{animation:kflash 0.6s ease-in-out 0s 6 alternate;}',
-    '@keyframes kflash{from{background:#fdf0e4;}to{background:#f6c58f;}}',
+    '@keyframes kflash{from{background:#fff0ea;}to{background:#f7b7a3;}}',
     'html.karte-open,html.karte-open body{overflow:hidden;}',
     //   ★はみ出し対策（2026-11-04g・iPhone の LIFF で日付の欄がカードの右端を越えた）
     //     ・iOS の date/time 入力は固有の見た目と最小幅を持ち、width:100% でも親を越える＝appearance を外し、最小幅を0にする
@@ -140,8 +141,12 @@
     '#karteRoot .k-grid2>*,#karteRoot .k-grid3>*{min-width:0;}',
     '#karteRoot .k-pill,#karteRoot .k-btn.small{max-width:100%;}',
     //   休憩の帯：数えていないとき（中身が空）は出さない。inline の display:none と二重に守る
-    '#karteRoot .k-restbar{position:sticky;top:0;z-index:3;background:var(--k-acc-l);border:1px solid #cfe5df;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:10px;}',
+    '#karteRoot .k-restbar{background:var(--k-acc-l);border:1px solid #d2ddf0;border-radius:10px;padding:6px 6px 6px 12px;display:flex;align-items:center;gap:8px;margin:0 0 8px 28px;}',
     '#karteRoot .k-restbar:empty{display:none !important;}',
+    '#karteRoot .k-admin{background:#f0f3f7;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;margin-top:8px;}',
+    '#karteRoot .k-headrow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-8px 0 6px;}',
+    '#karteRoot .k-link{min-height:44px;padding:0 2px 0 8px;border:none;background:transparent;color:var(--k-acc);font-size:13px;font-family:inherit;white-space:nowrap;}',
+    '#karteRoot .k-caution .k-link{color:var(--k-warn);}',
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}'
   ].join('\n');
   function ensureStyle() {
@@ -179,6 +184,11 @@
   function fmtDate(ms) { if (!ms) return ''; var t = new Date(Number(ms) + 9 * 3600000); return (t.getUTCMonth() + 1) + '/' + t.getUTCDate() + ' ' + String(t.getUTCHours()).padStart(2, '0') + ':' + String(t.getUTCMinutes()).padStart(2, '0'); }
   function md(d) { var p = String(d || '').split('-'); return p.length === 3 ? (+p[1]) + '/' + (+p[2]) : String(d || ''); }
   function msg(text, bad) { return el('p', { class: 'k-msg' + (bad ? ' bad' : ''), text: text }); }
+  //   見出しの右に小さなリンク（「編集 ›」「体組成へ ›」）。押せる高さは 44px 取る（2026-11-05 整理：概要は読むだけ・書くのはリンクの先）
+  function headRow(title, linkText, onclick, cls) {
+    return el('div', { class: 'k-headrow' }, [el('div', { class: 'k-h', style: 'margin:0;', text: title }),
+      linkText ? el('button', { type: 'button', class: 'k-link' + (cls ? ' ' + cls : ''), text: linkText, onclick: onclick }) : null]);
+  }
   function card(title, kids, cls) { return el('div', { class: cls || 'k-card' }, [title ? el('div', { class: 'k-h', text: title }) : null].concat(kids || [])); }
   function trainerName(id) {
     var list = (window.state && state._allTrainers) || [];
@@ -513,8 +523,8 @@
   function ring(pct, text, size) {
     var z = size || 64, r = z / 2 - 5, c = 2 * Math.PI * r, p = Math.max(0, Math.min(1, Number(pct) || 0));
     var s = sv('svg', { viewBox: '0 0 ' + z + ' ' + z, width: z, height: z, role: 'img', 'aria-label': text });
-    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#e3f1ee', 'stroke-width': 8 }));
-    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#0e6b5c', 'stroke-width': 8, 'stroke-linecap': 'round',
+    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#edf2fb', 'stroke-width': 8 }));
+    s.appendChild(sv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#243b66', 'stroke-width': 8, 'stroke-linecap': 'round',
       'stroke-dasharray': (c * p).toFixed(1) + ' ' + c.toFixed(1), transform: 'rotate(-90 ' + z / 2 + ' ' + z / 2 + ')' }));
     s.appendChild(sv('text', { x: z / 2, y: z / 2 + 5, 'text-anchor': 'middle', 'font-size': Math.round(z / 4.4), 'font-weight': 700, fill: '#1c1f26' }, text));
     return s;
@@ -531,10 +541,11 @@
       var hearing = (r.profile && r.profile.hearing) || {};
       var latest = latestBody(b && b.success && b.ready ? b.rows : []);
 
-      //   注意すること（安全面の要点）を最上部に
+      //   ★概要は読むだけ（2026-11-05 オーナー承認の整理案）。書く・記録する操作は各カードの右上のリンクの先と「契約・会員」タブへ
+      //   並び：注意すること → 目標と進み具合 → 直近の指導 → お客様のこと
       var agreed = r.consent && r.consent.state === 'agreed';
       var sb = r.safetyBrief;
-      var caut = el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: '注意すること' })]);
+      var caut = el('div', { class: 'k-caution' }, [headRow('注意すること', agreed ? '安全面を見る・書く' : null, function () { safetyForm(box); })]);
       if (agreed) {
         var pain = (sb && sb.pain) || [];
         if (pain.length || (sb && (sb.restrictions || sb.painSites || sb.diagnosis || sb.medication))) {
@@ -547,14 +558,14 @@
           txt.appendChild(el('div', { class: 'k-sub', text: '医師の診断：' + (sb.diagnosis || 'なし') + ' ／ 服薬：' + (sb.medication || 'なし') }));
           row.appendChild(txt); caut.appendChild(row);
         } else caut.appendChild(msg('記録はまだありません。'));
-        caut.appendChild(el('button', { class: 'k-btn out small', style: 'margin-top:10px;', text: '安全面を見る・書く', onclick: function () { safetyForm(box); } }));
       } else {
         caut.appendChild(msg(r.consent && r.consent.state === 'revoked' ? '同意が撤回されています（健康情報は記録できません）。' : '同意待ち：入会時の同意書でカルテでの健康情報の管理に同意をもらってから記録できます。'));
+        //   同意の記録は「契約・会員」タブの末尾（管理）へ移した。初回に迷わないよう、ここから直接行けるようにする
+        caut.appendChild(el('button', { type: 'button', class: 'k-btn out small', style: 'margin-top:6px;', text: '同意を記録する（契約・会員へ）›', onclick: function () { open(cur.customerId, cur.name, 'contract'); } }));
       }
-      caut.appendChild(consentRow(r.consent));
       box.appendChild(caut);
 
-      //   目標（3列）
+      //   目標と進み具合（3列）
       var p = r.profile || {};
       var g = el('div', { class: 'k-grid3' });
       g.appendChild(goalCol('体重', latest.w, hearing.targetWeight, 'kg'));
@@ -564,42 +575,38 @@
         el('div', { class: 'k-num', style: 'font-size:20px;margin-top:4px;', text: p.goal_deadline ? md(p.goal_deadline) : '—' }),
         el('div', { class: 'k-sub', text: p.goal_deadline ? p.goal_deadline.slice(0, 4) + '年' : '' }),
         el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-acc);margin-top:4px;', text: dl == null ? '' : (dl >= 0 ? '残り ' + dl + '日' : '期日を過ぎています') })]));
-      var goalCard = card('目標', [g]);
+      var goalCard = el('div', { class: 'k-card' }, [headRow('目標と進み具合', '体組成へ ›', function () { open(cur.customerId, cur.name, 'body'); }), g]);
       if (p.goal_text) goalCard.appendChild(el('div', { style: 'font-size:13px;line-height:1.7;background:var(--k-cream);border-radius:10px;padding:10px 12px;margin-top:12px;', text: '理想：' + p.goal_text }));
       box.appendChild(goalCard);
 
-      //   やる気＋目的
+      //   直近の指導
+      if (r.lastNote) box.appendChild(el('div', { class: 'k-card' }, [headRow('直近の指導', '指導の履歴へ ›', function () { open(cur.customerId, cur.name, 'notes'); }), noteView(r.lastNote)]));
+
+      //   お客様のこと（ヒアリングの内容：目的・やる気・引き締めたい部位・運動と生活）
+      var hasHearing = !!(r.profile && r.profile.hearing);
+      var who = el('div', { class: 'k-card', style: 'display:flex;flex-direction:column;gap:12px;' }, [headRow('お客様のこと', hasHearing ? 'ヒアリングを編集' : 'ヒアリングを記入する', function () { hearingForm(box, r, null); })]);
       var pc = el('div', { class: 'k-pills', style: 'gap:6px;' });
       (hearing.purposes || []).forEach(function (k) { pc.appendChild(el('span', { class: 'k-tag', style: 'font-size:12px;padding:5px 10px;', text: label(PURPOSES, k) })); });
       if (!(hearing.purposes || []).length) pc.appendChild(el('span', { class: 'k-sub', text: '目的は未記入' }));
-      box.appendChild(el('div', { class: 'k-card', style: 'display:flex;gap:16px;align-items:center;' }, [
+      who.appendChild(el('div', { style: 'display:flex;gap:16px;align-items:center;' }, [
         hearing.motivation ? ring(hearing.motivation / 10, String(hearing.motivation), 72) : el('div', { class: 'k-sub', style: 'width:72px;text-align:center;', text: 'やる気 未記入' }),
         el('div', { style: 'flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;' }, [el('div', { class: 'k-sub', text: 'やる気（10段階）と目的' }), pc])
       ]));
-
-      //   引き締めたい部位
       if ((hearing.slimAreas || []).length) {
         var sa = el('div', { style: 'display:flex;gap:8px;' });
         hearing.slimAreas.forEach(function (k, i) {
           sa.appendChild(el('div', { style: 'flex:1;text-align:center;padding:10px 0;border-radius:10px;background:' + (i === 0 ? 'var(--k-acc-l)' : 'var(--k-cream)') + ';' }, [
             el('div', { class: 'k-sub', text: String(i + 1) }), el('div', { style: 'font-size:15px;font-weight:700;', text: label(SLIM_AREAS, k) })]));
         });
-        box.appendChild(card('引き締めたい部位', [sa]));
+        who.appendChild(el('div', {}, [el('div', { class: 'k-sub', style: 'margin-bottom:6px;', text: '引き締めたい部位' }), sa]));
       }
-
-      //   運動と生活
       var life = [['いまの運動', hearing.exerciseNow], ['過去の経験', hearing.exercisePast], ['睡眠', hearing.sleep], ['食事', hearing.meals]].filter(function (x) { return x[1]; });
       if (life.length) {
         var lg = el('div', { class: 'k-grid2', style: 'font-size:13px;' });
         life.forEach(function (x) { lg.appendChild(el('div', {}, [el('div', { class: 'k-sub', text: x[0] }), el('div', { text: x[1] })])); });
-        box.appendChild(card('運動と生活', [lg]));
+        who.appendChild(lg);
       }
-      box.appendChild(el('button', { class: 'k-btn' + (r.profile && r.profile.hearing ? ' out' : ''), text: r.profile && r.profile.hearing ? 'ヒアリングを編集' : 'ヒアリングを記入する',
-        onclick: function () { hearingForm(box, r, null); } }));
-
-      //   直近の指導
-      if (r.lastNote) box.appendChild(card('直近の指導', [noteView(r.lastNote)]));
-      if (r.assigned) box.appendChild(membershipCard());
+      box.appendChild(who);
       if (draft && draft.kind === 'profile') hearingForm(box, r, draft.data, draft.navMode);
       else if (draft && draft.kind === 'sub' && draft.sub === 'hearing') hearingForm(box, r, null, draft.navMode);
       else if (draft && draft.kind === 'sub' && draft.sub === 'safety' && agreed) safetyForm(box, draft.navMode);
@@ -621,7 +628,7 @@
       if (!window.confirm(lbl)) return;
       kWrite('k_saveConsent', { customerId: cur.customerId, state: stateTo, method: method }, newReqId()).then(function (r) {
         if (!r || !r.success) { window.alert(errText(r)); return; }
-        open(cur.customerId, cur.name, 'summary', null, 'replace');
+        open(cur.customerId, cur.name, cur.tab, null, 'replace');   // 記録した画面（契約・会員）に留まる
       });
     }
     if (state0 !== 'agreed') {
@@ -674,7 +681,7 @@
       var b = el('button', { type: 'button', style: 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;', text: String(n), onclick: function () { cur.dirty = true; v = (v === n ? null : n); paint(); } });
       bs.push(b); box.appendChild(b);
     })(n);
-    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #0e6b5c;background:#0e6b5c;color:#fff;font-weight:700' : '1px solid #c9ccd3;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
+    function paint() { bs.forEach(function (b, i) { var on = v === i + 1; b.style.cssText = 'min-height:38px;border-radius:6px;font-size:13px;font-family:inherit;border:' + (on ? '2px solid #243b66;background:#243b66;color:#fff;font-weight:700' : '1px solid #c9ccd3;background:#fff;color:#1c1f26'); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
     paint();
     return { el: box, get: function () { return v; } };
   }
@@ -791,7 +798,7 @@
         window.alert(r && r.success ? '記録しました。' : errText(r));
       });
     }
-    return card('退会・再入会の記録', [msg('退会後3年の保存期間の起算日になります。契約の期限切れとは別に、退会が決まったときだけ記録してください。'), d.row,
+    return el('div', { style: 'border-top:1px solid #dde3eb;padding-top:12px;' }, [el('div', { style: 'font-size:14px;font-weight:700;margin-bottom:6px;', text: '退会・再入会の記録' }), msg('退会後3年の保存期間の起算日になります。契約の期限切れとは別に、退会が決まったときだけ記録してください。'), d.row,
       el('div', { style: 'display:flex;gap:6px;' }, [
         el('button', { class: 'k-btn out small', text: '退会を記録', onclick: function () { rec('withdrawn'); } }),
         el('button', { class: 'k-btn out small', text: '再入会を記録', onclick: function () { rec('rejoined'); } })])]);
@@ -838,11 +845,11 @@
     [0.25, 0.5, 0.75].forEach(function (r) { s.appendChild(sv('line', { x1: P, x2: W - 4, y1: (H * r).toFixed(1), y2: (H * r).toFixed(1), stroke: '#eceae4' })); });
     if (goalPts && goalPts.length >= 2) s.appendChild(sv('polyline', { fill: 'none', stroke: '#b8965a', 'stroke-dasharray': '5 4', 'stroke-width': 1.5,
       points: goalPts.map(function (g) { return x(g.d).toFixed(1) + ',' + y(g.v).toFixed(1); }).join(' ') }));
-    s.appendChild(sv('polyline', { fill: 'none', stroke: '#0e6b5c', 'stroke-width': 2.2, 'stroke-linejoin': 'round', points: pts.map(function (p) { return x(p.d).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' ') }));
+    s.appendChild(sv('polyline', { fill: 'none', stroke: '#243b66', 'stroke-width': 2.2, 'stroke-linejoin': 'round', points: pts.map(function (p) { return x(p.d).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' ') }));
     pts.forEach(function (p) {
       //   ● 本人の記録 ○ InBody
-      s.appendChild(sv('circle', p.src === 'i' ? { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.6, fill: '#ffffff', stroke: '#0e6b5c', 'stroke-width': 2 }
-        : { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.2, fill: '#0e6b5c' }));
+      s.appendChild(sv('circle', p.src === 'i' ? { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.6, fill: '#ffffff', stroke: '#243b66', 'stroke-width': 2 }
+        : { cx: x(p.d).toFixed(1), cy: y(p.v).toFixed(1), r: 3.2, fill: '#243b66' }));
     });
     s.appendChild(sv('text', { x: 2, y: 12, 'font-size': 10, fill: '#5d574e' }, hi.toFixed(1)));
     s.appendChild(sv('text', { x: 2, y: H - 4, 'font-size': 10, fill: '#5d574e' }, lo.toFixed(1)));
@@ -866,6 +873,9 @@
       box.innerHTML = '';
       if (!r || !r.success) { box.appendChild(msg(errText(r), true)); return; }
       if (!r.ready) { box.appendChild(msg('体組成の記録を読み込めませんでした。しばらくしてから開き直してください（続くときはオーナーへ）。')); return; }
+      //   ★書くのは上のボタンから専用の記入画面へ（2026-11-05 整理案）。読み直し後の復元・戻るでも記入画面を開き直す
+      if (draft && (draft.kind === 'measure' || (draft.kind === 'sub' && draft.sub === 'measure'))) { measureSub(box, draft.kind === 'measure' ? draft.data : null, draft.navMode); return; }
+      box.appendChild(el('button', { class: 'k-btn', text: '＋ 測定を記録', onclick: function () { measureSub(box, null); } }));
       var rows = r.rows || [];
       var hearing = (s && s.success && s.profile && s.profile.hearing) || {};
       var W2 = lastTwo(rows, 'w'), F2 = lastTwo(rows, 'pbf'), M2 = lastTwo(rows, 'smm'), WA = lastTwo(rows, 'waist'), L2 = lastTwo(rows, 'lean');
@@ -917,12 +927,11 @@
       drawChart();
 
       var a = assess(rows, hearing.purposes);
-      if (a) box.appendChild(el('div', { class: 'k-card', style: 'background:var(--k-acc-l);border-color:#cfe5df;' }, [
+      if (a) box.appendChild(el('div', { class: 'k-card', style: 'background:var(--k-acc-l);border-color:#d2ddf0;' }, [
         el('div', { class: 'k-h', text: '前回からの見立て（自動・目安）' }), el('div', { style: 'font-size:14px;line-height:1.75;', text: a.text }),
         el('div', { class: 'k-sub', style: 'margin-top:6px;', text: '※ 数字の動きから出す目安で、診断ではありません。' })]));
       box.appendChild(el('button', { class: 'k-btn out', text: '変化の理由を確かめる（指導の履歴へ）', onclick: function () { open(cur.customerId, cur.name, 'notes', { kind: 'reflect', data: {} }); } }));
 
-      box.appendChild(measureForm(draft && draft.kind === 'measure' ? draft.data : null));
       box.appendChild(goalForm(r.goal));
       var hist = card('最近の記録', []);
       (r.raw || []).forEach(function (m) {
@@ -947,6 +956,12 @@
     });
   }
 
+  function measureSub(box, draftData, mode) {
+    navPush({ cid: cur.customerId, tab: 'body', sub: 'measure' }, mode);
+    box.innerHTML = '';
+    box.appendChild(measureForm(draftData));
+    box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { goBack(); } }));
+  }
   function measureForm(draftData) {
     var c = card('測定を記録（InBody・周囲径）', [msg('測った項目だけ入れてください。体重と体脂肪率を入れれば除脂肪量は自動で計算します。')]);
     var d = field('測定日', (draftData && draftData.measuredDate) || today(), 'date'); d.el.max = today();
@@ -1085,14 +1100,26 @@
       });
     } catch (e) {}
   }
-  function restSeconds() { var v = Number((function () { try { return localStorage.getItem('karte_rest_s'); } catch (e) { return null; } })()); return [60, 90, 120, 180].indexOf(v) >= 0 ? v : 90; }
-  function restStart() {
-    rest.endAt = Date.now() + restSeconds() * 1000; rest.buzzed = false; audioUnlock();
+  //   休憩の秒数は種目ごと（2026-11-05 オーナー：種目で休憩を変える）。選べるのは 15・30・60・90 秒、基本は 60 秒。
+  //   種目名ごとに端末へ覚える（次にその種目を足したら同じ秒数）。記録には保存しない（従来どおり）
+  var REST_CHOICES = [15, 30, 60, 90], REST_DEFAULT = 60;
+  function restMap() { try { var m = JSON.parse(localStorage.getItem('karte_rest_ex') || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; } }
+  function restSecondsFor(ex) { var v = Number(restMap()[String(ex || '')]); return REST_CHOICES.indexOf(v) >= 0 ? v : REST_DEFAULT; }
+  function setRestSecondsFor(ex, v) { if (REST_CHOICES.indexOf(Number(v)) < 0) return; var m = restMap(); m[String(ex || '')] = Number(v); try { localStorage.setItem('karte_rest_ex', JSON.stringify(m)); } catch (e) {} }
+  function restStart(sec) {
+    rest.endAt = Date.now() + (REST_CHOICES.indexOf(Number(sec)) >= 0 ? Number(sec) : REST_DEFAULT) * 1000; rest.buzzed = false; audioUnlock();
     if (rest.box) rest.box.classList.remove('k-rest-done');
     if (rest.iv) clearInterval(rest.iv);
     rest.iv = setInterval(restTick, 500); restTick();
   }
-  function restStop() { rest.endAt = 0; if (rest.iv) clearInterval(rest.iv); rest.iv = null; if (rest.box) restTick(); }
+  //   種目・セットを消したとき、帯の位置（何番目の種目の何セット目）を詰める。休憩中のそれ自体を消したら止める（関門②）
+  function restShift(ei, si) {
+    var p = rest.pos; if (!p) return;
+    if (si == null) { if (p.ei === ei) restStop(); else if (p.ei > ei) p.ei--; return; }
+    if (p.ei !== ei) return;
+    if (p.si === si) restStop(); else if (p.si > si) p.si--;
+  }
+  function restStop() { rest.endAt = 0; rest.pos = null; if (rest.iv) clearInterval(rest.iv); rest.iv = null; if (rest.box) restTick(); }
   function restTick() {
     if (!rest.box || !rest.box.isConnected) { if (rest.iv) clearInterval(rest.iv); rest.iv = null; return; }   // 画面から外れたら止める（戻ったら trainingForm が続きを始める）
     var left = Math.ceil((rest.endAt - Date.now()) / 1000);
@@ -1168,9 +1195,10 @@
     c.appendChild(partsLine);
     var prevBtnBox = el('div');
     c.appendChild(prevBtnBox);
+    var pastWrap = el('div');   // 「過去の記録から写す」は描き直し（refreshTop）で消さない置き場に分ける
+    c.appendChild(pastWrap);
     var restBar = el('div', { class: 'k-restbar', style: 'display:none;' });   // ★見た目は CSS の .k-restbar（inline に display を2つ書くと後の flex が勝ち、空の帯が出ていた）
-    c.appendChild(restBar);
-    rest.box = restBar;
+    rest.box = restBar;   // ★置き場所は draw() が決める：✓を押したセットの真下（無ければ一覧の先頭＝空なので見えない）
     //   ★休憩中に上の「記録の入力」をもう一度押すと、この欄ごと作り直される。この時点の欄はまだ画面に無い（返してから置かれる）ので、
     //     ここで数えると「外れた帯」と見なして止まる。画面に置かれた後に、残り時間があれば新しい帯で続ける（関門②）
     setTimeout(function () {
@@ -1197,10 +1225,62 @@
         if (D.items.length && !window.confirm('いま入れている内容を、前回の内容に置き換えますか？')) return;
         var byEx = {}, order = [];
         (p.sets || []).slice().sort(function (a, b) { return a.set_no - b.set_no; }).forEach(function (x) { if (!byEx[x.exercise]) { byEx[x.exercise] = []; order.push(x.exercise); } byEx[x.exercise].push({ w: x.weight_kg, r: x.reps, done: false }); });
+        restStop();   // 中身を置き換える＝休憩の帯の位置が意味を失う
         D.items = order.map(function (ex) { return { exercise: ex, sets: byEx[ex] }; });
         if (totalSets(D.items) > TR_TOTAL) { window.alert('前回の内容が60セットを超えるため、途中までにしました。'); trimTotal(); }
         save(); draw();
       } }));
+    }
+    //   過去の記録から写す（2026-11-05 オーナー）：日を選んで「重量・回数ごと」か「種目だけ」を、いまの記録の後ろに足す（✓は外す）
+    //   ★日のタグ（全身・上半身…）は第2弾。いまは種目から分かる部位で絞る
+    if ((sessions || []).length) {
+      var pastBox = el('div', { style: 'display:none;' });
+      pastWrap.appendChild(el('button', { type: 'button', class: 'k-btn out', text: '過去の記録から写す', onclick: function () { pastBox.style.display = pastBox.style.display === 'none' ? '' : 'none'; if (pastBox.style.display === '') { pastPart = ''; pastSel = null; drawPast(); } } }));   // 開くたびに「すべて」から
+      pastWrap.appendChild(pastBox);
+      var pastSel = null, pastPart = '';
+      function partsOf(sess) { var m = {}, out = []; (sess.sets || []).forEach(function (x) { var pt = partOf(x.exercise); if (!m[pt]) { m[pt] = 1; out.push(pt); } }); return out; }
+      function exOrder(sess) { var by = {}, order = []; (sess.sets || []).slice().sort(function (a, b) { return a.set_no - b.set_no; }).forEach(function (x) { if (!by[x.exercise]) { by[x.exercise] = []; order.push(x.exercise); } by[x.exercise].push(x); }); return { by: by, order: order }; }
+      function drawPast() {
+        pastBox.innerHTML = '';
+        var list0 = (sessions || []).filter(function (x) { return String(x.session_date) < String(D.sessionDate); }).sort(byNewest).slice(0, 30);   // 記録の日付より前・新しい順に30回まで
+        var allParts = []; list0.forEach(function (x) { partsOf(x).forEach(function (pt) { if (allParts.indexOf(pt) < 0) allParts.push(pt); }); });
+        var chips = el('div', { class: 'k-pills', style: 'gap:6px;margin:8px 0;' });
+        [''].concat(allParts).forEach(function (pt) {
+          chips.appendChild(el('button', { type: 'button', class: 'k-pill' + (pastPart === pt ? ' on' : ''), text: pt || 'すべて', onclick: function () { pastPart = pt; pastSel = null; drawPast(); } }));
+        });
+        pastBox.appendChild(chips);
+        list0.filter(function (x) { return !pastPart || partsOf(x).indexOf(pastPart) >= 0; }).forEach(function (x) {
+          var on = pastSel === x;
+          var o = exOrder(x);
+          pastBox.appendChild(el('button', { type: 'button', 'aria-pressed': on ? 'true' : 'false', class: 'k-card', style: 'display:block;width:100%;text-align:left;margin-bottom:8px;padding:12px;font-family:inherit;font-size:14px;color:var(--k-ink);' + (on ? 'border:2px solid var(--k-acc);' : ''),
+            onclick: function () { pastSel = on ? null : x; drawPast(); } }, [
+            el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;' }, [el('b', { text: md(x.session_date) + '・' + trainerName(x.author_trainer_id) }), on ? el('span', { style: 'font-size:12px;color:var(--k-acc);font-weight:700;', text: '選択中' }) : null]),
+            el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;' }, partsOf(x).map(function (pt) { return el('span', { class: 'k-tag', text: pt }); })),
+            el('div', { class: 'k-sub', text: o.order.join('・') })]));
+        });
+        if (pastSel) {
+          pastBox.appendChild(el('div', { class: 'k-grid2', style: 'margin-top:4px;' }, [
+            el('button', { type: 'button', class: 'k-btn', text: '重量・回数ごと写す', onclick: function () { copyPast(pastSel, true); } }),
+            el('button', { type: 'button', class: 'k-btn out', text: '種目だけ写す', onclick: function () { copyPast(pastSel, false); } })]));
+          pastBox.appendChild(el('div', { class: 'k-sub', style: 'margin-top:6px;', text: '写した後も直せます。✓は外れた状態で入り、いまの記録の後ろに足します。' }));
+        }
+      }
+      function copyPast(sess, withNums) {
+        var o = exOrder(sess), cut = false;
+        o.order.forEach(function (ex) {
+          var sets = o.by[ex].map(function (x) { return withNums ? { w: x.weight_kg, r: x.reps, done: false } : { w: '', r: '', done: false }; });
+          var same0 = D.items.filter(function (it) { return it.exercise === ex; })[0];   // ★同じ種目は1つにまとめる（1種目10セットまで・関門②）
+          if (!same0 && D.items.length >= 20) { cut = true; return; }
+          var cap = 10 - (same0 ? same0.sets.length : 0), room = TR_TOTAL - totalSets(D.items);
+          var n = Math.min(sets.length, cap, room);
+          if (n < sets.length) cut = true;
+          if (n <= 0) return;
+          if (same0) same0.sets = same0.sets.concat(sets.slice(0, n)); else D.items.push({ exercise: ex, sets: sets.slice(0, n) });
+        });
+        if (cut) window.alert('上限（20種目・1種目10セット・合計60セット）を超える分は写していません。');
+        pastSel = null; pastBox.style.display = 'none';
+        save(); draw();
+      }
     }
     function trimTotal() { var n = 0; D.items.forEach(function (it) { it.sets = it.sets.filter(function () { n++; return n <= TR_TOTAL; }); }); D.items = D.items.filter(function (it) { return it.sets.length; }); }
     d.el.onchange = function () { D.sessionDate = d.get() || today(); save(); refreshTop(); draw(); };
@@ -1222,20 +1302,21 @@
     }
     function draw() {
       list.innerHTML = '';
+      var placed = false;
       D.items.forEach(function (it, ei) {
         var hasVal = it.sets.some(function (s) { return s.w !== '' && s.r !== '' && s.w != null && s.r != null; });
         var noneDone = !it.sets.some(function (s) { return s.done === true; });
-        var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#f1c9a3' : 'var(--k-line)') + ';border-radius:12px;padding:12px;margin-bottom:10px;' + (hasVal && noneDone ? 'background:#fffaf4;' : '') });
+        var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#f5c9bb' : 'var(--k-line)') + ';border-radius:12px;padding:12px;margin-bottom:10px;' + (hasVal && noneDone ? 'background:#fff7f4;' : '') });
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
           el('div', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
-          el('button', { type: 'button', class: 'k-btn out small', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { D.items.splice(ei, 1); save(); draw(); } })]));
+          el('button', { type: 'button', class: 'k-btn out small', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { restShift(ei); D.items.splice(ei, 1); save(); draw(); } })]));
         blk.appendChild(el('div', { class: 'k-sub', style: 'margin:2px 0 8px;', text: prevLabel(it.exercise) }));
         blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;', text: 'メモ' }), el('span')]));
         it.sets.forEach(function (s, si) {
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
-            style: 'min-width:48px;min-height:48px;border-radius:12px;font-size:20px;font-weight:700;' + (s.done ? 'background:#0e6b5c;color:#fff;border:1px solid #0e6b5c;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
-            text: '✓', onclick: function () { s.done = !s.done; save(); draw(); if (s.done) restStart(); } });
+            style: 'min-width:48px;min-height:48px;border-radius:12px;font-size:20px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#c9ccd3;border:1px solid #c9ccd3;'),
+            text: '✓', onclick: function () { s.done = !s.done; if (s.done) rest.pos = { ei: ei, si: si }; save(); draw(); if (s.done) restStart(restSecondsFor(it.exercise)); } });
           blk.appendChild(el('div', { class: 'k-setrow' }, [
             el('span', { style: 'color:var(--k-sub);font-size:13px;text-align:center;', text: String(si + 1) }),
             numInput(s.w, 'kg', (si + 1) + 'セット目の重量', function (v) { s.w = v; }),
@@ -1245,7 +1326,7 @@
               style: 'min-width:44px;min-height:44px;border-radius:10px;font-size:16px;' + (s.note ? 'background:var(--k-acc-l);color:var(--k-acc);border:1px solid var(--k-acc);' : 'background:#fff;color:#9a9ea6;border:1px solid #c9ccd3;'),
               text: '✎', onclick: function () { s.memoOpen = !(s.memoOpen || s.note); if (!s.memoOpen && !s.note) { save(); draw(); return; } save(); draw(); focusMemo(ei, si); } }),
             el('button', { type: 'button', class: 'k-setdel', 'aria-label': (si + 1) + 'セット目を消す', style: 'min-width:44px;min-height:44px;border:none;background:transparent;color:#9a9ea6;font-size:16px;', text: '×',
-              onclick: function () { it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
+              onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
           //   セットのメモ（✎ で開く・入っていれば開いたまま）。痛み・診断は書かない（注意すること へ）
           if (s.note || s.memoOpen) {
             var mi = el('input', { type: 'text', maxlength: '200', placeholder: '例：最後の2回は補助', 'aria-label': (si + 1) + 'セット目のメモ（200字まで）', 'data-memo': ei + ':' + si, enterkeyhint: 'done', autocomplete: 'off' });
@@ -1263,8 +1344,9 @@
             });
             blk.appendChild(el('div', { class: 'k-setnote' }, [mi, chips,
               el('div', { class: 'k-sub', style: 'margin-top:4px;color:var(--k-warn);', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }),
-              el('button', { type: 'button', class: 'k-btn out small k-setdel2', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
+              el('button', { type: 'button', class: 'k-btn out small k-setdel2', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
           }
+          if (rest.pos && rest.pos.ei === ei && rest.pos.si === si) { blk.appendChild(restBar); placed = true; }   // ★休憩の帯は✓を押したセットの真下（2026-11-05 オーナー：スクロールが煩わしい）
         });
         //   セットを足す＝直前のセットを複製（✓は外す）
         blk.appendChild(el('button', { type: 'button', class: 'k-btn out small', text: '＋ セット（前のセットを複製）', onclick: function () {
@@ -1273,8 +1355,19 @@
           var last = it.sets[it.sets.length - 1] || { w: '', r: '' };
           it.sets.push({ w: last.w, r: last.r, done: false }); save(); draw();
         } }));
+        //   休憩の行（従来の見た目のまま種目ごとに置く・2026-11-05 オーナー）。秒数はこの種目に覚える
+        var rs = el('select', { 'data-nodirty': '1', 'aria-label': it.exercise + 'の休憩の秒数', style: 'min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 8px;font-size:16px;background:#fff;' });
+        REST_CHOICES.forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSecondsFor(it.exercise)) o.selected = true; rs.appendChild(o); });
+        rs.onchange = function () { setRestSecondsFor(it.exercise, rs.value); };
+        var snd = el('button', { type: 'button', class: 'k-pill' + (restSound() ? ' on' : ''), 'aria-pressed': restSound() ? 'true' : 'false', text: restSound() ? '終了音：あり' : '終了音：なし', onclick: function () {
+          var on = !restSound(); try { localStorage.setItem('karte_rest_sound', on ? 'on' : 'off'); } catch (e) {}
+          if (on) audioUnlock();   // ★この操作の中で用意する（後からでは iPhone は鳴らせない）
+          draw();   // 終了音は端末で1つ＝ほかの種目の表示もそろえる
+        } });
+        blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;' }, [rs, snd, el('span', { class: 'k-sub', text: '✓を押すと休憩タイマーが始まります（記録には保存されません）' })]));
         list.appendChild(blk);
       });
+      if (!placed) list.insertBefore(restBar, list.firstChild);   // ✓のセットが無い・消えた：一覧の先頭（数えていれば見える・空なら隠れる）
       if (!D.items.length) list.appendChild(msg('「前回の内容で始める」か「種目を足す」から始めてください。'));
       var t = totalSets(D.items), rec = 0;
       buildPayload(D.items).forEach(function (x) { rec += x.sets.length; });
@@ -1296,15 +1389,6 @@
     picker.style.display = 'none';
     c.appendChild(picker);
     c.appendChild(remain);
-    var rs = el('select', { 'data-nodirty': '1', 'aria-label': '休憩の秒数', style: 'min-height:44px;border:1px solid #c9ccd3;border-radius:8px;padding:0 8px;font-size:16px;' });
-    [60, 90, 120, 180].forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSeconds()) o.selected = true; rs.appendChild(o); });
-    rs.onchange = function () { try { localStorage.setItem('karte_rest_s', rs.value); } catch (e) {} };
-    var snd = el('button', { type: 'button', class: 'k-pill' + (restSound() ? ' on' : ''), 'aria-pressed': restSound() ? 'true' : 'false', text: restSound() ? '終了音：あり' : '終了音：なし', onclick: function () {
-      var on = !restSound(); try { localStorage.setItem('karte_rest_sound', on ? 'on' : 'off'); } catch (e) {}
-      if (on) audioUnlock();   // ★この操作の中で用意する（後からでは iPhone は鳴らせない）
-      snd.className = 'k-pill' + (on ? ' on' : ''); snd.textContent = on ? '終了音：あり' : '終了音：なし'; snd.setAttribute('aria-pressed', on ? 'true' : 'false');
-    } });
-    c.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;' }, [rs, snd, el('span', { class: 'k-sub', text: '✓を押すと休憩タイマーが始まります（記録には保存されません）。終了音は端末の消音設定でも鳴る場合があります' })]));
     c.appendChild(el('div', { class: 'k-note-hint', style: 'margin-top:10px;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }));
 
     function send(payload, reqId) {
@@ -1487,9 +1571,21 @@
     return box;
   }
 
+  function noteSub(box, draftData, mode) {
+    navPush({ cid: cur.customerId, tab: 'notes', sub: 'note' }, mode);
+    box.innerHTML = '';
+    //   ★版（タグを送ってよいか）は記入画面を開くたびに読み直す。戻る・読み直しの復元から直接ここへ来ても判定できるように（読めなければ信用しない）
+    cur.notesSchema = null;
+    var askedFor = cur.customerId;
+    kRead('k_notes', { customerId: askedFor }).then(function (r) { if (r && r.success && cur.customerId === askedFor) cur.notesSchema = r.karteSchema; });
+    box.appendChild(noteForm(draftData));
+    box.appendChild(el('button', { class: 'k-btn out', text: '戻る', onclick: function () { goBack(); } }));
+  }
   function tabNotes(box, draft) {
+    //   ★書くのは上のボタンから専用の記入画面へ（2026-11-05 整理案）
+    if (draft && (draft.kind === 'note' || (draft.kind === 'sub' && draft.sub === 'note'))) { noteSub(box, draft.kind === 'note' ? draft.data : null, draft.navMode); return; }
     var reflectOpen = !!(draft && (draft.kind === 'reflect' || draft.kind === 'reflectNote'));
-    box.appendChild(noteForm(draft && draft.kind === 'note' ? draft.data : null));
+    box.appendChild(el('button', { class: 'k-btn', text: '＋ メモを書く', onclick: function () { noteSub(box, null); } }));
     var rbox = el('div');
     box.appendChild(rbox);
     function showReflect(data) { rbox.innerHTML = ''; rbox.appendChild(reflectForm(data)); }
@@ -1593,14 +1689,20 @@
   }
 
   // ---------------------------------------------------------------- 契約
+  //   契約・会員（2026-11-05 整理：契約の一覧＋末尾に「管理」＝同意の記録・退会と再入会の記録。概要から移した）
+  //   ★契約が読めない（担当外）・契約が無いときも「管理」は出す（同意の記録は従来どおり誰でも・退会と再入会は担当だけ＝従来の条件のまま）
   function tabContract(box) {
     box.appendChild(msg('読み込み中…'));
-    kRead('k_contract', { customerId: cur.customerId }).then(function (r) {
+    var askedFor = cur.customerId;
+    Promise.all([kRead('k_contract', { customerId: askedFor }), loadSummary()]).then(function (rs) {
+      if (cur.customerId !== askedFor || cur.tab !== 'contract') return;
+      var r = rs[0], sm = rs[1];
       box.innerHTML = '';
-      if (r && r.code === 'FORBIDDEN') { box.appendChild(msg('担当外のお客様の契約は表示されません。')); return; }
-      if (!r || !r.success) { box.appendChild(msg(errText(r), true)); return; }
-      if (!(r.contracts || []).length) { box.appendChild(msg('契約の記録が見つかりませんでした。')); return; }
-      r.contracts.forEach(function (c) {
+      box.appendChild(el('div', { class: 'k-sub', style: 'letter-spacing:.08em;padding:0 2px;', text: '契約' }));
+      if (r && r.code === 'FORBIDDEN') box.appendChild(msg('担当外のお客様の契約は表示されません。'));
+      else if (!r || !r.success) box.appendChild(msg(errText(r), true));
+      else if (!(r.contracts || []).length) box.appendChild(msg('契約の記録が見つかりませんでした。'));
+      else r.contracts.forEach(function (c) {
         var d0 = c.startMs ? new Date(c.startMs + 9 * 3600000).toISOString().slice(0, 10) : '?';
         var d1 = c.endMs ? new Date(c.endMs + 9 * 3600000).toISOString().slice(0, 10) : '';
         box.appendChild(el('div', { class: 'k-card' }, [
@@ -1609,6 +1711,17 @@
           el('div', { style: 'font-size:14px;margin-top:4px;', text: (c.freq ? '月' + c.freq + '回　' : '') + (c.tickets ? 'チケット' + c.tickets + '枚　' : '') + (c.trainer ? '担当：' + c.trainer : '') })
         ]));
       });
+      //   管理（ときどき使う記録）
+      if (!sm || !sm.success) return;
+      var adm = el('div', { class: 'k-admin' }, [el('div', { class: 'k-h', style: 'margin:0;color:var(--k-sub);', text: '管理（ときどき使う記録）' })]);
+      var cs = sm.consent ? sm.consent.state : 'none';
+      adm.appendChild(el('div', {}, [
+        el('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;gap:8px;' }, [
+          el('div', { style: 'font-size:14px;font-weight:700;', text: '健康情報の取り扱いの同意' }),
+          el('div', { style: 'font-size:12px;color:' + (cs === 'agreed' ? 'var(--k-acc)' : 'var(--k-warn)') + ';', text: cs === 'agreed' ? '同意済み' : (cs === 'revoked' ? '撤回済み' : '同意待ち') })]),
+        consentRow(sm.consent)]));
+      if (sm.assigned) adm.appendChild(membershipCard());
+      box.appendChild(adm);
     });
   }
 

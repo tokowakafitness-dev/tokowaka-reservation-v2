@@ -54,8 +54,8 @@
   .lang-toggle span { font-family:'Noto Sans JP',sans-serif; font-size:12px; font-weight:700; letter-spacing:.06em; padding:4px 9px; cursor:pointer; }
   .lang-on { background:#fff; color:var(--navy); }
   .lang-off { background:transparent; color:rgba(255,255,255,.85); }
-.btn.btn-karte{background:#0e6b5c;border-color:#0e6b5c;color:#fff;}
-.btn.btn-karte:active{background:#0a5246;border-color:#0a5246;}
+.btn.btn-karte{background:#243b66;border-color:#243b66;color:#fff;}
+.btn.btn-karte:active{background:#1a2d50;border-color:#1a2d50;}
 </style>
 </head>
 <body>
@@ -173,7 +173,7 @@
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-05c 戻る：LIFFを閉じない・左→右で戻る・右→左で進む（予約画面は閉じた直後のカルテへだけ）';
+  var LIFF_BUILD = '2026-11-05d カルテ整理案 第1弾（カルテを開くをネイビーに）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -2915,6 +2915,6 @@
   boot();
 </script>
 <!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
-<script src="karte.js?v=2026-11-05c"></script>
+<script src="karte.js?v=2026-11-05d"></script>
 </body>
 </html>
