@@ -75,7 +75,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   await settle();
   const root = w.document.getElementById('karteRoot');
   ok('2-1 名前・メモに入った HTML は要素にならない', root && !root.querySelector('img') && !w.pwned && root.textContent.includes('<img'), root && root.innerHTML.slice(0, 200));
-  ok('5-1 同意が無いと「同意待ち」と出て、安全面のボタンは出ない', root.textContent.includes('同意待ち') && !root.textContent.includes('安全面を見る・書く'));
+  ok('5-1 同意が無いと「同意待ち」と出て、安全面のボタンは出ない', root.textContent.includes('同意待ち') && !root.textContent.includes('編集 ›'));
   ok('5-2 ★概要は読むだけ：同意・退会のボタンは置かず、「契約・会員」への案内だけ', !root.textContent.includes('同意を記録（紙）') && !root.textContent.includes('退会を記録') && root.textContent.includes('同意を記録する（契約・会員へ）'));
   ok('5-2b 概要の並び：注意すること → 目標と進み具合 → 直近の指導 → お客様のこと', (() => { const t = root.textContent; const a = ['注意すること', '目標と進み具合', '直近の指導', 'お客様のこと'].map((x) => t.indexOf(x)); return a.every((v, i) => v >= 0 && (i === 0 || v > a[i - 1])); })());
   [...root.querySelectorAll('button')].find((x) => x.textContent.includes('同意を記録する（契約・会員へ）')).click(); await settle();
@@ -85,12 +85,13 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
 {
   //   担当外：契約は読めない（FORBIDDEN）が、同意の記録は出す・退会と再入会は出さない（従来の条件のまま）
   const { w } = boot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, customer: { customerId: 'C2', name: '会員', trainerId: 'T9' }, assigned: false, consent: { state: 'agreed' }, safetyBrief: null, profile: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_summary') return { success: true, customer: { customerId: 'C2', name: '会員', trainerId: 'T9' }, assigned: false, consent: { state: 'agreed', changedAt: Date.UTC(2026, 8, 15, 1), method: 'paper' }, safetyBrief: null, profile: null, lastNote: null, nextReservation: null };
     if (b.action === 'k_contract') return { success: false, code: 'FORBIDDEN' };
     return { success: true };
   });
   w.KarteUI.open('C2', '会員', 'contract'); await settle();
   const root = w.document.getElementById('karteRoot');
+  ok('5-4b 同意の状態に日付と方法（モック K4：同意済み 9/15（紙））', root.textContent.includes('同意済み 9/15（紙）'));
   ok('5-4 ★担当外：契約は「表示されません」でも管理の欄は出る（撤回の記録あり・退会は無し）', root.textContent.includes('担当外のお客様の契約は表示されません') && root.textContent.includes('撤回を記録') && !root.textContent.includes('退会を記録'), root.textContent.slice(0, 200));
 }
 
@@ -107,7 +108,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === '＋ メモを書く').click(); await settle();   // 書くのは専用の記入画面（2026-11-05）
   const ta = w.document.querySelectorAll('#karteRoot textarea');
   ta[0].value = '胸の日';
-  const save = [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === 'メモを保存');
+  const save = [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === '保存する');
   save.click(); await settle();
   save.click(); await settle();
   const notes = sent.filter((b) => b.action === 'k_addNote');
@@ -127,7 +128,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   await settle();
   [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === '＋ メモを書く').click(); await settle();   // 書くのは専用の記入画面（2026-11-05）
   w.document.querySelectorAll('#karteRoot textarea')[0].value = '消したくないメモ';
-  [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === 'メモを保存').click();
+  [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === '保存する').click();
   await settle();
   const saved = JSON.parse(w.sessionStorage.getItem('karte_draft_v1') || 'null');
   ok('4-1 入力を端末に退避して読み直す', w.reloaded === 1 && saved && saved.draft && saved.draft.data.body === '消したくないメモ', JSON.stringify(saved));
@@ -157,7 +158,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   });
   w.KarteUI.open('C1', '会員', 'summary');
   await settle();
-  [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === '安全面を見る・書く').click();
+  [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === '編集 ›').click();
   await settle();
   w.document.querySelectorAll('#karteRoot textarea')[1].value = '右膝の手術歴';
   [...w.document.querySelectorAll('#karteRoot button')].find((x) => x.textContent === '保存する').click();
@@ -230,8 +231,8 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   const root = w.document.getElementById('karteRoot');
   ok('8-1 ★理想・ヒアリングの自由文・痛みの症状を HTML として解釈しない', !root.querySelector('img') && !w.pwned && root.textContent.includes('<img'));
   ok('8-2 注意すること：身体図に右肩 6 が載る（読み上げの名前にも）', !!root.querySelector('svg[aria-label*="右肩 6"]') && root.textContent.includes('右肩 6/10'));
-  ok('8-3 目標の3列（現在 58.4kg → 54kg・あと 4.4kg）', root.textContent.includes('58.4kg') && root.textContent.includes('あと 4.4kg'));
-  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを編集').click();
+  ok('8-3 ★目標と進み具合（モック K1）：輪＝(60−58.4)/(60−54)＝27%・いま 58.4／目標 54／期日 3/31', (() => { const g = [...root.querySelectorAll('.k-card')].find((c) => c.textContent.includes('目標と進み具合')); return !!g && g.textContent.includes('27%') && /いま58\.4kg/.test(g.textContent) && /目標54kg/.test(g.textContent) && g.textContent.includes('3/31'); })(), (([...root.querySelectorAll('.k-card')].find((c) => c.textContent.includes('目標と進み具合')) || {}).textContent || ''));
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを編集 ›').click();
   await settle();
   const pill = (t) => [...root.querySelectorAll('button')].find((x) => x.textContent.replace(/^\d+ /, '') === t);
   pill('筋力アップ').click(); pill('太もも').click(); pill('二の腕').click(); pill('背中').click();   // 3つまで（背中は入らない）
@@ -253,7 +254,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   w.KarteUI.open('C1', '会員', 'summary');
   await settle();
   const root = w.document.getElementById('karteRoot');
-  [...root.querySelectorAll('button')].find((x) => x.textContent === '安全面を見る・書く').click();
+  [...root.querySelectorAll('button')].find((x) => x.textContent === '編集 ›').click();
   await settle();
   [...root.querySelectorAll('button')].find((x) => x.textContent === '右膝').click();
   [...root.querySelectorAll('button')].filter((x) => x.textContent === '7').pop().click();
@@ -295,7 +296,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   w2.KarteUI.open('C1', '会員', 'summary');
   await settle();
   const root = w2.document.getElementById('karteRoot');
-  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを編集').click();
+  [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを編集 ›').click();
   await settle();
   [...root.querySelectorAll('button')].find((x) => x.textContent === 'ヒアリングを保存').click();
   await settle();
@@ -307,11 +308,11 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   const tagPill = () => [...r2.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'トレーニング');
   tagPill().click();
   r2.querySelectorAll('textarea')[0].value = 'タグ付きのメモ';
-  [...r2.querySelectorAll('button')].find((x) => x.textContent === 'メモを保存').click();
+  [...r2.querySelectorAll('button')].find((x) => x.textContent === '保存する').click();
   await settle();
   ok('9-3 ★版の無い Worker にはタグ付きのメモを送らない', !sent.some((x) => x.action === 'k_addNote'));
   tagPill().click();   // タグを外す
-  [...r2.querySelectorAll('button')].find((x) => x.textContent === 'メモを保存').click();
+  [...r2.querySelectorAll('button')].find((x) => x.textContent === '保存する').click();
   await settle();
   ok('9-4 タグなしのメモは古い Worker でも送れる（意味が変わらない）', sent.some((x) => x.action === 'k_addNote' && !x.tag));
 }
@@ -329,7 +330,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   [...r.querySelectorAll('button')].find((x) => x.textContent === '＋ メモを書く').click(); await settle();
   [...r.querySelectorAll('button.k-pill')].find((x) => x.textContent === '食事').click();
   r.querySelectorAll('textarea')[0].value = 'x';
-  [...r.querySelectorAll('button')].find((x) => x.textContent === 'メモを保存').click();
+  [...r.querySelectorAll('button')].find((x) => x.textContent === '保存する').click();
   await settle();
   ok('9-5 ★前に読んだ版を、今回の読み取りが失敗したときに信用しない', !sent.some((x) => x.action === 'k_addNote'));
 }
@@ -360,6 +361,12 @@ function trBoot(responder) {
 const TR_HIST = [{ session_id: 'S3', session_date: '2026-11-01', created_at: 300, author_trainer_id: 'T1', rev: 1, sets: [
   { exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10, e1rm: 53.3 }, { exercise: 'スクワット', set_no: 2, weight_kg: 40, reps: 8, e1rm: 50.7 }] }];
 const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.textContent.indexOf(t) === 0);
+//   前回の内容から始める＝「過去の記録から写す」画面（前回の日が最初から選ばれている）→「重量・回数ごと写す」（2026-11-05 モック K3/K3b）
+const draftOf = (w) => JSON.parse(w.localStorage.getItem('karte_tr_draft_v1:T1:C1') || 'null');
+async function fromPrev(root) {
+  btn(root, '過去の記録から写す').click(); await settle();
+  btn(root, '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
+}
 {
   let addResp = { success: true, sessionId: 'N1' };
   const { w, sent } = trBoot(async (b) => {
@@ -371,10 +378,10 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   let root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   const checks = () => [...root.querySelectorAll('button[aria-label$="実施済みにする"]')];
   ok('10-5 ★前回の内容を置く（2セット・✓は外れている）', checks().length === 2 && checks().every((x) => x.getAttribute('aria-pressed') === 'false'));
-  btn(root, '＋ セット（前のセットを複製）').click(); await settle();
+  btn(root, '＋ セット').click(); await settle();
   const ins = [...root.querySelectorAll('input[aria-label$="重量"]')];
   ok('10-6 ★セットを足すと直前のセットを複製（✓は外す）', ins.length === 3 && ins[2].value === '40' && checks()[2].getAttribute('aria-pressed') === 'false');
   const key = 'karte_tr_draft_v1:T1:C1';
@@ -386,14 +393,17 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   ok('10-8 ★開き直すと入力の途中（✓も）が戻る', checks().length === 3 && checks()[0].getAttribute('aria-pressed') === 'true' && root.textContent.includes('最大24時間'));
   //   1回目：通信の結果が分からない（BAD_RESPONSE）
   addResp = { success: false, code: 'BAD_RESPONSE' };
-  btn(root, '✓のセットを記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   const s1 = sent.filter((x) => x.action === 'k_addTraining');
   ok('10-9 ★✓の1セットだけを送る', s1.length === 1 && s1[0].items.length === 1 && s1[0].items[0].sets.length === 1, JSON.stringify(s1[0] && s1[0].items));
   root = w.document.getElementById('karteRoot');
   ok('10-10 ★結果が分からないときは編集させず「同じ内容で送り直す」だけ', !!btn(root, '同じ内容で送り直す') && !root.querySelector('input[aria-label$="重量"]'));
   addResp = { success: true, sessionId: 'N1' };
-  btn(root, '日別の記録を確かめる').click();
-  ok('10-10b 結果が分からないとき「日別の記録を確かめる」で日別に切り替わる', root.querySelector('.k-seg button.on') && root.querySelector('.k-seg button.on').textContent === '日別');
+  btn(root, '日別の記録を確かめる').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
+  root = w.document.getElementById('karteRoot');
+  ok('10-10b 結果が分からないとき「日別の記録を確かめる」でトレーニングの画面に戻り日別の記録を開く', !!root.querySelector('.k-daycard.focus') && !!root.querySelector('.k-dayrow[aria-expanded="true"]') && !root.classList.contains('k-entry'));
+  ok('10-10c ★戻ってきたときは途中の記録を自動で開き直さない（記録の画面から出られる）', !!btn(root, '記録の入力（途中）を開く'));
+  btn(root, '記録の入力（途中）を開く').click(); await settle();
   btn(root, '同じ内容で送り直す').click(); await settle();
   const s2 = sent.filter((x) => x.action === 'k_addTraining');
   ok('10-11 ★送り直しは同じ送信番号・同じ中身', s2.length === 2 && s2[1].clientReqId === s2[0].clientReqId && JSON.stringify(s2[1].items) === JSON.stringify(s2[0].items));
@@ -416,9 +426,9 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   let root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   root.querySelector('button[aria-label$="実施済みにする"]').click(); await settle();
-  btn(root, '✓のセットを記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   const d1 = JSON.parse(w.localStorage.getItem('karte_tr_draft_v1:T1:C1'));
   ok('10-14 ★断られた（TOTAL_SETS）ら編集に戻り、送信番号を替え、理由を出す', d1 && !d1.pending && d1.reqId !== sent.filter((x) => x.action === 'k_addTraining')[0].clientReqId && w.alerts.some((a) => a.includes('60セット')));
   //   別の顧客の下書きは戻さない・送らない
@@ -442,9 +452,9 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   root.querySelector('button[aria-label$="実施済みにする"]').click(); await settle();
-  btn(root, '✓のセットを記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   const ss = w.sessionStorage.getItem('karte_draft_v1') || '';
   const ld = JSON.parse(w.localStorage.getItem('karte_tr_draft_v1:T1:C1') || 'null');
   ok('10-17 ★トークン切れ：sessionStorage には記録の中身を入れず、端末の下書きに送った中身を固定', w.reloaded === 1 && !ss.includes('スクワット') && ld && ld.pending && ld.pending.payload.items.length === 1, ss);
@@ -462,8 +472,11 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'スクワット').click();
   [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'ベンチプレス').click();
   btn(root, '選んだ 2 種目を足す').click(); await settle();
-  const ins = [...root.querySelectorAll('input[aria-label$="重量"]')];
-  ok('10-19 ★まとめて足す・その種目の前回の値を1セット目に入れる（前回なしは空）', ins.length === 2 && ins[0].value === '40' && ins[1].value === '', ins.map((x) => x.value).join(','));
+  const it19 = (draftOf(w) || { items: [] }).items;
+  ok('10-19 ★まとめて足す・その種目の前回の値を1セット目に入れる（前回なしは空）', it19.length === 2 && String(it19[0].sets[0].w) === '40' && it19[1].sets[0].w === '', JSON.stringify(it19));
+  ok('10-19b ★開いているのは最後に足した種目だけ・ほかは1行に畳む（モック K3）', root.querySelectorAll('input[aria-label$="重量"]').length === 1 && !!root.querySelector('button.k-excol[aria-label="スクワットを開く"]'));
+  root.querySelector('button.k-excol[aria-label="スクワットを開く"]').click(); await settle();
+  ok('10-19c 畳んだ種目を押すと広がる（ほかは畳む）', root.querySelector('input[aria-label$="重量"]').value === '40' && !!root.querySelector('button.k-excol[aria-label="ベンチプレスを開く"]'));
 }
 
 // ================= 11. 送っている途中（関門②） =================
@@ -480,9 +493,9 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   let root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   root.querySelector('button[aria-label$="実施済みにする"]').click(); await settle();
-  const save = btn(root, '✓のセットを記録する');
+  const save = btn(root, '保存する');
   save.click();
   save.disabled = false; save.click();   // ★ボタンを押せなくするだけでなく、送る処理そのものも2回目を止める
   await settle();
@@ -504,11 +517,11 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   root.querySelector('button[aria-label$="実施済みにする"]').click(); await settle();
   const orig = w.Storage.prototype.setItem;
   w.Storage.prototype.setItem = function (k) { if (String(k).indexOf('karte_tr_draft_v1') === 0) throw new Error('quota'); return orig.apply(this, arguments); };
-  btn(root, '✓のセットを記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   w.Storage.prototype.setItem = orig;
   ok('11-4 ★送信の控えを端末に残せないなら送らない', !sent.some((x) => x.action === 'k_addTraining') && w.alerts.some((a) => a.includes('控え')));
 }
@@ -531,9 +544,9 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   root.querySelector('button[aria-label$="実施済みにする"]').click(); await settle();
-  btn(root, '✓のセットを記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   w.KarteUI.open('C2', '会員二', 'summary'); await settle();
   release(); await settle(); await settle();
   const d1 = JSON.parse(w.localStorage.getItem('karte_tr_draft_v1:T1:C1') || 'null');
@@ -567,7 +580,7 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   ok('12-1 開いたときは見える範囲の高さに合わせ、キーパッドの印は無い', root.style.height === '800px' && !root.classList.contains('k-kb'));
   vv.height = 460; (listeners.resize || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 40));
   ok('12-2 ★キーパッドが出たら（見える範囲が縮んだら）画面をその上に収め、下のタブを隠す印を付ける', root.style.height === '460px' && root.classList.contains('k-kb') && /#karteRoot\.k-kb \.k-tabs\{display:none;\}/.test(SRC));
@@ -685,7 +698,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   root = w.document.getElementById('karteRoot');
   ok('13-9 ★戻るとヒアリングの画面が出る（概要に落ちない）', root.textContent.includes('ヒアリングを保存'), root.textContent.slice(0, 80));
   w.history.back(); await pop(); await settle();   // 概要へ
-  btn(root, '安全面を見る・書く').click(); await settle();
+  btn(root, '編集 ›').click(); await settle();
   [...root.querySelectorAll('.k-tab')].find((x) => x.textContent === '契約・会員').click(); await settle();
   w.history.back(); await pop(); await settle(); await settle();
   ok('13-10 ★戻ると安全面の画面が出る', w.document.getElementById('karteRoot').textContent.includes('痛み・不調'));
@@ -761,7 +774,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   let root = w.document.getElementById('karteRoot');
   ok('14-1 日別・種目別に、保存したセットのメモが出る（前回の表示にも）', root.textContent.includes('2セット目：最後の2回は補助'));
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   ok('14-1b 種目の「前回」の表示に前回のメモ', root.textContent.includes('（メモ：最後の2回は補助）'));
   ok('14-2 ★前回の内容で始めてもメモは写さない（その日の出来事なので）', !root.querySelector('input[data-memo]'));
   root.querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
@@ -770,11 +783,11 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   mi.value = 'フォーム良好'; mi.dispatchEvent(new w.Event('input', { bubbles: true }));
   const dr = JSON.parse(w.localStorage.getItem('karte_tr_draft_v1:T1:C1'));
   ok('14-4 ★メモも端末の下書きに残る', dr.items[0].sets[0].note === 'フォーム良好');
-  btn(root, '＋ セット（前のセットを複製）').click(); await settle();
+  btn(root, '＋ セット').click(); await settle();
   ok('14-5 セットを複製してもメモは写さない', !root.querySelector('input[data-memo="0:2"]'));
   [...root.querySelectorAll('button[aria-label$="実施済みにする"]')][0].click(); await settle();
   [...root.querySelectorAll('button[aria-label$="実施済みにする"]')][1].click(); await settle();
-  btn(root, '✓のセットを記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   const p = sent.filter((x) => x.action === 'k_addTraining').pop();
   ok('14-6 ★メモは✓のセットに付けて送る（空のメモは送らない）', p && p.items[0].sets[0].note === 'フォーム良好' && !('note' in p.items[0].sets[1]), JSON.stringify(p && p.items));
   ok('14-7 メモ欄は200字まで・16px', /maxlength: '200'/.test(SRC) && /k-setnote input\{[^}]*font-size:16px/.test(SRC));
@@ -787,7 +800,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   //   2セット目は数字を消して「メモだけ」にする
   for (const lab of ['2セット目の重量', '2セット目の回数']) { const x = root.querySelector('input[aria-label="' + lab + '"]'); x.value = ''; x.dispatchEvent(new w.Event('input', { bubbles: true })); }
   root.querySelector('button[aria-label="2セット目のメモ"]').click(); await settle();
@@ -798,7 +811,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   ok('14-9 よく使うメモを押すだけで入る（重ねられる）', root.querySelector('input[data-memo="0:1"]').value === '補助あり・フォーム崩れ');
   ok('14-10 よく使うメモに健康の言葉を入れない', !/痛|しびれ|服薬|薬|診断|怪我|ケガ/.test(SRC.slice(SRC.indexOf('var MEMO_PRESETS'), SRC.indexOf('var MEMO_PRESETS') + 200)));
   root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
-  btn(root, '✓のセットを記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   ok('14-11 ★メモだけ書いて✓の無いセットも「記録されない入力」として保存の前に知らせる（やめたら送らない）', msgs.some((m) => m.includes('記録されない入力が 1 セット')) && !sent.some((x) => x.action === 'k_addTraining'), msgs.join(' / '));
   ok('14-12 幅の狭い端末（380px 以下＝SE・mini を含む）では、セットを消すボタンをメモ欄へ移して数字の欄を広く取る', /@media \(max-width:380px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 48px 44px/.test(SRC) && /k-setdel\{display:none;\}/.test(SRC));
 }
@@ -810,7 +823,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   root.querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
   const del2 = root.querySelector('.k-setdel2');
   ok('14-13 ★広い画面では「このセットを消す」は出さない（×だけ）', del2 && w.getComputedStyle(del2).display === 'none', del2 && w.getComputedStyle(del2).display);
@@ -819,11 +832,12 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 {
   //   ★はみ出し（2026-11-04g・iPhone で日付の欄がカードの右端を越え、日付の下に空の緑の帯が出た）
   //     計算後の見た目で確かめる（inline に display を2つ書くと後が勝つ、は文字列の検査では見つからない）
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : b.action === 'k_body' ? { success: true, ready: true, rows: [], raw: [] } : { success: true }));
   w.confirm = () => true;
-  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  //   ★今日の記録の日付は見出しに移った（2026-11-05 モック K3）＝日付の欄の見た目は体組成の記入画面で確かめる
+  w.KarteUI.open('C1', '会員', 'body'); await settle();
   const root = w.document.getElementById('karteRoot');
-  btn(root, '＋ 今日の記録').click(); await settle();
+  btn(root, '＋ 測定を記録').click(); await settle();
   const date = root.querySelector('.k-field input[type="date"]');
   const cs = date && w.getComputedStyle(date);
   ok('15-1 ★日付の欄は最小幅0・ブロック・幅100%（iOS の固有の最小幅で親を越えない）', !!cs && cs.minWidth === '0px' && cs.display === 'block' && cs.width === '100%' && cs.maxWidth === '100%', cs && [cs.minWidth, cs.display, cs.width, cs.maxWidth].join(' '));
@@ -832,24 +846,27 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   const lab = date && date.closest('.k-field');
   ok('15-4 入力の枠（label）も最小幅0（grid の中で縮める）', !!lab && w.getComputedStyle(lab).minWidth === '0px');
   ok('15-5 grid の子は最小幅0（2列・3列の中の日付・数字の欄が列を越えない）', /\.k-grid2>\*,#karteRoot \.k-grid3>\*\{min-width:0;\}/.test(SRC));
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  btn(root, '＋ 今日の記録').click(); await settle();
   const rb = root.querySelector('.k-restbar');
   ok('15-6 ★休憩を数えていないときは、休憩の帯を出さない（空の緑の帯）', !!rb && rb.children.length === 0 && w.getComputedStyle(rb).display === 'none', rb && w.getComputedStyle(rb).display);
   if (rb) { rb.style.display = ''; }
   ok('15-6b ★inline の display が外れても、中身が空なら帯は出ない（二重の守り）', !!rb && w.getComputedStyle(rb).display === 'none', rb && w.getComputedStyle(rb).display);
   if (rb) { rb.style.display = 'none'; }
   ok('15-7 ★休憩の帯は inline に display を2つ書かない（後の flex が勝って空のまま出る）', !/display:none;[^']*display:flex/.test(SRC));
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
   const rb2 = root.querySelector('.k-restbar');
   ok('15-8 ✓で休憩の帯が出る（横並び＝「止める」が右端）', !!rb2 && rb2.textContent.includes('休憩') && w.getComputedStyle(rb2).display === 'flex', rb2 && w.getComputedStyle(rb2).display);
   ok('15-9 長い英数字（種目名・メモ）は途中で折り返す', /#karteRoot\{overflow-wrap:anywhere;/.test(SRC));
   //   ★休憩中に上の「記録の入力」をもう一度押す＝記録の欄が作り直される。帯を置く前に進めると、外れた帯と見なして黙って止まっていた（関門②）
   //     （タブを移ったときに消すのは設計33 §9-7 の仕様）
-  const again = [...root.querySelectorAll('button')].find((x) => /今日の記録|記録の入力/.test(x.textContent));
+  //   ★2026-11-05 今日の記録は専用の画面になり「上のボタンで作り直す」経路は無い。休憩中に記録欄が描き直される操作（セットを足す）で確かめる
+  const again = btn(root, '＋ セット');
   if (again) again.click(); await settle();
   await new Promise((r) => setTimeout(r, 650));
   const rb3 = root.querySelector('.k-restbar');
-  ok('15-11 ★休憩中に記録の欄が作り直されても、休憩の帯が出たまま数え続ける', !!again && !!rb3 && rb3.isConnected && rb3.textContent.includes('休憩 ') && w.getComputedStyle(rb3).display === 'flex', rb3 && (rb3.textContent + ' ' + w.getComputedStyle(rb3).display));
+  ok('15-11 ★休憩中に記録の欄が描き直されても、休憩の帯が出たまま数え続ける', !!again && !!rb3 && rb3.isConnected && rb3.textContent.includes('休憩 ') && w.getComputedStyle(rb3).display === 'flex', rb3 && (rb3.textContent + ' ' + w.getComputedStyle(rb3).display));
   const tab = root.querySelector('.k-tab');
   const tcs = tab && w.getComputedStyle(tab);
   ok('15-12 ★下のタブは文字14px以上・押せる高さ56px以上（iPhone で小さすぎた）', !!tcs && parseFloat(tcs.fontSize) >= 14 && parseInt(tcs.minHeight, 10) >= 56, tcs && tcs.fontSize + ' ' + tcs.minHeight);
@@ -868,23 +885,23 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   const pop = () => new Promise((r) => setTimeout(r, 40));
   w.KarteUI.open('C1', '会員', 'body'); await settle();
   let root = w.document.getElementById('karteRoot');
-  ok('16-1 ★体組成：上に「＋ 測定を記録」・記入欄はタブの画面に置かない', !!btn(root, '＋ 測定を記録') && !root.textContent.includes('この内容で記録する'));
+  ok('16-1 ★体組成：上に「＋ 測定を記録」・記入欄はタブの画面に置かない', !!btn(root, '＋ 測定を記録') && !root.textContent.includes('保存する'));
   btn(root, '＋ 測定を記録').click(); await settle();
-  ok('16-2 押すと記入画面（履歴に積む＝戻るで閉じられる）', root.textContent.includes('この内容で記録する') && w.history.state.sub === 'measure' && w.history.state.tab === 'body');
+  ok('16-2 押すと記入画面（履歴に積む＝戻るで閉じられる）', root.textContent.includes('保存する') && w.history.state.sub === 'measure' && w.history.state.tab === 'body');
   w.history.back(); await pop(); await settle();
   root = w.document.getElementById('karteRoot');
-  ok('16-3 ★戻ると体組成の画面（カルテは閉じない）', !!root && !!btn(root, '＋ 測定を記録') && !root.textContent.includes('この内容で記録する'));
+  ok('16-3 ★戻ると体組成の画面（カルテは閉じない）', !!root && !!btn(root, '＋ 測定を記録') && !root.textContent.includes('保存する'));
   w.history.forward(); await pop(); await settle();
   root = w.document.getElementById('karteRoot');
-  ok('16-4 進むと記入画面に戻る', root.textContent.includes('この内容で記録する'));
+  ok('16-4 進むと記入画面に戻る', root.textContent.includes('保存する'));
   root.querySelectorAll('input[type=number]')[0].value = '70.1';
-  btn(root, 'この内容で記録する').click(); await settle();
+  btn(root, '保存する').click(); await settle();
   ok('16-5 保存すると送って体組成の画面へ', sent.some((x) => x.action === 'k_addMeasurement') && !!btn(w.document.getElementById('karteRoot'), '＋ 測定を記録'));
   w.KarteUI.open('C1', '会員', 'notes'); await settle();
   root = w.document.getElementById('karteRoot');
-  ok('16-6 ★指導の履歴：上に「＋ メモを書く」・記入欄はタブの画面に置かない', !!btn(root, '＋ メモを書く') && !root.textContent.includes('メモを保存'));
+  ok('16-6 ★指導の履歴：上に「＋ メモを書く」・記入欄はタブの画面に置かない', !!btn(root, '＋ メモを書く') && !root.textContent.includes('保存する'));
   btn(root, '＋ メモを書く').click(); await settle();
-  ok('16-7 押すと記入画面・版を読み直す', root.textContent.includes('メモを保存') && w.history.state.sub === 'note' && sent.filter((x) => x.action === 'k_notes').length >= 2);
+  ok('16-7 押すと記入画面・版を読み直す', root.textContent.includes('保存する') && w.history.state.sub === 'note' && sent.filter((x) => x.action === 'k_notes').length >= 2);
   w.history.back(); await pop(); await settle();
   ok('16-8 戻ると指導の履歴の画面', !!btn(w.document.getElementById('karteRoot'), '＋ メモを書く'));
 }
@@ -897,7 +914,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();
+  await fromPrev(root);
   const sel = root.querySelector('select[aria-label="スクワットの休憩の秒数"]');
   ok('17-1 ★休憩の秒数は種目の欄の中・選べるのは15/30/60/90秒・基本は60秒', !!sel && [...sel.options].map((o) => o.value).join(',') === '15,30,60,90' && sel.value === '60');
   ok('17-2 記録欄全体の秒数の選択は無くした（種目ごとに一本化）', !root.querySelector('select[aria-label="休憩の秒数"]'));
@@ -916,7 +933,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   w.KarteUI.close && w.KarteUI.close();
 }
 
-// ================= 18. 過去の記録から写す（2026-11-05 オーナー） =================
+// ================= 18. 過去の記録から写す（2026-11-05 オーナー・モック K3b＝専用の画面） =================
 {
   const HIST2 = [
     { session_id: 'P2', session_date: '2026-10-29', created_at: 200, author_trainer_id: 'T1', rev: 1, sets: [
@@ -925,32 +942,32 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
       { exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }, { exercise: 'ヒップスラスト', set_no: 2, weight_kg: 40, reps: 12 }] }];
   const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: HIST2, best: [] } : { success: true }));
   w.confirm = () => true;
+  try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
+  const pop = () => new Promise((r) => setTimeout(r, 40));
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();   // いまの記録＝ラットプルダウン
+  ok('18-0 ★今日の記録は専用の画面（ネイビーの見出し・名前と日付・下のタブは隠す）', root.classList.contains('k-entry') && root.querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && / 様 ／ \d+\/\d+\(.\)/.test(root.querySelector('.k-entrydate').textContent) && w.getComputedStyle(root.querySelector('.k-tabs')).display === 'none');
   btn(root, '過去の記録から写す').click(); await settle();
-  const cards = () => [...root.querySelectorAll('button.k-card')];
-  ok('18-1 ★過去の日が新しい順に並び、種目から分かる部位が付く', cards().length === 2 && cards()[0].textContent.includes('10/29') && cards()[0].textContent.includes('背中') && cards()[1].textContent.includes('脚・尻'), cards().map((x) => x.textContent).join(' | '));
+  const cards = () => [...root.querySelectorAll('button.k-pick')];
+  const items = () => (draftOf(w) || { items: [] }).items;
+  ok('18-1 ★写す画面は専用の画面・新しい順・部位が付く・前回の日が最初から選ばれている', root.querySelector('.k-entrytitle').textContent === '過去の記録から写す' && w.history.state.sub === 'trpick' && cards().length === 2 && cards()[0].textContent.includes('10/29') && cards()[0].getAttribute('aria-pressed') === 'true' && cards()[0].textContent.includes('背中') && cards()[1].textContent.includes('脚・尻'), cards().map((x) => x.textContent).join(' | '));
+  w.history.back(); await pop(); await settle();
+  ok('18-2 写さずに戻ると今日の記録の画面・何も足さない', w.history.state.sub === 'trform' && items().length === 0);
+  await fromPrev(root);
+  ok('18-3 ★写すと今日の記録の画面に戻り、前回（10/29）の重量・回数が入る（✓は外れた状態）', w.history.state.sub === 'trform' && JSON.stringify(items()) === JSON.stringify([{ exercise: 'ラットプルダウン', sets: [{ w: 30, r: 12, done: false }, { w: 30, r: 10, done: false }] }]), JSON.stringify(items()));
+  btn(root, '過去の記録から写す').click(); await settle();
   [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === '脚・尻').click(); await settle();
-  ok('18-2 部位で絞れる', cards().length === 1 && cards()[0].textContent.includes('10/25'));
-  cards()[0].click(); await settle();
-  ok('18-3 日を選ぶと「重量・回数ごと写す」「種目だけ写す」が出る', !!btn(root, '重量・回数ごと写す') && !!btn(root, '種目だけ写す'));
-  btn(root, '重量・回数ごと写す').click(); await settle();
-  const names = () => [...root.querySelectorAll('select[aria-label$="の休憩の秒数"]')].map((x) => x.getAttribute('aria-label').replace('の休憩の秒数', ''));
-  ok('18-4 ★いまの記録の後ろに足す（置き換えない）', names().join(',') === 'ラットプルダウン,スクワット,ヒップスラスト', names().join(','));
-  const ins = [...root.querySelectorAll('.k-setrow input')].map((x) => x.value);
-  ok('18-5 ★重量・回数ごと写す（✓は外れた状態）', ins.slice(4).join(',') === '50,10,40,12' && [...root.querySelectorAll('button[aria-label$="実施済みにする"]')].every((x) => x.getAttribute('aria-pressed') === 'false'), ins.join(','));
-  btn(root, '過去の記録から写す').click(); await settle();
-  cards()[0].click(); await settle();   // 10/29（すべて に戻っている）
-  btn(root, '種目だけ写す').click(); await settle();
-  const ins2 = [...root.querySelectorAll('.k-setrow input')].map((x) => x.value);
-  ok('18-6 ★種目だけ写す＝数字は空・同じ種目は1つにまとめる（ラットプルダウンに2セット足す）', names().join(',') === 'ラットプルダウン,スクワット,ヒップスラスト' && ins2.slice(0, 8).join(',') === '30,12,30,10,,,,', ins2.join(','));
-  for (let k = 0; k < 4; k++) { btn(root, '過去の記録から写す').click(); await settle(); cards()[0].click(); await settle(); btn(root, '重量・回数ごと写す').click(); await settle(); }
-  const latSets = root.querySelectorAll('button[aria-label$="実施済みにする"]').length - 2;   // スクワット1・ヒップスラスト1を除く
-  ok('18-7 ★同じ種目を何度写しても1種目10セットまで（超える分は写さず知らせる）', names().filter((x) => x === 'ラットプルダウン').length === 1 && latSets === 10 && w.alerts.some((m) => m.includes('1種目10セット')), latSets + ' ' + w.alerts.join('|'));
-  const date = root.querySelector('.k-field input[type="date"]');
+  ok('18-4 部位で絞れる（絞った先の最初の日が選ばれる）', cards().length === 1 && cards()[0].textContent.includes('10/25') && cards()[0].getAttribute('aria-pressed') === 'true');
+  btn(root, '種目だけ写す').click(); await pop(); await settle();
+  ok('18-5 ★種目だけ写す＝数字は空・いまの記録の後ろに足す（置き換えない）', items().map((x) => x.exercise).join(',') === 'ラットプルダウン,スクワット,ヒップスラスト' && items()[1].sets[0].w === '' && items()[0].sets[0].w === 30, JSON.stringify(items()));
+  ok('18-5b 最後に足した種目が開いている', !!root.querySelector('select[aria-label="ヒップスラストの休憩の秒数"]') && !!root.querySelector('button.k-excol[aria-label="ラットプルダウンを開く"]'));
+  for (let k = 0; k < 5; k++) await fromPrev(root);
+  const lat = items().filter((x) => x.exercise === 'ラットプルダウン');
+  ok('18-6 ★同じ種目を何度写しても1つにまとめ・1種目10セットまで（超える分は写さず知らせる）', lat.length === 1 && lat[0].sets.length === 10 && w.alerts.some((m) => m.includes('1種目10セット')), JSON.stringify(lat) + ' ' + w.alerts.join('|'));
+  const date = root.querySelector('input.k-dateover');
   date.value = '2026-10-28'; date.dispatchEvent(new w.Event('change', { bubbles: true })); await settle();
+  ok('18-7 見出しの日付を押して変えられる（見出しの表示も変わる）', root.querySelector('.k-entrydate').textContent.includes('10/28(水) ▾'));
   btn(root, '過去の記録から写す').click(); await settle();
   ok('18-8 ★記録の日付より後の日は出さない（10/28 の記録に 10/29 を写さない）', cards().length === 1 && cards()[0].textContent.includes('10/25'), cards().map((x) => x.textContent).join(' | '));
   w.KarteUI.close && w.KarteUI.close();
@@ -962,7 +979,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
-  btn(root, '前回（').click(); await settle();   // スクワット 2セット
+  await fromPrev(root);   // スクワット 2セット
   btn(root, '＋ セット').click(); await settle();   // 3セット
   root.querySelector('button[aria-label="3セット目を実施済みにする"]').click(); await settle();
   root.querySelector('button[aria-label="1セット目を消す"]').click(); await settle();
@@ -971,6 +988,87 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   root.querySelector('button[aria-label="2セット目を消す"]').click(); await settle();
   bar = root.querySelector('.k-restbar');
   ok('17-9 ★休憩中のセットそのものを消したら止める（別のセットの下に出さない）', bar.children.length === 0 && w.getComputedStyle(bar).display === 'none');
+  w.KarteUI.close && w.KarteUI.close();
+}
+
+{
+  //   開いただけの空の下書きでは、次にタブを開いたとき自動で記録の画面を開かない（種目が入っていれば開く＝従来どおり）
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  w.confirm = () => true;
+  try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  btn(root, '＋ 今日の記録').click(); await settle();
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  ok('18-9 ★開いただけ（空）なら次は自動で開かない・「＋ 今日の記録」のまま', !root.classList.contains('k-entry') && !!btn(root, '＋ 今日の記録'));
+  btn(root, '＋ 今日の記録').click(); await settle();
+  await fromPrev(root);
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  ok('18-10 種目が入っていれば開き直すと記録の画面に戻る（前回の書き方はモックどおり）', root.classList.contains('k-entry') && root.textContent.includes('前回 11/1：40kg × 10・8'), root.textContent.slice(0, 300));
+  w.KarteUI.close && w.KarteUI.close();
+}
+
+// ================= 19. どの画面もモックどおり（2026-11-05 オーナー：完全にモック通り） =================
+{
+  const HIST3 = [
+    { session_id: 'Q2', session_date: '2026-11-01', created_at: 200, author_trainer_id: 'T1', rev: 1, sets: [
+      { exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }, { exercise: 'スクワット', set_no: 2, weight_kg: 50, reps: 8, note: '最後は補助' }, { exercise: 'ラットプルダウン', set_no: 3, weight_kg: 30, reps: 12 }] },
+    { session_id: 'Q1', session_date: '2026-10-25', created_at: 100, author_trainer_id: 'T1', rev: 1, sets: [
+      { exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10 }] }];
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: HIST3, best: [] };
+    if (b.action === 'k_body') return { success: true, ready: true, rows: [], raw: [] };
+    if (b.action === 'k_notes') return { success: true, karteSchema: 31, notes: [] };
+    return { success: true };
+  });
+  try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  const t = root.textContent;
+  ok('19-1 ★トレーニング（K2）：＋今日の記録 → 見る → 前回（11/1）→ 種目ごとの推移 → 日別の記録', ['＋ 今日の記録', '見る', '前回（11/1）', '種目ごとの推移', '日別の記録'].map((x) => t.indexOf(x)).every((v, i, a) => v >= 0 && (i === 0 || v > a[i - 1])) && !root.querySelector('.k-seg'), t.slice(0, 200));
+  ok('19-2 前回のカード：種目・重量×回数・セットのメモ（2種目・3セット）', t.includes('2種目・3セット') && t.includes('50kg × 10・8') && t.includes('2セット目：最後は補助'));
+  ok('19-3 種目ごとの推移：自己ベスト', t.includes('自己ベスト 50kg × 10（11/1）'));
+  const rows = () => [...root.querySelectorAll('.k-dayrow')];
+  ok('19-4 日別の記録：日付（曜日）・種目の数・部位の印、最初は閉じている', rows().length === 2 && rows()[0].textContent.includes('11/1(日)') && rows()[0].getAttribute('aria-expanded') === 'false');
+  rows()[1].click(); await settle();
+  ok('19-5 押すと中身（担当・重量×回数）と削除が開く', rows()[1].getAttribute('aria-expanded') === 'true' && root.querySelector('.k-daycard').textContent.includes('担当 ') && !!btn(root.querySelector('.k-daycard'), '削除'));
+  [...root.querySelectorAll('.k-daycard button.k-pill')].find((x) => x.textContent === '背中').click(); await settle();
+  ok('19-6 部位で絞れる', rows().length === 1 && rows()[0].textContent.includes('11/1'));
+  w.KarteUI.open('C1', '会員', 'notes'); await settle();
+  btn(root, '＋ メモを書く').click(); await settle();
+  ok('19-7 ★指導メモ（K5）：ネイビーの見出し・社内メモのカード（お客様には見えません）・保存は下に固定・下のタブは隠す', root.classList.contains('k-entry') && root.querySelector('.k-entrytitle').textContent === '指導メモを書く' && root.textContent.includes('お客様には見えません') && !!root.querySelector('.k-savebar') && w.getComputedStyle(root.querySelector('.k-tabs')).display === 'none');
+  w.history.back(); await new Promise((r) => setTimeout(r, 40)); await settle();
+  ok('19-8 戻るとカルテの見出しと下のタブが戻る', !root.classList.contains('k-entry') && !root.querySelector('.k-entryhead') && w.getComputedStyle(root.querySelector('.k-tabs')).display !== 'none');
+  w.KarteUI.open('C1', '会員', 'body'); await settle();
+  btn(root, '＋ 測定を記録').click(); await settle();
+  ok('19-9 測定の記入画面も同じ作り（ネイビーの見出し・保存は下に固定）', root.querySelector('.k-entrytitle').textContent === '測定を記録' && !!root.querySelector('.k-savebar'));
+  //   端に寄せる（LINE の下スワイプの最小化に渡しにくくする）
+  Object.defineProperty(root, 'scrollHeight', { value: 2000, configurable: true }); Object.defineProperty(root, 'clientHeight', { value: 800, configurable: true });
+  root.scrollTop = 0;
+  const ev = new w.Event('touchstart', { bubbles: true }); ev.touches = [{ clientX: 100, clientY: 100 }]; root.querySelector('.k-body').dispatchEvent(ev);
+  ok('19-11 ★押せる大きさ：見出しの日付は文字の部分全体（44px 以上）・日別の行は44px', /k-entrytext\{position:relative;min-height:44px;\}/.test(SRC) && /k-dateover\{[^}]*min-height:44px/.test(SRC) && /k-dayrow\{[^}]*min-height:44px/.test(SRC));
+  ok('19-10 ★一番上で触ると1px内側へ寄せる（引き下げを画面の中で受け止める）', root.scrollTop === 1 && /min-height:calc\(100% \+ 2px\)/.test(SRC) && /overscroll-behavior:contain/.test(SRC), String(root.scrollTop));
+  w.KarteUI.close && w.KarteUI.close();
+}
+
+{
+  //   「日別の記録を確かめる」の要求は、そのお客様だけ（読み込みに失敗した後、別のお客様に持ち越さない・関門②）
+  let failC1 = false;
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_training') { if (b.customerId === 'C1' && failC1) return { success: false, code: 'INTERNAL' }; return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] }; }
+    return { success: true };
+  });
+  w.localStorage.setItem('karte_tr_draft_v1:T1:C1', JSON.stringify({ v: 1, tid: 'T1', cid: 'C1', sessionDate: '2026-11-05', items: [{ exercise: 'スクワット', sets: [{ w: 40, r: 10, done: true }] }], reqId: 'r1',
+    pending: { payload: { customerId: 'C1', sessionDate: '2026-11-05', items: [{ exercise: 'スクワット', sets: [{ weight_kg: 40, reps: 10 }] }] }, reqId: 'r1' }, at: Date.now() }));
+  w.KarteUI.open('C1', '会員', 'training'); await settle();
+  const root = w.document.getElementById('karteRoot');
+  ok('19-12 送り直し待ちなら開いたとき送り直しの画面', !!btn(root, '同じ内容で送り直す'));
+  failC1 = true;
+  btn(root, '日別の記録を確かめる').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
+  w.KarteUI.open('C2', '別の会員', 'training'); await settle();
+  ok('19-13 ★別のお客様のトレーニングでは日別の記録を勝手に開かない', !root.querySelector('.k-daycard.focus') && !root.querySelector('.k-dayrow[aria-expanded="true"]'));
   w.KarteUI.close && w.KarteUI.close();
 }
 
