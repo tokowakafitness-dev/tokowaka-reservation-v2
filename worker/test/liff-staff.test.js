@@ -70,7 +70,7 @@ const btnT = (root, t) => [...root.querySelectorAll('button')].find((x) => x.tex
   const rules = added.replace(/\/\*[\s\S]*?\*\//g, '').split('}').map((x) => x.trim()).filter(Boolean).map((x) => x.split('{')[0].trim());
   const memberClasses = /(^|[ ,])(header|\.card|\.btn|\.btn-outline|\.muted|\.big|\.sect-h|\.screen|\.trainer|\.hlabel|\.home-row|input|select|textarea|body)\b/;
   const STAFF_ONLY = /^\.(slist|srow|schip|sgrid2|sgrid3|slab|sbtns|sseg|ssave|shead|sback|stx|stt|sst|sbanner)\b/;   // トレーナー画面にしかない部品
-  const leak = rules.filter((sel) => sel.split(',').some((one) => memberClasses.test(one.trim()) && !/^body\.staff\b/.test(one.trim()) && !STAFF_ONLY.test(one.trim())));
+  const leak = rules.filter((sel) => sel.split(',').some((one) => memberClasses.test(one.trim()) && !/^body\.staff\b/.test(one.trim()) && !/^body\.booting\b/.test(one.trim()) && !STAFF_ONLY.test(one.trim())));   // booting＝最初の画面が出るまで（8-4 で外れることを確かめる）
   ok('1-1b トレーナー画面だけの部品は、会員の画面の HTML に出てこない', !/class="[^"]*\b(slist|srow|schip|sgrid2|sgrid3|slab|sbtns|sseg|ssave|shead|sback|sbanner)\b/.test(BODY));
   ok('1-1 ★足した見た目の指定は、会員の画面で使う部品（header・.card・.btn など）には body.staff の時だけ効く', added.length > 0 && leak.length === 0, leak.join(' | '));
   const w = boot({ custs: [{ customerId: 'C1', name: '山田 花子' }] });
@@ -220,6 +220,19 @@ ok('6-4 ★消化ペースも絵文字の印をやめた（遅れ＝コーラル
   ok('7-3 ★会員の画面に入ったらトレーナーの見た目を外す', !w.document.body.classList.contains('staff'));
   w.__t.renderCustomerList();
   ok('7-4 一覧に戻ったら付け直す', w.document.body.classList.contains('staff'));
+}
+
+// ================= 8. 最初の読み込み・見出しのネイビー（2026-11-06） =================
+ok('8-1 ★最初の読み込みは新しい見た目（body に booting を最初から付ける・地 #fafbfc・ネイビーの見出し・回る印）', /<body class="booting">/.test(HTML) && /body\.booting\{background:#fafbfc;\}/.test(HTML) && /body\.booting header\{background:#243b66;/.test(HTML) && /body\.booting #s-loading::before\{/.test(HTML));
+ok('8-2 ★トレーナーの見出しはネイビー・顧客一覧の題名とお名前を帯につなげる', /body\.staff header\{background:#243b66;color:#fff;/.test(HTML) && /body\.staff #s-tadmin:not\(\.sub\) > \.big\{background:#243b66;/.test(HTML));
+{
+  const dom = new JSDOM('<!doctype html><html><head><style>' + STYLE + '</style></head><body class="booting">' + BODY + '</body></html>', { runScripts: 'outside-only' });
+  const w = dom.window;
+  w.eval('var state = {}; var _showGen = 0;' + SHOW + 'window.show = show;');
+  w.show('s-loading');
+  ok('8-3 読み込み中は目印を付けたまま', w.document.body.classList.contains('booting'));
+  w.show('s-home');
+  ok('8-4 ★最初の画面が出たら外す', !w.document.body.classList.contains('booting'));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} トレーナーの予約ページ 検証: ${pass} passed / ${fail} failed`);

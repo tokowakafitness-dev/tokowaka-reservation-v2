@@ -58,7 +58,17 @@
 .btn.btn-karte:active{background:#1a2d50;border-color:#1a2d50;}
 /* ★トレーナーで開いたときだけ（body.staff）：カルテと同じ配色・文字・大きさ・見分け方（2026-11-06 オーナー承認のモック P1〜P6）。会員の画面には効かない */
 body.staff{background:#fafbfc;color:#1c2321;font-size:14px;}
-body.staff header{background:#fff;color:#1c2321;border-bottom:1px solid #e7ebf0;font-family:'Noto Sans JP',sans-serif;font-size:12px;font-weight:500;letter-spacing:.08em;padding:12px 14px;}
+body.staff header{background:#243b66;color:#fff;border-bottom:0;font-family:'Noto Sans JP',sans-serif;font-size:12px;font-weight:500;letter-spacing:.08em;padding:12px 14px;}
+/* 顧客一覧の最初（題名とお名前）は見出しのネイビーの帯につなげる（2026-11-06 オーナー：メインの色をヘッダーあたりで） */
+body.staff #s-tadmin:not(.sub) > .big{background:#243b66;color:#fff;margin:-12px -14px 0;padding:2px 14px 0;}
+body.staff #s-tadmin:not(.sub) > #tadminName{background:#243b66;color:rgba(255,255,255,.85);margin:0 -14px 12px !important;padding:2px 14px 14px;font-size:12px;}
+/* ★最初の読み込み（役割が分かる前・body.booting）：新しい見た目で出す。最初の画面が出たら外す */
+body.booting{background:#fafbfc;}
+body.booting header{background:#243b66;color:#fff;border-bottom:0;font-family:'Noto Sans JP',sans-serif;font-size:12px;font-weight:500;letter-spacing:.08em;padding:12px 14px;}
+body.booting #s-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:60vh;}
+body.booting #s-loading::before{content:'';width:30px;height:30px;border-radius:50%;border:3px solid #edf2fb;border-top-color:#243b66;animation:bootspin .8s linear infinite;}
+body.booting #s-loading .muted{color:#5b6661;font-size:13px;}
+@keyframes bootspin{to{transform:rotate(360deg);}}
 body.staff .lang-toggle{display:none;}
 body.staff .screen{padding:12px 14px;}
 body.staff .big{font-family:'Noto Sans JP',sans-serif;font-size:17px;font-weight:700;color:#1c2321;letter-spacing:0;}
@@ -112,7 +122,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
 .sbtns .btn{flex:1 1 140px;}
 </style>
 </head>
-<body>
+<body class="booting">
 <div id="app">
   <header>
     <span data-i18n="header">TOKOWAKA 吉祥寺｜予約</span>
@@ -227,7 +237,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-06b トレーナーの予約ページをカルテと同じ作りに（P1〜P6・代行中の帯）';
+  var LIFF_BUILD = '2026-11-06c 読み込み画面を新しい見た目に・トレーナーの見出しをネイビーに';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -667,6 +677,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
     //   ★会員の画面（ホーム・登録・自分の予約）に入ったらトレーナーの見た目を外す（トレーナーの一覧に戻るとき付け直す）
     if (['s-home', 's-register', 's-myres'].indexOf(id) >= 0) document.body.classList.remove('staff');
+    if (id !== 's-loading') document.body.classList.remove('booting');   // 最初の画面が出たら読み込みの見た目を外す
     if (typeof _staffBanner === 'function') _staffBanner(id);
   }
   //   代行・変更の帯（モック P4・2026-11-06）：トレーナーが会員の予約画面を使い回すとき、誰の予約を扱っているかを常に出す
