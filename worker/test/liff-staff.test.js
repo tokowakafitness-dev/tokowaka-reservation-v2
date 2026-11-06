@@ -235,5 +235,20 @@ ok('8-2 ★トレーナーの見出しはネイビー・顧客一覧の題名と
   ok('8-4 ★最初の画面が出たら外す', !w.document.body.classList.contains('booting'));
 }
 
+// ================= 9. チケット補充の配置・見やすさ（2026-11-06 オーナー：配置がおかしい・見にくい） =================
+{
+  const w = boot({ custs: [{ customerId: 'C1', name: '山田' }] });
+  w.document.body.classList.add('staff');
+  w.__t.renderCustomerDetail('C1', '山田');
+  const pair = w.document.getElementById('refillPair'), lab = w.document.querySelector('label[for=refillPair]');
+  const pcs = w.getComputedStyle(pair), lcs = w.getComputedStyle(lab);
+  ok('9-1 ★ペア・レンタルのチェック欄は横いっぱいに広げない（隠して、名前を押して選ぶボタンに）', pcs.position === 'absolute' && pcs.opacity === '0' && lcs.borderRadius === '999px' && parseInt(lcs.minHeight, 10) >= 44, pcs.position + ' ' + pcs.width + ' / ' + lcs.borderRadius);
+  pair.click();   // 名前の欄を押したのと同じ（チェックが付く）
+  const lc2 = w.getComputedStyle(lab);
+  ok('9-2 ★選ぶとネイビーに塗り、文字は白い太字（後ろの名前の欄の指定に負けない）・押す場所44px', lc2.backgroundColor === 'rgb(36, 59, 102)' && lc2.color === 'rgb(255, 255, 255)' && lc2.fontWeight === '700' && parseInt(lc2.minHeight, 10) >= 44, lc2.backgroundColor + ' ' + lc2.color + ' ' + lc2.fontWeight + ' ' + lc2.minHeight);
+  ok('9-3 ★入力欄を横いっぱいにする指定はチェック欄に効かない', /body\.staff #s-tadmin \.card input:not\(\[type=checkbox\]\):not\(\[type=radio\]\),body\.staff #s-tadmin \.card select\{width:100%;/.test(HTML));
+  ok('9-4 ★見出しは濃い太字・文字の間を詰める／残り回数の最初の行は区切り線を出さない', /body\.staff \.sect-h\{[^}]*font-size:14px;color:#1c2321;font-weight:700;letter-spacing:\.02em;/.test(HTML) && /body\.staff \.card \.home-row:first-child[^{]*\{border-top:0;/.test(HTML));
+}
+
 console.log(`\n${fail ? '❌' : '✅'} トレーナーの予約ページ 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

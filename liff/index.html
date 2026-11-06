@@ -78,7 +78,17 @@ body.staff .btn{min-height:44px;padding:10px 14px;border-radius:10px;background:
 body.staff .btn-outline{background:#fff;color:#243b66;border:1.5px solid #243b66;}
 body.staff .btn.btn-danger{background:#fff;color:#bb4630;border:1px solid #e09a86;font-weight:500;}
 body.staff .btn:active{filter:brightness(.92);}
-body.staff .sect-h{font-family:'Noto Sans JP',sans-serif;font-size:12px;color:#5b6661;font-weight:500;letter-spacing:.08em;margin:14px 2px 6px;}
+body.staff .sect-h{font-family:'Noto Sans JP',sans-serif;font-size:14px;color:#1c2321;font-weight:700;letter-spacing:.02em;margin:18px 2px 8px;}
+/* 残り回数の行：最初の区切り線は出さない・線は新しい色・項目名は読める濃さ（2026-11-06 オーナー：見にくい） */
+body.staff .home-row{border-top-color:#e7ebf0;}
+body.staff .card .home-row:first-child,body.staff .card > div:first-child > .home-row:first-child{border-top:0;margin-top:0;padding-top:0;}
+body.staff .home-row .k{color:#5b6661;font-size:13px;}
+/* ペアチケット・レンタル：チェック欄を隠し、押して選ぶボタンにする（選ぶとネイビー） */
+body.staff #refillPair,body.staff #refillRental{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none;}
+body.staff #s-tadmin .card label[for=refillPair],body.staff #s-tadmin .card label[for=refillRental]{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border:1px solid #8692a6;border-radius:999px;background:#fff;color:#1c2321;font-size:13px;font-weight:500;cursor:pointer;}
+body.staff #s-tadmin .card #refillPair:checked + label,body.staff #s-tadmin .card #refillRental:checked + label{background:#243b66;border-color:#243b66;color:#fff;font-weight:700;}
+body.staff #refillPair:disabled + label{opacity:.45;}
+body.staff #refillPair:focus-visible + label,body.staff #refillRental:focus-visible + label{box-shadow:0 0 0 3px rgba(36,59,102,.25);}
 body.staff #s-tadmin input:not([type=checkbox]):not([type=radio]),body.staff #s-tadmin select,body.staff #s-tadmin textarea{min-height:44px;border:1px solid #8692a6;border-radius:10px;font-size:16px;padding:0 10px;box-sizing:border-box;background:#fff;color:#1c2321;font-family:inherit;}
 body.staff #s-tadmin input:focus,body.staff #s-tadmin select:focus,body.staff #s-tadmin textarea:focus{outline:none;border-color:#243b66;box-shadow:0 0 0 3px rgba(36,59,102,.18);}
 body.staff .hlabel{border-radius:999px;padding:3px 10px;font-size:12px;}
@@ -107,7 +117,7 @@ body.staff .trainer{border:1px solid #dde3ea;border-radius:14px;box-shadow:0 1px
 .sgrid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
 .sgrid2 .btn{margin-top:0;}
 body.staff #s-tadmin .card label{font-weight:500;font-size:12px;color:#5b6661;}
-body.staff #s-tadmin .card input,body.staff #s-tadmin .card select{width:100%;margin:4px 0 12px;}
+body.staff #s-tadmin .card input:not([type=checkbox]):not([type=radio]),body.staff #s-tadmin .card select{width:100%;margin:4px 0 12px;}
 body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padding:10px 12px;color:#243b66 !important;}
 .sseg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:4px 0 12px;}
 .sseg button{min-height:44px;border:1px solid #8692a6;border-radius:10px;background:#fff;font-size:13px;font-family:inherit;color:#1c2321;}
@@ -237,7 +247,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-06c 読み込み画面を新しい見た目に・トレーナーの見出しをネイビーに';
+  var LIFF_BUILD = '2026-11-06d トレーナー：チケット補充の配置・見出しと残り回数を見やすく';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
