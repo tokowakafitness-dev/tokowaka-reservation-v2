@@ -122,8 +122,8 @@ const dayOffset = (n) => { const t = new Date(Date.now() + 9 * 3600000 + n * 864
   ok('1-5 書き込みは許可外の Origin で403', r5.status === 403 && r5.detail === 'ORIGIN');
   const r6 = await call('U_T1', 'k_addNote', { ...w, clientReqId: crid() }, { origin: null });
   ok('1-6 Origin が無くても403', r6.status === 403);
-  const r7 = await call('U_T1', 'k_addNote', { ...w, clientReqId: crid() }, { iatAge: 601 });
-  ok('1-7 発行から10分を超えたトークンは書けない', r7.status === 401 && r7.detail === 'STALE_TOKEN');
+  const r7 = await call('U_T1', 'k_addNote', { ...w, clientReqId: crid() }, { iatAge: 3601 });
+  ok('1-7 発行から1時間を超えたトークンは書けない（決定0142：10分→1時間）', r7.status === 401 && r7.detail === 'STALE_TOKEN');
   const r8 = await call('U_T1', 'k_addNote', { ...w, clientReqId: crid() }, { noIat: true });
   ok('1-8 iat の無いトークンは書けない', r8.status === 401);
   const r8b = await call('U_T1', 'k_summary', { customerId: 'C1' }, { iatAge: 3000 });

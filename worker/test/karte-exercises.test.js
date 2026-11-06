@@ -128,8 +128,8 @@ ok('E2-3 名前の正規化：前後の空白だけ落とす・全角半角は�
   const c1 = await call('U_C1', 'k_saveExercise', { ...w, clientReqId: crid() });
   const g1 = await call('U_GUEST', 'k_exercises', {});
   ok('E3-1 会員・未登録は届かない（403）', c1.status === 403 && g1.status === 403, JSON.stringify([c1, g1]));
-  const st = await call('U_T1', 'k_saveExercise', { ...w, clientReqId: crid() }, { iatAge: 601 });
-  ok('E3-2 ★発行から10分を超えたトークンでは書けない（I46 はそのまま）', st.status === 401 && st.detail === 'STALE_TOKEN', JSON.stringify(st));
+  const st = await call('U_T1', 'k_saveExercise', { ...w, clientReqId: crid() }, { iatAge: 3601 });
+  ok('E3-2 ★発行から1時間を超えたトークンでは書けない（I46・決定0142）', st.status === 401 && st.detail === 'STALE_TOKEN', JSON.stringify(st));
   const og = await call('U_T1', 'k_saveExercise', { ...w, clientReqId: crid() }, { origin: 'https://evil.example' });
   ok('E3-3 許可外の Origin は403', og.status === 403 && og.detail === 'ORIGIN');
   ok('E3-4 ここまで1行も書いていない', q1(env, `SELECT COUNT(*) n FROM karte_exercises`).n === 0);

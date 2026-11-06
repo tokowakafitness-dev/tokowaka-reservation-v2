@@ -86,14 +86,14 @@ const trResp = (extra) => async (b) => {
 let S1store = null;
 {
   //   S1：開いてから11分後に保存する＝手元のトークンが9分を超えている → 送らずに退避して logout → 読み直し
-  const { w, sent } = boot(trResp(), { token: jwt(11 * 60) });
+  const { w, sent } = boot(trResp(), { token: jwt(61 * 60) });
   await openWithSet(w);
   btn(R(w), '保存する').click(); await settle();
   const d = draftOf(w);
   const ss = JSON.parse(w.sessionStorage.getItem('karte_draft_v1') || 'null');
   const mark = Number(w.sessionStorage.getItem('karte_reauth') || 0);
   ok('S1-1 ★古いトークンでは送らない（k_addTraining を1回も送らない）', !sent.some((x) => x.action === 'k_addTraining'), JSON.stringify(sent.map((x) => x.action)));
-  ok('S1-2 ★LINE アプリの中でも logout してから読み直す', w.logouts === 1 && w.reloaded === 1, `logout=${w.logouts} reload=${w.reloaded}`);
+  ok('S1-2 ★LINE アプリの中では logout せず読み直すだけ（logout すると最初のページに戻る・決定0142）', w.logouts === 0 && w.reloaded === 1, `logout=${w.logouts} reload=${w.reloaded}`);
   ok('S1-3 ★入力は端末の下書きに残り、送信中（pending）にしない＝読み直し後に「結果が分からない」と出さない', d && d.items.length === 1 && d.items[0].sets[0].done === true && !d.pending, JSON.stringify(d));
   ok('S1-4 退避（sessionStorage）は記録の画面へ戻る印だけ（中身・氏名を入れない）・読み直しの印に時刻', ss && ss.tab === 'training' && ss.draft && ss.draft.kind === 'training' && !JSON.stringify(ss).includes('スクワット') && !JSON.stringify(ss).includes('会員') && mark > Date.now() - 5000);
   S1store = { ls: storeOf(w.localStorage), ss: storeOf(w.sessionStorage) };
@@ -112,7 +112,7 @@ let S1store = null;
 {
   //   S3：読み直してもまだ古い（Worker が 401）→ もう読み直さず「LINE から開き直して」・入力は端末に残る
   const { w, sent } = boot(trResp((b) => (b.action === 'k_addTraining' ? { success: false, code: 'UNAUTHORIZED', detail: 'STALE_TOKEN' } : { success: true })),
-    { token: jwt(11 * 60), ls: S1store.ls, ss: S1store.ss });
+    { token: jwt(61 * 60), ls: S1store.ls, ss: S1store.ss });
   await new Promise((r) => setTimeout(r, 30)); await settle();
   btn(R(w), '保存する').click(); await settle();
   const d = draftOf(w);
@@ -127,11 +127,11 @@ let S1store = null;
   await openWithSet(w);
   btn(R(w), '保存する').click(); await settle();
   const d = draftOf(w);
-  ok('S4-1 ★401 の経路も logout してから読み直す（送った中身は下書きに固定）', w.logouts === 1 && w.reloaded === 1 && d && d.pending && d.pending.payload.items.length === 1);
+  ok('S4-1 ★401 の経路も同じ取り直し（アプリの中は logout しない・送った中身は下書きに固定）', w.logouts === 0 && w.reloaded === 1 && d && d.pending && d.pending.payload.items.length === 1);
 }
 {
   //   S5：liff.getDecodedIDToken があればそれの iat を使う（送るトークンと LIFF のトークンが同じとき）
-  const { w, sent } = boot(trResp(), { token: 'OPAQUE', liff: { getDecodedIDToken: () => ({ iat: Math.floor(Date.now() / 1000) - 600 }) } });
+  const { w, sent } = boot(trResp(), { token: 'OPAQUE', liff: { getDecodedIDToken: () => ({ iat: Math.floor(Date.now() / 1000) - 3600 }) } });
   await openWithSet(w);
   btn(R(w), '保存する').click(); await settle();
   ok('S5-1 getDecodedIDToken の iat で古さを見る', !sent.some((x) => x.action === 'k_addTraining') && w.reloaded === 1);
@@ -139,29 +139,40 @@ let S1store = null;
   const e2 = boot(trResp(), { token: jwt(-120) });
   await openWithSet(e2.w);
   btn(R(e2.w), '保存する').click(); await settle();
-  const e3 = boot(trResp(), { token: jwt(8 * 60) });
+  const e3 = boot(trResp(), { token: jwt(58 * 60) });
   await openWithSet(e3.w);
   btn(R(e3.w), '保存する').click(); await settle();
-  ok('S6-1 iat が未来・発行から8分のトークンはそのまま送る', e2.sent.some((x) => x.action === 'k_addTraining') && e3.sent.some((x) => x.action === 'k_addTraining') && e2.w.reloaded === 0 && e3.w.reloaded === 0);
+  ok('S6-1 iat が未来・発行から58分のトークンはそのまま送る', e2.sent.some((x) => x.action === 'k_addTraining') && e3.sent.some((x) => x.action === 'k_addTraining') && e2.w.reloaded === 0 && e3.w.reloaded === 0);
+}
+{
+  //   S1b：LINE アプリの外（PC 等の外部ブラウザ・isInClient()===false）では logout してから読み直す（liff.init が古いトークンを返し続けるため）
+  const out = boot(trResp(), { token: jwt(61 * 60), liff: { isInClient: () => false } });
+  await openWithSet(out.w);
+  btn(R(out.w), '保存する').click(); await settle();
+  ok('S1b-1 ★アプリの外では logout してから読み直す', out.w.logouts === 1 && out.w.reloaded === 1 && !out.sent.some((x) => x.action === 'k_addTraining'), `logout=${out.w.logouts} reload=${out.w.reloaded}`);
+  const inn = boot(trResp(), { token: jwt(61 * 60), liff: { isInClient: () => true } });
+  await openWithSet(inn.w);
+  btn(R(inn.w), '保存する').click(); await settle();
+  ok('S1b-2 ★アプリの中（isInClient()===true）では logout しない', inn.w.logouts === 0 && inn.w.reloaded === 1, `logout=${inn.w.logouts} reload=${inn.w.reloaded}`);
 }
 {
   //   S7：トレーニング以外の書き込み（指導メモ）も同じ：送らずに入力を退避して取り直す
-  const { w, sent } = boot(async (b) => (b.action === 'k_notes' ? { success: true, karteSchema: 32, notes: [] } : { success: true }), { token: jwt(11 * 60) });
+  const { w, sent } = boot(async (b) => (b.action === 'k_notes' ? { success: true, karteSchema: 32, notes: [] } : { success: true }), { token: jwt(61 * 60) });
   w.KarteUI.open('C1', '会員', 'notes'); await settle();
   btn(R(w), '＋ メモを書く').click(); await settle();
   R(w).querySelectorAll('textarea')[0].value = '消したくない架空のメモ';
   btn(R(w), '保存する').click(); await settle();
   const ss = JSON.parse(w.sessionStorage.getItem('karte_draft_v1') || 'null');
-  ok('S7-1 ★指導メモも送らずに退避して logout → 読み直し', !sent.some((x) => x.action === 'k_addNote') && w.logouts === 1 && w.reloaded === 1 && ss && ss.draft && ss.draft.data.body === '消したくない架空のメモ', JSON.stringify(ss));
+  ok('S7-1 ★指導メモも送らずに退避して読み直し', !sent.some((x) => x.action === 'k_addNote') && w.logouts === 0 && w.reloaded === 1 && ss && ss.draft && ss.draft.data.body === '消したくない架空のメモ', JSON.stringify(ss));
   //   S8：種目の登録（k_saveExercise）も書き込み＝同じ守り
-  const e = boot(trResp(), { token: jwt(11 * 60) });
+  const e = boot(trResp(), { token: jwt(61 * 60) });
   e.w.KarteUI.open('C1', '会員', 'training'); await settle();
   btn(R(e.w), '＋ 今日の記録').click(); await settle();
   btn(R(e.w), '＋ 種目を足す').click();
   const q = R(e.w).querySelector('input[aria-label="種目を探す"]'); q.value = 'ケーブルクロス'; q.oninput(); await settle();
   btn(R(e.w), '「ケーブルクロス」を').click(); await settle();
   ok('S8-1 種目の登録も古いトークンでは送らずに取り直す', !e.sent.some((x) => x.action === 'k_saveExercise') && e.w.reloaded === 1);
-  ok('S9-1 ★Worker の10分の規則（I46）は変えていない', /TOKEN_MAX_AGE_S: 600,/.test(readFileSync(join(ROOT, 'worker/src/routes/karte.js'), 'utf8')) && /TOKEN_REFRESH_S = 540/.test(SRC));
+  ok('S9-1 ★Worker の上限は1時間・画面は59分で取り直す（決定0142）', /TOKEN_MAX_AGE_S: 3600,/.test(readFileSync(join(ROOT, 'worker/src/routes/karte.js'), 'utf8')) && /TOKEN_REFRESH_S = 3540/.test(SRC));
 }
 {
   //   S10：index.html の起動：ログインの印が無い（liff.logout の後に LINE が自動で入り直さなかった）→ liff.login を1回だけ呼ぶ。
@@ -209,7 +220,7 @@ const stashOf = (w) => ({ ls: storeOf(w.localStorage), ss: storeOf(w.sessionStor
 async function afterReload(st, resp) { const e = boot(resp || baseResp(), { token: jwt(5), ls: st.ls, ss: st.ss }); for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5)); await settle(); return e; }
 {
   //   目標線（体組成）
-  const { w, sent } = boot(baseResp(), { token: jwt(11 * 60) });
+  const { w, sent } = boot(baseResp(), { token: jwt(61 * 60) });
   w.KarteUI.open('C1', '会員', 'body'); await settle();
   const gcard = () => [...R(w).querySelectorAll('.k-card')].filter((c) => c.textContent.includes('体重の目標線')).pop();
   const ins = gcard().querySelectorAll('input');
@@ -227,7 +238,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
 }
 {
   //   退会・再入会の発効日（契約・会員）
-  const { w, sent } = boot(baseResp(), { token: jwt(11 * 60) });
+  const { w, sent } = boot(baseResp(), { token: jwt(61 * 60) });
   w.KarteUI.open('C1', '会員', 'contract'); await settle();
   const di = [...R(w).querySelectorAll('input[type="date"]')].pop();
   di.value = '2026-10-31';
@@ -245,7 +256,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
 }
 {
   //   種目の登録（新しい名前・部位）の途中
-  const { w, sent } = boot(baseResp(), { token: jwt(11 * 60) });
+  const { w, sent } = boot(baseResp(), { token: jwt(61 * 60) });
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   btn(R(w), '＋ 今日の記録').click(); await settle();
   btn(R(w), '＋ 種目を足す').click();
@@ -265,7 +276,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
 }
 {
   //   部位を直すモードの途中
-  const { w } = boot(baseResp(), { token: jwt(11 * 60) });
+  const { w } = boot(baseResp(), { token: jwt(61 * 60) });
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   btn(R(w), '＋ 今日の記録').click(); await settle();
   btn(R(w), '＋ 種目を足す').click();
@@ -279,7 +290,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
 }
 {
   //   中3：未来の時刻の印は無効（消して、取り直しを止めない）
-  const { w, sent } = boot(trResp(), { token: jwt(11 * 60), ss: { karte_reauth: String(Date.now() + 20 * 60 * 1000) } });
+  const { w, sent } = boot(trResp(), { token: jwt(61 * 60), ss: { karte_reauth: String(Date.now() + 20 * 60 * 1000) } });
   await openWithSet(w);
   btn(R(w), '保存する').click(); await settle();
   const mk = Number(w.sessionStorage.getItem('karte_reauth') || 0);

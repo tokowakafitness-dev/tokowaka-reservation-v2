@@ -21,7 +21,7 @@ import { EXERCISE_LIMITS, normalizeExerciseName, normalizePart } from '../lib/ka
 
 export const KARTE_LIMITS = {
   BODY_BYTES: 16 * 1024,
-  TOKEN_MAX_AGE_S: 600,
+  TOKEN_MAX_AGE_S: 3600,   // 2026-11-06 オーナー承認（決定0142）で10分→1時間＝LINE の ID トークンの有効期限。exp は auth.js が別に見る。LIFF は開いたままトークンが新しくならず、10分では施術中に保存できなかった
   RATE_PER_WINDOW: 60,
   WINDOW_MS: 10 * 60 * 1000,
   NOTE_CHARS: 2000,

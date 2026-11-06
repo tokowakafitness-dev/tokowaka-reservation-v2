@@ -479,7 +479,7 @@ const PREV = Object.assign({}, KARTE, { notes: [
   };
   const { w, root } = await previewEnv(false, kfetch);
   w.reloaded = 0; w.__karteReload = () => { w.reloaded++; }; w.logouts = 0; w.liff.logout = () => { w.logouts++; };
-  const old = jwt(11 * 60); w.liff.getIDToken = () => old;
+  const old = jwt(61 * 60); w.liff.getIDToken = () => old;
   kbtn(root, '指導の履歴').click(); await settle();
   kbtn([...root.querySelectorAll('.k-mpreview .card')].find((c) => c.textContent.includes('わたしの枚')), '直す').click(); await settle();
   const ta = root.querySelector('.k-mpreview textarea[aria-label="お客様へ"]'); ta.value = '読み直しの前に直した文'; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
@@ -488,7 +488,7 @@ const PREV = Object.assign({}, KARTE, { notes: [
   const nSave = w.fetched.filter((b) => b.action === 'k_saveMemberNote').length;
   kbtn(root, '保存する').click(); await settle();
   const ss = JSON.parse(w.sessionStorage.getItem('karte_draft_v1') || 'null');
-  ok('8b-1 ★古いトークンでは送らず、直していた入力（文・次回までに・触ったタグ・送信番号）を退避して logout → 読み直し', w.fetched.filter((b) => b.action === 'k_saveMemberNote').length === nSave && w.reloaded === 1 && w.logouts === 1
+  ok('8b-1 ★古いトークンでは送らず、直していた入力（文・次回までに・触ったタグ・送信番号）を退避して読み直し（アプリの中は logout しない）', w.fetched.filter((b) => b.action === 'k_saveMemberNote').length === nSave && w.reloaded === 1 && w.logouts === 0
      && ss && ss.draft && ss.draft.sub === 'mpreview' && ss.draft.cid === 'C1' && ss.draft.edit.mnoteId === 'M1' && ss.draft.edit.message === '読み直しの前に直した文' && ss.draft.edit.todo[1] === '水を飲む' && ss.draft.edit.tagsTouched === true && !!ss.draft.edit.reqId, JSON.stringify(ss));
   ok('8b-2 ★退避に氏名を残さない', ss && ss.name === '' && !JSON.stringify(ss).includes('会員'), JSON.stringify(ss));
   //   読み直した後（新しいトークン）

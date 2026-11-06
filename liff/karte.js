@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-06c 保存の前にトークンを取り直す・種目を全員で共有し部位を付ける・自重・休憩タイマーの切り替え';
+  var KARTE_BUILD = '2026-11-06d 書き込みのトークンの上限を1時間に・LINE アプリの中で logout しない（決定0142）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -290,7 +290,7 @@
   //   新しいトークンで書けた＝読み直しの印を消す（次にトークンが古くなったら、また1回だけ読み直せる）
   function doneWrite(r) { if (r && r.success) { try { sessionStorage.removeItem(REAUTH_KEY); } catch (e) {} } return r; }
   //   ---- トークンの鮮度（画面の側の見積もり。最終の判定は Worker）
-  var TOKEN_REFRESH_S = 540;          // 9分。Worker の上限（KARTE_LIMITS.TOKEN_MAX_AGE_S=600）より1分早く取り直す
+  var TOKEN_REFRESH_S = 3540;         // 59分。Worker の上限（KARTE_LIMITS.TOKEN_MAX_AGE_S=3600・決定0142）より1分早く取り直す
   var REAUTH_KEY = 'karte_reauth';    // 読み直し済みの印（sessionStorage・中身は印を付けた時刻）
   var REAUTH_TTL = 10 * 60 * 1000;    // 印が効くのは10分（それより前の印は無いものとして扱う）
   function adoptFreshToken() {
@@ -337,7 +337,8 @@
     return reauth(draft);
   }
   //   取り直し：入力を端末に退避 → LINE からいったんログアウト → 読み直し（liff.init が新しいトークンを取る）
-  //     ★LINE アプリの中でも logout する（読み直しだけでは liff.init が保存済みの同じトークンを使い、直らない）
+  //     ★logout は LINE アプリの外（PC 等の外部ブラウザ）だけ。LINE アプリの中で logout すると LINE のログインを経由して
+  //       最初のページに戻ってしまった（2026-11-06 オーナーの実機・決定0142）。アプリの中は読み直しだけ（index.html の _apiGas と同じ）
   //     ★印（REAUTH_KEY）は新しいトークンで書けたときに消す（doneWrite）。印が効いているあいだにまた古ければ案内（入力は端末に残る）
   function reauth(draft) {
     //   ★トレーニングの送信中に別の顧客を開いていたら、読み直さない（その顧客の画面を奪わない・下書きの pending は端末に残る）
@@ -347,7 +348,7 @@
         sessionStorage.setItem(REAUTH_KEY, String(Date.now()));
         var isTr = !!(draft && draft.kind === 'training');
         sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ customerId: isTr ? draft.customerId : cur.customerId, name: '', tab: (draft && draft.tab) || (isTr ? 'training' : cur.tab), draft: isTr ? (draft.ex ? { kind: 'training', ex: draft.ex } : { kind: 'training' }) : (draft || null), at: Date.now() }));   // ★氏名は残さない（どの画面も・開き直したら概要から取る）。トレーニングの中身は下書き（localStorage）にある
-        try { if (window.liff && typeof liff.logout === 'function') liff.logout(); } catch (e) {}
+        try { if (window.liff && typeof liff.logout === 'function' && typeof liff.isInClient === 'function' && liff.isInClient() === false) liff.logout(); } catch (e) {}
         reloadPage();
         return new Promise(function () {});
       }
