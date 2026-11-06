@@ -190,6 +190,7 @@
 ## 5. 未確認（関門①の前に確かめる）
 
 1. **GAS の Web アプリが受けられる URL の長さ**。最悪で約2,700文字。検査で計算し、反映後に `--live` で最悪の長さを通す。通らなければ100字を下げる（オーナーに再確認）。
+   - **確認済み（2026-11-06）**：本番の GAS に `?probe=<x×N>&action=line_urlLengthProbe` を送り、2,700・5,400・8,000字のすべてで `{"success":false,"code":"UNAUTHORIZED"}`（＝末尾の action まで届いた）。実装の最悪の URL（idToken 1,300字＋絵文字100個）は検査で 2,766字（`liff-cancel-reason.test.js` 2-9 は 5,400字以下を確かめる）。LINE の内側のブラウザに固有の上限は関門③に残す（改訂2-6）。
 2. **キャンセルした時刻は今どこにも残っていない**：台帳（line_reservations）にキャンセルの時刻の列は無い（`cancelReservationLine` は7列目の状態と9列目の備考だけ書く）。当日消化のときだけ `transfer_credits` の2列目（振替権を付けた時刻）が実質のキャンセル時刻になる（振替予約のキャンセルは付かない）。→ cancel_notes の `cancelled_at` が初めての記録になる。
 3. `notify_retry` の行を消す処理が本当に無いか（`lbNotifyRetryTick` 全体と、点検・手作業の関数を読む）。
 4. 「同じ resId の2行目」が来る経路（ALREADY で止まるはずだが、`AMBIGUOUS_RESERVATION_ID`・二重タップの扱いを確かめる）。
@@ -444,3 +445,20 @@
 - 例外のときに残すのは「どの単位か」と例外の種類だけ。理由・ひとこと・氏名・フル ID はログに出さない。
 - 検査：_lbCustTrainerId が throw しても success:true で会員への通知は試みる／_lbMemberLang が throw しても success:true／掃除の読み取り・書き込みが throw しても success:true／metrics の書き込みが throw しても success:true／これらの例外のログに理由・ひとこと・氏名・フル ID が出ない。
 - 不変条件 I-C11 として MODEL に足す（実装と同じコミット）。
+
+---
+
+## 実装で分かった事実（2026-11-06・実装のときに追記）
+
+- **§5-3 確認済み**：`notify_retry` の行・本文を消す処理は無かった（`lbNotifyRetryTick`・点検・手作業の関数を grep）。本文を30日で空にする処理は、末尾ではなく**取り分けのロックの中の同じ1回の書き込みに相乗り**させた（シートの往復を増やさず、行の状態を他の実行と取り合わない）。対象は sent・stale・closed（closed はオーナーに知らせた時刻から数える）。alert（オーナーへのメール待ち）は空にしない。1回50行まで。
+- **§5-4**：同じ resId の2行目は、台帳の ALREADY がロックの中で止めるので来ない。cancel_notes の行はその同じロックの中で書くので、**重複の確かめは実装していない**（確かめるにはロックの中で表を読むことになり、改訂1-1 に反する）。来るとすれば手作業で台帳を戻したときだけ。
+- **§5-6 確認済み**：`edgeAfterWrite` は `res.customerId`・`params.customerId` しか読まない。`gas-entry-guard` の CUSTOMER_KEYS・`dualwrite-entries` の一覧は新しい引数に反応しない（全検査が通る）。`handleLineGet` のログは action 名だけ。
+- **note_purged_at の意味を足した**：ひとことが無い行は書いた時点で `-`。こうすると日次点検と作業依頼が **note 列を一度も読まずに**「ひとことが残っている行」を数えられる（I-C6 を字義どおり守れる。改訂1-2 の「2列を読む」は cancelled_at と note_purged_at の2列）。
+- **notified の決め方**：行を書く時点（ロックの中）では、担当への2通目を送るか分からない（担当の検索はロックの外）。書くときは「その枠のトレーナーがいれば slot」、送った後に違っていれば掃除の単位で1セルだけ直す（slot+owner_trainer／none）。
+- **保存できなかった理由・ひとことは通知にも載せない**：画面に「お送りできませんでした」と出すのと揃えるため。担当への2通目も送らない。
+- **actor の決め方**：予約の本人（台帳4列目の LINE ID と一致）＝customer。ただしオーナーの無料の入口からは owner。それ以外はオーナーの役割なら owner、そうでなければ trainer。
+- **OUTCOME_CHANGED の freeCancel** は判定そのもの（会員の入口では `_lbIsFreeCancelWindow` の値）。
+- **時間予算の判定**は、担当と会員のそれぞれを送る直前に「受付から12秒」「通知開始から4秒」の両方で見る。掃除は受付から12秒を過ぎていたら見送る（次のキャンセルで追いつく）。
+- **booking_metrics に書くのは何か起きたときだけ**：CXL_NOTE_HEADER／CXL_NOTE_SAVE_FAIL／CXL_REASON_DROPPED／CXL_NOTE_TOO_LONG／CXL_NOTIFY_SLOW（積んだ・4秒超・受付から12秒超）。毎回の所要時間は Logger の `[perf] cancel notify` に出す（キャンセルのたびに表へ1行足して遅くしない）。`getBookingMetrics` は CXL_ を予約の成否と別に数える（`cxl`）。
+- **画面**：完了の文は、当日消化（振替の案内が出る）なら案内と同じ確認の窓の先頭に、それ以外は alert で出す。失敗（BAD_EXPECTATION・通信の失敗・その他）は画面に留まり、下書きを残して押し直せる。`r.freeCancel` が真偽値でなければ当日消化側の文を出し、cxlExpect は空（比べない）。
+- **作業依頼**：新しい op は足さず、`remaining` に `cancelNotes` を足した（許可一覧の編集をオーナーに頼まない）。

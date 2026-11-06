@@ -83,6 +83,16 @@ D1                      その写し ＋ D1で作った枠・引当
 | `body_freeze` | freeze_id | `/body/freeze`（frozen→copying→copied→verified／failed） | 読むのは verified だけ | — |
 ★`body_records`（2-1）は使わない（列が足りない・設計28で `body_measurements` に置き換え）。
 
+### 2-3c. GAS のシート：キャンセルの記録（設計36・★D1 へは押し出さない）
+| 表 | 主キー | 書くのは | 読むのは | 消える条件 |
+|---|---|---|---|---|
+| `cancel_notes` | res_id（1予約に1行） | `cancelReservationLine`（ロックの中で appendRow 1回・**すべての取消**＝会員・トレーナー・オーナー）／`_lbCnMaintain`（ロックの外・ひとことと識別子を空にする・notified を直す）／作るのは `setupCancelNotesSheet` だけ | オーナー（シート）／作業依頼 `remaining` の `cancelNotes`（件数だけ・COUNT_COLS）／日次点検（cancelled_at と note_purged_at だけ） | 行は消さない。ひとこと（note）は1年で空・res_id・customer_id・trainer_id は2年で空 |
+| `notify_retry`（既存・設計17） | id | `_lbNqOnFail`／`_lbNqDefer`（キャンセルの時間予算を超えた残り・設計36） | `lbNotifyRetryTick` | ★設計36 から：終わった行（sent・stale・closed）の本文 text を30日で空にする（取り分けのロックと同じ1回の書き込み・1回50行まで）。行は消さない |
+
+- ★`cancel_notes.note_purged_at` は「ひとことが残っていない」印を兼ねる（ひとことが無い行は書いた時点で `-`）。だから点検と作業依頼は **note 列を一度も読まずに**「残っている行」を数えられる（I-C6）。
+- ★**キャンセルした時刻は cancel_notes の `cancelled_at` にしか無い**（台帳にキャンセルの時刻の列は無い。当日消化のときだけ transfer_credits の付与時刻が実質の時刻）。設計37 の計測の土台。
+- 見出し（14列・完全一致）：res_id, cancelled_at, start_at, trainer_id, customer_id, actor（customer／trainer／owner）, outcome（free／consumed／owner_free）, transfer, reason_key（work／family／condition／other／空）, trainer_reason（第2段・trainer_convenience／customer_proxy／空）, note, note_purged_at, notified（slot／slot+owner_trainer／none）, ids_purged_at
+
 ### 2-4. トリガー（★4本だけ。ここだけが `used` を動かす）
 ```
 trg_alloc_consume_monthly   引当 INSERT → monthly_quota.used + units
@@ -165,6 +175,17 @@ trg_alloc_return_pack       同
 | I-M6 | **verified でない会員の行は LINE の ID を送らない**（押し出し側。D1 で customer にならない＝c_myKarte に届かない）。Worker 側の確認は「LINE の ID が無い行は guest」 | `member-karte.test.js` 1-15（GAS 側の検査は gas/ の担当が足す） |
 | I-M7 | **会員本人と「お客様の見え方」は同じ組み立て関数（buildMemberKarte）を通る**。見え方は共有の範囲（canSeeKarteShared）で開け、契約は担当の範囲（canSeeCustomer）のときだけ。ID（mnoteId・rev・sessionId・authorIsMe）は見え方にだけ付く | `member-karte.test.js` 5-6・6-1〜6-8 |
 | I-M8 | **access_log に中身を書かない**。会員本人の閲覧は trainer_id=NULL・role='customer'・section='member_karte'・action='c_myKarte'・req_id=NULL。失敗の console に ID を出さない | `member-karte.test.js` 2-18・6-8・8-10・10-5 |
+| I-C1 | **台帳の備考（9列目）は予約の鍵。理由・ひとことを一切入れない**（書く値は設計36の前と1文字も同じ）。備考を鍵として読む4か所（`cancelReservationLine` の完全一致・`undoSameDayCancel` の前方一致・`_lbNqFindResv`・`_lbNudgeResId`）が今どおり（設計36） | `gas-cancel-reason.test.js` 1-1〜1-4・10-1〜10-5 |
+| I-C2 | **理由・ひとことのせいでキャンセルを失敗させない**：知らない鍵・101字以上・文字列でない値・数式（sanitizeCell）・保存の失敗・見出しの不一致は、キャンセルを成立させて印（noteDropped・booking_metrics の CXL_）だけ残す。長すぎるひとことは切り詰めず丸ごと捨てる | `gas-cancel-reason.test.js` 2-1〜2-12・8-1〜8-6 |
+| I-C3 | **cancel_notes からカルテ（karte_*）へ何も写さない**。ひとことは健康情報を書く場所ではない＝入力欄の真下に注意書き・選択肢「体調・コンディション」は区分だけ | `gas-cancel-reason.test.js` 11-7、`liff-cancel-reason.test.js` 1-5・1-6 |
+| I-C4 | **ひとことの本文をログ・booking_metrics・作業依頼の結果・会員宛の LINE に出さない**（トレーナー宛と送り直しの列・オーナーへのメールには載る＝オーナー決定）。会員に「お伝えします」と言うのは空でないひとことを保存できたとき（messageAccepted）だけ | `gas-cancel-reason.test.js` 5-3・5-4・7-6・9-17・11-3・11-4、`liff-cancel-reason.test.js` 6-1〜6-7 |
+| I-C5 | **キャンセルの判定は変えない**（`_lbIsFreeCancelWindow`・振替権の付与）。無料にできるのはオーナーの専用の入口 `line_ownerFreeCancel` だけ。トレーナーの画面は見え方（「キャンセル（当日消化）」と確認の文）だけ変え、`r.freeCancel` が真偽値でなければ「消化されるかもしれない」側の文 | `gas-cancel-reason.test.js` 11-8・3-8・11-5、`liff-cancel-reason.test.js` 7-1〜7-9 |
+| I-C6 | **作業依頼・日次点検は note 列を読まない**（ひとことが残っているかは note_purged_at の空で見る）。作業依頼は COUNT_COLS の列だけを読み、鍵ごと・状態ごとの件数だけを固定の一覧で返す（セルの文字を出さない） | `gas-cancel-reason.test.js` 9-13〜9-22 |
+| I-C7 | **ロックの中は「判定・台帳・振替権・cancel_notes の1行」だけ**。LINE の送信・担当や LINE ID や言語の検索・文の組み立て・掃除・booking_metrics はロックの後（I19 の精神）。trainer_master・名簿（オーナー無料取消の認可）もロックの前に1回だけ読み、ロックの中は手元の値を引く（2026-11-06 関門②） | `gas-cancel-reason.test.js` 4-1〜4-5・13-1〜13-2b・13-8 |
+| I-C8 | **判定が画面で同意した結果（cxlExpect）と違えば何も書かずに OUTCOME_CHANGED**。無い・空は比べない（古い画面）・free／consumed 以外は何も書かずに BAD_EXPECTATION（理由・ひとことと違い、同意の内容なので壊れていれば止める） | `gas-cancel-reason.test.js` 3-1〜3-8、`liff-cancel-reason.test.js` 5-5〜5-8 |
+| I-C9 | **cancel_notes の見出しが完全一致（14列・順番）しなければ行を書かない**（キャンセルは成立・header_mismatch・CXL_NOTE_HEADER）。キャンセルの経路ではシートを作らない。appendRow はそれだけを内側で囲む | `gas-cancel-reason.test.js` 8-1〜8-9 |
+| I-C10 | **trainer_reason（第2段の鍵）は判定・消化・振替権に使わない**（使い道は設計37 の対象判定だけ）。会員から来たら捨てる | `gas-cancel-reason.test.js` 10-6・10-7 |
+| I-C11 | **台帳を書いた後の処理は「成立後の付け足し」**：その枠のトレーナー／契約上の担当／会員／掃除／記録の5つを独立に囲み、どれが落ちても success:true（例外のログは単位の名前と種類だけ）。その枠のトレーナーには時間予算を見ずに直接（noInlineRetry）、担当と会員は受付から12秒・通知開始から4秒を超えたら `_lbNqDefer` で積む。各通知は一度だけ attempted か deferred に進む（_lbPush を呼んだ通知は外から積まない）。**messageAccepted と会員宛の「お伝えしました」は、保存できて、かつその枠か担当へ送ったか積んだときだけ**。cancel_notes の notified の訂正は時間予算を見ずに毎回（掃除と別の単位） | `gas-cancel-reason.test.js` 6-1〜6-9・7-1〜7-6・13-3〜13-7c |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。

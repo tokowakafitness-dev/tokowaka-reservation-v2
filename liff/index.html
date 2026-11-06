@@ -102,6 +102,17 @@
   .hist-list { padding:0 14px; }
   .hist-meta { font-size:12px; color:var(--sub); margin-top:2px; }
   .mres p.muted { margin:6px 0 0; }
+  /* キャンセルの確認の画面（設計36）。選択肢は1つだけ・もう一度押すと外れる＝見た目はチップ、中身は checkbox */
+  .cxl-msg { white-space:pre-line; font-size:14px; line-height:1.7; margin:0; }
+  .cxl-chips { display:flex; flex-wrap:wrap; gap:8px; margin:2px 0 10px; }
+  .cxl-chip { position:relative; display:inline-flex; align-items:center; min-height:44px; padding:0 14px; border:1.5px solid var(--card-line); border-radius:999px; background:#fff; color:var(--ink); font-size:14px; cursor:pointer; }
+  .cxl-chip input { position:absolute; opacity:0; width:1px; height:1px; margin:0; }
+  .cxl-chip.on { border-color:var(--pri); background:var(--pri-l); color:var(--pri); font-weight:700; }
+  .cxl-chip:focus-within { outline:2px solid var(--pri); outline-offset:2px; }
+  #s-cxl textarea { display:block; width:100%; box-sizing:border-box; font-size:16px; min-height:88px; border:1px solid var(--field); border-radius:10px; padding:10px 12px; font-family:inherit; color:var(--ink); background:#fff; resize:vertical; }
+  #s-cxl .cxl-health { margin:6px 2px 0; }
+  #s-cxl .cxl-count { margin:4px 2px 0; text-align:right; }
+  #s-cxl .cxl-count.over { color:var(--warn); font-weight:700; }
   .hist-list .hist { padding:10px 0; border-top:1px solid var(--line); }
   .hist-list .hist:first-child { border-top:0; }
   /* 完了 */
@@ -280,6 +291,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     <div id="myResList"></div>
   </div>
 
+  <!-- キャンセルの確認の画面（設計36）。中身は renderCxl が文字として入れる -->
+  <div id="s-cxl" class="screen" hidden>
+    <div class="mhead"><button id="cxlBack" data-back class="mback" type="button" data-i18n-aria="back" aria-label="戻る">←</button><div class="mtt" data-i18n="cxl_title">ご予約のキャンセル</div></div>
+    <div id="cxlBody"></div>
+  </div>
+
   <div id="s-week" class="screen" hidden>
     <div class="mhead"><button id="backToTrainer" data-back class="mback" type="button" data-i18n-aria="week_reselect" aria-label="トレーナーを選び直す">←</button><div class="mtt" data-i18n="home_reserve">予約する</div></div>
     <div class="msteps"><span class="done"><i>1</i><span data-i18n="step_trainer"></span></span><span class="on"><i>2</i><span data-i18n="step_datetime"></span></span><span class=""><i>3</i><span data-i18n="step_confirm"></span></span></div>
@@ -369,7 +386,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-06f 会員画面 C2：カルテのタブ（体組成・トレーニング・指導の履歴・契約）・次回のご予約';
+  var LIFF_BUILD = '2026-11-06g キャンセルの確認の画面（理由・ひとこと）・トレーナーのキャンセルの見え方（設計36）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -443,6 +460,16 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'{date} の振替セッションをキャンセルします。\n本日以降のため1回分の消化となり、振替の再申し込みはできません。\nよろしいですか？',
       confirm_cancel_penalty:'{date} のご予約をキャンセルします。\n本日以降のため、1回分の消化となります。よろしいですか？',
       confirm_transfer_offer:'当日キャンセルのため1回分を消化しました。\n\n振替セッション（追加5,500円）をお申し込みになりますか？\n（次の画面で日時を選べます）',
+      cxl_title:'ご予約のキャンセル', cxl_reason_h:'よろしければ理由をお聞かせください（任意）',
+      cxl_r_work:'仕事・急な予定', cxl_r_family:'家庭の事情', cxl_r_condition:'体調・コンディション', cxl_r_other:'その他',
+      cxl_note_ph:'担当トレーナーへのひとこと（任意）', cxl_note_count:'あと{n}字', cxl_note_over:'100字までです',
+      cxl_health_note:'体調の詳しい内容（痛み・診断・お薬など）は、こちらではなく担当トレーナーへ直接お伝えください。',
+      cxl_submit:'キャンセルする', cxl_retry:'キャンセルできませんでした。もう一度お試しください。',
+      cxl_outcome_changed:'前日17時を過ぎたため、内容が変わりました。ご確認のうえ、もう一度お進みください。',
+      cxl_outcome_changed_other:'キャンセルの扱いが変わりました。ご確認のうえ、もう一度お進みください。',
+      cxl_done_thanks:'キャンセルしました。理由をお聞かせいただきありがとうございます。',
+      cxl_done_relayed:'キャンセルしました。ひとことは担当トレーナーにお伝えします。',
+      cxl_done_unsent:'キャンセルは完了しました。理由・ひとことはお送りできませんでした。',
       mk_tab_home:'概要', mk_tab_body:'体組成', mk_tab_training:'トレーニング', mk_tab_notes:'指導の履歴', mk_tab_contract:'契約', mk_tabs_aria:'会員メニュー', mk_back:'概要に戻る',
       mk_next_title:'次回のご予約', mk_next_trainer:'担当 {name}', mk_next_more:'このあと {dates} にもご予約があります',
       mk_unavail:'いまは表示できません。時間をおいて開き直してください。',
@@ -523,6 +550,16 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'Cancel your transfer session on {date}?\nFrom today onward this counts as one used session, and you cannot re-apply for a transfer.\nProceed?',
       confirm_cancel_penalty:'Cancel your booking on {date}?\nFrom today onward this counts as one used session. Proceed?',
       confirm_transfer_offer:'Same-day cancellation used one session.\n\nWould you like to apply for a transfer session (extra ¥5,500)?\n(You can choose a date/time on the next screen)',
+      cxl_title:'Cancel booking', cxl_reason_h:'If you like, please tell us why (optional)',
+      cxl_r_work:'Work / sudden plans', cxl_r_family:'Family reasons', cxl_r_condition:'Health / condition', cxl_r_other:'Other',
+      cxl_note_ph:'A message to your trainer (optional)', cxl_note_count:'{n} characters left', cxl_note_over:'Up to 100 characters',
+      cxl_health_note:'Please tell your trainer directly about health details (pain, diagnosis, medication, etc.), not here.',
+      cxl_submit:'Cancel booking', cxl_retry:'Could not cancel. Please try again.',
+      cxl_outcome_changed:'It is now past 17:00 the day before, so the terms have changed. Please review and try again.',
+      cxl_outcome_changed_other:'The cancellation terms have changed. Please review and try again.',
+      cxl_done_thanks:'Your booking has been cancelled. Thank you for telling us why.',
+      cxl_done_relayed:'Your booking has been cancelled. We will pass your message on to your trainer.',
+      cxl_done_unsent:'Your booking has been cancelled. However, we could not send your reason or message.',
       mk_tab_home:'Overview', mk_tab_body:'Body', mk_tab_training:'Training', mk_tab_notes:'Coaching', mk_tab_contract:'Plan', mk_tabs_aria:'Member menu', mk_back:'Back to overview',
       mk_next_title:'Your next session', mk_next_trainer:'with {name}', mk_next_more:'You also have bookings on {dates}',
       mk_unavail:"This can't be shown right now. Please open it again later.",
@@ -603,6 +640,16 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'取消您 {date} 的改期课程？\n当天及以后将消耗一次，且无法再次申请改期。\n是否继续？',
       confirm_cancel_penalty:'取消您 {date} 的预约？\n当天及以后将消耗一次。是否继续？',
       confirm_transfer_offer:'当天取消已消耗一次。\n\n是否申请改期课程（额外5,500日元）？\n（可在下一屏选择时间）',
+      cxl_title:'取消预约', cxl_reason_h:'方便的话，请告诉我们原因（选填）',
+      cxl_r_work:'工作・临时安排', cxl_r_family:'家庭原因', cxl_r_condition:'身体状况', cxl_r_other:'其他',
+      cxl_note_ph:'给负责教练的留言（选填）', cxl_note_count:'还可输入{n}字', cxl_note_over:'最多100字',
+      cxl_health_note:'身体状况的详细内容（疼痛、诊断、用药等）请不要写在这里，请直接告诉负责教练。',
+      cxl_submit:'确认取消', cxl_retry:'未能取消，请重试。',
+      cxl_outcome_changed:'已过前一天17点，取消条件已变更。请确认后重新操作。',
+      cxl_outcome_changed_other:'取消条件已变更。请确认后重新操作。',
+      cxl_done_thanks:'已取消预约。感谢您告诉我们原因。',
+      cxl_done_relayed:'已取消预约。您的留言将转达给负责教练。',
+      cxl_done_unsent:'取消已完成，但未能发送原因和留言。',
       mk_tab_home:'概要', mk_tab_body:'体成分', mk_tab_training:'训练', mk_tab_notes:'指导记录', mk_tab_contract:'合同', mk_tabs_aria:'会员菜单', mk_back:'返回概要',
       mk_next_title:'下次预约', mk_next_trainer:'教练 {name}', mk_next_more:'之后在 {dates} 也有预约',
       mk_unavail:'现在无法显示，请稍后重新打开。',
@@ -683,6 +730,16 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'取消您 {date} 的改期課程？\n當天及之後將消耗一次，且無法再次申請改期。\n是否繼續？',
       confirm_cancel_penalty:'取消您 {date} 的預約？\n當天及之後將消耗一次。是否繼續？',
       confirm_transfer_offer:'當天取消已消耗一次。\n\n是否申請改期課程（額外5,500日圓）？\n（可於下一個畫面選擇時間）',
+      cxl_title:'取消預約', cxl_reason_h:'方便的話，請告訴我們原因（選填）',
+      cxl_r_work:'工作・臨時安排', cxl_r_family:'家庭原因', cxl_r_condition:'身體狀況', cxl_r_other:'其他',
+      cxl_note_ph:'給負責教練的留言（選填）', cxl_note_count:'還可輸入{n}字', cxl_note_over:'最多100字',
+      cxl_health_note:'身體狀況的詳細內容（疼痛、診斷、用藥等）請不要寫在這裡，請直接告訴負責教練。',
+      cxl_submit:'確認取消', cxl_retry:'未能取消，請重試。',
+      cxl_outcome_changed:'已過前一天17點，取消條件已變更。請確認後重新操作。',
+      cxl_outcome_changed_other:'取消條件已變更。請確認後重新操作。',
+      cxl_done_thanks:'已取消預約。感謝您告訴我們原因。',
+      cxl_done_relayed:'已取消預約。您的留言將轉達給負責教練。',
+      cxl_done_unsent:'取消已完成，但未能傳送原因和留言。',
       mk_tab_home:'概要', mk_tab_body:'體組成', mk_tab_training:'訓練', mk_tab_notes:'指導記錄', mk_tab_contract:'合約', mk_tabs_aria:'會員選單', mk_back:'返回概要',
       mk_next_title:'下次預約', mk_next_trainer:'教練 {name}', mk_next_more:'之後在 {dates} 也有預約',
       mk_unavail:'現在無法顯示，請稍後重新開啟。',
@@ -852,13 +909,13 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       + _PERF.length + '回 ／ 合計 <b>' + total.toLocaleString() + 'ms</b></div>';
   }
 
-  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error','s-mk'];
+  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-cxl','s-week','s-confirm','s-done','s-whoami','s-error','s-mk'];
   var _showGen = 0;   // 画面が切り替わった回数（右→左で進んでよいかの判定に使う）
   function show(id){
     _showGen++;
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
     //   ★会員の画面（ホーム・登録・自分の予約）に入ったらトレーナーの見た目を外す（トレーナーの一覧に戻るとき付け直す）
-    if (['s-home', 's-register', 's-myres', 's-mk'].indexOf(id) >= 0) document.body.classList.remove('staff');
+    if (['s-home', 's-register', 's-myres', 's-cxl', 's-mk'].indexOf(id) >= 0) document.body.classList.remove('staff');
     if (id !== 's-loading') document.body.classList.remove('booting');   // 最初の画面が出たら読み込みの見た目を外す
     if (typeof _staffBanner === 'function') _staffBanner(id);
     if (typeof _mkTabsSync === 'function') _mkTabsSync(id);   // 会員のカルテの下のタブ（設計35 C2）。★履歴は触らない
@@ -1099,6 +1156,19 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     else if (/[?&#]cal=0/.test(location.href)) { localStorage.removeItem('lb_cal'); }
     USE_CAL = (localStorage.getItem('lb_cal') === '1');
   } catch (e) { USE_CAL = /[?&#]cal=1/.test(location.href); }
+
+  // キャンセル理由の画面（設計36）を出すか（2026-11-06 関門③）。
+  //   ★全員に出す前に、オーナーの端末で本番の GAS へ新しい形の取消を通して確かめる（試験の1行・LINE 内の URL の長さ・応答時間）。
+  //     URLに ?cxl=1 を付けるか、localStorage に lb_cxl=1 を入れると有効。?cxl=0 で戻る。
+  //   ★全員に広げるときは CXL_DEFAULT_ON を true にする（1行）。偽の間は設計36 以前の確認の窓のまま
+  //   ★トレーナー画面の「（当日消化）」表示はこの切替と関係なく出る（古い GAS でも正しく倒れる・関門③で確認済み）
+  var CXL_DEFAULT_ON = false;
+  var CXL_ON = CXL_DEFAULT_ON;
+  try {
+    if (/[?&#]cxl=1/.test(location.href)) { localStorage.setItem('lb_cxl', '1'); }
+    else if (/[?&#]cxl=0/.test(location.href)) { localStorage.removeItem('lb_cxl'); }
+    CXL_ON = CXL_DEFAULT_ON || (localStorage.getItem('lb_cxl') === '1');
+  } catch (e) { CXL_ON = CXL_DEFAULT_ON || /[?&#]cxl=1/.test(location.href); }
 
   // GASの操作名 → Workerの窓口。ここに無いものは全てGASへ行く（読み取りだけを載せる）
   var EDGE_MAP = {
@@ -2257,7 +2327,8 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
           btns.appendChild(chg);
         }
         var cxl = document.createElement('button'); cxl.className = 'btn btn-danger'; cxl.style.margin = '0';
-        cxl.textContent = (state._isOwner && !r.freeCancel) ? 'キャンセル（当日消化）' : 'キャンセル';
+        //   ★前日17時以降はオーナー以外にも「当日消化」と出す（設計36 3-6・判定は変えない）。真偽値でなければ「当日消化」と言い切らない
+        cxl.textContent = (r.freeCancel === false) ? 'キャンセル（当日消化）' : 'キャンセル';
         cxl.onclick = function(){ trainerCancel(r); };
         btns.appendChild(cxl);
         //   ★オーナーだけ：前日17時を過ぎた予約も無料で変更・取消できる（設計26）。専用の入口なので、古い GAS では「知らない操作」で止まる
@@ -2351,8 +2422,17 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     loadTrainers();   // トレーナー選択画面へ（カードのonclickがtrainerId確定→loadSlots・proxyMode保持）
   }
   on('tadminReload', function(){ loadTrainerReservations(); });
+  //   確認の文（設計36 3-6・改訂1-10）。判定は変えない（前日17時以降は消化・無料にできるのはオーナーの専用の入口だけ）。
+  //   ★r.freeCancel は真偽値かを先に確かめる。false と欠落を同じに扱わない（分からないときは「消化されるかもしれない」側の文）
+  function trainerCancelMsg(r){
+    var head = String(r.customerName || '') + '様の予約（' + String(r.dateLabel || '') + '）を取り消します。';
+    if (r.freeCancel === true) return head + 'よろしいですか？';
+    if (r.freeCancel === false) return state._isOwner ? head + 'よろしいですか？'
+      : head + '\nお客様の1回分が消化されます。\nトレーナー都合で無料にする場合は、オーナーに依頼してください。\nよろしいですか？';
+    return head + '\n前日17時を過ぎている場合、お客様の1回分が消化されます。\nよろしいですか？';
+  }
   function trainerCancel(r){
-    if (!window.confirm(r.customerName + '様の予約（' + r.dateLabel + '）を取り消します。よろしいですか？')) return;
+    if (!window.confirm(trainerCancelMsg(r))) return;
     api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
       if (res && res.success) { window.alert('取り消しました。お客様に通知が届きます。'); loadTrainerReservations(); }
       else if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadTrainerReservations(); }
@@ -3118,7 +3198,27 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     loadSlots();                 // 同トレーナーの週グリッドへ（新しい時間を選ぶ）
   }
 
-  function cancelReservation(r){
+  // ---------------------------------------------------------------- キャンセルの確認の画面（設計36）
+  //   window.confirm の代わり。今の確認の文（3種・鍵も文も同じ）をそのまま出し、理由（任意・1つだけ）とひとこと（任意・100字）を受け取る。
+  //   ★理由・ひとことは「おまけ」：何も選ばず書かなくても押せる。サーバーの値はすべて文字として入れる（textContent）
+  //   ★下書き state.cxlDraft = { resId, key, note } は言語切替で消えない（描き直しで戻す）。別の予約を開いたら戻さない。戻るで捨てる
+  //   ★同意した結果 cxlExpect（free／consumed）を付けて送る。サーバーの判定と違えば何も書かれずに OUTCOME_CHANGED が返る
+  //     ＝文を選び直して、もう一度押してもらう（画面を開いたまま前日17時をまたいだとき）
+  var CXL_KEYS = ['work', 'family', 'condition', 'other'];   // GAS の LB_CXL_KEYS と同じ鍵
+  var CXL_NOTE_MAX = 100;                                     // コードポイントで数える（絵文字1つ＝1字）。GAS と同じ
+  //   ひとことの整え方（GAS の _lbCxlNormText と同じ規則・worker/test/gas-cancel-reason.test.js が突き合わせる）
+  function _cxlNorm(s){
+    s = String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000B-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
+    var lines = s.split('\n').map(function(x){ return x.replace(/^\s+|\s+$/g, ''); }).filter(function(x){ return x !== ''; });
+    if (lines.length > 3) lines = lines.slice(0, 2).concat([lines.slice(2).join(' ')]);
+    return lines.join('\n');
+  }
+  function _cxlLen(s){ return Array.from(_cxlNorm(s)).length; }
+  //   画面で出した文の種類＝同意した結果。真偽値でなければ比べない（''）
+  function _cxlExpectOf(r){ return r.freeCancel === true ? 'free' : (r.freeCancel === false ? 'consumed' : ''); }
+  function _cxlSt(){ if (!state.cxlInflight) state.cxlInflight = {}; if (!state.cxlDone) state.cxlDone = {}; }
+  //   ★設計36 以前の取消（確認の窓1つ・理由なし）。CXL_ON が偽のときだけ使う＝関門③の本番試験が済むまで全員はこちら
+  function _cancelReservationLegacy(r){
     var msg;
     if (r.freeCancel) {
       msg = t('confirm_cancel_free', { date: r.dateLabel });
@@ -3147,6 +3247,153 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       }
       loadMyReservations();
     }).catch(function(e){ showError(t('comm_fail', { msg: e })); });
+  }
+
+  function cancelReservation(r){
+    if (!CXL_ON) return _cancelReservationLegacy(r);
+    _cxlSt();
+    if (!state.cxlDraft || state.cxlDraft.resId !== r.reservationId) state.cxlDraft = { resId: r.reservationId, key: '', note: '' };
+    state.cxlR = r; state.cxlNotice = '';
+    renderCxl();
+  }
+  //   描くだけ（言語切替はこれを呼ぶ＝再通信しない）
+  function renderCxl(){
+    var r = state.cxlR, dr = state.cxlDraft;
+    if (!r || !dr || dr.resId !== r.reservationId) return;
+    _cxlSt();
+    state._repaint = renderCxl;
+    var busy = (state.cxlInflight[r.reservationId] || 0) > 0;
+    var box = document.getElementById('cxlBody'); box.innerHTML = '';
+    function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+    var c1 = el('div', 'card mres');
+    c1.appendChild(el('div', 'mres-date', String(r.dateLabel || '')));
+    c1.appendChild(el('p', 'muted', t('trainer_colon') + String(r.trainerName || '')));
+    box.appendChild(c1);
+    if (state.cxlNotice) box.appendChild(el('p', 'err', t(state.cxlNotice)));
+    var msgKey = r.freeCancel === true ? 'confirm_cancel_free' : (r.transfer ? 'confirm_cancel_transfer' : 'confirm_cancel_penalty');
+    var c2 = el('div', 'card'); c2.appendChild(el('p', 'cxl-msg', t(msgKey, { date: r.dateLabel }))); box.appendChild(c2);
+    box.appendChild(el('div', 'sect-h', t('cxl_reason_h')));
+    var chips = el('div', 'cxl-chips');
+    var boxes = [];
+    CXL_KEYS.forEach(function(k){
+      var lab = el('label', 'cxl-chip' + (dr.key === k ? ' on' : ''));
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = k; cb.checked = (dr.key === k);
+      if (dr.key === k) cb._rsvTouched = true;   // 言語切替で描き直しても「入力あり」を保つ（戻るの確認）
+      cb.onchange = function(){
+        dr.key = cb.checked ? k : '';
+        boxes.forEach(function(o){ if (o.cb !== cb) o.cb.checked = false; o.lab.className = 'cxl-chip' + (o.cb.checked ? ' on' : ''); });
+      };
+      lab.appendChild(cb); lab.appendChild(el('span', '', t('cxl_r_' + k)));
+      boxes.push({ cb: cb, lab: lab });
+      chips.appendChild(lab);
+    });
+    box.appendChild(chips);
+    var ta = document.createElement('textarea'); ta.id = 'cxlNote'; ta.rows = 3; ta.placeholder = t('cxl_note_ph'); ta.value = dr.note || '';
+    ta.setAttribute('aria-label', t('cxl_note_ph'));
+    if (dr.note) ta._rsvTouched = true;
+    box.appendChild(ta);
+    box.appendChild(el('p', 'muted cxl-health', t('cxl_health_note')));   // 入力欄の真下（I55 と同じ置き方）
+    var cnt = el('p', 'muted cxl-count'); cnt.id = 'cxlCount'; box.appendChild(cnt);
+    var err = el('p', 'err'); err.id = 'cxlErr'; err.hidden = true; box.appendChild(err);
+    var go = el('button', 'btn btn-danger', t('cxl_submit')); go.id = 'cxlSubmit'; go.type = 'button';
+    go.onclick = cxlSubmit;
+    box.appendChild(go);
+    var bk = el('button', 'btn btn-outline', t('back')); bk.id = 'cxlBack2'; bk.type = 'button'; bk.setAttribute('data-back', '');
+    bk.onclick = cxlLeave;
+    box.appendChild(bk);
+    ta.oninput = function(){ dr.note = ta.value; _cxlCount(); };
+    _cxlCount();
+    if (busy) _cxlBackLock(true);
+    show('s-cxl');
+  }
+  //   残りの字数。101字以上は押せない（切り詰めない）
+  function _cxlCount(){
+    var dr = state.cxlDraft, cnt = document.getElementById('cxlCount'), go = document.getElementById('cxlSubmit');
+    if (!dr || !cnt || !go) return;
+    var n = _cxlLen(dr.note), over = n > CXL_NOTE_MAX;
+    cnt.textContent = over ? t('cxl_note_over') : t('cxl_note_count', { n: CXL_NOTE_MAX - n });
+    cnt.className = 'muted cxl-count' + (over ? ' over' : '');
+    go.disabled = over || ((state.cxlInflight || {})[dr.resId] || 0) > 0;
+  }
+  //   送信中は戻らない（data-back を押せなくする＝横スワイプ・端末の戻るも止まる）
+  function _cxlBackLock(on){
+    ['cxlBack', 'cxlBack2'].forEach(function(id){ var b = document.getElementById(id); if (b) b.disabled = !!on; });
+    var go = document.getElementById('cxlSubmit'); if (go && on) go.disabled = true;
+  }
+  function _cxlErr(msg){
+    var e = document.getElementById('cxlErr'); if (e) { e.textContent = msg; e.hidden = false; }
+    _cxlBackLock(false); _cxlCount();
+  }
+  //   戻る（画面の「←」「戻る」・横スワイプ・端末の戻る）。下書きを捨てて一覧へ（再通信しない）
+  function cxlLeave(){
+    _cxlSt();
+    var dr = state.cxlDraft;
+    if (dr && (state.cxlInflight[dr.resId] || 0) > 0) return;
+    state.cxlDraft = null; state.cxlR = null; state.cxlNotice = '';
+    renderMyReservations();
+  }
+  on('cxlBack', cxlLeave);
+  function cxlSubmit(){
+    _cxlSt();
+    var r = state.cxlR, dr = state.cxlDraft, go = document.getElementById('cxlSubmit');
+    if (!r || !dr || dr.resId !== r.reservationId) return;
+    if ((state.cxlInflight[r.reservationId] || 0) > 0 || (go && go.disabled)) return;
+    if (_cxlLen(dr.note) > CXL_NOTE_MAX) return;
+    if (go) go.disabled = true;   // ★同期的に押せなくする（同じ瞬間の連打で2本目を送らない・改訂1-9）
+    _cxlSend(r, { key: dr.key || '', note: _cxlNorm(dr.note) });
+  }
+  function _cxlSend(r, input){
+    _cxlSt();
+    var id = r.reservationId;
+    state.cxlInflight[id] = (state.cxlInflight[id] || 0) + 1;
+    _cxlBackLock(true);
+    var e0 = document.getElementById('cxlErr'); if (e0) e0.hidden = true;
+    api({ action:'line_cancelReservation', reservationId: id, cxlReason: input.key, cxlNote: input.note, cxlExpect: _cxlExpectOf(r) }).then(function(res){
+      state.cxlInflight[id]--;
+      if (state.cxlDone[id]) return;   // 先に成功した結果で進んだあとの結果は捨てる
+      if (!res || !res.success) {
+        //   ★同じ予約の別の送信がまだ飛んでいる間の失敗は捨てる（1本目の成功を「失敗」に見せない・改訂1-9）
+        if (state.cxlInflight[id] > 0) return;
+        // ★案内を出してから一覧を取り直すと、取り直しが画面を切り替えて**案内が消える**。
+        //   読む間もなく消えるので、確実に目に入る出し方にする（2026-10-04・Codex指摘）。
+        if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadMyReservations(); return; }
+        //   判定が同意と違った：何も書かれていない。文を選び直す（振替は振替の文）。入力は残す
+        if (res && res.code === 'OUTCOME_CHANGED' && typeof res.freeCancel === 'boolean') {
+          r.freeCancel = res.freeCancel;
+          state.cxlNotice = res.freeCancel ? 'cxl_outcome_changed_other' : 'cxl_outcome_changed';
+          _cxlBackLock(false);
+          renderCxl(); return;
+        }
+        _cxlErr((res && (res.code === 'BAD_EXPECTATION' || res.code === 'OUTCOME_CHANGED')) ? t('cxl_retry') : t('err_cancel', { code: (res && res.code) || '?' }));
+        return;
+      }
+      state.cxlDone[id] = true;
+      state.cxlDraft = null; state.cxlNotice = '';
+      var doneMsg = _cxlDoneText(res, input);
+      if (res.penalty && !r.transfer) {
+        // 当日キャンセル＝1回消化。振替セッション（+5,500円）を案内。
+        // ★振替セッション自身のキャンセルでは案内しない（振替の振替＝再振替を防ぐ。バックエンドでも同ガード）。
+        if (window.confirm((doneMsg ? doneMsg + '\n\n' : '') + t('confirm_transfer_offer'))) {
+          startTransfer(r);
+          return;
+        }
+      } else if (doneMsg) {
+        window.alert(doneMsg);
+      }
+      loadMyReservations();
+    }).catch(function(e){
+      state.cxlInflight[id]--;
+      if (state.cxlDone[id] || state.cxlInflight[id] > 0) return;
+      _cxlErr(t('comm_fail', { msg: e }));   // ★自動で送り直さない（_NO_RETRY）。下書きは残す＝もう一度押せる
+    });
+  }
+  //   完了の文（改訂1-4）。何も入れていなければ文を足さない。
+  //   ★古い GAS（recordSaved の鍵が無い）は「お送りできませんでした」＝黙って消さない
+  function _cxlDoneText(res, input){
+    if (!input.key && !input.note) return '';
+    if (typeof res.recordSaved !== 'boolean') return t('cxl_done_unsent');
+    if (input.note) return res.messageAccepted === true ? t('cxl_done_relayed') : t('cxl_done_unsent');
+    return (res.recordSaved === true && !res.noteDropped) ? t('cxl_done_thanks') : t('cxl_done_unsent');
   }
 
   function startTransfer(r){

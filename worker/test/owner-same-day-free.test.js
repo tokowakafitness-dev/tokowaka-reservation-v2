@@ -68,9 +68,13 @@ function world({ actor, start, channel = 'line', maySee = true }) {
     _lbTrainerMaySeeCustomer: () => maySee, _lbCustOwnerOf: () => 'T1',
     _lbContractTypeOf: () => '通常',
     _lbReserveCore: (ci, body, ch) => { log.core.push({ ci, body, ch }); return { success: true, reservationId: 'R2', calendarEventId: '', trainerEventId: '' }; },
+    //   設計36（キャンセル理由）の身代わり：cancel_notes は無い扱い・担当の検索は空・積む／記録は何もしない
+    _lbCnReady: () => ({ ok: false, why: 'no_sheet' }), _lbCustTrainerId: () => '', _lbNqDefer: () => true,
+    _lbLogOutcome: () => {}, _lbCnMaintain: () => ({}), _lbCnMark: () => 0, _lbCustOwnerMap: () => ({ C1: 'T1' }), _lbCustOwnerFromMap: (m, c) => (m && c in m ? m[c] : null), Array, Object,
   };
   vm.createContext(ctx);
-  vm.runInContext([pluck(LB, '_lbIsOwnerRole'), pluck(LB, '_lbIsFreeCancelWindow'), pluck(LB, 'cancelReservationLine'), pluck(LB, 'changeReservationLine')].join('\n'), ctx);
+  vm.runInContext([(LB.match(/^var LB_CXL_[A-Z_]+ = [^\n]+$/gm) || []).join('\n'), pluck(LB, '_lbIsOwnerRole'), pluck(LB, '_lbIsFreeCancelWindow'), pluck(LB, 'cancelReservationLine'), pluck(LB, 'changeReservationLine'),
+    pluck(LB, '_lbCxlExpect'), pluck(LB, '_lbCxlNormText'), pluck(LB, '_lbCxlNormalize'), pluck(LB, '_lbCxlLogErr'), pluck(LB, '_lbCxlAfter')].join('\n'), ctx);
   return { ctx, log, row };
 }
 
@@ -135,8 +139,10 @@ console.log('=== ③ 配線 ===');
 {
   ok('③-1 ★専用の入口：取消は ownerFree を付けて呼ぶ', /case 'line_ownerFreeCancel':\s*return cancelReservationLine\(lineUserId, params\.reservationId, \{ ownerFree: true \}\);/.test(LB));
   ok('③-2 ★専用の入口：変更も同じ', /case 'line_ownerFreeChange':\s*return changeReservationLine\(lineUserId, params\.reservationId, params\.newStartISO, \{ ownerFree: true \}\);/.test(LB));
+  //   ★設計36：普通の取消の入口は理由・ひとこと・同意した結果（cxl）だけを渡す。ownerFree は付けない
   ok('③-3 ★普通の入口は ownerFree を付けない（クライアントの値で無料にならない）',
-    /case 'line_cancelReservation':\s*return cancelReservationLine\(lineUserId, params\.reservationId\);/.test(LB)
+    /case 'line_cancelReservation':\s*return cancelReservationLine\(lineUserId, params\.reservationId, \{ cxl: \{ reason: params\.cxlReason, note: params\.cxlNote, expect: params\.cxlExpect \} \}\);/.test(LB)
+    && !/case 'line_cancelReservation':[^\n]*ownerFree/.test(LB)
     && /case 'line_changeReservation':\s*return changeReservationLine\(lineUserId, params\.reservationId, params\.newStartISO\);/.test(LB));
   const ew = (PE.match(/var EDGE_AFTER_WRITE = \{([\s\S]*?)\};/) || [])[1] || '';
   const ec = (PE.match(/var EDGE_CALSYNC_AFTER = \{([\s\S]*?)\};/) || [])[1] || '';

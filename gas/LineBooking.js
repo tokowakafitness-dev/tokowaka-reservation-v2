@@ -282,7 +282,8 @@ function _lbDispatch(params, action, lineUserId, auth) {
     case 'line_makeTransferReservation':return makeTransferReservationLine(lineUserId, { trainerId: params.trainerId, startISO: params.startISO });
     case 'line_getBookingOptions':  return getBookingOptions(lineUserId, params.startISO, params.customerId);   // 予約対象日時ベースの選択肢（ペア残・通常経路）
     case 'line_getMyReservations':  return getMyReservations(lineUserId);
-    case 'line_cancelReservation':  return cancelReservationLine(lineUserId, params.reservationId);
+    //   理由・ひとこと・同意した結果（設計36）。理由とひとことは「おまけ」＝壊れていても取消は成立する。cxlExpect だけは壊れていれば止める
+    case 'line_cancelReservation':  return cancelReservationLine(lineUserId, params.reservationId, { cxl: { reason: params.cxlReason, note: params.cxlNote, expect: params.cxlExpect } });
     case 'line_listSameDayCancels': return listSameDayCancels(lineUserId);                             // オーナーのみ（設計24）
     case 'line_undoSameDayCancel':  return undoSameDayCancel(lineUserId, params.reservationId);        // オーナーのみ（設計24）
     case 'line_changeReservation':  return changeReservationLine(lineUserId, params.reservationId, params.newStartISO);
@@ -1906,7 +1907,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-04a 計算の材料4つの印を日次点検で確かめる・補充のログに氏名を出さない（設計30）';
+var LB_HEALTH_BUILD = '2026-11-06b キャンセル理由（cancel_notes・通知の時間予算・送り直しの本文を30日で空に）とトレーナーのキャンセルの見え方（設計36）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2081,6 +2082,19 @@ function dailyHealthCheck(dryRunArg) {
       }
     } catch (eSw) { add('shadow_sweep_read_fail', 'D1', 'warn', 1, 'shadow のまとめた比較の記録が読めない: ' + eSw.message); }
   } catch (e) { add('metrics_fail', '通知', 'warn', 1, '実測ログの集計に失敗: ' + e.message); }
+
+  _step('キャンセル理由');
+  // ---- キャンセル理由の記録（設計36）。★ひとことの列は読まない（空にした印 note_purged_at で見る・I-C6）。日数と件数だけ ----
+  try {
+    var cnh = _lbCnHealth(Date.now());
+    add('cancel_notes_unready', '予約', 'warn', cnh.ready ? 0 : 1,
+        'cancel_notes が使えません（' + cnh.why + '）。キャンセルは成立していますが、理由・ひとこと・キャンセルの時刻が保存されていません。setupCancelNotesSheet を実行し、見出しを確かめてください');
+    add('cancel_notes_purge_late', '予約', 'warn', (cnh.oldestNoteDays != null && cnh.oldestNoteDays > LB_CN.HEALTH_DAYS) ? 1 : 0,
+        'キャンセルのひとことが ' + cnh.oldestNoteDays + '日 残っています（1年で空にする決まり）。キャンセルのたびの掃除が止まっていないか確かめてください');
+    var cxm = (bm && bm.cxl) || {};   // 上の「通知」で読んだ実測ログを使う（点検を重くしない）
+    add('cancel_notes_save_fail', '予約', 'warn', Number(cxm.CXL_NOTE_SAVE_FAIL || 0), '直近1日、キャンセル理由の保存に失敗した回数（キャンセルは成立）');
+    add('cancel_notify_slow', '通知', 'info', Number(cxm.CXL_NOTIFY_SLOW || 0), '直近1日、キャンセルの通知が時間の予算を超えた回数（担当・会員の通知は送り直しの列へ）');
+  } catch (e) { add('cancel_notes_check_fail', '予約', 'warn', 1, 'キャンセル理由の記録の点検に失敗: ' + String((e && e.name) || 'Error')); }
 
   _step('LINE通数');
   // ---- LINE通数 ----
@@ -4572,6 +4586,8 @@ var LB_NQ = {
                                     //   作業中ずっとロックを持つため毎回取り損ね、反映後1回も走らなかった（2026-10-13）。
                                     //   待っている間はロックを持たないので、予約の10秒待ちは妨げない
   ALERT_MAX: 30,                    // 1通のメールに載せる上限
+  TEXT_KEEP_DAYS: 30,               // 終わった行（sent・stale・closed）の本文を空にするまでの日数（設計36：ひとこと・氏名入りの本文を持ち続けない）
+  TEXT_PURGE_MAX: 50,               // 1回で本文を空にする行の上限
   ON_PROP: 'LB_NOTIFY_RETRY_ON',               // '0' で自動の送り直しだけを止める（記録とオーナーへのメールは続ける）
   FAIL_PROP: 'LB_NOTIFY_QUEUE_WRITE_FAIL',     // キューに書けなかった（別の媒体に残す）
   STARTED_PROP: 'LB_NOTIFY_RETRY_STARTED',
@@ -4679,9 +4695,10 @@ function _lbPushOnce(to, text, opts) {
 
 // 今までの入口（呼び出し元13か所はこのまま）。4つ目の ctx は任意：
 //   { resId, oldResId, customerId, startMs } … 1件の予約に紐づく通知だけが渡す（設計17 §4-0 の配線表）
-function _lbPush(to, text, purpose, ctx) {
+//   5つ目の opts は任意：{ noInlineRetry } … キャンセルの要求の中だけが渡す（429 でその場で粘らない＝届かなければ今どおり積む・設計36 改訂2-1）
+function _lbPush(to, text, purpose, ctx, opts) {
   var r;
-  try { r = _lbPushOnce(to, text, { purpose: purpose }); }
+  try { r = _lbPushOnce(to, text, { purpose: purpose, noInlineRetry: !!(opts && opts.noInlineRetry) }); }
   catch (e) { r = { ok: false, code: 'EXCEPTION', body: String((e && e.message) || e).slice(0, 200), uncertain: true }; }
   if (r.ok) return true;
   if (r.code === 'NO_TO') { Logger.log('_lbPush skip: to無し'); return false; }   // LINE未連携＝想定内
@@ -4721,6 +4738,41 @@ function _lbNqOnFail(to, text, purpose, ctx, r) {
   row[_lbNqCol('last_detail')] = ((r && r.uncertain) ? 'delivery_unknown: ' : '') + String((r && r.body) || '').slice(0, 200);
   row[_lbNqCol('email_attempts')] = 0;
   _lbNqAppendRow(row);
+}
+
+// 送らずに積む（設計36 改訂2-1・3-3）。キャンセルの要求の中で、時間の予算を超えた残りの宛先だけに使う。
+//   ★_lbPush を呼んだ通知をここで積まない（失敗の積み込みは _lbPush → _lbNqOnFail に任せる＝二重に積まない）
+//   ★例外は握る（キャンセルの応答を壊さない）。積めなければ非常用の記録へ
+//   積む行：attempts=0・next_at=いま+10分・state=pending（ctx が揃っていれば。揃わなければ alert）・last_code=DEFERRED
+//   送り直しの判定（I17）は送る直前に台帳を見る＝取消の状態のまま・開始前のときだけ送られる
+function _lbNqDefer(to, text, purpose, ctx) {
+  try {
+    if (!to) return false;                         // LINE 未連携＝送る先が無い（_lbPush の NO_TO と同じ扱い）
+    var pol = _lbNqPolicy(purpose);
+    if (pol === 'none') return false;
+    var c = ctx || {};
+    var hasCtx = !!(c.resId && c.customerId && _lbIsFiniteNum(Number(c.startMs)));
+    if (String(purpose || '').indexOf('change_') === 0 && !c.oldResId) hasCtx = false;
+    var state = (pol === 'single' && hasCtx) ? 'pending' : 'alert';
+    var now = Date.now();
+    var row = [];
+    for (var i = 0; i < LB_NQ.HEAD.length; i++) row.push('');
+    row[_lbNqCol('id')] = 'N' + Utilities.getUuid();
+    row[_lbNqCol('created_at')] = now;
+    row[_lbNqCol('token_key')] = 'msg';
+    row[_lbNqCol('to')] = String(to);
+    row[_lbNqCol('text')] = String(text || '');
+    row[_lbNqCol('purpose')] = String(purpose || 'other');
+    row[_lbNqCol('ctx_json')] = JSON.stringify(c);
+    row[_lbNqCol('state')] = state;
+    row[_lbNqCol('attempts')] = 0;
+    row[_lbNqCol('next_at')] = (state === 'pending') ? now + LB_NQ.RETRY_AFTER_MIN[0] * 60000 : '';
+    row[_lbNqCol('last_code')] = 'DEFERRED';
+    row[_lbNqCol('last_detail')] = 'not_sent: CANCEL_TIME_BUDGET';
+    row[_lbNqCol('email_attempts')] = 0;
+    _lbNqAppendRow(row);
+    return true;
+  } catch (e) { _lbNqEmergency(purpose, 'DEFERRED', e); return false; }
 }
 
 // 体験予約のスタッフ通知（旧トークン・コード.js）など、送り直さずオーナーへ知らせるだけのもの
@@ -4850,7 +4902,7 @@ function lbNotifyRetryTick(startedAtMs) {
     Logger.log('[notify-retry] warmupCache に時間がかかったので、今回は送り直さない');
     return { ok: false, code: 'LATE' };
   }
-  var out = { ok: true, sent: 0, retry: 0, stale: 0, alert: 0, mailed: 0, recovered: 0 };
+  var out = { ok: true, sent: 0, retry: 0, stale: 0, alert: 0, mailed: 0, recovered: 0, purged: 0 };
   try {
     var leaseId = Utilities.getUuid();
     var lock = LockService.getScriptLock();
@@ -4875,6 +4927,12 @@ function lbNotifyRetryTick(startedAtMs) {
             st = (st === 'sending') ? 'pending' : 'alert';
             row[_lbNqCol('state')] = st; row[_lbNqCol('lease_id')] = ''; row[_lbNqCol('lease_until')] = '';
             changed = true; out.recovered++;
+          }
+          //   ★終わった行の本文を30日で空にする（設計36・オーナー決定 2026-11-06）。行は消さない（番号がずれない）。
+          //     取り分けと同じロック・同じ1回の書き込みに相乗りする（シートの往復を増やさない）
+          if (out.purged < LB_NQ.TEXT_PURGE_MAX && (st === 'sent' || st === 'stale' || st === 'closed') && String(row[_lbNqCol('text')] || '') !== '') {
+            var doneAt = Math.max(Number(row[_lbNqCol('created_at')]) || 0, Number(row[_lbNqCol('alerted_at')]) || 0);
+            if (doneAt && now - doneAt > LB_NQ.TEXT_KEEP_DAYS * 86400000) { row[_lbNqCol('text')] = ''; changed = true; out.purged++; }
           }
           if (st === 'pending' && retryOff) {
             st = 'alert'; row[_lbNqCol('state')] = 'alert'; row[_lbNqCol('last_detail')] = 'not_sent: RETRY_OFF / ' + String(row[_lbNqCol('last_detail')] || '');
@@ -4942,7 +5000,7 @@ function lbNotifyRetryTick(startedAtMs) {
       if (mail.ok) out.mailed = alerts.length;
     }
     try { props.setProperty(LB_NQ.COMPLETED_PROP, String(Date.now())); } catch (eC) {}
-    if (claimed.length || alerts.length || out.recovered) Logger.log('[notify-retry] ' + JSON.stringify(out));
+    if (claimed.length || alerts.length || out.recovered || out.purged) Logger.log('[notify-retry] ' + JSON.stringify(out));
     return out;
   } catch (e) {
     Logger.log('[notify-retry] 例外: ' + e.message);
@@ -7660,7 +7718,9 @@ var _LB_ST = {
   push_change_penalty:{ ja:'\n（当日変更のため1回分の消化となります）', en:'\n(Same-day change: counts as one used session)', zh:'\n（当天更改将消耗一次）', 'zh-Hant':'\n（當天變更將消耗一次）' },
   push_cancelled:    { ja:'ご予約を取り消しました。\n日時：{dt}\n担当：{trainer}', en:'Your booking was cancelled.\nDate/Time: {dt}\nTrainer: {trainer}', zh:'您的预约已取消。\n时间：{dt}\n教练：{trainer}', 'zh-Hant':'您的預約已取消。\n時間：{dt}\n教練：{trainer}' },
   push_cancel_free:  { ja:'\n（前日17時までのため無料です）', en:'\n(Free: before 17:00 the day before)', zh:'\n（前一天17点前免费）', 'zh-Hant':'\n（前一天17點前免費）' },
-  push_cancel_penalty:{ ja:'\n（当日取消のため1回分の消化となります）', en:'\n(Same-day cancellation: counts as one used session)', zh:'\n（当天取消将消耗一次）', 'zh-Hant':'\n（當天取消將消耗一次）' }
+  push_cancel_penalty:{ ja:'\n（当日取消のため1回分の消化となります）', en:'\n(Same-day cancellation: counts as one used session)', zh:'\n（当天取消将消耗一次）', 'zh-Hant':'\n（當天取消將消耗一次）' },
+  //   ひとことを預かったときだけ足す（設計36）。ひとことの本文は会員宛に写さない
+  push_cancel_note_relayed:{ ja:'\nひとことは担当トレーナーにお伝えします。', en:'\nWe will pass your message on to your trainer.', zh:'\n您的留言将转达给负责教练。', 'zh-Hant':'\n您的留言將轉達給負責教練。' }
 };
 function _lbSt(lang, key, vars) {
   var e = _LB_ST[key]; var s = e ? (e[_lbNormLang(lang)] != null ? e[_lbNormLang(lang)] : e.ja) : key;
@@ -7774,7 +7834,11 @@ function _lbConsumeReservationEvents(customerName, trainer, start) {
 
 //   opts.ownerFree（設計26）：オーナーが当日（前日17時以降）でも無料で取り消す。専用の入口 line_ownerFreeCancel からだけ付く。
 //     オーナー以外が頼んだら何も書かずに FORBIDDEN（黙って当日消化にしない）
+//   opts.cxl（設計36）：会員の取消の理由 reason・ひとこと note・同意した結果 expect（free／consumed）。
+//     ★理由とひとことは「おまけ」：どんな値でも取消を止めない（捨てて成立させる）。expect だけは同意の内容なので、壊れていれば止める
+//     ★ロックの中は「判定・台帳・振替権・cancel_notes の1行」だけ（I-C7）。通知・検索・掃除・記録はロックの後（_lbCxlAfter・I-C11）
 function cancelReservationLine(lineUserId, reservationId, opts) {
+  var _cxT0 = Date.now();   // 受付の時刻（通知の時間予算の起点・設計36 改訂2-1）
   reservationId = String(reservationId || '').trim();
   if (!reservationId) return { success: false, code: 'BAD_REQUEST', message: '予約IDがありません。' };
   var rec = getCustomerByLine(lineUserId);
@@ -7793,6 +7857,18 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
   var last = sh.getLastRow();
   if (last < 2) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
 
+  //   ★同意した結果（設計36 改訂2-2）：無い・空＝古い画面（比べない）／free・consumed＝比べる／それ以外＝何も書かずに止める
+  var _cxIn = (opts && opts.cxl) || {};
+  var _cxExpect = _lbCxlExpect(_cxIn.expect);
+  if (_cxExpect === null) return { success: false, code: 'BAD_EXPECTATION', message: 'もう一度お試しください。' };
+  var _cx = _lbCxlNormalize(_cxIn);   // 入力だけを見る（ロックの前）
+  var _cn = _lbCnReady();             // cancel_notes の見出しの確認（実行ごとに1回・ロックの中で表を読まない＝改訂1-8）
+  //   ★オーナーの無料取消の認可に使う名簿（顧客→担当）は、ロックの前に1回だけ読む（I-C7・2026-11-06 関門②）。
+  //     ロックの中では手元の値を引くだけ。読めない・名簿に無い＝null＝誰にも通さない（_lbTrainerMaySeeCustomer と同じ倒れ方）
+  var _ownMap = _ownerFreeReq ? _lbCustOwnerMap() : null;
+  //   ロックの中で決まった値。ロックの外へ渡すのは**台帳の行から既に読めた値**と判定の結果だけ（改訂2-3）
+  var done = null;
+
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
@@ -7804,12 +7880,12 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
       var r = values[i];
       if (String(r[8]) !== reservationId) continue;               // 備考＝resId
       // 本人（顧客）または担当トレーナーのみ操作可（トレーナー管理ページ対応）
-      var _actorTr = getTrainerByLine(lineUserId);
+      var _actorTr = _actorTrainer;   // ★ロックの前に読んだものを使う（ロックの中で trainer_master を読まない・I-C7）
       var _isOwner = String(r[3]) === String(lineUserId);
       var _isTrainer = _actorTr && String(r[4]) === String(_actorTr.trainerId);
       if (!_isOwner && !_isTrainer && !_lbIsOwnerRole(_actorTr)) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };   // オーナーは全予約を操作可
       //   ★オーナーの無料取消は認可の正本も通す（設計24と同じ・例外を増やさない・名簿に無い顧客は止める）
-      if (_ownerFreeReq && !_lbTrainerMaySeeCustomer(_actorTr, _lbCustOwnerOf(String(r[2] || '')))) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };
+      if (_ownerFreeReq && !_lbTrainerMaySeeCustomer(_actorTr, _lbCustOwnerFromMap(_ownMap, String(r[2] || '')))) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };
       if (String(r[6]) !== 'confirmed') return { success: false, code: 'ALREADY', message: 'この予約は既に取消・変更済みです。' };
       var start = _lbParseResvDate(r[0]);
       if (!start) return { success: false, code: 'SERVER_ERROR', message: '予約日時を解釈できません。' };
@@ -7818,8 +7894,11 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
       var _freeWin = _lbIsFreeCancelWindow(start);
       var _ownerApplied = _ownerFreeReq && !_freeWin;   // ★オーナー権限で無料にした（期限前はもともと無料＝通常の無料として扱う）
       var free = _freeWin || _ownerApplied;
+      //   ★判定が「画面で同意した結果」と違えば何も書かない（I-C8・設計36 改訂1-5）。画面を開いたまま前日17時をまたいだとき。
+      //     判定そのものは変えない（_lbIsFreeCancelWindow のまま）。古い画面（expect なし）は比べない
+      if (_cxExpect && _cxExpect !== (free ? 'free' : 'consumed')) return { success: false, code: 'OUTCOME_CHANGED', freeCancel: free, message: '前日17時を過ぎたため、キャンセルの扱いが変わりました。' };
       var customerName = String(r[1]);
-      var trainer = _lbTrainerById(String(r[4]));
+      var trainer = _lbTrainerById(String(r[4]));   // カレンダーの後始末に使う（判定と後始末の一部＝ロックの中・改訂2-3）
 
       // 無料＝両方削除（枠開放・計上なし）／当日消化＝B1を[消化]化（billing計上・空き枠系から除外）・トレーナー✅削除
       if (free) _lbDeleteReservationEvents(customerName, trainer, start);
@@ -7827,35 +7906,402 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
 
       var row = i + 2;
       sh.getRange(row, 7).setValue(free ? 'cancelled' : 'consumed');   // 無料=cancelled(残数が戻る)／当日=consumed(消化計上=戻さない)
+      //   ★備考（9列目）は予約の鍵。理由・ひとことを一切入れない（I-C1・設計36）。書く値は設計36の前と1文字も同じ
       sh.getRange(row, 9).setValue(reservationId + (_ownerApplied ? '|無料取消（オーナー権限 ' + Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '）' : (free ? '|無料取消' : '|当日消化取消')));  // 備考に記録
       // #9：当日キャンセル（消化）で振替権を1件付与（6日有効）。振替予約のキャンセルには付与しない（再振替ループ防止）。
       if (!free && String(r[9] || '') !== 'transfer') _lbGrantTransferCredit(String(r[2]), reservationId);
       // （回数券の実消化は残数管理フェーズで payment_flag/請求連携。ここでは記録＋penalty返却のみ）
 
-      var s = _lbFmtResvLabel(r[0]);   // トレーナー通知用（日本語）
-      var _cl = _lbMemberLang(String(r[3]));
-      _lbPush(String(r[3]), _lbSt(_cl, 'push_cancelled', { dt: _lbFmtResvLabel(r[0], _cl), trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
-        _lbSt(_cl, _ownerApplied ? 'push_cancel_owner_free' : (free ? 'push_cancel_free' : 'push_cancel_penalty')), 'cancel_customer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
-      if (trainer) {
-        var trId = getTrainerLineId(trainer.id);
-        if (trId) _lbPush(trId, '【予約キャンセル】' + customerName + '様\n日時：' + s + (_ownerApplied ? '\n（無料取消・オーナー権限）' : (free ? '\n（無料取消）' : '\n（当日消化）')), 'cancel_trainer', { resId: String(reservationId), customerId: String(r[2]), startMs: start.getTime() });
+      //   ---- cancel_notes に1行（設計36）。理由が無くても・誰が操作しても1行（設計37 の計測の土台）----
+      //   誰の操作か：本人＝customer／オーナーの役割＝owner／それ以外＝trainer。理由とひとことは会員本人のときだけ受け取る
+      var _actor = (_isOwner && !_ownerFreeReq) ? 'customer' : (_lbIsOwnerRole(_actorTr) ? 'owner' : 'trainer');
+      var _cxKey = '', _cxNote = '', _cxTr = '', _cxDropped = '', _cxSaved = false;
+      if (_actor === 'customer') { _cxKey = _cx.key; _cxNote = _cx.note; _cxDropped = _cx.dropped; }
+      else { if (_cx.sent) _cxDropped = 'not_customer'; _cxTr = _cx.trainerReason; }   // trainer_reason は判定・消化・振替権に使わない（I-C10）
+      if (_cn.ok) {
+        //   ★appendRow だけを囲む（改訂2-5）。書けなくても台帳と振替権は書き終わっている＝必ず成功の応答へ進む
+        try {
+          _cn.sheet.appendRow(_lbCnRow({ resId: reservationId, cancelledAt: Date.now(), startAt: start.getTime(), trainerId: String(r[4] || ''),
+            customerId: String(r[2] || ''), actor: _actor, outcome: _ownerApplied ? 'owner_free' : (free ? 'free' : 'consumed'),
+            transfer: String(r[9] || '') === 'transfer', reasonKey: _cxKey, trainerReason: _cxTr, note: _cxNote, notified: trainer ? 'slot' : 'none' }));
+          _cxSaved = true;
+        } catch (eCn) { _cxSaved = false; }
       }
-
-      //   ★会員IDを返す（2026-10-08・二重書きの穴を塞ぐ）。
-      //     返さないと、edgeAfterWrite は lineUserId から会員を引く。
-      //     **トレーナーが取り消したとき、それはトレーナーのIDなので会員が特定できず、
-      //     D1の引当が更新されないまま残る。** 翌朝の照合で食い違いとして出るだけで、
-      //     その間ずっと古い残数がD1に入っている。
-      //     行（r[2]=customer_id）から読めるのだから、返すのが正しい。
-      //   ★氏名は返さない（2026-10-08・Codex関門②）。
-      //     edgeAfterWrite は氏名が無ければ customerId から引き直す。
-      //     応答に不要な個人情報を増やす理由がない。
-      return { success: true, penalty: !free, ownerFree: _ownerApplied, customerId: String(r[2] || '') };
+      //   保存できなかった理由・ひとことは、通知にも載せない（画面に「お送りできませんでした」と出すのと揃える）
+      if (!_cxSaved) {
+        if (_cxKey || _cxNote) _cxDropped = _cn.ok ? 'save_failed' : 'header_mismatch';
+        _cxKey = ''; _cxNote = '';
+      }
+      done = { resId: reservationId, customerId: String(r[2] || ''), customerLineId: String(r[3] || ''), customerName: customerName,
+               slotTrainerId: String(r[4] || ''), trainer: trainer, start: start, rawStart: r[0], free: free, ownerApplied: _ownerApplied,
+               actor: _actor, key: _cxKey, note: _cxNote, saved: _cxSaved, dropped: _cxDropped,
+               keyDropped: _actor === 'customer' && _cx.keyDropped, cnOk: !!_cn.ok, cnWhy: _cn.ok ? '' : String(_cn.why || '') };
+      break;
     }
-    return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
+    if (!done) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
   } finally {
     lock.releaseLock();
   }
+
+  //   ---- ここからロックの外：成立後の付け足し（通知・担当の検索・言語・掃除・記録）。何が落ちても応答は成功のまま（I-C11）----
+  var _af = null;
+  try { _af = _lbCxlAfter(done, _cxT0); } catch (eAf) { _lbCxlLogErr('after', eAf); }
+
+  //   ★会員IDを返す（2026-10-08・二重書きの穴を塞ぐ）。
+  //     返さないと、edgeAfterWrite は lineUserId から会員を引く。
+  //     **トレーナーが取り消したとき、それはトレーナーのIDなので会員が特定できず、
+  //     D1の引当が更新されないまま残る。** 翌朝の照合で食い違いとして出るだけで、
+  //     その間ずっと古い残数がD1に入っている。
+  //     行（r[2]=customer_id）から読めるのだから、返すのが正しい。
+  //   ★氏名は返さない（2026-10-08・Codex関門②）。
+  //     edgeAfterWrite は氏名が無ければ customerId から引き直す。
+  //     応答に不要な個人情報を増やす理由がない。
+  //   ★設計36：recordSaved（cancel_notes に行を書けた）・messageAccepted（空でないひとことを保存して通知の文に載せた）・noteDropped を足すだけ
+  return { success: true, penalty: !done.free, ownerFree: done.ownerApplied, customerId: String(r[2] || ''),
+           recordSaved: done.saved, messageAccepted: !!(_af && _af.relayed === true), noteDropped: done.dropped };
+}
+
+// ============================================================
+// キャンセル理由（設計36・2026-11-06）
+//   会員がキャンセルするときの理由（選択肢）とひとこと（100字・任意）を、専用シート cancel_notes に1行で残し、
+//   その枠のトレーナー（と契約上の担当）への通知に載せる。
+//   ★倒れる向き：理由・ひとことは「おまけ」。判定できない・保存できない・長すぎる・知らない鍵 → 理由を捨ててキャンセルは成立させる。
+//   ★ひとことは機密に準じる：ログ・作業依頼の結果・公開の場所に本文を出さない。カルテへは写さない（I-C3・I-C4）。
+// ============================================================
+//   選択肢の鍵とトレーナー宛の表示名（日本語固定）。画面（liff/index.html の CXL_KEYS）と同じ鍵
+var LB_CXL_KEYS = { work: '仕事・急な予定', family: '家庭の事情', condition: '体調・コンディション', other: 'その他' };
+//   第2段（トレーナーのキャンセルの理由）の鍵。第1段では入口から来ない。使い道は設計37 の対象判定だけ（I-C10）
+var LB_CXL_TRAINER_KEYS = { trainer_convenience: 1, customer_proxy: 1 };
+var LB_CXL_NOTE_MAX = 100;   // コードポイントで数える（絵文字1つ＝1字）。画面と同じ
+//   通常時の時間予算（保証ではない・改訂3-1）。受付から12秒＝LIFF の待ち切り20秒から応答・JSONP の余裕8秒を引いたもの。
+//   通知を始めてから4秒＝最大3通を通常4秒以内に収める余裕。超えたら担当と会員の通知は送らずに積む（その枠のトレーナーは必ず送る）
+var LB_CXL_BUDGET = { ACCEPT_MS: 12000, NOTIFY_MS: 4000 };
+
+//   同意した結果の正規化。'' ＝比べない（無い・空）／'free'・'consumed'／null ＝壊れている（止める）
+function _lbCxlExpect(v) {
+  if (v == null || v === '') return '';
+  if (v === 'free' || v === 'consumed') return v;
+  return null;
+}
+
+//   ひとことの整え方（画面の _cxlNorm と同じ規則・worker/test/gas-cancel-reason.test.js が突き合わせる）
+//     改行をそろえ、制御文字と向きを変える不可視の文字を落とし、各行の前後の空白を落とし、空の行を落とす。
+//     4行目以降は3行目へ1つの空白でつなぐ（最大3行）
+function _lbCxlNormText(s) {
+  s = String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000B-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
+  var lines = s.split('\n').map(function (x) { return x.replace(/^\s+|\s+$/g, ''); }).filter(function (x) { return x !== ''; });
+  if (lines.length > 3) lines = lines.slice(0, 2).concat([lines.slice(2).join(' ')]);
+  return lines.join('\n');
+}
+
+//   入力だけを見る（シートも時刻も読まない）。400 にしない＝知らない鍵・長すぎるひとことは捨てて印だけ残す（設計36 §1）
+//     返り値 { key, note, dropped, keyDropped, sent, trainerReason }
+//       sent … 何か送られてきたか（会員以外が送ったものを捨てた印に使う）
+function _lbCxlNormalize(raw) {
+  var c = raw || {};
+  var k = (typeof c.reason === 'string') ? c.reason : '';
+  var n = (typeof c.note === 'string') ? c.note : '';
+  var tr = (typeof c.trainerReason === 'string') ? c.trainerReason : '';
+  var out = { key: '', note: '', dropped: '', keyDropped: false, sent: !!(k || n || tr), trainerReason: '' };
+  if (k) { if (Object.prototype.hasOwnProperty.call(LB_CXL_KEYS, k)) out.key = k; else out.keyDropped = true; }
+  if (tr && Object.prototype.hasOwnProperty.call(LB_CXL_TRAINER_KEYS, tr)) out.trainerReason = tr;
+  if (n) {
+    var t = _lbCxlNormText(n);
+    //   ★切り詰めない（途中で切ると意味が変わる）。丸ごと捨てて印を残す
+    if (Array.from(t).length > LB_CXL_NOTE_MAX) out.dropped = 'too_long';
+    else out.note = t;
+  }
+  return out;
+}
+
+//   例外を残すのは「どの単位か」と例外の種類だけ（理由・ひとこと・氏名・ID を出さない・改訂4-1）
+function _lbCxlLogErr(unit, e) {
+  try { Logger.log('[cancel] 成立後の付け足しで例外（' + unit + '）: ' + String((e && e.name) || 'Error')); } catch (e2) {}
+}
+
+//   成立後の付け足し（ロックの外・改訂4-1）。5つの単位を**それぞれ独立に**囲む＝1つの失敗で後ろを止めない。
+//     1. その枠のトレーナー（時間予算を見ずに直接・noInlineRetry＝改訂3-2）
+//     2. 契約上の担当の検索と通知（会員の操作で理由かひとことがあるときだけ・同じ人・担当なし・LINE が無い・読めない → 送らない）
+//     3. 会員の言語の検索と通知
+//     4. cancel_notes の掃除（＋ notified の印）
+//     5. booking_metrics の記録
+//   ★各通知は一度だけ unsent → attempted（_lbPush を呼んだ）か unsent → deferred（_lbNqDefer で積んだ）に進む（改訂3-3）。
+//     _lbPush を呼んだ通知は外から積まない（失敗の積み込みは _lbPush → _lbNqOnFail に任せる）
+function _lbCxlAfter(d, t0) {
+  var tN = Date.now();
+  var st = { slot: 'unsent', owner: 'unsent', customer: 'unsent' }, failed = [];
+  var ctx = { resId: String(d.resId), customerId: String(d.customerId), startMs: d.start.getTime() };
+  var slotLine = '';
+  function over() { var n = Date.now(); return (n - t0 > LB_CXL_BUDGET.ACCEPT_MS) || (n - tN > LB_CXL_BUDGET.NOTIFY_MS); }
+  function send(name, to, text, purpose, direct) {
+    if (st[name] !== 'unsent' || !to) return;
+    if (!direct && over()) { st[name] = 'deferred'; _lbNqDefer(to, text, purpose, ctx); return; }
+    st[name] = 'attempted';
+    _lbPush(to, text, purpose, ctx, { noInlineRetry: true });   // キャンセルの要求の中では429で粘らない（改訂2-1）
+  }
+  //   トレーナー宛の文（日本語固定）。理由とひとことは会員の操作で保存できたときだけ載る（d.key・d.note は保存できなければ空）
+  function trText() {
+    return '【予約キャンセル】' + d.customerName + '様\n日時：' + _lbFmtResvLabel(d.rawStart)
+      + (d.ownerApplied ? '\n（無料取消・オーナー権限）' : (d.free ? '\n（無料取消）' : '\n（当日消化）'))
+      + (d.key ? '\n理由：' + LB_CXL_KEYS[d.key] : '') + (d.note ? '\nひとこと：' + d.note : '');
+  }
+  // 1. その枠のトレーナー
+  try {
+    if (d.trainer) { slotLine = String(getTrainerLineId(d.trainer.id) || ''); send('slot', slotLine, trText(), 'cancel_trainer', true); }
+  } catch (e1) { failed.push('slot'); _lbCxlLogErr('slot', e1); }
+  // 2. 契約上の担当（★読めないときは送らない側＝担当を推測しない）
+  try {
+    if (d.actor === 'customer' && (d.key || d.note)) {
+      var ownTid = String(_lbCustTrainerId(d.customerId) || '');
+      if (ownTid && ownTid !== d.slotTrainerId) {
+        var ownLine = String(getTrainerLineId(ownTid) || '');
+        if (ownLine && ownLine !== slotLine) send('owner', ownLine, '（担当のお客様です）\n' + trText(), 'cancel_trainer', false);
+      }
+    }
+  } catch (e2) { failed.push('owner'); _lbCxlLogErr('owner', e2); }
+  //   ★「ひとことを伝えた」＝保存できて、かつトレーナーの誰か（その枠か担当）へ送ったか積んだとき（2026-11-06 関門②）。
+  //     その枠のトレーナーに LINE が無く、担当も同じ人なら、誰にも届いていない＝会員にも画面にも「伝えた」と言わない
+  st.relayed = !!(d.saved && d.note) && (st.slot !== 'unsent' || st.owner !== 'unsent');
+  // 3. 会員（「お伝えします」は上の relayed のときだけ。ひとことの本文は写さない）
+  try {
+    if (d.customerLineId) {
+      var cl = _lbMemberLang(d.customerLineId);
+      var tn = d.trainer ? _lbTrainerNameLang(d.trainer.id, d.trainer.name, cl) : '';
+      send('customer', d.customerLineId,
+        _lbSt(cl, 'push_cancelled', { dt: _lbFmtResvLabel(d.rawStart, cl), trainer: tn })
+        + _lbSt(cl, d.ownerApplied ? 'push_cancel_owner_free' : (d.free ? 'push_cancel_free' : 'push_cancel_penalty'))
+        + (st.relayed ? _lbSt(cl, 'push_cancel_note_relayed') : ''), 'cancel_customer', false);
+    }
+  } catch (e3) { failed.push('customer'); _lbCxlLogErr('customer', e3); }
+  var notifyMs = Date.now() - tN;
+  // 4a. この行の notified を実際の結果に直す（★時間予算を見ない・掃除と別の単位＝遅れても誤った印を残さない・2026-11-06 関門②）
+  try {
+    if (d.cnOk && d.saved) {
+      var notified = st.owner !== 'unsent' ? 'slot+owner_trainer' : (st.slot !== 'unsent' ? 'slot' : 'none');
+      _lbCnMark(_lbCnReady().sheet, d.resId, notified);
+    }
+  } catch (e4a) { failed.push('mark'); _lbCxlLogErr('mark', e4a); }
+  // 4b. cancel_notes の掃除（時間予算の内側だけ。遅れても次のキャンセルで追いつく）
+  try {
+    if (d.cnOk && Date.now() - t0 <= LB_CXL_BUDGET.ACCEPT_MS) _lbCnMaintain(_lbCnReady().sheet, Date.now());
+  } catch (e4) { failed.push('purge'); _lbCxlLogErr('purge', e4); }
+  // 5. booking_metrics（本文・氏名・ID は書かない）
+  try {
+    var codes = [];
+    if (d.cnWhy) codes.push('CXL_NOTE_HEADER');
+    else if (!d.saved) codes.push('CXL_NOTE_SAVE_FAIL');
+    if (d.keyDropped) codes.push('CXL_REASON_DROPPED');
+    if (d.dropped === 'too_long') codes.push('CXL_NOTE_TOO_LONG');
+    var deferred = (st.owner === 'deferred' ? 1 : 0) + (st.customer === 'deferred' ? 1 : 0);
+    if (deferred || notifyMs > LB_CXL_BUDGET.NOTIFY_MS || Date.now() - t0 > LB_CXL_BUDGET.ACCEPT_MS) codes.push('CXL_NOTIFY_SLOW');
+    var detail = 'notify_ms=' + notifyMs + ' total_ms=' + (Date.now() - t0) + ' deferred=' + deferred + (failed.length ? ' failed=' + failed.join(',') : '') + (d.cnWhy ? ' why=' + d.cnWhy : '');
+    for (var ci = 0; ci < codes.length; ci++) _lbLogOutcome(codes[ci], 'cancel', detail);
+  } catch (e5) { _lbCxlLogErr('metrics', e5); }
+  try { Logger.log('[perf] cancel notify: ' + notifyMs + 'ms（その枠=' + st.slot + ' 担当=' + st.owner + ' 会員=' + st.customer + (failed.length ? ' 例外=' + failed.join(',') : '') + '）'); } catch (e6) {}
+  return st;
+}
+
+// ---- 専用シート cancel_notes（設計36 §3-4・改訂1-2〜1-8・2-4）----
+//   ★キャンセルの経路では作らない（無ければ書かない）。作るのは setupCancelNotesSheet だけ。
+//   ★見出しが完全一致しなければ書かない（キャンセルは成立・I-C9）。
+//   ★行は消さない（行の番号がずれない）。ひとことは1年で空に・識別子（res_id・customer_id・trainer_id）は2年で空に。
+//   ★note_purged_at は「ひとことが残っていない」印も兼ねる：ひとことが無い行は書いた時点で '-'。
+//     だから日次点検と作業依頼は note 列を一度も読まずに「残っている行」を数えられる（I-C6）
+var LB_CN = {
+  SHEET: 'cancel_notes',
+  HEAD: ['res_id', 'cancelled_at', 'start_at', 'trainer_id', 'customer_id', 'actor', 'outcome', 'transfer',
+         'reason_key', 'trainer_reason', 'note', 'note_purged_at', 'notified', 'ids_purged_at'],
+  NOTE_DAYS: 365,      // ひとことを空にする（オーナー決定 2026-11-06）
+  IDS_DAYS: 730,       // 識別子を空にする（同）
+  PURGE_MAX: 20,       // 1回の掃除で触る行の上限
+  MARK_SCAN: 30,       // notified を直すときに末尾から見る行数（今書いた行は末尾付近・並行キャンセルの余裕）
+  HEALTH_DAYS: 400,    // 日次点検：ひとことが残る最も古い行がこれより古ければ悪化
+  //   作業依頼の件数が読む列（allowlist）。★note・res_id・customer_id・trainer_id を入れない（I-C6）
+  COUNT_COLS: ['cancelled_at', 'actor', 'outcome', 'transfer', 'reason_key', 'trainer_reason', 'note_purged_at', 'ids_purged_at']
+};
+var _LB_CN_READY = null;   // 実行ごとに1回だけ見出しを確かめる
+function _lbCnCol(name) { return LB_CN.HEAD.indexOf(name) + 1; }   // 1始まりの列番号
+
+//   見出しの確認。{ ok:true, sheet } か { ok:false, why:'no_sheet'|'header_mismatch'|'read_failed' }
+function _lbCnReady() {
+  if (_LB_CN_READY) return _LB_CN_READY;
+  var r;
+  try {
+    var sh = _lbSs().getSheetByName(LB_CN.SHEET);
+    if (!sh) r = { ok: false, why: 'no_sheet' };
+    else if (sh.getLastColumn() !== LB_CN.HEAD.length) r = { ok: false, why: 'header_mismatch' };
+    else {
+      var h = sh.getRange(1, 1, 1, LB_CN.HEAD.length).getValues()[0], same = true;
+      for (var i = 0; i < LB_CN.HEAD.length; i++) if (String(h[i]) !== LB_CN.HEAD[i]) same = false;
+      r = same ? { ok: true, sheet: sh } : { ok: false, why: 'header_mismatch' };
+    }
+  } catch (e) { r = { ok: false, why: 'read_failed' }; }
+  _LB_CN_READY = r;
+  return r;
+}
+
+//   1行を組み立てる。文字の値はすべて sanitizeCell（=・+・-・@ で始まる文を数式にしない）
+function _lbCnRow(o) {
+  var row = [];
+  for (var i = 0; i < LB_CN.HEAD.length; i++) row.push('');
+  row[_lbCnCol('res_id') - 1] = sanitizeCell(o.resId);
+  row[_lbCnCol('cancelled_at') - 1] = Number(o.cancelledAt);
+  row[_lbCnCol('start_at') - 1] = Number(o.startAt);
+  row[_lbCnCol('trainer_id') - 1] = sanitizeCell(o.trainerId);
+  row[_lbCnCol('customer_id') - 1] = sanitizeCell(o.customerId);
+  row[_lbCnCol('actor') - 1] = sanitizeCell(o.actor);
+  row[_lbCnCol('outcome') - 1] = sanitizeCell(o.outcome);
+  row[_lbCnCol('transfer') - 1] = !!o.transfer;
+  row[_lbCnCol('reason_key') - 1] = sanitizeCell(o.reasonKey || '');
+  row[_lbCnCol('trainer_reason') - 1] = sanitizeCell(o.trainerReason || '');
+  row[_lbCnCol('note') - 1] = o.note ? sanitizeCell(o.note) : '';
+  row[_lbCnCol('note_purged_at') - 1] = o.note ? '' : '-';   // ひとことが無い＝空にする対象が無い
+  row[_lbCnCol('notified') - 1] = sanitizeCell(o.notified || 'none');
+  return row;
+}
+
+//   シートを作る（オーナーが GAS エディタで1回実行する）。見出しだけを書く。
+//   ★既にあって行があるのに見出しが違うときは**書き換えない**（行の意味を変えない）。ログで知らせて止める
+function setupCancelNotesSheet() {
+  var ss = _lbSs(), sh = ss.getSheetByName(LB_CN.SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(LB_CN.SHEET);
+    sh.getRange(1, 1, 1, LB_CN.HEAD.length).setValues([LB_CN.HEAD]);
+    _LB_CN_READY = null;
+    Logger.log('✅ cancel_notes を作りました（見出し ' + LB_CN.HEAD.length + '列）');
+    return 'created';
+  }
+  _LB_CN_READY = null;
+  if (_lbCnReady().ok) { Logger.log('✅ cancel_notes は作成済みで、見出しも一致しています'); return 'ok'; }
+  if (sh.getLastRow() <= 1) {
+    sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), LB_CN.HEAD.length)).clearContent();
+    sh.getRange(1, 1, 1, LB_CN.HEAD.length).setValues([LB_CN.HEAD]);
+    _LB_CN_READY = null;
+    Logger.log('✅ cancel_notes の見出しを書き直しました（行はありませんでした）');
+    return 'rewrote';
+  }
+  Logger.log('❌ cancel_notes に行があるのに見出しが違います。書き換えません。見出しを次に揃えてください：' + LB_CN.HEAD.join(','));
+  return 'mismatch';
+}
+
+//   掃除（ロックの外・キャンセル1回につき1回）。設計36 改訂1-2・1-3・2-4
+//     1年を過ぎてひとことが残る行（note_purged_at が空）と、2年を過ぎて識別子が残る行（ids_purged_at が空）を
+//     古い順に合わせて最大20行。行ごとに1回読み（res_id と cancelled_at で位置を確かめる）、1回で書く。
+//     mark … { resId, notified }：直前に書いた行の notified を直す（誰に送ろうとしたか）
+//   返り値 { note, ids, marked }
+function _lbCnMaintain(sh, nowMs, mark) {
+  var out = { note: 0, ids: 0, marked: 0 };
+  var last = sh.getLastRow();
+  if (last < 2) return out;
+  var n = last - 1, W = LB_CN.HEAD.length;
+  var a = sh.getRange(2, 1, n, 2).getValues();                                  // res_id・cancelled_at
+  var b = sh.getRange(2, _lbCnCol('note_purged_at'), n, 3).getValues();          // note_purged_at・notified・ids_purged_at
+  var noteCut = nowMs - LB_CN.NOTE_DAYS * 86400000, idsCut = nowMs - LB_CN.IDS_DAYS * 86400000;
+  var cands = [];
+  for (var i = 0; i < n; i++) {
+    var at = Number(a[i][1]);
+    if (!_lbIsFiniteNum(at) || at <= 0) continue;
+    var needNote = at < noteCut && String(b[i][0]) === '';
+    var needIds = at < idsCut && String(b[i][2]) === '';
+    if (needNote || needIds) cands.push({ i: i, at: at, resId: String(a[i][0]) });
+  }
+  cands.sort(function (x, y) { return x.at - y.at; });
+  cands = cands.slice(0, LB_CN.PURGE_MAX);
+  for (var k = 0; k < cands.length; k++) {
+    var rowNum = cands[k].i + 2;
+    var cur = sh.getRange(rowNum, 1, 1, W).getValues()[0];
+    //   ★書く位置を確かめる（行が動いていたら書かない）
+    if (String(cur[0]) !== cands[k].resId || Number(cur[1]) !== cands[k].at) continue;
+    var changed = false;
+    if (cands[k].at < noteCut && String(cur[_lbCnCol('note_purged_at') - 1]) === '') {
+      cur[_lbCnCol('note') - 1] = ''; cur[_lbCnCol('note_purged_at') - 1] = nowMs; out.note++; changed = true;
+    }
+    if (cands[k].at < idsCut && String(cur[_lbCnCol('ids_purged_at') - 1]) === '') {
+      cur[_lbCnCol('res_id') - 1] = ''; cur[_lbCnCol('customer_id') - 1] = ''; cur[_lbCnCol('trainer_id') - 1] = '';
+      cur[_lbCnCol('ids_purged_at') - 1] = nowMs; out.ids++; changed = true;
+    }
+    if (changed) sh.getRange(rowNum, 1, 1, W).setValues([cur]);
+  }
+  if (mark && mark.resId) out.marked = _lbCnMark(sh, mark.resId, mark.notified);   // 互換（旧い呼び方）
+  return out;
+}
+
+//   直前に書いた行の notified を直す（書いた時点では担当への2通目を送るか分からないため）。違うときだけ1回書く。
+//   ★末尾の LB_CN.MARK_SCAN 行だけを見る（今書いた行は末尾にある・表全体を読まない）。見つからなければ何もしない
+function _lbCnMark(sh, resId, notified) {
+  var last = sh.getLastRow();
+  if (last < 2 || !resId) return 0;
+  var n = Math.min(last - 1, LB_CN.MARK_SCAN), top = last - n + 1;
+  var a = sh.getRange(top, 1, n, 1).getValues(), b = sh.getRange(top, _lbCnCol('notified'), n, 1).getValues();
+  var want = sanitizeCell(resId);
+  for (var j = n - 1; j >= 0; j--) {
+    if (String(a[j][0]) !== want) continue;
+    if (String(b[j][0]) !== String(notified)) { sh.getRange(top + j, _lbCnCol('notified')).setValue(sanitizeCell(notified)); return 1; }
+    return 0;
+  }
+  return 0;
+}
+
+//   日次点検が読む状態。★note 列を読まない（note_purged_at の空で「ひとことが残っている」を見る・I-C6）。日数だけを返す
+function _lbCnHealth(nowMs) {
+  var ready = _lbCnReady();
+  var out = { ready: !!ready.ok, why: ready.ok ? '' : String(ready.why || ''), rows: 0, oldestNoteDays: null };
+  if (!ready.ok) return out;
+  var sh = ready.sheet, last = sh.getLastRow();
+  if (last < 2) return out;
+  var n = last - 1;
+  var at = sh.getRange(2, _lbCnCol('cancelled_at'), n, 1).getValues();
+  var np = sh.getRange(2, _lbCnCol('note_purged_at'), n, 1).getValues();
+  var oldest = null;
+  out.rows = n;
+  for (var i = 0; i < n; i++) {
+    var t = Number(at[i][0]);
+    if (!_lbIsFiniteNum(t) || t <= 0 || String(np[i][0]) !== '') continue;
+    if (oldest == null || t < oldest) oldest = t;
+  }
+  if (oldest != null) out.oldestNoteDays = Math.floor((nowMs - oldest) / 86400000);
+  return out;
+}
+
+//   作業依頼（remaining の cancelNotes）：鍵ごと・状態ごとの**件数だけ**（設計36 改訂1-7・I-C6）。
+//   ★読む列は LB_CN.COUNT_COLS だけ（列ごとに読む）。ひとこと・ID の列は読まない。例外の文にセルの値を連結しない
+function cancelNotesCountText() {
+  var ready = _lbCnReady();
+  if (!ready.ok) return 'cancel_notes：使えません（' + ready.why + '）。setupCancelNotesSheet を実行してください。';
+  var sh = ready.sheet, last = sh.getLastRow(), n = Math.max(0, last - 1);
+  var lines = ['cancel_notes：見出し 一致／行 ' + n];
+  if (!n) return lines.join('\n');
+  var col = {};
+  for (var c = 0; c < LB_CN.COUNT_COLS.length; c++) {
+    var name = LB_CN.COUNT_COLS[c];
+    col[name] = sh.getRange(2, _lbCnCol(name), n, 1).getValues();
+  }
+  var now = Date.now(), since = now - 30 * 86400000;
+  function bump(o, k) { o[k] = (o[k] || 0) + 1; }
+  var all = { actor: {}, outcome: {}, reason: {} }, recent = { actor: {}, outcome: {}, reason: {} };
+  var notesKept = 0, idsPurged = 0, transfer = 0, trReason = {}, badTime = 0, recentN = 0;
+  //   表に出す鍵は固定の一覧だけ（知らない値は「その他の値」に寄せる＝セルの文字を出さない）
+  var ACT = { customer: 1, trainer: 1, owner: 1 }, OUT = { free: 1, consumed: 1, owner_free: 1 };
+  for (var i = 0; i < n; i++) {
+    var t = Number(col.cancelled_at[i][0]);
+    if (!_lbIsFiniteNum(t) || t <= 0) { badTime++; continue; }
+    var a = String(col.actor[i][0]), o = String(col.outcome[i][0]), rk = String(col.reason_key[i][0]);
+    a = ACT[a] ? a : '?'; o = OUT[o] ? o : '?';
+    rk = rk === '' ? '（なし）' : (Object.prototype.hasOwnProperty.call(LB_CXL_KEYS, rk) ? rk : '?');
+    bump(all.actor, a); bump(all.outcome, o); if (a === 'customer') bump(all.reason, rk);
+    if (t >= since) { recentN++; bump(recent.actor, a); bump(recent.outcome, o); if (a === 'customer') bump(recent.reason, rk); }
+    if (String(col.note_purged_at[i][0]) === '') notesKept++;
+    if (String(col.ids_purged_at[i][0]) !== '') idsPurged++;
+    if (col.transfer[i][0] === true || String(col.transfer[i][0]).toUpperCase() === 'TRUE') transfer++;
+    var tr = String(col.trainer_reason[i][0]);
+    if (tr) bump(trReason, Object.prototype.hasOwnProperty.call(LB_CXL_TRAINER_KEYS, tr) ? tr : '?');
+  }
+  function fmt(o) { var s = []; for (var k in o) s.push(k + ' ' + o[k]); return s.length ? s.join('・') : '0'; }
+  lines.push('直近30日：' + recentN + '件／操作 ' + fmt(recent.actor) + '／判定 ' + fmt(recent.outcome) + '／会員の理由 ' + fmt(recent.reason));
+  lines.push('全期間：操作 ' + fmt(all.actor) + '／判定 ' + fmt(all.outcome) + '／会員の理由 ' + fmt(all.reason) + '／振替 ' + transfer);
+  lines.push('ひとことが残っている行 ' + notesKept + '／識別子を空にした行 ' + idsPurged + (badTime ? '／時刻が読めない行 ' + badTime : ''));
+  if (Object.keys(trReason).length) lines.push('トレーナーの理由（第2段）：' + fmt(trReason));
+  return lines.join('\n');
 }
 
 // ============================================================
@@ -8249,6 +8695,25 @@ function _lbRecurSheet() {
 //     権限の判定にはこちらだけを使う。_lbCustTrainerId は通知先を引くなど
 //     「担当が分かれば足りる」用途に限る。
 //   返り値： trainerId（担当あり） ／ ''（実在して担当なし） ／ null（判定できない）
+//   名簿（顧客→担当）を1回で読んで手元に持つ（ロックの中で表を読まないため・設計36 I-C7）。
+//   読めない＝null（_lbCustOwnerFromMap が常に null を返す＝判定できない側へ倒れる）
+function _lbCustOwnerMap() {
+  var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!sh || sh.getLastRow() < 2) return null;
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, _lbMapWidth(sh)).getValues(), m = {};
+  for (var i = 0; i < v.length; i++) {
+    var cid = String(v[i][MAP_COL.CUSTOMER_ID - 1] || '');
+    if (cid && !Object.prototype.hasOwnProperty.call(m, cid)) m[cid] = String(v[i][MAP_COL.TRAINER_ID - 1] || '');   // 最初の行（_lbCustOwnerOf と同じ）
+  }
+  return m;
+}
+//   _lbCustOwnerOf と同じ契約：空の ID・読めない・見つからない＝null
+function _lbCustOwnerFromMap(m, customerId) {
+  var cid = String(customerId || '');
+  if (!cid || !m || !Object.prototype.hasOwnProperty.call(m, cid)) return null;
+  return m[cid];
+}
+
 function _lbCustOwnerOf(customerId) {
   var cid = String(customerId || '');
   if (!cid) return null;
@@ -8859,7 +9324,7 @@ function getBookingMetrics(sinceDays) {
   var sh = _lbSheet(LB_METRICS_SHEET); if (!sh || sh.getLastRow() < 2) return { total: 0, byOutcome: {}, byChannel: {}, notifyFail: { total: 0, byReason: {}, byPurpose: {} }, days: days };
   var cutoff = Utilities.formatDate(new Date(new Date().getTime() - days * 86400000), SETTINGS.TIMEZONE, 'yyyy-MM-dd');
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
-  var byOutcome = {}, byChannel = {}, total = 0, nfTotal = 0, nfByReason = {}, nfByPurpose = {}, consec = {}, register = {};
+  var byOutcome = {}, byChannel = {}, total = 0, nfTotal = 0, nfByReason = {}, nfByPurpose = {}, consec = {}, register = {}, cxl = {};
   for (var i = 0; i < v.length; i++) {
     if (_lbDateKey(v[i][1]) < cutoff) continue;   // yyyy-MM-dd の辞書比較＝時系列比較（★日付型のセルはそろえてから）
     var oc = String(v[i][2] || '?'), ch = String(v[i][3] || '?');
@@ -8869,9 +9334,10 @@ function getBookingMetrics(sinceDays) {
     }
     if (oc.indexOf('CONSEC_') === 0) { consec[oc] = (consec[oc] || 0) + 1; continue; }   // 連続ルール（設計18）も別勘定
     if (oc.indexOf('REGISTER_') === 0) { register[oc] = (register[oc] || 0) + 1; continue; }   // 会員登録の失敗（2026-10-23）も別勘定
+    if (oc.indexOf('CXL_') === 0) { cxl[oc] = (cxl[oc] || 0) + 1; continue; }   // キャンセル理由の保存・通知の遅れ（設計36）も別勘定
     byOutcome[oc] = (byOutcome[oc] || 0) + 1; byChannel[ch] = (byChannel[ch] || 0) + 1; total++;
   }
-  return { total: total, byOutcome: byOutcome, byChannel: byChannel, notifyFail: { total: nfTotal, byReason: nfByReason, byPurpose: nfByPurpose }, consec: consec, register: register, days: days };
+  return { total: total, byOutcome: byOutcome, byChannel: byChannel, notifyFail: { total: nfTotal, byReason: nfByReason, byPurpose: nfByPurpose }, consec: consec, register: register, cxl: cxl, days: days };
 }
 
 // 直近7日の成否レポート（GASエディタから実行、または週次トリガーで）。数字で失敗率を把握。

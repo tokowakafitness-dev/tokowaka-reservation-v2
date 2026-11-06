@@ -1,7 +1,7 @@
 {
   "LB_EDGE_BUILD": "2026-11-06a 会員の LINE ID は照合済み（verified）の行だけ送る（設計35 改訂1-6）",
   "LB_AUDIT_BUILD": "2026-10-17a 配線の入口は Worker の一覧・溢れの確かめ済み・連続ルールの記録にトレーナーと時刻",
-  "LB_HEALTH_BUILD": "2026-11-04a 計算の材料4つの印を日次点検で確かめる・補充のログに氏名を出さない（設計30）",
+  "LB_HEALTH_BUILD": "2026-11-06b キャンセル理由（cancel_notes・通知の時間予算・送り直しの本文を30日で空に）とトレーナーのキャンセルの見え方（設計36）",
   "LB_NUDGE_BUILD": "2026-10-24a 改行をLINEの幅に合わせる・固定枠の時刻が日付型でも崩れない",
-  "LB_JOB_BUILD": "2026-11-06a 会員の LINE ID の照合状態を数える窓口（remaining の authAudit）"
+  "LB_JOB_BUILD": "2026-11-06b キャンセル理由の件数だけを数える窓口（remaining の cancelNotes・設計36）"
 }

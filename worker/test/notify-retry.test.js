@@ -439,7 +439,11 @@ ok('4-1 ★N8 予約変更は「承りました」を送らない（suppressNoti
 ok('4-2 予約確定に予約IDを渡す', /custInfo\.customerName, channel, custInfo\.customerId, resId\)/.test(S));
 ok('4-3 変更に新旧の予約IDを渡す', /var _chCtx = \{ resId: String\(made\.reservationId \|\| ''\), oldResId: String\(reservationId\)/.test(S)
    && /'change_customer', _chCtx\)/.test(S) && /'change_trainer', _chCtx\)/.test(S));
-ok('4-4 取消に予約IDを渡す', (S.match(/'cancel_(customer|trainer)', \{ resId: String\(reservationId\)/g) || []).length === 2);
+//   ★設計36：取消の通知はロックの外（_lbCxlAfter）で、3通（その枠・担当・会員）とも同じ ctx を渡す
+ok('4-4 取消に予約IDを渡す', /var ctx = \{ resId: String\(d\.resId\), customerId: String\(d\.customerId\), startMs: d\.start\.getTime\(\) \};/.test(S)
+   && /_lbPush\(to, text, purpose, ctx, \{ noInlineRetry: true \}\)/.test(S) && /_lbNqDefer\(to, text, purpose, ctx\)/.test(S)
+   && (S.match(/'cancel_(customer|trainer)', (true|false)\)/g) || []).length === 3
+   && /resId: reservationId, customerId: String\(r\[2\] \|\| ''\)/.test(S));
 ok('4-5 前日リマインドに予約ID（I列の「|」の前）を渡す', /'reminder_customer',\s*\{ resId: String\(r\[8\] \|\| ''\)\.split\('\|'\)\[0\]/.test(S));
 ok('4-6 手動紐付けに予約IDを渡す', /'booking_customer', \{ resId: String\(resId\), customerId: String\(customerId\), startMs: start\.getTime\(\) \}/.test(S));
 ok('4-7 ★warmupCache が必ず（finally で）送り直しを呼ぶ', /function warmupCache\(\) \{\s*var _wcStart = Date\.now\(\);\s*try \{ _warmupCacheBody\(\); \}\s*finally \{\s*try \{ lbNotifyRetryTick\(_wcStart\); \}/.test(C),

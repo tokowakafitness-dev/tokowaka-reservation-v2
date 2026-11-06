@@ -215,7 +215,8 @@ for (const [label, f] of [['503（MEMBER_KARTE_OFF）', () => ({ success: false,
   ok('4b-4 選ぶボタン・見出しのリンクは44px以上', /\.mk-pill \{[^}]*min-height:44px/.test(STYLE) && /\.mk-link \{[^}]*min-height:44px/.test(STYLE));
   ok('4b-5 会員の既定に important を足していない', !/\.mk-[^{]*\{[^}]*!important/.test(STYLE));
   ok('4b-6 予約ページの viewport は変えていない', HTML.includes('<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'));
-  ok('4b-7 版の印を上げた', /var LIFF_BUILD = '2026-11-06f/.test(HTML) && /karte\.js\?v=2026-11-06b/.test(HTML) && /KARTE_BUILD = '2026-11-06b/.test(KSRC));
+  //   ★画面の版は後の変更でも上がる（設計36 で 2026-11-06g）。設計35 の版以降であることだけを見る
+  ok('4b-7 版の印を上げた', /var LIFF_BUILD = '2026-11-(06[f-z]|0[7-9]|[1-3]\d)/.test(HTML) && /karte\.js\?v=2026-11-06b/.test(HTML) && /KARTE_BUILD = '2026-11-06b/.test(KSRC));
 }
 
 // ================= 6. トレーナー：お客様に見える欄（karte.js だけで動かす） =================
