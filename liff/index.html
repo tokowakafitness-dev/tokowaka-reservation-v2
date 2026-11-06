@@ -6,54 +6,117 @@
 <title>TOKOWAKA予約</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  :root { --pri:#1b2a47; --acc:#b8965a; --line:#e6ddcd; --ok:#2e7d32; --bg:#faf5eb; --navy:#1b2a47; --ink:#1a1a1a;
-          /* 超過の表示に使う赤。クリーム地のブランドに合わせ、強すぎない深めの赤にする（2026-10-04 オーナー指定）。
-             顧客に見せる数字なので、驚かせずに「確認が要る」と伝わる濃さを選ぶ。 */
-          --warn:#a8524a; }
+  /* 会員の見た目（2026-11-06 確定配色・カルテ／トレーナー画面と同じ。設計34）。★トレーナー用（body.staff）はこの後ろに書く＝同じ強さなら後ろが勝つ。ここでは強制の指定（important）を足さない */
+  :root { --pri:#243b66; --pri2:#1a2d50; --pri-l:#edf2fb; --acc:#6b5427; --acc-l:#f3ecdc; --line:#e7ebf0; --card-line:#dde3ea; --ok:#2e7d32;
+          --bg:#fafbfc; --navy:#243b66; --ink:#1c2321; --sub:#5b6661; --field:#8692a6;
+          /* 注意（超過・振替の期限・消す操作）。少し明るいコーラル（2026-11-05 オーナー確定） */
+          --warn:#bb4630; --warn-l:#fff0ea; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body { margin:0; font-family:'Noto Sans JP',-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; color:var(--ink); background:var(--bg); }
+  body { margin:0; font-family:'Noto Sans JP',-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; color:var(--ink); background:var(--bg); font-size:14px; }
   #app { max-width:480px; margin:0 auto; min-height:100vh; }
-  header { padding:15px 16px; background:var(--navy); color:#fff; border-bottom:1px solid var(--line); font-weight:600; font-size:15px; font-family:'Shippori Mincho',serif; letter-spacing:.04em; }
-  .screen { padding:16px; }
-  .muted { color:#888; font-size:13px; }
-  .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; background:var(--pri); color:#fff; font-size:15px; font-weight:600; margin-top:12px; cursor:pointer; }
-  .btn:disabled { opacity:.5; }
-  .btn-outline { background:#fff; color:var(--pri); border:1px solid var(--line); }
-  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:12px; }
-  .trainer { display:flex; align-items:center; justify-content:space-between; padding:16px; background:#fff; border:1px solid var(--line); border-radius:12px; margin-bottom:10px; cursor:pointer; }
-  .trainer:active { background:#f0f0f0; }
-  .code-input { width:100%; padding:14px; font-size:22px; letter-spacing:8px; text-align:center; border:1px solid var(--line); border-radius:10px; }
-  .weekbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-  .weekbar button { border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 12px; font-size:14px; }
-  table.grid { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; }
-  table.grid { background:#fff; }
-  table.grid th, table.grid td { border:1px solid #dcdcdc; text-align:center; padding:0; height:26px; }
-  table.grid th { background:#f5f5f5; font-weight:600; padding:3px 0; }
-  table.grid td.h { background:#f5f5f5; font-weight:600; width:34px; }
-  .cell-open { background:#fff; color:var(--navy); font-weight:700; font-size:13px; cursor:pointer; }
-  .cell-open:active { background:#eef1f6; }
-  .cell-sel { background:var(--navy,#1f2a44)!important; color:#fff!important; font-weight:700; }
-  .cell-none { background:#fff; color:#ccc; }
-  .cell-closed { background:#f2f2f2; color:#bbb; }
-  .err { color:#c62828; font-size:13px; margin-top:8px; }
-  .sect-h { font-family:'Shippori Mincho',serif; font-size:14px; color:var(--navy); font-weight:600; margin:18px 4px 8px; letter-spacing:.04em; }
-  .hist { padding:12px 16px; }
-  .hist-date { font-weight:600; font-size:14px; color:var(--ink); }
-  .hlabel { display:inline-block; font-size:11px; padding:2px 8px; border-radius:3px; background:#efe9dc; color:var(--navy); }
-  .home-row { display:flex; align-items:baseline; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
-  .home-row .k { font-size:13px; color:#888; min-width:5.5em; }
-  .home-row .v { font-size:14px; font-weight:700; color:var(--pri); }
-  .home-row .v b { color:var(--acc); font-size:20px; margin-right:1px; }
-  .big { font-size:20px; font-weight:600; margin:4px 0; font-family:'Shippori Mincho',serif; color:var(--navy); letter-spacing:.03em; }
-  .done-icon { font-size:48px; text-align:center; margin:12px 0; }
+  header { padding:12px 16px; background:var(--navy); color:#fff; font-weight:500; font-size:12px; letter-spacing:.08em; }
+  .screen { padding:14px 16px; }
+  .muted { color:var(--sub); font-size:12px; line-height:1.6; }
+  .btn { display:block; width:100%; min-height:48px; padding:12px 14px; border:1.5px solid var(--pri); border-radius:10px; background:var(--pri); color:#fff; font-size:15px; font-weight:700; margin-top:10px; cursor:pointer; font-family:inherit; }
+  .btn:active { background:var(--pri2); }
+  .btn:disabled { opacity:.45; }
+  .btn-outline { background:#fff; color:var(--pri); border:1.5px solid var(--pri); }
+  .btn-outline:active { background:var(--pri-l); }
+  .btn.btn-danger { background:#fff; color:var(--warn); border:1px solid #e09a86; font-weight:500; }
+  .btn-main { min-height:52px; font-size:16px; }
+  #homeReserve::before { content:'＋ '; }
+  .card { background:#fff; border:1px solid var(--card-line); border-radius:14px; box-shadow:0 1px 3px rgba(28,35,33,.07); padding:12px 14px; margin-bottom:10px; }
+  .trainer { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:#fff; border:1px solid var(--card-line); border-radius:14px; box-shadow:0 1px 3px rgba(28,35,33,.07); margin-bottom:8px; cursor:pointer; }
+  .trainer:active { background:var(--pri-l); }
+  .code-input { width:100%; padding:12px; font-size:22px; letter-spacing:8px; text-align:center; border:1px solid var(--field); border-radius:10px; }
+  /* ★会員登録の画面だけ（カルテ #karteRoot・トレーナーの入力欄には効かせない） */
+  #s-register input:not([type=checkbox]):not([type=radio]), #s-register select, #s-register textarea { width:100%; font-size:16px; min-height:44px; border:1px solid var(--field); border-radius:10px; padding:8px 12px; font-family:inherit; color:var(--ink); background:#fff; }
+  .weekbar { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+  .weekbar button { min-height:44px; border:1.5px solid var(--pri); background:#fff; color:var(--pri); border-radius:10px; padding:0 12px; font-size:13px; font-weight:700; font-family:inherit; }
+  .weekbar button:disabled { opacity:.4; }
+  table.grid { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; background:#fff; }
+  table.grid th, table.grid td { border:1px solid var(--line); text-align:center; padding:0; height:30px; }
+  table.grid th { background:#f0f3f7; color:var(--sub); font-weight:700; padding:3px 0; }
+  table.grid td.h { background:#f0f3f7; color:var(--sub); font-weight:700; width:34px; }
+  .cell-open { background:var(--pri-l); color:var(--pri); font-weight:700; font-size:13px; cursor:pointer; }
+  .cell-open:active { background:#d9e3f4; }
+  .cell-sel { background:var(--navy)!important; color:#fff!important; font-weight:700; }
+  .cell-none { background:#fff; color:#c5ccd6; }
+  .cell-closed { background:#f2f4f7; color:#c5ccd6; }
+  .err { color:var(--warn); font-size:13px; margin-top:8px; line-height:1.6; }
+  .sect-h { font-size:12px; color:var(--sub); font-weight:700; margin:16px 2px 6px; letter-spacing:.08em; }
+  .hist { padding:10px 14px; }
+  .hist-date { font-weight:700; font-size:14px; color:var(--ink); }
+  .hlabel { display:inline-block; font-size:12px; padding:2px 10px; border-radius:999px; background:var(--pri-l); color:var(--pri); font-weight:700; }
+  .hlabel.gold { background:var(--acc-l); color:var(--acc); }
+  .home-row { display:flex; align-items:baseline; gap:12px; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
+  #homeInfo > .home-row:first-child, #homeInfo > :first-child .home-row:first-child { margin-top:0; padding-top:0; border-top:0; }
+  #homeInfo:empty { display:none; }
+  .home-row .k { font-size:12px; color:var(--sub); min-width:5.5em; }
+  .home-row .v { font-size:14px; font-weight:700; color:var(--ink); }
+  .home-row .v b { color:var(--pri); font-size:22px; margin-right:1px; }
+  .big { font-size:17px; font-weight:700; margin:4px 0; color:var(--ink); }
+  /* 一番上のネイビーの帯（ホーム）：ヘッダーと続けて1枚の帯に見せる */
+  .mtop { background:var(--navy); color:#fff; margin:-14px -16px 12px; padding:2px 16px 16px; }
+  .mtop .big { color:#fff; font-size:20px; margin:0; }
+  .mtop-sub { font-size:12px; color:rgba(255,255,255,.85); margin-top:2px; }
+  /* 予約の流れの見出し：戻る（44px）＋題名のネイビーの帯 */
+  .mhead { display:flex; align-items:center; gap:10px; background:var(--navy); color:#fff; margin:-14px -16px 0; padding:6px 16px 10px; }
+  .mback { flex:none; width:44px; height:44px; border:1px solid rgba(255,255,255,.55); border-radius:12px; background:transparent; color:#fff; font-size:18px; font-family:inherit; cursor:pointer; }
+  .mback:active { background:rgba(255,255,255,.12); }
+  .mtt { flex:1; min-width:0; font-size:16px; font-weight:700; }
+  /* 進み具合（1 トレーナー／2 日時／3 確認） */
+  .msteps { display:flex; gap:6px; margin:0 -16px 12px; padding:8px 16px; background:#fff; border-bottom:1px solid var(--line); }
+  .msteps > span { flex:1; display:flex; align-items:center; gap:6px; font-size:12px; color:var(--sub); min-width:0; white-space:nowrap; overflow:hidden; }
+  .msteps i { font-style:normal; flex:none; width:20px; height:20px; border-radius:50%; border:1px solid var(--card-line); display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; }
+  .msteps .on { color:var(--pri); font-weight:700; } .msteps .on i { background:var(--pri); border-color:var(--pri); color:#fff; }
+  .msteps .done i { background:var(--pri-l); border-color:var(--pri-l); color:var(--pri); }
+  /* ホームの「予約の確認・変更 ›」の行 */
+  .mrow { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:52px; margin-top:10px; padding:0 14px; background:#fff; border:1px solid var(--card-line); border-radius:14px; box-shadow:0 1px 3px rgba(28,35,33,.07); color:var(--ink); font-size:15px; font-weight:700; font-family:inherit; cursor:pointer; text-align:left; }
+  .mrow:active { background:var(--pri-l); }
+  .mrow .go, .tgo { color:var(--pri); font-size:18px; font-weight:700; }
+  /* トレーナーの行（頭文字の丸・担当の印・選ぶ ›） */
+  .trainer { min-height:64px; gap:10px; }
+  .tav { flex:none; width:40px; height:40px; border-radius:50%; background:var(--pri-l); color:var(--pri); display:inline-flex; align-items:center; justify-content:center; font-weight:700; font-size:16px; }
+  .tnm { flex:1; min-width:0; font-size:15px; font-weight:700; }
+  .tbadge { font-size:12px; background:var(--acc-l); color:var(--acc); border-radius:999px; padding:3px 10px; font-weight:700; white-space:nowrap; }
+  /* 確認：日時・担当の表と、下に固定する確定ボタン */
+  .mtable { padding:4px 14px; }
+  .mtr { display:flex; gap:12px; padding:10px 0; border-top:1px solid var(--line); align-items:baseline; }
+  .mtr:first-child { border-top:0; }
+  .mtr .k { flex:none; min-width:4em; font-size:12px; color:var(--sub); }
+  .mtr .v { flex:1; min-width:0; font-size:15px; font-weight:700; }
+  #cfOptions:not(:empty) { background:#fff; border:1px solid var(--card-line); border-radius:14px; box-shadow:0 1px 3px rgba(28,35,33,.07); padding:10px 14px; margin-bottom:10px; }
+  #cfOptions label { padding:10px 0; line-height:1.5; }
+  #cfOptions input[type=radio] { width:20px; height:20px; margin:0 6px 0 0; vertical-align:-4px; accent-color:var(--pri); }
+  .mfix { position:sticky; bottom:0; z-index:3; background:var(--bg); margin:0 -16px; padding:4px 16px calc(10px + env(safe-area-inset-bottom)); }
+  /* 自分の予約 */
+  .mres { padding:12px 14px; }
+  .mres-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .mres-date { font-size:16px; font-weight:700; }
+  .mres-sub { font-size:12px; color:var(--sub); margin-top:4px; }
+  .mres-btns { display:flex; gap:8px; margin-top:10px; }
+  .mres-btns .btn { flex:1; margin-top:0; min-height:44px; font-size:14px; }
+  .hist-list { padding:0 14px; }
+  .hist-meta { font-size:12px; color:var(--sub); margin-top:2px; }
+  .mres p.muted { margin:6px 0 0; }
+  .hist-list .hist { padding:10px 0; border-top:1px solid var(--line); }
+  .hist-list .hist:first-child { border-top:0; }
+  /* 完了 */
+  .done-icon { color:var(--pri); text-align:center; margin:16px 0 8px; }
+  .mdone-dt { font-size:16px; font-weight:700; color:var(--ink); line-height:1.6; }
   [hidden] { display:none !important; }
   header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .lang-toggle { display:inline-flex; border:1px solid rgba(255,255,255,.5); border-radius:8px; overflow:hidden; flex:none; }
   .lang-toggle span { font-family:'Noto Sans JP',sans-serif; font-size:12px; font-weight:700; letter-spacing:.06em; padding:4px 9px; cursor:pointer; }
   .lang-on { background:#fff; color:var(--navy); }
   .lang-off { background:transparent; color:rgba(255,255,255,.85); }
+  /* トレーナーが代行で会員の画面を使うときは進み具合を出さない（staffHead と同じ見え方に寄せる） */
+  body.staff .msteps { display:none; }
+  body.staff .mhead, body.staff .mtop { margin-top:-12px; }
+  body.staff .mhead, body.staff .mtop, body.staff .mfix { margin-left:-14px; margin-right:-14px; padding-left:14px; padding-right:14px; }   /* トレーナーの画面の余白は14px */
 .btn.btn-karte{background:#243b66;border-color:#243b66;color:#fff;}
 .btn.btn-karte:active{background:#1a2d50;border-color:#1a2d50;}
 /* ★トレーナーで開いたときだけ（body.staff）：カルテと同じ配色・文字・大きさ・見分け方（2026-11-06 オーナー承認のモック P1〜P6）。会員の画面には効かない */
@@ -145,11 +208,11 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     <div class="card">
       <div class="big" data-i18n="reg_title">会員登録</div>
       <p class="muted" data-i18n="reg_desc">ご契約時の情報で登録します。すべての項目をご入力ください。</p>
-      <input id="regName" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" data-i18n-ph="reg_ph_name" placeholder="お名前（契約時のお名前）">
-      <input id="regPhone" type="tel" inputmode="tel" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" data-i18n-ph="reg_ph_phone" placeholder="電話番号（ハイフンなし）">
-      <input id="regEmail" type="email" inputmode="email" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" data-i18n-ph="reg_ph_email" placeholder="メールアドレス">
-      <input id="regBirthday" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" data-i18n-ph="reg_ph_birthday" placeholder="生年月日（例：1990/01/01）">
-      <textarea id="regGoal" rows="3" style="width:100%;padding:11px;margin:6px 0;box-sizing:border-box;" data-i18n-ph="reg_ph_goal" placeholder="トレーニングの目標・ご要望"></textarea>
+      <input id="regName" style="margin:6px 0;" data-i18n-ph="reg_ph_name" placeholder="お名前（契約時のお名前）">
+      <input id="regPhone" type="tel" inputmode="tel" style="margin:6px 0;" data-i18n-ph="reg_ph_phone" placeholder="電話番号（ハイフンなし）">
+      <input id="regEmail" type="email" inputmode="email" style="margin:6px 0;" data-i18n-ph="reg_ph_email" placeholder="メールアドレス">
+      <input id="regBirthday" style="margin:6px 0;" data-i18n-ph="reg_ph_birthday" placeholder="生年月日（例：1990/01/01）">
+      <textarea id="regGoal" rows="3" style="margin:6px 0;" data-i18n-ph="reg_ph_goal" placeholder="トレーニングの目標・ご要望"></textarea>
       <div id="registerErr" class="err" hidden></div>
       <button id="registerBtn" class="btn" data-i18n="reg_submit">登録する</button>
     </div>
@@ -157,27 +220,28 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   </div>
 
   <div id="s-home" class="screen" hidden>
-    <div class="card" style="border-top:3px solid var(--acc);">
-      <div class="big" id="homeName">様</div>
-      <div id="homeInfo"></div>
-    </div>
-    <button id="homeReserve" class="btn" data-i18n="home_reserve">予約する</button>
-    <button id="homeMyRes" class="btn btn-outline" data-i18n="home_myres">予約を確認する</button>
+    <div class="mtop"><div class="big" id="homeName">様</div><div class="mtop-sub" data-i18n="home_greet">いつもご来店ありがとうございます</div></div>
+    <button id="homeReserve" class="btn btn-main" data-i18n="home_reserve">予約する</button>
+    <button id="homeMyRes" class="mrow" type="button"><span data-i18n="home_myres">予約の確認・変更</span><span class="go">›</span></button>
+    <div class="sect-h" data-i18n="home_balance">ご利用状況</div>
+    <div class="card" id="homeInfo"></div>
   </div>
 
   <div id="s-trainer" class="screen" hidden>
-    <button id="toHome" data-back class="btn btn-outline" style="margin-top:0;" data-i18n="back_home">← ホームに戻る</button>
-    <p class="muted" style="margin-top:18px;" data-i18n="trainer_prompt">担当トレーナーを選んでください。</p>
+    <div class="mhead"><button id="toHome" data-back class="mback" type="button" data-i18n-aria="back_home" aria-label="← ホームに戻る">←</button><div class="mtt" data-i18n="home_reserve">予約する</div></div>
+    <div class="msteps"><span class="on"><i>1</i><span data-i18n="step_trainer"></span></span><span class=""><i>2</i><span data-i18n="step_datetime"></span></span><span class=""><i>3</i><span data-i18n="step_confirm"></span></span></div>
+    <p class="muted" data-i18n="trainer_prompt">担当トレーナーを選んでください。</p>
     <div id="trainerList"></div>
   </div>
 
   <div id="s-myres" class="screen" hidden>
-    <div class="big" style="margin-bottom:12px;" data-i18n="myres_title">あなたの予約</div>
+    <div class="mhead"><button id="myResBack" data-back class="mback" type="button" data-i18n-aria="back" aria-label="戻る">←</button><div class="mtt" data-i18n="myres_title">あなたの予約</div></div>
     <div id="myResList"></div>
-    <button id="myResBack" data-back class="btn btn-outline" data-i18n="back">戻る</button>
   </div>
 
   <div id="s-week" class="screen" hidden>
+    <div class="mhead"><button id="backToTrainer" data-back class="mback" type="button" data-i18n-aria="week_reselect" aria-label="トレーナーを選び直す">←</button><div class="mtt" data-i18n="home_reserve">予約する</div></div>
+    <div class="msteps"><span class="done"><i>1</i><span data-i18n="step_trainer"></span></span><span class="on"><i>2</i><span data-i18n="step_datetime"></span></span><span class=""><i>3</i><span data-i18n="step_confirm"></span></span></div>
     <div class="weekbar">
       <button id="prevWeek" data-i18n="week_prev">‹ 前の週</button>
       <span id="weekLabel" style="font-size:13px;font-weight:600;"></span>
@@ -192,27 +256,29 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     </div>
     <div id="gridWrap"></div>
     <p class="muted" style="margin-top:8px;" id="weekHint" data-i18n="week_hint">○ をタップすると予約確認へ進みます。</p>
-    <button id="backToTrainer" data-back class="btn btn-outline" data-i18n="week_reselect">トレーナーを選び直す</button>
     <button id="weekHome" data-back class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
   </div>
 
   <div id="s-confirm" class="screen" hidden>
-    <div class="card">
-      <div class="big" data-i18n="cf_title">この内容で予約しますか？</div>
-      <p><span data-i18n="cf_trainer_label">担当：</span><span id="cfTrainer"></span></p>
-      <p><span data-i18n="cf_datetime_label">日時：</span><span id="cfDatetime"></span></p>
+    <div class="mhead"><button id="confirmCancel" data-back class="mback" type="button" data-i18n-aria="back" aria-label="戻る">←</button><div class="mtt" data-i18n="cf_title">この内容で予約しますか？</div></div>
+    <div class="msteps"><span class="done"><i>1</i><span data-i18n="step_trainer"></span></span><span class="done"><i>2</i><span data-i18n="step_datetime"></span></span><span class="on"><i>3</i><span data-i18n="step_confirm"></span></span></div>
+    <div class="card mtable">
+      <div class="mtr"><span class="k" data-i18n="cf_datetime_label">日時：</span><span class="v" id="cfDatetime"></span></div>
+      <div class="mtr"><span class="k" data-i18n="cf_trainer_label">担当：</span><span class="v" id="cfTrainer"></span></div>
     </div>
-    <div id="confirmErr" class="err" hidden></div>
-    <button id="confirmBtn" class="btn" data-i18n="cf_submit">予約を確定する</button>
-    <button id="confirmCancel" data-back class="btn btn-outline" data-i18n="back">戻る</button>
+    <div id="cfOptions"></div>
+    <div class="mfix">
+      <div id="confirmErr" class="err" hidden></div>
+      <button id="confirmBtn" class="btn btn-main" data-i18n="cf_submit">予約を確定する</button>
+    </div>
     <button id="confirmHome" class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
   </div>
 
   <div id="s-done" class="screen" hidden>
-    <div class="done-icon">✅</div>
+    <div class="done-icon" aria-hidden="true"><svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="22" width="7" height="20" rx="2"/><rect x="15" y="17" width="6" height="30" rx="2"/><rect x="43" y="17" width="6" height="30" rx="2"/><rect x="49" y="22" width="7" height="20" rx="2"/><line x1="21" y1="32" x2="43" y2="32"/></svg></div>
     <div class="card" style="text-align:center;">
       <div class="big" data-i18n="done_title">ご予約を承りました</div>
-      <p id="doneDetail" class="muted"></p>
+      <p id="doneDetail" class="mdone-dt"></p>
       <p class="muted" data-i18n="done_note">前日にリマインドをお送りします。キャンセルは前日17時まで無料です。</p>
     </div>
     <button id="doneClose" data-back class="btn" data-i18n="done_close">ホームに戻る</button>
@@ -247,7 +313,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-06d トレーナー：チケット補充の配置・見出しと残り回数を見やすく';
+  var LIFF_BUILD = '2026-11-06e 会員画面 C1：確定配色・帯と進み具合・言語切替で選択と送信中を保つ';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -271,7 +337,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       reg_ph_birthday:'生年月日（例：1990/01/01）', reg_ph_goal:'トレーニングの目標・ご要望',
       reg_submit:'登録する', reg_submitting:'登録中…', reg_note:'※ご契約情報と一致しない場合は担当トレーナーへご連絡ください。',
       reg_all_fields:'すべての項目をご入力ください。', reg_fail:'ご登録できませんでした。担当トレーナーへご連絡ください。',
-      home_reserve:'予約する', home_myres:'予約を確認する', name_suffix:' 様', member_fallback:'会員',
+      home_reserve:'予約する', home_myres:'予約の確認・変更', home_greet:'いつもご来店ありがとうございます', home_balance:'ご利用状況', step_trainer:'トレーナー', step_datetime:'日時', step_confirm:'確認', name_suffix:' 様', member_fallback:'会員',
       home_onboard_thanks:'ご登録ありがとうございます。',
       home_onboard_1:'9月1日（月）から、こちらのLINEでご予約・残数確認をご利用いただけます。',
       home_onboard_2:'それまでは、これまでどおり担当トレーナーへご予約ください。',
@@ -339,7 +405,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       reg_ph_birthday:'Date of birth (e.g. 1990/01/01)', reg_ph_goal:'Your training goals / requests',
       reg_submit:'Register', reg_submitting:'Registering…', reg_note:'* If the details do not match your contract, please contact your trainer.',
       reg_all_fields:'Please fill in all fields.', reg_fail:'Registration failed. Please contact your trainer.',
-      home_reserve:'Book a session', home_myres:'View my bookings', name_suffix:'', member_fallback:'Member',
+      home_reserve:'Book a session', home_myres:'View / change bookings', home_greet:'Thank you for training with us', home_balance:'Your plan', step_trainer:'Trainer', step_datetime:'Date', step_confirm:'Confirm', name_suffix:'', member_fallback:'Member',
       home_onboard_thanks:'Thank you for registering.',
       home_onboard_1:'From Monday, September 1, you can book and check your balance here on LINE.',
       home_onboard_2:'Until then, please book with your trainer as usual.',
@@ -407,7 +473,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       reg_ph_birthday:'出生日期（例：1990/01/01）', reg_ph_goal:'训练目标・需求',
       reg_submit:'注册', reg_submitting:'注册中…', reg_note:'※如与签约信息不一致，请联系您的教练。',
       reg_all_fields:'请填写所有项目。', reg_fail:'无法完成注册。请联系您的教练。',
-      home_reserve:'预约', home_myres:'查看我的预约', name_suffix:'', member_fallback:'会员',
+      home_reserve:'预约', home_myres:'查看・变更预约', home_greet:'感谢您一直以来的光临', home_balance:'使用情况', step_trainer:'教练', step_datetime:'日期时间', step_confirm:'确认', name_suffix:'', member_fallback:'会员',
       home_onboard_thanks:'感谢您的注册。',
       home_onboard_1:'9月1日（周一）起，您可在此LINE进行预约和查看剩余次数。',
       home_onboard_2:'在此之前，请照常联系您的教练进行预约。',
@@ -475,7 +541,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       reg_ph_birthday:'出生日期（例：1990/01/01）', reg_ph_goal:'訓練目標・需求',
       reg_submit:'註冊', reg_submitting:'註冊中…', reg_note:'※如與簽約資料不符，請聯繫您的教練。',
       reg_all_fields:'請填寫所有欄位。', reg_fail:'無法完成註冊。請聯繫您的教練。',
-      home_reserve:'預約', home_myres:'查看我的預約', name_suffix:'', member_fallback:'會員',
+      home_reserve:'預約', home_myres:'查看・變更預約', home_greet:'感謝您一直以來的光臨', home_balance:'使用情況', step_trainer:'教練', step_datetime:'日期時間', step_confirm:'確認', name_suffix:'', member_fallback:'會員',
       home_onboard_thanks:'感謝您的註冊。',
       home_onboard_1:'9月1日（週一）起，您可在此LINE進行預約與查看剩餘次數。',
       home_onboard_2:'在此之前，請照常聯繫您的教練進行預約。',
@@ -564,8 +630,10 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     document.documentElement.setAttribute('lang', LANG);
     var els = document.querySelectorAll('[data-i18n]');
     Array.prototype.forEach.call(els, function(el){ el.textContent = t(el.getAttribute('data-i18n')); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n-aria]'), function(el){ el.setAttribute('aria-label', String(t(el.getAttribute('data-i18n-aria'))).replace(/^←\s*/, '')); });
     var phs = document.querySelectorAll('[data-i18n-ph]');
     Array.prototype.forEach.call(phs, function(el){ el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph'))); });
+    if (typeof state !== 'undefined' && state && state._regBusy) { var rbn = document.getElementById('registerBtn'); if (rbn) rbn.textContent = t('reg_submitting'); }
     var tg = document.getElementById('langToggle');
     // ZHボタンは簡体(zh)・繁体(zh-Hant)のどちらでも点灯（トグルは3つのまま）。
     if (tg) Array.prototype.forEach.call(tg.querySelectorAll('[data-lang]'), function(el){ var dl = el.getAttribute('data-lang'); var on = (dl === LANG) || (dl === 'zh' && LANG === 'zh-Hant'); el.className = on ? 'lang-on' : 'lang-off'; });
@@ -703,7 +771,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     var b = document.createElement('div'); b.id = 'staffBanner'; b.className = 'sbanner';
     var t0 = document.createElement('span'); t0.textContent = txt; b.appendChild(t0);
     var x = document.createElement('button'); x.type = 'button'; x.textContent = 'やめる ×'; x.setAttribute('aria-label', '代行・変更をやめて顧客一覧に戻る');
-    x.onclick = function(){ if (typeof goHome === 'function') goHome(); };
+    x.onclick = function(){ if (typeof _confirmInFlight === 'function' && _confirmInFlight()) return; if (typeof goHome === 'function') goHome(); };
     b.appendChild(x);
     sc.insertBefore(b, sc.firstChild);
   }
@@ -713,6 +781,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   function on(id, fn){ var el = document.getElementById(id); if (el) el.onclick = fn; }
 
   // ---------------------------------------------------------------- 戻る（2026-11-05 オーナー指示）
+  //   確定の結果待ち（送信中・タイムアウト後の照合中）か。★この間は確認画面から移さない（Codex 関門②：照合中に戻って別の枠を送れた）
+  //     照合が「不明」で終わった後は移ってよい（閉じ込めない・従来どおり）
+  function _confirmInFlight(){ return !!(typeof state !== 'undefined' && state && state.confirmBusy && state.confirmBusyKey !== 'cf_verify_unknown'); }
   //   ★LIFF は右上の閉じるでだけ閉じる。iPhone の左端スワイプ・Android の戻るボタンは、履歴が尽きると LIFF ごと閉じる。
   //     だから予約画面の上に「見張りの1段」を常に積んでおき、それが外れたら画面の「戻る」を押したのと同じ動きをして積み直す。
   //     最初の画面（会員ホーム・顧客一覧）では何もしない＝閉じずにその場に留まる
@@ -734,6 +805,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   function rsvBack(){
     if (_karteOpen()) return;
     if (_busyEl && !_busyEl.hidden) return;   // 送信中は動かさない
+    if (_confirmInFlight()) return;   // 確定の照合中も動かさない（通信の覆いは照合の前に消える）
     var scr = null;
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el && !el.hidden) scr = el; });
     if (!scr) return;
@@ -1425,33 +1497,42 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     var goal = document.getElementById('regGoal').value.trim();
     var errEl = document.getElementById('registerErr'); errEl.hidden = true;
     if (!name || !phone || !email || !birthday || !goal) { errEl.textContent=t('reg_all_fields'); errEl.hidden=false; return; }
-    var btn = this; btn.disabled = true; btn.textContent=t('reg_submitting');
+    var btn = this; btn.disabled = true; btn.textContent=t('reg_submitting'); state._regBusy = true;   // 言語切替でも「登録中…」を保つ（設計34 改訂1-2）
     api({ action:'line_selfRegister', name:name, phone:phone, email:email, birthday:birthday, goal:goal, lang:LANG }).then(function(res){
-      btn.disabled=false; btn.textContent=t('reg_submit');
+      state._regBusy = false; btn.disabled=false; btn.textContent=t('reg_submit');
       if (res.success && res.verified) { api({ action:'line_getMemberStatus' }).then(function(r){ if (r && r.success && r.verified) renderHome(r); else show('s-home'); }); }
       else { errEl.textContent = res.message || t('reg_fail'); errEl.hidden=false; }
-    }).catch(function(e){ btn.disabled=false; btn.textContent=t('reg_submit'); errEl.textContent=t('comm_fail',{msg:e}); errEl.hidden=false; });
+    }).catch(function(e){ state._regBusy = false; btn.disabled=false; btn.textContent=t('reg_submit'); errEl.textContent=t('comm_fail',{msg:e}); errEl.hidden=false; });
   });
 
   function loadTrainers(){
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_getTrainers' }).then(function(res){
       if (!res.success) { showError(t('err_trainers')); return; }
-      var box = document.getElementById('trainerList'); box.innerHTML = '';
-      var trainers = res.trainers.slice();
-      var defId = state.defaultTrainerId || '';
-      if (defId) trainers.sort(function(a,b){ return (b.id===defId?1:0) - (a.id===defId?1:0); });   // 担当を先頭に
-      trainers.forEach(function(tr){
-        var d = document.createElement('div');
-        d.className = 'trainer';
-        var isDefault = (defId && tr.id === defId);
-        d.innerHTML = '<span>'+ tr.name + (isDefault ? ' <span style="font-size:12px;color:#c8a25a;">'+t('trainer_badge')+'</span>' : '') +'</span><span style="color:#c8a25a;">'+t('trainer_choose')+'</span>';
-        d.onclick = function(){ state.trainerId=tr.id; state.trainerName=tr.name; state.weekOffset=0; state.changeMode=false; state._ownerFreeResId=''; state.changeCustomerId=''; state.transferMode=false; state.excludeStartISO=''; loadSlots(); };
-        box.appendChild(d);
-      });
-      state._repaint = loadTrainers;
-      show('s-trainer');
+      state._trainersRes = res;
+      renderTrainers();
     }).catch(function(e){ showError(t('comm_fail',{msg:e})); });
+  }
+  //   描くだけ（言語切替はこれを呼ぶ＝再通信しない・設計34 改訂1-2）。名前は文字として入れる
+  function renderTrainers(){
+    var res = state._trainersRes || { trainers: [] };
+    var box = document.getElementById('trainerList'); box.innerHTML = '';
+    var trainers = (res.trainers || []).slice();
+    var defId = state.defaultTrainerId || '';
+    if (defId) trainers.sort(function(a,b){ return (b.id===defId?1:0) - (a.id===defId?1:0); });   // 担当を先頭に
+    trainers.forEach(function(tr){
+      var d = document.createElement('div');
+      d.className = 'trainer';
+      var isDefault = (defId && tr.id === defId);
+      var av = document.createElement('span'); av.className = 'tav'; av.textContent = String(tr.name || '').slice(0, 1); d.appendChild(av);
+      var nm = document.createElement('span'); nm.className = 'tnm'; nm.textContent = String(tr.name || ''); d.appendChild(nm);
+      if (isDefault) { var bd = document.createElement('span'); bd.className = 'tbadge'; bd.textContent = t('trainer_badge'); d.appendChild(bd); }
+      var go = document.createElement('span'); go.className = 'tgo'; go.textContent = t('trainer_choose'); d.appendChild(go);
+      d.onclick = function(){ state.trainerId=tr.id; state.trainerName=tr.name; state.weekOffset=0; state.changeMode=false; state._ownerFreeResId=''; state.changeCustomerId=''; state.transferMode=false; state.excludeStartISO=''; loadSlots(); };
+        box.appendChild(d);
+    });
+    state._repaint = renderTrainers;
+    show('s-trainer');
   }
 
   on('toHome', function(){ if (state._fromTrainerAdmin || state.proxyMode) { goHome(); return; } show('s-home'); });   // トレーナーの代行中は顧客一覧へ（会員ホームに落ちない）
@@ -2271,8 +2352,8 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     function packBreakdownRow(singleExpire, isTicketType){
       var ps = h.ticketPacks || [];
       if (ps.length) return '<div class="home-row"><span class="k">' + t('ticket_breakdown') + '</span><span class="v" style="font-size:13px;line-height:1.6;">'
-        + ps.map(function(p){ return p.expire ? t('bd_pack', { n: p.remaining, e: p.expire }) : t('bd_pack_noexp', { n: p.remaining }); }).join('<br>') + '</span></div>';
-      return singleExpire ? '<div class="home-row"><span class="k">' + (isTicketType ? t('expiry_valid') : t('expiry_ticket')) + '</span><span class="v" style="font-size:14px;">' + singleExpire + '</span></div>' : '';
+        + ps.map(function(p){ return p.expire ? t('bd_pack', { n: p.remaining, e: _sEsc(p.expire) }) : t('bd_pack_noexp', { n: p.remaining }); }).join('<br>') + '</span></div>';
+      return singleExpire ? '<div class="home-row"><span class="k">' + (isTicketType ? t('expiry_valid') : t('expiry_ticket')) + '</span><span class="v" style="font-size:14px;">' + _sEsc(singleExpire) + '</span></div>' : '';
     }
     _perfHome(h);   // ?perf のときだけ中身を出す（普段は何もしない）。★型の分岐より前に置く
     // ★超過の表示（2026-10-04 オーナー要望）。
@@ -2348,7 +2429,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       state.pairPackMax = Number(res.pairPackMax || 0);         // 単一チケットの最大残（2名来店の可否目安）
       state.pairExpire = '';   // 確定画面では対象日基準の期限(line_getBookingOptions)で上書きする
       var _tcExp = res.transferCredits && res.transferCredits.nextExpireLabel;
-      var _tcExpHtml = _tcExp ? t('until_wrap', { e: res.transferCredits.nextExpireLabel }) : '';
+      var _tcExpHtml = _tcExp ? t('until_wrap', { e: _sEsc(res.transferCredits.nextExpireLabel) }) : '';
       var tcHtml = (res.transferCredits && res.transferCredits.available > 0)
         ? '<div class="home-row"><span class="k">' + t('transfer_avail') + '</span><span class="v"><b>' + res.transferCredits.available + '</b> ' + t('unit_times') + _tcExpHtml + '</span></div>' : '';
       document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true) + tcHtml;
@@ -2438,52 +2519,56 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_getMyReservations' }).then(function(res){
       if (!res.success) { showError(t('err_myres',{code:res.code||'?'})); return; }
-      state._repaint = loadMyReservations;
-      var box = document.getElementById('myResList'); box.innerHTML = '';
-      // ── 今後のご予約 ──
-      var h1 = document.createElement('div'); h1.className = 'sect-h'; h1.textContent = t('sect_upcoming'); box.appendChild(h1);
-      if (!res.reservations || !res.reservations.length) {
-        var e1 = document.createElement('div'); e1.className = 'card'; e1.innerHTML = '<p class="muted">' + t('no_upcoming') + '</p>'; box.appendChild(e1);
-      } else {
-        res.reservations.forEach(function(r){
-          var d = document.createElement('div');
-          d.className = 'card';
-          var note = r.freeCancel ? t('note_free_cancel') : t('note_penalty');
-          var typeLabel = r.transfer
-            ? '<span class="hlabel" style="background:#efe9dc;">' + t('type_transfer') + '</span>'
-            : (r.bookType === 'チケット'
-                ? '<span class="hlabel" style="background:#eef1f6;">' + t('type_ticket') + '</span>'
-                : '<span class="hlabel" style="background:#eef1f6;">' + t('type_normal') + '</span>');
-          d.innerHTML = '<div class="big">' + r.dateLabel + '</div><div style="margin:6px 0 2px;">' + typeLabel + '</div><p class="muted">' + t('trainer_colon') + r.trainerName + '<br>' + t('location_label') + t('location_name') + '</p>'
-            + '<p class="muted" style="font-size:12px;margin-top:4px;">' + note + '</p>';
-          if (r.freeCancel) {   // 前日17時まで＝無料で時間変更可。当日はキャンセル→振替に統一。
-            var chg = document.createElement('button');
-            chg.className = 'btn btn-outline';
-            chg.style.marginTop = '8px';
-            chg.textContent = t('change_time');
-            chg.onclick = function(){ startChange(r); };
-            d.appendChild(chg);
-          }
-          var btn = document.createElement('button');
-          btn.className = 'btn btn-outline';
-          btn.style.marginTop = '8px';
-          btn.textContent = t('cancel_this');
-          btn.onclick = function(){ cancelReservation(r); };
-          d.appendChild(btn);
-          box.appendChild(d);
-        });
-      }
-      // ── これまでの記録（実施済み・当日キャンセル消化）──
-      if (res.history && res.history.length) {
-        var h2 = document.createElement('div'); h2.className = 'sect-h'; h2.textContent = t('sect_history'); box.appendChild(h2);
-        res.history.forEach(function(r){
-          var hd = document.createElement('div'); hd.className = 'card hist';
-          hd.innerHTML = '<div class="hist-date">' + r.dateLabel + '</div><p class="muted" style="margin-top:4px;">' + t('trainer_colon') + r.trainerName + '　<span class="hlabel">' + r.statusLabel + '</span></p>';
-          box.appendChild(hd);
-        });
-      }
-      show('s-myres');
+      state._myResRes = res;
+      renderMyReservations();
     }).catch(function(e){ showError(t('comm_fail',{msg:e})); });
+  }
+  //   描くだけ（言語切替はこれを呼ぶ＝再通信しない・設計34 改訂1-2）。サーバーの値はすべて文字として入れる（改訂1-4）
+  function renderMyReservations(){
+    var res = state._myResRes || {};
+    state._repaint = renderMyReservations;
+    var box = document.getElementById('myResList'); box.innerHTML = '';
+    function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+    // ── 今後のご予約 ──
+    box.appendChild(el('div', 'sect-h', t('sect_upcoming')));
+    if (!res.reservations || !res.reservations.length) {
+      var e1 = el('div', 'card'); e1.appendChild(el('p', 'muted', t('no_upcoming'))); box.appendChild(e1);
+    } else {
+      res.reservations.forEach(function(r){
+        var d = el('div', 'card mres');
+        var top = el('div', 'mres-top');
+        top.appendChild(el('div', 'mres-date', String(r.dateLabel || '')));
+        var typeKey = r.transfer ? 'type_transfer' : (r.bookType === 'チケット' ? 'type_ticket' : 'type_normal');
+        top.appendChild(el('span', 'hlabel' + (r.transfer ? ' gold' : ''), t(typeKey)));
+        d.appendChild(top);
+        d.appendChild(el('p', 'muted', t('trainer_colon') + String(r.trainerName || '') + ' ／ ' + t('location_label') + t('location_name')));
+        d.appendChild(el('p', 'muted mres-note', r.freeCancel ? t('note_free_cancel') : t('note_penalty')));
+        var row = el('div', 'mres-btns');
+        if (r.freeCancel) {   // 前日17時まで＝無料で時間変更可。当日はキャンセル→振替に統一。
+          var chg = el('button', 'btn btn-outline', t('change_time'));
+          chg.onclick = function(){ startChange(r); };
+          row.appendChild(chg);
+        }
+        var btn = el('button', 'btn btn-outline btn-danger', t('cancel_this'));
+        btn.onclick = function(){ cancelReservation(r); };
+        row.appendChild(btn);
+        d.appendChild(row);
+        box.appendChild(d);
+      });
+    }
+    // ── これまでの記録（実施済み・当日キャンセル消化）──
+    if (res.history && res.history.length) {
+      box.appendChild(el('div', 'sect-h', t('sect_history')));
+      var hl = el('div', 'card hist-list');
+      res.history.forEach(function(r){
+        var hd = el('div', 'hist');
+        hd.appendChild(el('div', 'hist-date', String(r.dateLabel || '')));
+        var m = el('div', 'hist-meta'); m.appendChild(document.createTextNode(String(r.trainerName || '') + ' ')); m.appendChild(el('span', 'hlabel', String(r.statusLabel || ''))); hd.appendChild(m);
+        hl.appendChild(hd);
+      });
+      box.appendChild(hl);
+    }
+    show('s-myres');
   }
 
   function startChange(r){
@@ -2658,10 +2743,10 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       list.innerHTML = '';
       keys.forEach(function(k){
         var v = state.batchSel[k];
-        var row = document.createElement('div'); row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-top:1px solid rgba(255,255,255,.15);';
+        var row = document.createElement('div'); row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0;border-top:1px solid rgba(255,255,255,.15);';
         var lab = document.createElement('span'); lab.textContent = _fmtBatchSlot(v);
         var x = document.createElement('button'); x.textContent = '✕'; x.setAttribute('aria-label','remove');
-        x.style.cssText = 'background:transparent;border:none;color:#fff;font-size:15px;cursor:pointer;padding:0 6px;line-height:1;';
+        x.style.cssText = 'background:transparent;border:none;color:#fff;font-size:15px;cursor:pointer;padding:0;line-height:1;min-width:44px;min-height:44px;';   // 押す場所44px（Codex 関門②）
         x.onclick = function(){ delete state.batchSel[k]; renderWeek(); renderBatchBar(); };   // 削除→グリッド再描画でハイライトも解除
         row.appendChild(lab); row.appendChild(x); list.appendChild(row);
       });
@@ -2735,7 +2820,14 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     if (box.scrollIntoView) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  function openConfirm(slot){
+  function openConfirm(slot, keep){
+    //   ★keep＝言語切替の描き直しだけ。同じ枠・同じお客様・同じモードのときだけ、選択と取得結果と送信中を保つ（既存の不具合：選択が初期化され送る中身が変わった）
+    var _tgt = { startISO: slot.startISO, customerId: state.proxyMode ? String(state.proxyCustomerId || '') : '', proxyMode: !!state.proxyMode, changeMode: !!state.changeMode, transferMode: !!state.transferMode };
+    var _same = !!(keep && state.selected === slot && state._optFor && JSON.stringify(state._optFor) === JSON.stringify(_tgt));
+    if (_same) { _paintConfirm(slot); return; }
+    if (_confirmInFlight()) return;   // 結果待ちの間は別の確認を開かない（古い送信の印を外さない）
+    state.confirmBusy = false; state.confirmBusyKey = '';   // 新しい予約の確認＝送信中の印は持ち越さない
+    state._optFor = _tgt;
     state.selected = slot;
     state.useTransfer = false; state.repeatCount = 1;
     // 消化先の既定：通常経路（月額・通常チケット）が残っていればそちら。ペアチケットしか無い会員だけペア既定。
@@ -2750,16 +2842,18 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     //   ここで getBookingOptions を待たず・失敗をゲートにしない。チケット/レンタル会員でオプション取得が失敗しても
     //   変更/振替を止めない（残数は changeReservationLine が旧枠を空けて正しく判定＝残0でも変更可）。
     if (state.changeMode || state.transferMode) {
-      state.optReady = true; state.optError = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
+      state.optReady = true; state.optError = ''; state.optErrorKey = ''; state.optErrorMsg = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
       state.attendeeCount = 1; state.packKind = 'normal';
     } else {
-      state.optReady = false; state.optError = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
+      state.optReady = false; state.optError = ''; state.optErrorKey = ''; state.optErrorMsg = ''; state.pairRemaining = 0; state.pairPackMax = 0; state.hasNormalRoute = true;
       setConfirmEnabled();   // 取得できるまで確定させない（既定1名のまま送られるのを防ぐ）
       var _seq = (state._optSeq = (state._optSeq || 0) + 1);
       var _optReq = { action:'line_getBookingOptions', startISO: slot.startISO };
       if (state.proxyMode) _optReq.customerId = state.proxyCustomerId;
+      var _tgtJson = JSON.stringify(_tgt);
       api(_optReq).then(function(r){
         if (_seq !== state._optSeq) return;   // 古い応答は捨てる
+        if (JSON.stringify(state._optFor) !== _tgtJson) return;   // 応答の時点でも、頼んだ対象が今の確認と同じか（改訂2-3）
         if (r && r.success) {
           state.pairRemaining = Number(r.pairRemaining || 0);
           state.pairPackMax = Number(r.pairPackMax || 0);
@@ -2768,26 +2862,36 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
           state.isPair = state.pairRemaining > 0;
           state.packKind = (state.isPair && !state.hasNormalRoute) ? 'pair' : 'normal';
           state.attendeeCount = (!state.proxyMode && state.packKind === 'pair' && state.pairPackMax >= 2) ? 2 : 1;
-          state.optReady = true; state.optError = '';
+          state.optReady = true; state.optError = ''; state.optErrorKey = ''; state.optErrorMsg = '';
         } else {
-          // 取得できないまま人数を推測して予約しない（fail-closed）
-          state.optError = (r && r.message) || t('opt_fail');
+          // 取得できないまま人数を推測して予約しない（fail-closed）。文は鍵で持ち、描くときに今の言語で出す（改訂2-2）
+          state.optError = 'err'; state.optErrorKey = 'opt_fail'; state.optErrorMsg = (r && r.message) ? String(r.message) : '';
         }
         buildConfirmOptions(); setConfirmEnabled();
       }).catch(function(){
         if (_seq !== state._optSeq) return;
-        state.optError = t('comm_fail',{msg:''}); buildConfirmOptions(); setConfirmEnabled();
+        if (JSON.stringify(state._optFor) !== _tgtJson) return;
+        state.optError = 'err'; state.optErrorKey = 'comm_fail'; state.optErrorMsg = ''; buildConfirmOptions(); setConfirmEnabled();
       });
     }
     // 代行は既定1名（月額会員の通常予約が大半なので、2名はトレーナーの明示選択に限る）
     state.attendeeCount = state.proxyMode ? 1 : ((state.packKind === 'pair' && state.pairPackMax >= 2) ? 2 : 1);   // 毎回リセット
+    document.getElementById('confirmErr').hidden = true;
+    _paintConfirm(slot);
+  }
+  //   確認画面を描く（文言・選択肢・ボタン）。状態は変えない＝言語切替でも選択・送信中を保つ
+  function _paintConfirm(slot){
     document.getElementById('cfTrainer').textContent = state.trainerName;
     var dt = new Date(slot.startISO);
-    state._repaint = function(){ openConfirm(slot); };   // 言語切替で確認画面を再描画
+    state._repaint = function(){ openConfirm(slot, true); };   // 言語切替は keep（選択を保つ）
     document.getElementById('cfDatetime').textContent = fullDateLabel(dt, slot.startTime, slot.endTime);
     buildConfirmOptions();
     setConfirmEnabled();   // 変更/振替は optReady=true 即座に有効化（通常/代行は取得後にコールバックで更新）
-    document.getElementById('confirmErr').hidden = true;
+    if (state.confirmBusy) {   // 送信中・照合中は今の言語で「処理中」「確認しています」を出し直す（押せないまま）
+      var _bk = state.confirmBusyKey || 'cf_submitting';
+      var cb = document.getElementById('confirmBtn'); if (cb) cb.textContent = t(_bk === 'cf_verify_unknown' ? 'cf_submit' : _bk);
+      if (_bk === 'cf_verifying' || _bk === 'cf_verify_unknown') { var ce = document.getElementById('confirmErr'); ce.textContent = t(_bk); ce.hidden = false; }
+    }
     show('s-confirm');
   }
   // 選択肢が対象日基準で確定するまで／確定できなかった場合は「予約を確定する」を押させない
@@ -2795,7 +2899,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     var b = document.getElementById('confirmBtn'); if (!b) return;
     //   取れなかった枠（SLOT_TAKEN）のままなら押させない（あとから選択肢の取得が終わって有効に戻るのを防ぐ）
     var taken = !!(state.slotTakenKey && state.selected && slotKeyOf(state.selected) === state.slotTakenKey);
-    b.disabled = !(state.optReady && !state.optError) || taken;
+    b.disabled = !!state.confirmBusy || !(state.optReady && !state.optError) || taken;   // ★送信中・照合中は必ず押せない（改訂2-1）
   }
   // #9 振替券の選択・#6 繰り返し を確定画面に動的描画（通常の会員予約フローのみ）
   function buildConfirmOptions(){
@@ -2804,7 +2908,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     host.innerHTML='';
     // 選択肢の取得中/失敗時は何も描かない（当日基準の古い値や既定値で予約させない）
     if (state.optError) {
-      host.innerHTML = '<div class="err">' + state.optError + '</div>';
+      var oe = document.createElement('div'); oe.className = 'err'; oe.textContent = state.optErrorMsg || t(state.optErrorKey || 'opt_fail', { msg: '' }); host.appendChild(oe);   // サーバーの文は訳さず文字で（改訂2-2）
       var rb = document.createElement('button'); rb.className='btn btn-outline'; rb.textContent=t('retry');
       rb.onclick = function(){ openConfirm(state.selected); };
       host.appendChild(rb); return;
@@ -2818,7 +2922,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       px.innerHTML='<div style="font-weight:600;margin-bottom:4px;">'+t('cf_attendee_pair_hdr')+'</div>'
         +'<label style="display:inline-block;margin-right:14px;"><input type="radio" name="cfAtt" value="1"'+(state.attendeeCount===2?'':' checked')+'> '+t('att_1')+'</label>'
         +(_pcan2 ? '<label style="display:inline-block;"><input type="radio" name="cfAtt" value="2"'+(state.attendeeCount===2?' checked':'')+'> '+t('att_2_pair')+'</label>' : '<span class="muted" style="font-size:12px;">'+t('att_only1_short')+'</span>');
-      px.addEventListener('change', function(){ var c=document.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='2') ? 2 : 1; });
+      px.addEventListener('change', function(){ var c=px.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='2') ? 2 : 1; });   // 読むのは確認画面の中だけ（改訂1-1）
       host.appendChild(px);
     }
     var isPlain = !state.proxyMode && !state.changeMode && !state.transferMode;
@@ -2827,12 +2931,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     //   選ばせないと常に通常が先に減り、ペアチケットが期限切れになりうるため。
     if (state.isPair && state.hasNormalRoute){
       var pk=document.createElement('div'); pk.style.cssText='margin-bottom:8px;padding:8px 10px;background:#f0f4fa;border-radius:8px;';
-      var _pkExp = state.pairExpire ? t('until_wrap',{e:state.pairExpire}) : '';
+      var _pkExp = state.pairExpire ? t('until_wrap',{e:_sEsc(state.pairExpire)}) : '';
       pk.innerHTML='<div style="font-weight:600;margin-bottom:4px;">'+t('cf_which_ticket')+'</div>'
         +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfKind" value="normal"'+(state.packKind==='pair'?'':' checked')+'> '+t('ticket_normal')+'</label>'
         +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfKind" value="pair"'+(state.packKind==='pair'?' checked':'')+'> '+t('ticket_pair')+' <span class="muted" style="font-size:12px;">'+t('pair_remaining',{n:state.pairRemaining})+_pkExp+'</span></label>';
       pk.addEventListener('change', function(){
-        var c=document.querySelector('input[name=cfKind]:checked');
+        var c=pk.querySelector('input[name=cfKind]:checked');
         state.packKind = (c && c.value==='pair') ? 'pair' : 'normal';
         state.packKindExplicit = true;   // 会員が選んだ＝サーバの自動判定より優先させる
         state.attendeeCount = (state.packKind==='pair' && state.pairPackMax>=2) ? 2 : 1;
@@ -2848,17 +2952,17 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
         +(_can2 ? '<label style="display:inline-block;margin-right:14px;"><input type="radio" name="cfAtt" value="2"'+(state.attendeeCount===2?' checked':'')+'> '+t('att_2')+'</label>' : '')
         +'<label style="display:inline-block;"><input type="radio" name="cfAtt" value="1"'+(state.attendeeCount===2?'':' checked')+'> '+t('att_1_diff')+'</label>'
         +(_can2 ? '' : '<div class="muted" style="font-size:12px;margin-top:4px;">'+t('att_only1')+'</div>');
-      pr.addEventListener('change', function(){ var c=document.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='2') ? 2 : 1; });
+      pr.addEventListener('change', function(){ var c=pr.querySelector('input[name=cfAtt]:checked'); state.attendeeCount = (c && c.value==='2') ? 2 : 1; });
       host.appendChild(pr);
     }
     // #9：有効な振替券があるときだけ ①通常/②振替 を選べる（既定=通常）
     if (state.transferCredits && state.transferCredits.available > 0){
       var tc=document.createElement('div'); tc.style.cssText='margin-bottom:8px;padding:8px 10px;background:#faf7f0;border-radius:8px;';
-      var _tcE = state.transferCredits.nextExpireLabel ? t('until_wrap',{e:state.transferCredits.nextExpireLabel}) : '';
+      var _tcE = state.transferCredits.nextExpireLabel ? t('until_wrap',{e:_sEsc(state.transferCredits.nextExpireLabel)}) : '';
       tc.innerHTML='<div style="font-weight:600;margin-bottom:4px;">'+t('cf_payment')+'</div>'
-        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="normal" checked> '+t('pay_normal')+'</label>'
-        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="transfer"> '+t('pay_transfer')+'<span class="muted" style="font-size:12px;"> '+t('transfer_avail')+' '+state.transferCredits.available+' '+t('unit_times')+_tcE+'</span></label>';
-      tc.addEventListener('change', function(){ var c=document.querySelector('input[name=cfPay]:checked'); state.useTransfer = !!(c && c.value==='transfer'); var rs=document.getElementById('cfRepeatWrap'); if (rs) rs.style.display = state.useTransfer ? 'none' : 'flex'; if (state.useTransfer) state.repeatCount=1; });
+        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="normal"'+(state.useTransfer?'':' checked')+'> '+t('pay_normal')+'</label>'
+        +'<label style="display:block;margin:3px 0;"><input type="radio" name="cfPay" value="transfer"'+(state.useTransfer?' checked':'')+'> '+t('pay_transfer')+'<span class="muted" style="font-size:12px;"> '+t('transfer_avail')+' '+state.transferCredits.available+' '+t('unit_times')+_tcE+'</span></label>';
+      tc.addEventListener('change', function(){ var c=tc.querySelector('input[name=cfPay]:checked'); state.useTransfer = !!(c && c.value==='transfer'); var rs=document.getElementById('cfRepeatWrap'); if (rs) rs.style.display = state.useTransfer ? 'none' : 'flex'; if (state.useTransfer) state.repeatCount=1; });
       host.appendChild(tc);
     }
     // #6：繰り返し（振替選択時は非表示・ペアチケット利用時は人数を回ごとに選ぶ必要があるため非表示。残数不足の回は自動スキップ）
@@ -2871,7 +2975,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     sel.addEventListener('change', function(){ state.repeatCount=Number(sel.value)||1; });
     rc.appendChild(lbl); rc.appendChild(sel); host.appendChild(rc);
   }
-  on('confirmCancel', function(){ show('s-week'); });
+  on('confirmCancel', function(){ if (_confirmInFlight()) return; show('s-week'); });
   // 全体に戻る＝どの画面/モードからでも最初（会員ホーム／トレーナーは管理一覧）へ抜ける。詰まった時の脱出口。
   function goHome(){
     var wasTrainer = state._fromTrainerAdmin || state.proxyMode;
@@ -2880,7 +2984,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     state.excludeStartISO=''; state.useTransfer=false; state.repeatCount=1; state._fromTrainerAdmin=false;
     if (wasTrainer) { loadTrainerReservations(); } else { loadHome(); }   // トレーナーは管理一覧／会員はホームへ
   }
-  on('confirmHome', goHome);
+  on('confirmHome', function(){ if (_confirmInFlight()) return; goHome(); });
   // ============================================================
   // 予約が本当に入ったかを確かめる（2026-10-03）
   // ============================================================
@@ -2972,8 +3076,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   on('weekHome', goHome);
   on('confirmBtn', function(){
     if (!state.optReady || state.optError) return;   // 二重防御：選択肢が確定していない状態では送らない
+    if (state.confirmBusy) { this.disabled = true; return; }   // ★送信中・照合中は送らない（言語切替で押せる状態に戻っても二重にしない・改訂2-1）
     var btn = this; var errEl = document.getElementById('confirmErr'); errEl.hidden=true;
-    btn.disabled = true; btn.textContent=t('cf_submitting');
+    btn.disabled = true; btn.textContent=t('cf_submitting'); state.confirmBusy = true; state.confirmBusyKey = 'cf_submitting';
     var _isTransfer = state.transferMode || state.useTransfer;   // #9：既存の振替フロー or 確定画面で②振替を選択
     var _isRecurring = !state.proxyMode && !state.changeMode && !_isTransfer && Number(state.repeatCount) > 1;   // #6
     var req = state.proxyMode
@@ -2990,6 +3095,8 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
             : { action:'line_makeReservationLine', trainerId: state.trainerId, startISO: state.selected.startISO, attendeeCount: state.attendeeCount, packKind: (state.packKindExplicit ? state.packKind : '') };
     api(req)
       .then(function(res){
+        if (!res || typeof res !== 'object') throw new Error('empty response');   // 応答が無い＝成立したか分からない（照合へ・Codex 関門②）
+        state.confirmBusy = false; state.confirmBusyKey = '';   // 結果が分かった（成功・はっきり断られた・SLOT_TAKEN）
         btn.disabled=false; btn.textContent=t('cf_submit');
         if (res.success) {
           var s = state.selected;
@@ -2997,15 +3104,17 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
             //   受付開始前（最終日より先）の回は「空き/残数」と分けて出す（設計25）。
             //   ★具体的な日付は出さない：8回だと2か月先にまたがり、開く日が回ごとに違う（Codex 関門②）
             var _no = Number(res.notOpenCount) || 0, _other = (Number(res.skippedCount) || 0) - _no;
-            document.getElementById('doneDetail').textContent = t('done_recurring', { trainer: state.trainerName, date: s.date, time: s.startTime, created: res.createdCount })
+            var _doneFn = function(){ return t('done_recurring', { trainer: state.trainerName, date: s.date, time: s.startTime, created: res.createdCount })
               + (_other > 0 ? t('done_recurring_skip', { skipped: _other }) : '')
-              + (_no > 0 ? t('done_recurring_notopen', { n: _no }) : '');
+              + (_no > 0 ? t('done_recurring_notopen', { n: _no }) : ''); };
           } else {
-            var tag = _isTransfer ? t('done_tag_transfer') : state.changeMode ? t('done_tag_change') : state.proxyMode ? t('done_tag_proxy') : '';
-            document.getElementById('doneDetail').textContent = (state.proxyMode ? state.proxyCustomerName + t('done_cust_sep') : '') + state.trainerName + t('done_sep') + s.date + ' ' + s.startTime + '〜' + s.endTime + tag;
+            var _pm = state.proxyMode, _pn = state.proxyCustomerName, _tn = state.trainerName, _cm = state.changeMode;
+            var _doneFn = function(){ var tag = _isTransfer ? t('done_tag_transfer') : _cm ? t('done_tag_change') : _pm ? t('done_tag_proxy') : '';
+              return (_pm ? _pn + t('done_cust_sep') : '') + _tn + t('done_sep') + s.date + ' ' + s.startTime + '〜' + s.endTime + tag; };
           }
           state.changeMode = false; state._ownerFreeResId=''; state.changeCustomerId=''; state.changeReservationId = ''; state.transferMode = false; state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = ''; state.useTransfer = false; state.repeatCount = 1;
-          state._repaint = null;   // 完了画面は静的（data-i18n）で再描画不要
+          document.getElementById('doneDetail').textContent = _doneFn();
+          state._repaint = function(){ document.getElementById('doneDetail').textContent = _doneFn(); };   // 言語切替で完了の詳細も今の言語に（改訂1-2）
           show('s-done');
         } else {
           errEl.textContent = res.message || t('book_fail');
@@ -3022,8 +3131,10 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
         }
       }).catch(function(e){
         // ★ボタンをここで戻さない。戻すと、成立しているのに押し直せてしまう。
+        //   描画の途中の例外でここに来たときも、結果待ちに戻して押せなくする（Codex 関門②）
+        state.confirmBusy = true; btn.disabled = true;
         errEl.textContent = t('cf_verifying'); errEl.hidden = false;
-        btn.textContent = t('cf_verifying');
+        btn.textContent = t('cf_verifying'); state.confirmBusyKey = 'cf_verifying';
         // ★送った時点の表示内容を控える（2026-10-03 Codex指摘）。
         //   確かめるのに最大で十数秒かかる。その間に顧客が別の画面へ移ると state が
         //   書き換わり、**別の予約の文面**を完了として出す／state.selected が消えて
@@ -3037,27 +3148,29 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
           if (found === true) {
             // 入っていた。完了として扱う（成功時と同じ文面を出す）
             var s2 = snap.sel;
-            if (!s2) { errEl.textContent = t('cf_verify_unknown'); btn.textContent = t('cf_submit'); return; }
-            var tag2 = snap.transfer ? t('done_tag_transfer') : snap.change ? t('done_tag_change') : snap.proxy ? t('done_tag_proxy') : '';
-            document.getElementById('doneDetail').textContent =
-              (snap.proxy ? snap.proxyName + t('done_cust_sep') : '')
-              + snap.trainer + t('done_sep') + s2.date + ' ' + s2.startTime + '〜' + s2.endTime + tag2;
+            if (!s2) { errEl.textContent = t('cf_verify_unknown'); btn.textContent = t('cf_submit'); state.confirmBusyKey = 'cf_verify_unknown'; return; }
+            var _doneFn2 = function(){ var tag2 = snap.transfer ? t('done_tag_transfer') : snap.change ? t('done_tag_change') : snap.proxy ? t('done_tag_proxy') : '';
+              return (snap.proxy ? snap.proxyName + t('done_cust_sep') : '')
+              + snap.trainer + t('done_sep') + s2.date + ' ' + s2.startTime + '〜' + s2.endTime + tag2; };
+            document.getElementById('doneDetail').textContent = _doneFn2();
+            state.confirmBusy = false; state.confirmBusyKey = '';
             state.changeMode = false; state._ownerFreeResId=''; state.changeCustomerId=''; state.changeReservationId = ''; state.transferMode = false;
             state.proxyMode = false; state.proxyCustomerId = ''; state.proxyCustomerName = '';
-            state.useTransfer = false; state.repeatCount = 1; state._repaint = null;
+            state.useTransfer = false; state.repeatCount = 1; state._repaint = function(){ document.getElementById('doneDetail').textContent = _doneFn2(); };
             btn.disabled = false; btn.textContent = t('cf_submit'); errEl.hidden = true;
             show('s-done');
             return;
           }
           if (found === false) {
             // 入っていない。ここで初めて押し直してよい。
+            state.confirmBusy = false; state.confirmBusyKey = '';
             btn.disabled = false; btn.textContent = t('cf_submit');
             errEl.textContent = t('cf_verify_none');
             return;
           }
           // 確かめられなかった。**押させない。** 二重予約の方が取り返しがつかない。
           btn.textContent = t('cf_submit');
-          errEl.textContent = t('cf_verify_unknown');
+          errEl.textContent = t('cf_verify_unknown'); state.confirmBusyKey = 'cf_verify_unknown';   // 押せないまま（言語を切り替えても）
         });
       });
   });

@@ -201,7 +201,7 @@ console.log('=== 4. 関門②で直したもの ===');
   ok('4-5 弾くときは _skipOutcome を付ける', (bodyOf('_lbReserveCoreImpl').match(/_skipOutcome: true/g) || []).length === 2);
   const LIFF = readFileSync(join(ROOT, 'liff/index.html'), 'utf8');
   ok('4-6 ★取れなかった枠のまま押し直させない', /state\.slotTakenKey = slotKeyOf\(state\.selected\);[^\n]*\n\s*btn\.disabled = true;/.test(LIFF));
-  ok('4-7 あとから選択肢の取得が終わっても有効に戻さない', /b\.disabled = !\(state\.optReady && !state\.optError\) \|\| taken;/.test(LIFF));
+  ok('4-7 あとから選択肢の取得が終わっても有効に戻さない', /b\.disabled = !!state\.confirmBusy \|\| !\(state\.optReady && !state\.optError\) \|\| taken;/.test(LIFF));
   // 画面の関数を取り出して動かす（状態遷移と後着の競合）
   const fnSrc = (name) => { const m = LIFF.match(new RegExp('function ' + name + '\\([^)]*\\)\\{[\\s\\S]*?\\n  \\}')); if (!m) throw new Error(name); return m[0]; };
   {
@@ -235,7 +235,7 @@ console.log('=== 4. 関門②で直したもの ===');
     ok('4-10 ★古い取り直しの結果で、新しい一覧を上書きしない', JSON.stringify(c.state.slots) === '["change-mode"]', JSON.stringify(c.state.slots));
   }
   ok('4-11 loadSlots が番号を進める', /function loadSlots\(\)\{\s*state\.slotsGen = \(state\.slotsGen \|\| 0\) \+ 1;/.test(LIFF));
-  ok('4-8 別の枠を選べば openConfirm がボタンを作り直す', /function openConfirm\(slot\)\{\s*state\.selected = slot;[\s\S]{0,4000}setConfirmEnabled\(\);/.test(LIFF));
+  ok('4-8 別の枠を選べば openConfirm がボタンを作り直す', /function openConfirm\(slot, keep\)\{[\s\S]{0,900}state\.selected = slot;[\s\S]{0,4000}_paintConfirm\(slot\);\s*\}\s*\/\/[^\n]*\n\s*function _paintConfirm\(slot\)\{[\s\S]{0,600}setConfirmEnabled\(\);/.test(LIFF));
 }
 
 console.log('');
