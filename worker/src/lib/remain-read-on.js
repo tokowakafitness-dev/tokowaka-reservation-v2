@@ -71,7 +71,8 @@ export function calcInputStatus(rows, nowMs) {
   return 'ok';
 }
 
-async function readCalcInputStatus(env, nowMs) {
+//   ★export して共用する（会員画面の契約＝設計35 改訂2-6。45分の判定を別に書き直さない）
+export async function readCalcInputStatus(env, nowMs) {
   try {
     const r = await env.DB.prepare(
       `SELECT key, synced_at FROM sync_state WHERE key IN (${CALC_INPUT_KEYS.map(() => '?').join(', ')})`

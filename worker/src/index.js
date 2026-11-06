@@ -25,6 +25,7 @@ import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { KARTE_HANDLERS, isKarteWrite, KARTE_LIMITS } from './routes/karte.js';
 import { handleBodyWrite, handleBodyFreeze, handleBodySeries } from './routes/body.js';
+import { compatMyKarte, memberKarteOn } from './routes/member-karte.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
          compatBoot, compatCustomerCard, rolesTooOld,
@@ -63,6 +64,9 @@ const HANDLERS = {
   //   2026-10-03 の実測で、通信の86%がGASのこの2つだった。
   c_boot:                compatBoot,
   c_customerCard:        compatCustomerCard,
+
+  // 会員が自分のカルテを読む（設計35）。GAS へ送り直さない（画面の EDGE_MAP に載せない）
+  c_myKarte:             compatMyKarte,
 
   // 顧客カルテ（設計28）。k_ は入口で鮮度・停止・Origin・トークンの新しさを通ってから届く
   ...KARTE_HANDLERS,
@@ -231,6 +235,12 @@ export default {
 
     const action = String(body.action || '');
     if (!action) return json({ success: false, code: 'NO_ACTION' }, origin, 400);
+
+    //   ★会員のカルテの停止スイッチ（wrangler.toml の MEMBER_KARTE）。**'on' でなければ必ず 503**（設計35 改訂1-4）
+    //     古い画面が直接呼んでも止まる。認可や D1 より前に止める（窓口の中でも同じ判定をもう一度する）
+    if (action === 'c_myKarte' && !memberKarteOn(env)) {
+      return json({ success: false, code: 'MEMBER_KARTE_OFF' }, origin, 503);
+    }
 
     //   ★カルテの停止スイッチ（wrangler.toml の KARTE = "off"）。認可や D1 より前に止める
     const isKarte = /^k_/.test(action);

@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-04a 棚卸しを1名でも読めなければ送らない・ログに氏名を出さない（設計30）';
+var LB_EDGE_BUILD = '2026-11-06a 会員の LINE ID は照合済み（verified）の行だけ送る（設計35 改訂1-6）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -193,6 +193,14 @@ function _edgeCustomers() {
   var last = sh.getLastRow();
   var v = sh.getRange(2, 1, last - 1, Math.max(MAP_COL.NOTE || 14, sh.getLastColumn())).getValues();
   var out = [], now = Date.now();
+  // ★LINE ID を送るのは照合済み（AUTH_STATE === 'verified'）の行だけ（2026-11-06・設計35 改訂1-6）。
+  //   Worker の resolveRole は customers.line_user_id だけで customer と決める（auth_state を見ない）。
+  //   pending／rejected／merged の行の LINE ID を送ると、未承認の人が D1 で会員になる。
+  //   GAS の getMemberStatus は verified でなければ未登録として答えるので、それに揃える。
+  //   ★行そのもの（customer_id）は今までどおり送る。予約・残数・リマインドは customer_id で動く。
+  //   ★同じ LINE ID の verified 行が2つあるときは、GAS の getCustomerByLine と同じく
+  //     シートで先の行だけに付ける（D1 の UNIQUE(line_user_id) を破って押し出し全体が落ちないように）。
+  var lineFor = _edgeVerifiedLineByRow(v);
   for (var i = 0; i < v.length; i++) {
     var cid = String(v[i][MAP_COL.CUSTOMER_ID - 1] || '');
     if (!cid) continue;
@@ -205,7 +213,7 @@ function _edgeCustomers() {
       phone: String(v[i][MAP_COL.PHONE - 1] || ''),
       email: '',
       birthday: '',
-      line_user_id: _edgeIdOrNull(v[i][MAP_COL.LINE_USER_ID - 1]),
+      line_user_id: lineFor[i] || null,
       default_trainer_id: _edgeIdOrNull(v[i][MAP_COL.TRAINER_ID - 1]),
       contract_status: String(v[i][MAP_COL.CONTRACT_STAT - 1] || ''),
       contract_type: String(v[i][MAP_COL.CONTRACT_TYPE - 1] || ''),
@@ -220,6 +228,76 @@ function _edgeCustomers() {
     });
   }
   return out;
+}
+
+// 顧客の行を「LINE ID を外す行（null）が先」に並べ替えた写しを返す（押し出し専用）。
+//   Worker は行の順に1つの batch で upsert する。D1 にまだ古い LINE ID が残る行より先に、
+//   同じ ID を持つ別の行を書くと UNIQUE で batch 全体が落ちる。外す側を先に書けば、その ID が空いてから付く。
+//   ★_edgeCustomers 自体の順は変えない。残数の押し出しは名簿の順の番号（EDGE_HOME_CURSOR）で続きから回るため、
+//     照合状態で順が動くと、時間切れの続きで会員を飛ばす。
+function _edgeCustomersForPush(customers) {
+  if (customers == null) return customers;
+  var nulls = [], withLine = [];
+  for (var k = 0; k < customers.length; k++) (customers[k].line_user_id ? withLine : nulls).push(customers[k]);
+  return nulls.concat(withLine);
+}
+
+// 行ごとに「送ってよい LINE ID」を返す（送らない行は null）。
+//   verified の行だけ。同じ ID の verified 行が複数あれば、シートで先の行だけ（getCustomerByLine と同じ選び方）。
+function _edgeVerifiedLineByRow(v) {
+  var res = [], taken = {};
+  for (var i = 0; i < v.length; i++) {
+    res.push(null);
+    if (!String(v[i][MAP_COL.CUSTOMER_ID - 1] || '')) continue;
+    if (String(v[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
+    var lid = _edgeIdOrNull(v[i][MAP_COL.LINE_USER_ID - 1]);
+    if (!lid || taken[lid]) continue;
+    taken[lid] = 1;
+    res[i] = lid;
+  }
+  return res;
+}
+
+// 会員の LINE ID の照合状態を数える（読み取りだけ・2026-11-06・設計35 改訂1-6 の①④）。
+//   ★件数だけを返す。氏名・customer_id・LINE ID は返さない・ログにも出さない。
+//   作業依頼では remaining の args.authAudit で読む（新しい op を足さない＝許可一覧の変更が要らない）。
+//   返す値：
+//     unverifiedWithLine  … verified でなく LINE ID がある行（反映後は D1 で null になる＝guest になる）
+//     verifiedWithLine    … verified で LINE ID がある行
+//     dupLineIds          … 同じ LINE ID が2行以上にある ID の数
+//     dupVerifiedLineIds  … そのうち verified の行が2行以上ある ID の数（先の行だけ送る）
+//     sentLine            … 押し出しで LINE ID を付けて送る行（＝ _edgeCustomers と同じ判定）
+//   読めなければ null（0件と言わない）。
+function _edgeAuthAudit() {
+  var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
+  if (!sh) return null;
+  if (sh.getLastRow() < 2) return null;
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(MAP_COL.NOTE || 14, sh.getLastColumn())).getValues();
+  var r = { rows: 0, unverifiedWithLine: 0, verifiedWithLine: 0, dupLineIds: 0, dupVerifiedLineIds: 0, sentLine: 0 };
+  var cnt = {}, vcnt = {};
+  for (var i = 0; i < v.length; i++) {
+    if (!String(v[i][MAP_COL.CUSTOMER_ID - 1] || '')) continue;
+    r.rows++;
+    var lid = _edgeIdOrNull(v[i][MAP_COL.LINE_USER_ID - 1]);
+    if (!lid) continue;
+    cnt[lid] = (cnt[lid] || 0) + 1;
+    if (String(v[i][MAP_COL.AUTH_STATE - 1]) === 'verified') { r.verifiedWithLine++; vcnt[lid] = (vcnt[lid] || 0) + 1; }
+    else r.unverifiedWithLine++;
+  }
+  for (var a in cnt) if (cnt[a] > 1) r.dupLineIds++;
+  for (var b in vcnt) if (vcnt[b] > 1) r.dupVerifiedLineIds++;
+  var lf = _edgeVerifiedLineByRow(v);
+  for (var j = 0; j < lf.length; j++) if (lf[j]) r.sentLine++;
+  return r;
+}
+function _edgeAuthAuditText() {
+  var r = _edgeAuthAudit();
+  if (!r) return '[edge ' + LB_EDGE_BUILD + '] 名簿が読めません（数えていません）';
+  return '[edge ' + LB_EDGE_BUILD + '] 会員の行 ' + r.rows
+    + ' ／ verified でなく LINE ID あり ' + r.unverifiedWithLine
+    + ' ／ verified で LINE ID あり ' + r.verifiedWithLine
+    + ' ／ 同じ LINE ID が複数行 ' + r.dupLineIds + '件（うち verified が複数 ' + r.dupVerifiedLineIds + '件）'
+    + ' ／ LINE ID を付けて送る行 ' + r.sentLine;
 }
 
 function _edgeReservations() {
@@ -1149,7 +1227,7 @@ function _pushToEdgeAllImpl(withHome, full) {
   var customers = _edgeCustomers();
 
   step('trainers',     function () { return _edgePushRowsF('trainers', _edgeTrainers(), batchId, { scope: 'all', deleteStale: full }); });
-  step('customers',    function () { return _edgePushRowsF('customers', customers, batchId, { scope: 'all', deleteStale: full }); });
+  step('customers',    function () { return _edgePushRowsF('customers', _edgeCustomersForPush(customers), batchId, { scope: 'all', deleteStale: full }); });
   step('reservations', function () { return _edgePushRowsF('reservations', _edgeReservations(), batchId, { scope: 'all', deleteStale: full }); });
   // ★固定枠だけは、ふだんの同期でも消す（2026-10-03・Codexの最終判定）。
   //   固定枠の削除はシートから行ごと消えるため、押し出す側に「消えた」という情報が残らない。

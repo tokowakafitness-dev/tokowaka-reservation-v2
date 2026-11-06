@@ -98,7 +98,9 @@ async function toConfirm(w) {
   ok('1-1 登録済みの会員はホームに入る', cur(w) === 's-home', cur(w));
   ok('1-2 会員の時はトレーナーの見た目（body.staff）が付かない・読み込み中の印が外れる', !w.document.body.classList.contains('staff') && !w.document.body.classList.contains('booting'));
   const kids = [...$(w, 's-home').children].map((e) => e.id || e.className);
-  eq('1-3 ホームの並び：名前の帯 → ＋予約する → 予約の確認・変更 → ご利用状況 → 残り回数のカード', kids, ['mtop', 'homeReserve', 'homeMyRes', 'sect-h', 'homeInfo']);
+  //   設計35 C2：次回のご予約（予約が無ければ隠れる）・会員のカルテ（memberKarte のときだけ）を足した。C1 の並びはそのまま
+  eq('1-3 ホームの並び：名前の帯 → ＋予約する → (次回のご予約) → 予約の確認・変更 → (カルテ) → ご利用状況 → 残り回数のカード', kids, ['mtop', 'homeReserve', 'homeNext', 'homeMyRes', 'homeKarte', 'sect-h', 'homeInfo']);
+  ok('1-3b 予約もカルテも無い会員では、足した2つは隠れている（C1 の見た目のまま）', $(w, 'homeNext').hidden && $(w, 'homeKarte').hidden && $(w, 'mkTabs').hidden);
   ok('1-4 お名前は文字として入る', $(w, 'homeName').textContent === '山田 花子 様');
   ok('1-5 「予約の確認・変更」の文言が出る（ボタンの中の文字）', $(w, 'homeMyRes').textContent.indexOf('予約の確認・変更') === 0);
 }

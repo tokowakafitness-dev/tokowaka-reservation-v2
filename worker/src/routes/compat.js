@@ -98,6 +98,8 @@ export async function compatMemberStatus({ env, who, ctx }) {
     pairPackMax: home.pairPackMax || 0,
     transferCredits: home.transferCredits || { available: 0 },
     home,
+    //   ★会員画面 C2 のタブを出すか（設計35）。真偽値だけ・D1 を読まない。c_boot の memberStatus にもそのまま乗る
+    memberKarte: String((env && env.MEMBER_KARTE) || '') === 'on',
   };
 }
 

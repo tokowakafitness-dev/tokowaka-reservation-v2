@@ -16,6 +16,7 @@
 import { canSeeCustomer } from '../perms.js';
 import { synthesizeBody, pickGoalLine } from '../lib/body-series.js';
 import { normalizeHearing, normalizePainMap, normalizeReasons, normalizeTag, parseJsonCol, has, HEARING_REVISION_SQL } from '../lib/karte-hearing.js';
+import { buildMemberKarte } from '../lib/member-karte.js';
 
 export const KARTE_LIMITS = {
   BODY_BYTES: 16 * 1024,
@@ -29,11 +30,17 @@ export const KARTE_LIMITS = {
   TOTAL_SETS: 60,          // 1回の記録の合計（設計33・本文16KB の余裕）
   PAGE: 20,
   BOARD_PAGE: 50,
+  //   会員に見せる文（設計35）。表の CHECK と同じ上限
+  MEMBER_MESSAGE: 400,
+  MEMBER_TODO: 3,
+  MEMBER_TODO_CHARS: 60,
+  MEMBER_TAGS: 6,
+  MEMBER_TAG_CHARS: 12,
 };
 
 //   カルテの窓口の版（設計31）。画面はこれが自分の想定以上のときだけ新しい項目を保存する
 //   （新しい画面が古い Worker に当たると、新しい項目が黙って捨てられ「保存しました」と出るため・関門②）
-export const KARTE_SCHEMA = 31;
+export const KARTE_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2）。古い Worker に member を送らせない
 
 export function isKarteWrite(action) {
   return /^k_(save|add|edit|delete|record)/.test(String(action || ''));
@@ -150,6 +157,12 @@ const G = {
            SELECT 1 FROM customers WHERE customer_id = ?
               AND (default_trainer_id IS NULL OR default_trainer_id = '' OR default_trainer_id = ?))`,
         cid, String(who.trainerId || ''))),
+  // ★会員に見せる枚の顧客・日付が、参照先の生きた session と一致する（設計35 改訂2-4）。違えば batch 全体を戻す
+  mnoteMatch: (mnoteId) => S(`INSERT INTO karte_guard (target) SELECT 1 FROM karte_member_notes m
+                                WHERE m.mnote_id = ? AND m.session_id IS NOT NULL
+                                  AND NOT EXISTS (SELECT 1 FROM karte_tr_sessions s
+                                                   WHERE s.session_id = m.session_id AND s.customer_id = m.customer_id
+                                                     AND s.session_date = m.session_date AND s.deleted_at IS NULL)`, mnoteId),
   // 体の記録の切り替え（凍結）が済んでいる
   ready: () => S(`INSERT INTO karte_guard (ready) SELECT 1 WHERE NOT EXISTS (
                     SELECT 1 FROM body_freeze WHERE state IN ('frozen', 'copying', 'copied', 'verified'))`),
@@ -505,11 +518,15 @@ async function addTraining(c) {
   } catch (e) { return err('BAD_REQUEST', 400, e.message); }
   //   ★合計の上限は正規化の後に数える。専用のコードで返す（画面が「合計60セットまで」と出せるように・関門①）
   if (sets.length > L.TOTAL_SETS) return err('TOTAL_SETS', 400);
+  //   お客様に見える欄（設計35 改訂1-2）。正規化してハッシュに必ず含める（無ければ null・改訂2-5）
+  let member;
+  try { member = has(b, 'member') ? normalizeMember(b.member) : null; } catch (e) { return err('BAD_REQUEST', 400, e.message); }
   const tid = String(c.who.trainerId || '');
   const sid = newId();
+  const mid = member ? newId() : null;
   const date = String(b.sessionDate);
   return runWrite(c, {
-    action: 'k_addTraining', section: 'training', customerId: cid, payload: { cid, date, sets },
+    action: 'k_addTraining', section: 'training', customerId: cid, payload: { cid, date, sets, member },
     plan: (now) => ({
       stmts: [
         G.target(cid),
@@ -517,8 +534,15 @@ async function addTraining(c) {
            VALUES (?, ?, ?, ?, 1, ?)`, sid, cid, date, tid, now),
         ...sets.map((x) => S(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps, note)
                               VALUES (?, ?, ?, ?, ?, ?)`, sid, x.exercise, x.set_no, x.weight_kg, x.reps, x.note)),
+        //   ★同じ batch で枚を書く＝トレーニングと全部か無か（作成者は送ったトレーナー・改訂2-2）
+        ...(member ? [
+          S(`INSERT INTO karte_member_notes (mnote_id, customer_id, session_id, session_date, message, todo_json, tags_json,
+                                             author_trainer_id, rev, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`, mid, cid, sid, date, member.message, member.todo_json, member.tags_json, tid, now, now),
+          G.mnoteMatch(mid),
+        ] : []),
       ],
-      result: { sessionId: sid, rev: 1 },
+      result: member ? { sessionId: sid, rev: 1, mnoteId: mid, mnoteRev: 1 } : { sessionId: sid, rev: 1 },
     }),
   });
 }
@@ -540,8 +564,216 @@ async function deleteTraining(c) {
         G.author('karte_tr_sessions', 'session_id', sid, 'author_trainer_id', c.who),
         G.rev('karte_tr_sessions', 'session_id', sid, rev),
         S(`UPDATE karte_tr_sessions SET deleted_at = ?, deleted_by = ?, rev = rev + 1 WHERE session_id = ? AND rev = ?`, now, tid, sid, rev),
+        //   ★同じ session の生きた「お客様へ」も同じ batch で論理削除（片方だけ残らない・設計35 改訂2-1）
+        S(`UPDATE karte_member_notes SET deleted_at = ?, deleted_by = ?, rev = rev + 1, updated_at = ?
+            WHERE session_id = ? AND deleted_at IS NULL`, now, tid, now, sid),
       ],
       result: { sessionId: sid, deleted: true },
+    }),
+  });
+}
+
+// ================================================================ 会員に見せる文（設計35）
+/**
+ * お客様に見える欄を正規化する（改訂2-5）。中身が全部空なら null（＝枚を作らない）
+ *   message：前後の空白を落とし、空は null・400字まで
+ *   todo・tags：文字の配列。前後の空白を落とし空要素を捨てる・空配列は null。件数と字数の上限
+ *   知らない鍵・型違い・上限超えは RangeError（400）
+ */
+export function normalizeMember(m) {
+  if (m == null) return null;
+  const f = normalizeMemberFields(m);
+  if (f.message === null && f.todo_json === null && f.tags_json === null) return null;
+  return f;
+}
+/** 項目ごとの正規化だけ（全部空でも null にしない）。編集で「1項目だけ消す」に使う */
+function normalizeMemberFields(m) {
+  if (typeof m !== 'object' || Array.isArray(m)) throw new RangeError('MEMBER');
+  for (const k of Object.keys(m)) if (!['message', 'todo', 'tags'].includes(k)) throw new RangeError('MEMBER_KEY');
+  const L = KARTE_LIMITS;
+  let message = null;
+  if (m.message != null) {
+    if (typeof m.message !== 'string') throw new RangeError('MESSAGE');
+    const t = m.message.trim();
+    if (t.length > L.MEMBER_MESSAGE) throw new RangeError('MESSAGE_TOO_LONG');
+    message = t === '' ? null : t;
+  }
+  const list = (v, maxN, maxChars, code) => {
+    if (v == null) return null;
+    if (!Array.isArray(v)) throw new RangeError(code);
+    const out = [];
+    for (const x of v) {
+      if (x == null) continue;
+      if (typeof x !== 'string') throw new RangeError(code);
+      const t = x.trim();
+      if (t === '') continue;
+      if (t.length > maxChars) throw new RangeError(code + '_TOO_LONG');
+      out.push(t);
+    }
+    if (out.length > maxN) throw new RangeError(code + '_TOO_MANY');
+    return out.length ? out : null;
+  };
+  const todo = list(m.todo, L.MEMBER_TODO, L.MEMBER_TODO_CHARS, 'TODO');
+  const tags = list(m.tags, L.MEMBER_TAGS, L.MEMBER_TAG_CHARS, 'TAGS');
+  return { message, todo_json: todo ? JSON.stringify(todo) : null, tags_json: tags ? JSON.stringify(tags) : null };
+}
+
+/**
+ * 「お客様の見え方」（改訂1-1・2-3）。共有の範囲を通した顧客を、会員と同じ組み立て関数で返す。
+ *   契約は担当の範囲（canSeeCustomer）を通るときだけ問い合わせる。MEMBER_KARTE には止められない
+ */
+async function memberPreview(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) {
+    await logAccess(c.env, c.who, cid, 'member_preview', 'k_memberPreview', 'denied');
+    return err('FORBIDDEN', 403);
+  }
+  const contractAllowed = await canSeeCustomer(c.env, c.who, cid);
+  const out = await buildMemberKarte(c.env, cid, { includeContract: contractAllowed === true, includeIds: true,
+                                                   viewerTrainerId: String(c.who.trainerId || '') });
+  await logAccess(c.env, c.who, cid, 'member_preview', 'k_memberPreview', 'ok');
+  return out;
+}
+
+async function mnoteRow(env, mnoteId) {
+  if (!mnoteId) return null;
+  return env.DB.prepare('SELECT customer_id, author_trainer_id FROM karte_member_notes WHERE mnote_id = ?').bind(String(mnoteId)).first();
+}
+
+/**
+ * 保存（改訂3-1 の3つの形）。曖昧な形は 400
+ *   ① 新規・トレーニングなし：rev=0・customerId・sessionDate（sessionId・mnoteId は送らない）
+ *   ② 新規・既存のトレーニングに追加：rev=0・sessionId（customerId・sessionDate・mnoteId は送らない）
+ *        顧客と日付は参照先の生きた session から引く。生きた枚が既にある＝409／session が無い・消えている・範囲外＝404
+ *   ③ 編集：mnoteId・今の rev（>0）（sessionId・sessionDate・customerId は送らない）。本人か owner だけ
+ *   中身は message・todo・tags（③は鍵がある項目だけ置き換える＝I54 と同じ）
+ */
+async function saveMemberNote(c) {
+  const b = c.body;
+  const p = (k) => has(b, k);
+  const rev = b.rev;
+  if (!Number.isInteger(rev) || rev < 0) return err('BAD_REQUEST', 400, 'rev');
+  //   content：項目ごとに正規化した値（新規は全部空なら 400・編集は最後の状態を見張りで確かめる）
+  let content;
+  try {
+    const m = {};
+    for (const k of ['message', 'todo', 'tags']) if (p(k)) m[k] = b[k];
+    if (!Object.keys(m).length) return err('BAD_REQUEST', 400, 'EMPTY');
+    content = normalizeMemberFields(m);
+    content.present = { message: p('message'), todo: p('todo'), tags: p('tags') };
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const allEmpty = content.message === null && content.todo_json === null && content.tags_json === null;
+  const tid = String(c.who.trainerId || '');
+
+  if (rev === 0) {
+    if (p('mnoteId')) return err('BAD_REQUEST', 400, 'SHAPE');
+    if (p('sessionId') === p('customerId')) return err('BAD_REQUEST', 400, 'SHAPE');   // 両方・どちらも無い
+    if (allEmpty) return err('BAD_REQUEST', 400, 'EMPTY');
+    const mid = newId();
+    const ins = (tail) => `INSERT INTO karte_member_notes (mnote_id, customer_id, session_id, session_date,
+        message, todo_json, tags_json, author_trainer_id, rev, created_at, updated_at) ${tail}`;
+    if (p('customerId')) {
+      //   ① トレーニングなし
+      if (p('sessionDate') === false) return err('BAD_REQUEST', 400, 'SHAPE');
+      //   ★トレーニングの無い枚は、文か次回までにが要る（タグだけでは会員のどこにも出ない・Codex 関門②）
+      if (content.message === null && content.todo_json === null) return err('BAD_REQUEST', 400, 'NEED_TEXT');
+      const cid = cidOf(b);
+      if (!isPastOrToday(b.sessionDate)) return err('BAD_REQUEST', 400, 'BAD_DATE');
+      if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+      const date = String(b.sessionDate);
+      return runWrite(c, {
+        action: 'k_saveMemberNote', section: 'member_note', customerId: cid,
+        payload: { form: 'day', cid, date, m: [content.message, content.todo_json, content.tags_json] },
+        plan: (now) => ({
+          stmts: [
+            G.target(cid),
+            S(ins(`VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 1, ?, ?)`), mid, cid, date, content.message, content.todo_json, content.tags_json, tid, now, now),
+          ],
+          result: { mnoteId: mid, rev: 1 },
+        }),
+      });
+    }
+    //   ② 既存のトレーニングに追加
+    if (p('sessionDate')) return err('BAD_REQUEST', 400, 'SHAPE');
+    const sid = String(b.sessionId || '');
+    const se = sid ? await c.env.DB.prepare('SELECT customer_id FROM karte_tr_sessions WHERE session_id = ? AND deleted_at IS NULL').bind(sid).first() : null;
+    const cid = se ? String(se.customer_id) : '';
+    if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+    return runWrite(c, {
+      action: 'k_saveMemberNote', section: 'member_note', customerId: cid,
+      payload: { form: 'session', sid, m: [content.message, content.todo_json, content.tags_json] },
+      plan: (now) => ({
+        stmts: [
+          G.rowLive('karte_tr_sessions', 'session_id', sid),
+          //   生きた枚が既にある＝409（部分 UNIQUE より先に、理由の分かる形で止める）
+          S(`INSERT INTO karte_guard (rev) SELECT 1 WHERE EXISTS (
+               SELECT 1 FROM karte_member_notes WHERE session_id = ? AND deleted_at IS NULL)`, sid),
+          //   ★顧客と日付は session から引く（要求からは受け取らない）
+          S(ins(`SELECT ?, s.customer_id, s.session_id, s.session_date, ?, ?, ?, ?, 1, ?, ?
+                   FROM karte_tr_sessions s WHERE s.session_id = ? AND s.deleted_at IS NULL`),
+            mid, content.message, content.todo_json, content.tags_json, tid, now, now, sid),
+          G.mnoteMatch(mid),
+        ],
+        result: { mnoteId: mid, rev: 1 },
+      }),
+    });
+  }
+
+  //   ③ 編集
+  if (!p('mnoteId') || p('sessionId') || p('sessionDate') || p('customerId')) return err('BAD_REQUEST', 400, 'SHAPE');
+  const mnoteId = String(b.mnoteId || '');
+  const row = await mnoteRow(c.env, mnoteId);
+  const cid = row ? String(row.customer_id) : '';
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const override = c.who.role === 'owner' && String(row.author_trainer_id || '') !== tid;
+  const f = (k) => (content.present[k] ? 1 : 0);
+  return runWrite(c, {
+    action: 'k_saveMemberNote', section: override ? 'member_note_owner_override' : 'member_note', customerId: cid,
+    payload: { form: 'edit', mnoteId, rev, m: [content.message, content.todo_json, content.tags_json], pr: content.present },
+    plan: (now) => ({
+      stmts: [
+        G.rowLive('karte_member_notes', 'mnote_id', mnoteId),
+        G.author('karte_member_notes', 'mnote_id', mnoteId, 'author_trainer_id', c.who),
+        G.rev('karte_member_notes', 'mnote_id', mnoteId, rev),
+        S(`UPDATE karte_member_notes SET
+              message = CASE WHEN ? = 1 THEN ? ELSE message END,
+              todo_json = CASE WHEN ? = 1 THEN ? ELSE todo_json END,
+              tags_json = CASE WHEN ? = 1 THEN ? ELSE tags_json END,
+              rev = rev + 1, updated_at = ?, updated_by = ?
+            WHERE mnote_id = ? AND rev = ? AND deleted_at IS NULL`,
+          f('message'), content.message, f('todo'), content.todo_json, f('tags'), content.tags_json, now, tid, mnoteId, rev),
+        //   編集の後も全部空にはしない（鍵の無い項目が残っていれば可）。トレーニングの無い枚は文か次回までにを残す（タグだけは会員に出ない）
+        S(`INSERT INTO karte_guard (state) SELECT 1 FROM karte_member_notes
+            WHERE mnote_id = ? AND message IS NULL AND todo_json IS NULL AND (tags_json IS NULL OR session_id IS NULL)`, mnoteId),
+      ],
+      result: { mnoteId, rev: rev + 1 },
+    }),
+  });
+}
+
+/** 削除（本人か owner。owner が他人の枚を消すときは section に上書きの印・改訂2-2・3-2） */
+async function deleteMemberNote(c) {
+  const b = c.body;
+  const mnoteId = String(b.mnoteId || '');
+  const row = await mnoteRow(c.env, mnoteId);
+  const cid = row ? String(row.customer_id) : '';
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const rev = b.rev;
+  if (!Number.isInteger(rev) || rev <= 0) return err('BAD_REQUEST', 400, 'rev');
+  const tid = String(c.who.trainerId || '');
+  const override = c.who.role === 'owner' && String(row.author_trainer_id || '') !== tid;
+  return runWrite(c, {
+    action: 'k_deleteMemberNote', section: override ? 'member_note_owner_override' : 'member_note', customerId: cid,
+    payload: { mnoteId, rev },
+    plan: (now) => ({
+      stmts: [
+        G.rowLive('karte_member_notes', 'mnote_id', mnoteId),
+        G.author('karte_member_notes', 'mnote_id', mnoteId, 'author_trainer_id', c.who),
+        G.rev('karte_member_notes', 'mnote_id', mnoteId, rev),
+        S(`UPDATE karte_member_notes SET deleted_at = ?, deleted_by = ?, rev = rev + 1, updated_at = ?
+            WHERE mnote_id = ? AND rev = ?`, now, tid, now, mnoteId, rev),
+      ],
+      result: { mnoteId, deleted: true },
     }),
   });
 }
@@ -971,4 +1203,7 @@ export const KARTE_HANDLERS = {
   k_deleteMeasurement: deleteMeasurement,
   k_saveGoalLine: saveGoalLine,
   k_recordMembership: recordMembership,
+  k_memberPreview: memberPreview,
+  k_saveMemberNote: saveMemberNote,
+  k_deleteMemberNote: deleteMemberNote,
 };

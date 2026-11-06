@@ -41,6 +41,8 @@ const TABLE = {
   //   c_boot は未登録の人も通す（起動して「会員登録へ」を出すため。c_memberStatus と同じ）。
   'c_boot':                ['guest', 'customer', 'trainer', 'owner'],
   'c_customerCard':        ['trainer'],
+  //   会員が自分のカルテを読む（設計35）。customer だけ。本人は who.customerId だけで決め、body を読まない
+  'c_myKarte':             ['customer'],
   'myReservations':    ['customer'],
   'book':              ['customer', 'trainer', 'owner'],
   'cancelReservation': ['customer', 'trainer', 'owner'],
@@ -97,6 +99,10 @@ const TABLE = {
   'k_deleteMeasurement':['trainer'],
   'k_saveGoalLine':     ['trainer'],
   'k_recordMembership': ['trainer'],
+  //   会員画面 C2（設計35）。お客様の見え方（読み取り）と、会員に見せる文の保存・削除
+  'k_memberPreview':    ['trainer'],
+  'k_saveMemberNote':   ['trainer'],
+  'k_deleteMemberNote': ['trainer'],
 
   // ---- 顧客マスタ ----
   'customerCreate':   ['trainer'],

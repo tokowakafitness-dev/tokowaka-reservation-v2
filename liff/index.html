@@ -113,6 +113,45 @@
   .lang-toggle span { font-family:'Noto Sans JP',sans-serif; font-size:12px; font-weight:700; letter-spacing:.06em; padding:4px 9px; cursor:pointer; }
   .lang-on { background:#fff; color:var(--navy); }
   .lang-off { background:transparent; color:rgba(255,255,255,.85); }
+  /* 会員のカルテ（設計35 C2・確定版モック F1〜F5）。下のタブは56px・14px。押す場所は44px以上。★会員の既定なので important は使わない */
+  .mk-tabs { position:fixed; left:0; right:0; bottom:0; z-index:20; max-width:480px; margin:0 auto; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); background:#fff; border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
+  .mk-tab { min-height:56px; padding:4px 2px; border:0; border-top:3px solid transparent; background:transparent; color:var(--sub); font-size:14px; line-height:1.2; font-family:inherit; cursor:pointer; overflow-wrap:anywhere; }
+  .mk-tab.on { color:var(--pri); font-weight:700; border-top-color:var(--pri); }
+  body.mk-on #app { padding-bottom:calc(64px + env(safe-area-inset-bottom)); }
+  .mk-card { display:flex; flex-direction:column; gap:8px; }
+  .mk-hrow { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .mk-h { font-size:15px; font-weight:700; color:var(--ink); min-width:0; }
+  .mk-link { flex:none; min-height:44px; padding:0 0 0 8px; border:0; background:transparent; color:var(--pri); font-size:13px; font-family:inherit; white-space:nowrap; cursor:pointer; }
+  .mk-chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .mk-chip { font-size:12px; border-radius:999px; padding:3px 10px; background:var(--pri-l); color:var(--pri); }
+  .mk-chip.gold { background:var(--acc-l); color:var(--acc); }
+  .mk-chip.warn { background:var(--warn-l); color:var(--warn); }
+  .mk-big { font-size:20px; font-weight:700; color:var(--pri); }
+  .mk-sub { font-size:12px; color:var(--sub); }
+  .mk-text { font-size:14px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .mk-grid3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+  .mk-grid3 > * { min-width:0; }
+  .mk-stat { background:#fff; border:1px solid var(--card-line); border-radius:14px; box-shadow:0 1px 3px rgba(28,35,33,.07); padding:12px 10px; }
+  .mk-statv { font-size:19px; font-weight:700; }
+  .mk-good { color:#3f5b8f; } .mk-bad { color:var(--warn); }
+  .mk-pills { display:flex; gap:6px; flex-wrap:wrap; }
+  .mk-pill { min-height:44px; border:1px solid var(--card-line); border-radius:999px; padding:0 14px; background:#fff; color:var(--ink); font-size:13px; font-family:inherit; cursor:pointer; }
+  .mk-pill.on { background:var(--pri); border-color:var(--pri); color:#fff; font-weight:700; }
+  .mk-trow { display:grid; grid-template-columns:52px repeat(3,minmax(0,1fr)); gap:6px; align-items:baseline; font-size:14px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .mk-trow.head { font-size:11px; color:var(--sub); padding:0 0 4px; }
+  .mk-trow:last-child { border-bottom:0; }
+  .mk-trow > span:not(:first-child) { text-align:right; }
+  .mk-exrow { display:flex; justify-content:space-between; gap:8px; font-size:14px; }
+  .mk-exrow > span:last-child { color:var(--sub); text-align:right; }
+  .mk-day { display:flex; justify-content:space-between; align-items:center; width:100%; min-height:44px; border:0; background:transparent; padding:0; font-family:inherit; font-size:14px; color:var(--ink); cursor:pointer; text-align:left; }
+  .mk-dayitem { display:flex; flex-direction:column; gap:6px; padding:6px 0 10px; border-bottom:1px solid var(--line); }
+  .mk-dayitem:last-child { border-bottom:0; }
+  .mk-todo { font-size:14px; line-height:1.6; padding:10px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+  .mk-todo:last-of-type { border-bottom:0; }
+  .mk-warn { font-size:12px; color:var(--warn); background:var(--warn-l); border-radius:8px; padding:6px 10px; line-height:1.6; }
+  .mk-rule { background:#f0f3f7; border-radius:14px; padding:14px; font-size:13px; line-height:1.8; color:#3f4a46; }
+  .mk-remain > .home-row:first-child, .mk-remain > :first-child .home-row:first-child { margin-top:0; padding-top:0; border-top:0; }
+  .mk-chart { display:block; width:100%; height:auto; }
   /* トレーナーが代行で会員の画面を使うときは進み具合を出さない（staffHead と同じ見え方に寄せる） */
   body.staff .msteps { display:none; }
   body.staff .mhead, body.staff .mtop { margin-top:-12px; }
@@ -222,7 +261,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   <div id="s-home" class="screen" hidden>
     <div class="mtop"><div class="big" id="homeName">様</div><div class="mtop-sub" data-i18n="home_greet">いつもご来店ありがとうございます</div></div>
     <button id="homeReserve" class="btn btn-main" data-i18n="home_reserve">予約する</button>
+    <div class="card mk-card" id="homeNext" hidden></div>
     <button id="homeMyRes" class="mrow" type="button"><span data-i18n="home_myres">予約の確認・変更</span><span class="go">›</span></button>
+    <div id="homeKarte" hidden></div>
     <div class="sect-h" data-i18n="home_balance">ご利用状況</div>
     <div class="card" id="homeInfo"></div>
   </div>
@@ -299,12 +340,27 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     <button id="tadminReload" class="btn btn-outline">更新</button>
   </div>
 
+  <!-- 会員のカルテのタブの画面（体組成・トレーニング・指導の履歴・契約）。概要は s-home。設計35 C2 -->
+  <div id="s-mk" class="screen" hidden>
+    <div class="mhead"><button id="mkBack" data-back class="mback" type="button" data-i18n-aria="mk_back" aria-label="概要に戻る">←</button><div class="mtt" id="mkTitle"></div></div>
+    <div id="mkBody" style="margin-top:12px;"></div>
+  </div>
+
   <div id="s-error" class="screen" hidden>
     <div class="card">
       <div class="big" data-i18n="err_title">エラー</div>
       <p id="errMsg" class="muted"></p>
     </div>
   </div>
+
+  <!-- 会員のカルテの下のタブ（memberKarte:true のときだけ・ホームとタブの画面で出す）。タブの切り替えは戻るの履歴に積まない -->
+  <nav id="mkTabs" class="mk-tabs" hidden data-i18n-aria="mk_tabs_aria" aria-label="会員メニュー">
+    <button type="button" class="mk-tab" data-mk="home" data-i18n="mk_tab_home">概要</button>
+    <button type="button" class="mk-tab" data-mk="body" data-i18n="mk_tab_body">体組成</button>
+    <button type="button" class="mk-tab" data-mk="training" data-i18n="mk_tab_training">トレーニング</button>
+    <button type="button" class="mk-tab" data-mk="notes" data-i18n="mk_tab_notes">指導の履歴</button>
+    <button type="button" class="mk-tab" data-mk="contract" data-i18n="mk_tab_contract">契約</button>
+  </nav>
 </div>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -313,7 +369,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-06e 会員画面 C1：確定配色・帯と進み具合・言語切替で選択と送信中を保つ';
+  var LIFF_BUILD = '2026-11-06f 会員画面 C2：カルテのタブ（体組成・トレーニング・指導の履歴・契約）・次回のご予約';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -387,6 +443,18 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'{date} の振替セッションをキャンセルします。\n本日以降のため1回分の消化となり、振替の再申し込みはできません。\nよろしいですか？',
       confirm_cancel_penalty:'{date} のご予約をキャンセルします。\n本日以降のため、1回分の消化となります。よろしいですか？',
       confirm_transfer_offer:'当日キャンセルのため1回分を消化しました。\n\n振替セッション（追加5,500円）をお申し込みになりますか？\n（次の画面で日時を選べます）',
+      mk_tab_home:'概要', mk_tab_body:'体組成', mk_tab_training:'トレーニング', mk_tab_notes:'指導の履歴', mk_tab_contract:'契約', mk_tabs_aria:'会員メニュー', mk_back:'概要に戻る',
+      mk_next_title:'次回のご予約', mk_next_trainer:'担当 {name}', mk_next_more:'このあと {dates} にもご予約があります',
+      mk_unavail:'いまは表示できません。時間をおいて開き直してください。',
+      mk_goal_title:'目標と進み具合', mk_to_body:'体組成へ ›', mk_now:'いま', mk_target:'目標', mk_deadline:'期日', mk_days_left:'あと{n}日', mk_days_over:'期日を過ぎました', mk_goal_unset:'目標はまだ決まっていません。担当トレーナーと決めましょう。', mk_ring_aria:'目標まで{p}',
+      mk_last_note:'直近の指導（{date}）', mk_to_notes:'指導の履歴へ ›', mk_todo_n:'次回までに {n}つ',
+      mk_progress_title:'目標までの進み具合', mk_weight_goal:'体重 {w}kg（{d}まで）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'いま {now}kg ／ あと {rest}kg', mk_since_join:'入会から {v}kg',
+      mk_weight:'体重', mk_fat:'体脂肪率', mk_muscle:'骨格筋量', mk_vs_prev:'前回比', mk_trend:'推移', mk_since:'入会 {d} から', mk_goal_line:'目標 {v}', mk_trend_aria:'{name}の推移 {a}から{b}',
+      mk_recent:'最近の記録', mk_mdate:'測定日', mk_no_body:'体組成の記録はまだありません。',
+      mk_last:'前回（{date}）', mk_counts:'{e}種目・{s}セット', mk_by_ex:'種目ごとの推移', mk_best:'自己ベスト', mk_days:'日別の記録', mk_ex_n:'{n}種目', mk_no_training:'トレーニングの記録はまだありません。',
+      mk_todo_title:'次回までに', mk_todo_none:'次回までのことは、まだありません。', mk_pain:'痛みが出たら無理をせず、次回トレーナーにお伝えください', mk_notes_title:'指導の履歴', mk_no_notes:'指導の記録はまだありません。', mk_by:'担当 {name}',
+      mk_remain:'残り回数', mk_contract_h:'契約', mk_contract_ask:'契約の内容は担当トレーナーにお尋ねください。', mk_live:'いま有効', mk_freq:'月{n}回', mk_tickets:'チケット{n}枚',
+      mk_rules_h:'キャンセルと振替', mk_rules:'前日17時まで無料でキャンセルできます。それ以降のキャンセルは1回分の消化になります。', mk_consult:'契約の内容についてのご相談は担当トレーナーへ。',
       dow:['日','月','火','水','木','金','土'], date_md:'{m}/{d}', date_full:'{m}月{d}日({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
     },
     en: {
@@ -455,6 +523,18 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'Cancel your transfer session on {date}?\nFrom today onward this counts as one used session, and you cannot re-apply for a transfer.\nProceed?',
       confirm_cancel_penalty:'Cancel your booking on {date}?\nFrom today onward this counts as one used session. Proceed?',
       confirm_transfer_offer:'Same-day cancellation used one session.\n\nWould you like to apply for a transfer session (extra ¥5,500)?\n(You can choose a date/time on the next screen)',
+      mk_tab_home:'Overview', mk_tab_body:'Body', mk_tab_training:'Training', mk_tab_notes:'Coaching', mk_tab_contract:'Plan', mk_tabs_aria:'Member menu', mk_back:'Back to overview',
+      mk_next_title:'Your next session', mk_next_trainer:'with {name}', mk_next_more:'You also have bookings on {dates}',
+      mk_unavail:"This can't be shown right now. Please open it again later.",
+      mk_goal_title:'Goal & progress', mk_to_body:'Body ›', mk_now:'Now', mk_target:'Goal', mk_deadline:'By', mk_days_left:'{n} days left', mk_days_over:'Past the date', mk_goal_unset:'No goal set yet. Decide one with your trainer.', mk_ring_aria:'{p} of the way to your goal',
+      mk_last_note:'Latest coaching ({date})', mk_to_notes:'Coaching ›', mk_todo_n:'{n} to do before next time',
+      mk_progress_title:'Progress to your goal', mk_weight_goal:'Weight {w}kg (by {d})', mk_weight_goal_nodl:'Weight {w}kg', mk_now_rest:'Now {now}kg / {rest}kg to go', mk_since_join:'{v}kg since joining',
+      mk_weight:'Weight', mk_fat:'Body fat', mk_muscle:'Muscle', mk_vs_prev:'vs last', mk_trend:'Trend', mk_since:'Since {d}', mk_goal_line:'Goal {v}', mk_trend_aria:'{name} trend from {a} to {b}',
+      mk_recent:'Recent records', mk_mdate:'Date', mk_no_body:'No body records yet.',
+      mk_last:'Last session ({date})', mk_counts:'{e} exercises · {s} sets', mk_by_ex:'By exercise', mk_best:'Personal best', mk_days:'By day', mk_ex_n:'{n} exercises', mk_no_training:'No training records yet.',
+      mk_todo_title:'Before next time', mk_todo_none:'Nothing yet.', mk_pain:"If you feel pain, don't push yourself. Please tell your trainer next time.", mk_notes_title:'Coaching history', mk_no_notes:'No coaching notes yet.', mk_by:'with {name}',
+      mk_remain:'Sessions left', mk_contract_h:'Plan', mk_contract_ask:'Please ask your trainer about your plan.', mk_live:'Active', mk_freq:'{n}/month', mk_tickets:'{n} tickets',
+      mk_rules_h:'Cancellations & transfers', mk_rules:'You can cancel free of charge until 5 pm the day before. Later cancellations use one session.', mk_consult:'For questions about your plan, please ask your trainer.',
       dow:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], date_md:'{m}/{d}', date_full:'{mon} {d} ({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
     },
     zh: {
@@ -523,6 +603,18 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'取消您 {date} 的改期课程？\n当天及以后将消耗一次，且无法再次申请改期。\n是否继续？',
       confirm_cancel_penalty:'取消您 {date} 的预约？\n当天及以后将消耗一次。是否继续？',
       confirm_transfer_offer:'当天取消已消耗一次。\n\n是否申请改期课程（额外5,500日元）？\n（可在下一屏选择时间）',
+      mk_tab_home:'概要', mk_tab_body:'体成分', mk_tab_training:'训练', mk_tab_notes:'指导记录', mk_tab_contract:'合同', mk_tabs_aria:'会员菜单', mk_back:'返回概要',
+      mk_next_title:'下次预约', mk_next_trainer:'教练 {name}', mk_next_more:'之后在 {dates} 也有预约',
+      mk_unavail:'现在无法显示，请稍后重新打开。',
+      mk_goal_title:'目标与进度', mk_to_body:'体成分 ›', mk_now:'现在', mk_target:'目标', mk_deadline:'期限', mk_days_left:'还有{n}天', mk_days_over:'已过期限', mk_goal_unset:'尚未设定目标，请与教练商量。', mk_ring_aria:'已完成目标的{p}',
+      mk_last_note:'最近的指导（{date}）', mk_to_notes:'指导记录 ›', mk_todo_n:'下次之前 {n} 项',
+      mk_progress_title:'目标进度', mk_weight_goal:'体重 {w}kg（{d}前）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'现在 {now}kg ／ 还差 {rest}kg', mk_since_join:'入会以来 {v}kg',
+      mk_weight:'体重', mk_fat:'体脂肪率', mk_muscle:'骨骼肌量', mk_vs_prev:'比上次', mk_trend:'变化', mk_since:'自入会 {d}', mk_goal_line:'目标 {v}', mk_trend_aria:'{name}的变化 {a}到{b}',
+      mk_recent:'最近记录', mk_mdate:'测量日', mk_no_body:'暂无体成分记录。',
+      mk_last:'上次（{date}）', mk_counts:'{e}个动作・{s}组', mk_by_ex:'各动作的变化', mk_best:'个人最佳', mk_days:'每日记录', mk_ex_n:'{n}个动作', mk_no_training:'暂无训练记录。',
+      mk_todo_title:'下次之前', mk_todo_none:'暂时没有。', mk_pain:'如果感到疼痛请不要勉强，下次请告诉教练', mk_notes_title:'指导记录', mk_no_notes:'暂无指导记录。', mk_by:'教练 {name}',
+      mk_remain:'剩余次数', mk_contract_h:'合同', mk_contract_ask:'合同内容请咨询您的教练。', mk_live:'有效中', mk_freq:'每月{n}次', mk_tickets:'课券{n}张',
+      mk_rules_h:'取消与改期', mk_rules:'前一天17点前可免费取消。之后取消将消耗一次。', mk_consult:'关于合同内容的咨询，请联系您的教练。',
       dow:['周日','周一','周二','周三','周四','周五','周六'], date_md:'{m}/{d}', date_full:'{m}月{d}日({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
     },
     'zh-Hant': {
@@ -591,6 +683,18 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       confirm_cancel_transfer:'取消您 {date} 的改期課程？\n當天及之後將消耗一次，且無法再次申請改期。\n是否繼續？',
       confirm_cancel_penalty:'取消您 {date} 的預約？\n當天及之後將消耗一次。是否繼續？',
       confirm_transfer_offer:'當天取消已消耗一次。\n\n是否申請改期課程（額外5,500日圓）？\n（可於下一個畫面選擇時間）',
+      mk_tab_home:'概要', mk_tab_body:'體組成', mk_tab_training:'訓練', mk_tab_notes:'指導記錄', mk_tab_contract:'合約', mk_tabs_aria:'會員選單', mk_back:'返回概要',
+      mk_next_title:'下次預約', mk_next_trainer:'教練 {name}', mk_next_more:'之後在 {dates} 也有預約',
+      mk_unavail:'現在無法顯示，請稍後重新開啟。',
+      mk_goal_title:'目標與進度', mk_to_body:'體組成 ›', mk_now:'現在', mk_target:'目標', mk_deadline:'期限', mk_days_left:'還有{n}天', mk_days_over:'已過期限', mk_goal_unset:'尚未設定目標，請與教練討論。', mk_ring_aria:'已完成目標的{p}',
+      mk_last_note:'最近的指導（{date}）', mk_to_notes:'指導記錄 ›', mk_todo_n:'下次之前 {n} 項',
+      mk_progress_title:'目標進度', mk_weight_goal:'體重 {w}kg（{d}前）', mk_weight_goal_nodl:'體重 {w}kg', mk_now_rest:'現在 {now}kg ／ 還差 {rest}kg', mk_since_join:'入會以來 {v}kg',
+      mk_weight:'體重', mk_fat:'體脂肪率', mk_muscle:'骨骼肌量', mk_vs_prev:'比上次', mk_trend:'變化', mk_since:'自入會 {d}', mk_goal_line:'目標 {v}', mk_trend_aria:'{name}的變化 {a}到{b}',
+      mk_recent:'最近記錄', mk_mdate:'測量日', mk_no_body:'尚無體組成記錄。',
+      mk_last:'上次（{date}）', mk_counts:'{e}個動作・{s}組', mk_by_ex:'各動作的變化', mk_best:'個人最佳', mk_days:'每日記錄', mk_ex_n:'{n}個動作', mk_no_training:'尚無訓練記錄。',
+      mk_todo_title:'下次之前', mk_todo_none:'暫時沒有。', mk_pain:'如果感到疼痛請不要勉強，下次請告訴教練', mk_notes_title:'指導記錄', mk_no_notes:'尚無指導記錄。', mk_by:'教練 {name}',
+      mk_remain:'剩餘次數', mk_contract_h:'合約', mk_contract_ask:'合約內容請詢問您的教練。', mk_live:'有效中', mk_freq:'每月{n}次', mk_tickets:'課券{n}張',
+      mk_rules_h:'取消與改期', mk_rules:'前一天17點前可免費取消。之後取消將消耗一次。', mk_consult:'關於合約內容的諮詢，請聯絡您的教練。',
       dow:['週日','週一','週二','週三','週四','週五','週六'], date_md:'{m}/{d}', date_full:'{m}月{d}日({dow}) {t1}〜{t2}', time_range:'{t1}〜{t2}'
     }
   };
@@ -748,15 +852,16 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       + _PERF.length + '回 ／ 合計 <b>' + total.toLocaleString() + 'ms</b></div>';
   }
 
-  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error'];
+  var SCREENS = ['s-loading','s-register','s-home','s-trainer','s-tadmin','s-myres','s-week','s-confirm','s-done','s-whoami','s-error','s-mk'];
   var _showGen = 0;   // 画面が切り替わった回数（右→左で進んでよいかの判定に使う）
   function show(id){
     _showGen++;
     SCREENS.forEach(function(s){ var el = document.getElementById(s); if (el) el.hidden = (s !== id); });
     //   ★会員の画面（ホーム・登録・自分の予約）に入ったらトレーナーの見た目を外す（トレーナーの一覧に戻るとき付け直す）
-    if (['s-home', 's-register', 's-myres'].indexOf(id) >= 0) document.body.classList.remove('staff');
+    if (['s-home', 's-register', 's-myres', 's-mk'].indexOf(id) >= 0) document.body.classList.remove('staff');
     if (id !== 's-loading') document.body.classList.remove('booting');   // 最初の画面が出たら読み込みの見た目を外す
     if (typeof _staffBanner === 'function') _staffBanner(id);
+    if (typeof _mkTabsSync === 'function') _mkTabsSync(id);   // 会員のカルテの下のタブ（設計35 C2）。★履歴は触らない
   }
   //   代行・変更の帯（モック P4・2026-11-06）：トレーナーが会員の予約画面を使い回すとき、誰の予約を扱っているかを常に出す
   //   ★トレーナーで開いたときだけ（body.staff）。会員の画面には出ない。名前は文字として入れる
@@ -2410,6 +2515,10 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   }
   function renderHome(res){
     state._repaint = function(){ renderHome(res); };   // 言語切替時にホームを再描画
+    state._homeRes = res;   // タブ（概要へ戻る・契約の残り回数）で使い回す（再通信しない）
+    //   会員のカルテ（設計35 C2）：true のときだけ出す。無い（GAS の応答・写しの無い起動）＝false（Worker の約束）
+    state.mkOn = !!(res && res.memberKarte === true);
+    state.mkTab = 'home';
     document.getElementById('homeName').textContent = (res.name || t('member_fallback')) + t('name_suffix');
     state.defaultTrainerId = res.defaultTrainerId || '';   // デフォルト担当（予約画面で先頭表示・変更可）
     var reserveBtn = document.getElementById('homeReserve');
@@ -2428,25 +2537,449 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       state.pairRemaining = Number(res.pairRemaining || 0);
       state.pairPackMax = Number(res.pairPackMax || 0);         // 単一チケットの最大残（2名来店の可否目安）
       state.pairExpire = '';   // 確定画面では対象日基準の期限(line_getBookingOptions)で上書きする
-      var _tcExp = res.transferCredits && res.transferCredits.nextExpireLabel;
-      var _tcExpHtml = _tcExp ? t('until_wrap', { e: _sEsc(res.transferCredits.nextExpireLabel) }) : '';
-      var tcHtml = (res.transferCredits && res.transferCredits.available > 0)
-        ? '<div class="home-row"><span class="k">' + t('transfer_avail') + '</span><span class="v"><b>' + res.transferCredits.available + '</b> ' + t('unit_times') + _tcExpHtml + '</span></div>' : '';
-      document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true) + tcHtml;
+      document.getElementById('homeInfo').innerHTML = homeInfoHtml(res.home || { type:null }, true) + _homeTcHtml(res);
       if (reserveBtn) reserveBtn.style.display = '';
     }
+    _mkHomeNext();    // 次回のご予約（起動のまとめの予約一覧から・memberKarte に関係なく出す）
+    _mkHomeKarte();   // 目標と進み具合・直近の指導（memberKarte のときだけ）
     show('s-home');
+  }
+  //   振替の行（ホーム・契約のタブで共用）
+  function _homeTcHtml(res){
+    var tc = res && res.transferCredits;
+    var _tcExp = tc && tc.nextExpireLabel;
+    var _tcExpHtml = _tcExp ? t('until_wrap', { e: _sEsc(tc.nextExpireLabel) }) : '';
+    return (tc && tc.available > 0)
+      ? '<div class="home-row"><span class="k">' + t('transfer_avail') + '</span><span class="v"><b>' + tc.available + '</b> ' + t('unit_times') + _tcExpHtml + '</span></div>' : '';
   }
 
   // 予約/キャンセル完了後にアプリを閉じず、残数を再取得してホームへ戻す（連続予約対応）。
   function loadHome(){
     state.transferMode = false; state.changeMode = false; state._ownerFreeResId=''; state.changeCustomerId=''; state.changeReservationId = '';
     state.proxyMode = false; state.excludeStartISO = '';   // 次の予約が素の状態で始まるようフラグをリセット
+    _mkNextReset();   // 予約・取消の後＝次回のご予約は取り直す
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_getMemberStatus' }).then(function(res){
       if (res && res.success && res.verified) renderHome(res); else show('s-home');
     }).catch(function(){ show('s-home'); });
   }
+
+  // ---------------------------------------------------------------- 会員のカルテ（設計35 C2・2026-11-06）
+  //   ★出すのは起動・会員の状態の応答に memberKarte:true が付いたときだけ（無い・false・GAS の応答・写しの無い起動＝C1 のまま）
+  //   ★c_myKarte は Worker にだけ聞く。**GAS へ送り直さない**（対応する GAS の操作が無い・設計35 改訂1-9）。失敗・503・時間切れは「いまは表示できません」で空のまま
+  //   ★起動ごとに最大1回。ホームとタブで使い回す（タブ・言語を切り替えても取り直さない＝state から描き直す）
+  //   ★サーバーの値はすべて textContent。グラフは createElementNS で数値と固定の文字だけ
+  //   ★タブの切り替えは戻るの履歴に積まない（show は履歴を触らない）。タブの画面の「←」（data-back）＝概要へ。概要では戻るで何もしない（C1 のまま）
+  //   ★描く部品（MemberKarteView）はトレーナーのカルテの「お客様の見え方」でも使う＝見え方が食い違わない（karte.js）
+  var MK_TABS = [['home', 'mk_tab_home'], ['body', 'mk_tab_body'], ['training', 'mk_tab_training'], ['notes', 'mk_tab_notes'], ['contract', 'mk_tab_contract']];
+  var MK_TIMEOUT_MS = 8000;
+  var _mkUi = { metric: 'weight', ex: '', openDay: '' };   // 選んだグラフ・種目・開いた日（言語を切り替えても保つ）
+  function _mkEl(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = String(text); return e; }
+  function _mkBtn(cls, text, fn){ var b = _mkEl('button', cls, text); b.type = 'button'; b.onclick = fn; return b; }
+  function _mkNum(v){ if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null; var n = Number(v); return isFinite(n) ? n : null; }
+  function _mk1(v){ var n = _mkNum(v); return n == null ? '—' : (Math.round(n * 10) / 10).toFixed(1); }
+  function _mkKg(v){ var n = _mkNum(v); return n == null ? '—' : String(Math.round(n * 100) / 100); }
+  function _mkStr(x){ return (x === null || x === undefined) ? '' : String(x); }
+  function _mkArr(x){ return Array.isArray(x) ? x : []; }
+  function _mkYmd(d){ var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(_mkStr(d)); return m ? [+m[1], +m[2], +m[3]] : null; }
+  function _mkMd(d){ var p = _mkYmd(d); return p ? t('date_md', { m: p[1], d: p[2] }) : ''; }
+  function _mkMdw(d){ var p = _mkYmd(d); return p ? _mkMd(d) + '(' + dow(new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()) + ')' : ''; }
+  function _mkToday(){ return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10); }
+  function _mkDayDiff(a, b){ var pa = _mkYmd(a), pb = _mkYmd(b); if (!pa || !pb) return null; return Math.round((Date.UTC(pa[0], pa[1] - 1, pa[2]) - Date.UTC(pb[0], pb[1] - 1, pb[2])) / 86400000); }
+  function _mkByDateDesc(list){ return _mkArr(list).filter(function(x){ return x && typeof x === 'object'; }).slice().sort(function(a, b){ var x = _mkStr(a.date), y = _mkStr(b.date); return x < y ? 1 : (x > y ? -1 : 0); }); }
+  //   会員に見せる枚＝お客様へか次回までにがある枚（タグだけの枚は日別の記録のタグにだけ出る）。showTagOnly はトレーナーの「お客様の見え方」だけ
+  function _mkTodo(n){ return _mkArr(n && n.todo).filter(function(x){ return x != null && x !== ''; }); }
+  function _mkShownNotes(data, showTagOnly){ return _mkByDateDesc(data && data.notes).filter(function(n){ return showTagOnly || (n.message != null && n.message !== '') || _mkTodo(n).length; }); }
+  function _mkHrow(title, linkText, fn){ var r = _mkEl('div', 'mk-hrow'); r.appendChild(_mkEl('div', 'mk-h', title)); if (linkText) r.appendChild(_mkBtn('mk-link', linkText, fn)); return r; }
+  function _mkCard(kids){ var c = _mkEl('div', 'card mk-card'); (kids || []).forEach(function(k){ if (k) c.appendChild(k); }); return c; }
+  function _mkMuted(text){ return _mkEl('p', 'muted', text); }
+  //   目標と進み具合：始め＝目標の線の開始体重（無ければ最初の測定）・いま＝最新・目標＝ヒアリングの目標体重（無ければ目標の線）
+  function _mkGoal(data){
+    var body = (data && data.body) || {}, goal = (data && data.goal) || {}, gl = body.goalLine || {};
+    var series = _mkArr(body.series).filter(function(r){ return r && _mkNum(r.weight) != null; });
+    var now = body.latest ? _mkNum(body.latest.weight) : null;
+    if (now == null && series.length) now = _mkNum(series[series.length - 1].weight);
+    var target = _mkNum(goal.targetWeight); if (target == null) target = _mkNum(gl.targetWeight);
+    var first = series.length ? _mkNum(series[0].weight) : null;
+    var start = _mkNum(gl.startWeight); if (start == null) start = first;
+    var deadline = _mkStr(goal.deadline) || _mkStr(gl.endDate); if (!_mkYmd(deadline)) deadline = '';
+    var pct = null;
+    if (start != null && now != null && target != null) pct = (start === target) ? (now === target ? 1 : 0) : Math.max(0, Math.min(1, (start - now) / (start - target)));
+    return { now: now, target: target, first: first, firstDate: series.length ? _mkStr(series[0].date) : '', deadline: deadline, pct: pct, daysLeft: deadline ? _mkDayDiff(deadline, _mkToday()) : null };
+  }
+  var _MK_SVG = 'http://www.w3.org/2000/svg';
+  function _mkSv(tag, attrs, text){ var e = document.createElementNS(_MK_SVG, tag); for (var k in attrs) e.setAttribute(k, String(attrs[k])); if (text != null) e.textContent = String(text); return e; }
+  function _mkRing(pct, z){
+    var r = z / 2 - 5, c = 2 * Math.PI * r, p = Math.max(0, Math.min(1, Number(pct) || 0)), label = Math.round(p * 100) + '%';
+    var s = _mkSv('svg', { viewBox: '0 0 ' + z + ' ' + z, width: z, height: z, role: 'img', 'aria-label': t('mk_ring_aria', { p: label }) });
+    s.style.flex = 'none';
+    s.appendChild(_mkSv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#edf2fb', 'stroke-width': 8 }));
+    s.appendChild(_mkSv('circle', { cx: z / 2, cy: z / 2, r: r, fill: 'none', stroke: '#243b66', 'stroke-width': 8, 'stroke-linecap': 'round', 'stroke-dasharray': (c * p).toFixed(1) + ' ' + c.toFixed(1), transform: 'rotate(-90 ' + z / 2 + ' ' + z / 2 + ')' }));
+    s.appendChild(_mkSv('text', { x: z / 2, y: z / 2 + 5, 'text-anchor': 'middle', 'font-size': Math.round(z / 4.4), 'font-weight': 700, fill: '#1c2321' }, label));
+    return s;
+  }
+  //   線グラフ（古→新）。目標の線は体重だけ
+  function _mkChart(points, goalV, unit, name){
+    var W = 330, H = 140, top = 22, bot = 22;
+    var vs = points.map(function(p){ return p.v; }); if (goalV != null) vs.push(goalV);
+    var lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs); if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    function x(i){ return points.length === 1 ? W / 2 : 12 + i * (W - 36) / (points.length - 1); }
+    function y(v){ return top + (hi - v) * (H - top - bot) / (hi - lo); }
+    var a = _mkKg(points[0].v) + unit, b = _mkKg(points[points.length - 1].v) + unit;
+    var s = _mkSv('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%', height: H, role: 'img', 'aria-label': t('mk_trend_aria', { name: name, a: a, b: b }), 'class': 'mk-chart' });
+    s.appendChild(_mkSv('line', { x1: 0, y1: H - 12, x2: W, y2: H - 12, stroke: '#e7ebf0' }));
+    if (goalV != null) {
+      s.appendChild(_mkSv('line', { x1: 0, y1: y(goalV).toFixed(1), x2: W, y2: y(goalV).toFixed(1), stroke: '#c8a25a', 'stroke-dasharray': '4 4' }));
+      s.appendChild(_mkSv('text', { x: W - 4, y: Math.max(12, y(goalV) - 6).toFixed(1), 'font-size': 11, fill: '#6b5427', 'text-anchor': 'end' }, t('mk_goal_line', { v: _mkKg(goalV) })));
+    }
+    s.appendChild(_mkSv('polyline', { points: points.map(function(p, i){ return x(i).toFixed(1) + ',' + y(p.v).toFixed(1); }).join(' '), fill: 'none', stroke: '#243b66', 'stroke-width': 3, 'stroke-linejoin': 'round' }));
+    var li = points.length - 1;
+    s.appendChild(_mkSv('circle', { cx: x(li).toFixed(1), cy: y(points[li].v).toFixed(1), r: 5, fill: '#243b66' }));
+    if (points.length > 1) s.appendChild(_mkSv('text', { x: x(0).toFixed(1), y: Math.max(12, y(points[0].v) - 8).toFixed(1), 'font-size': 11, fill: '#5b6661' }, _mkKg(points[0].v)));
+    s.appendChild(_mkSv('text', { x: Math.min(W - 4, x(li) + 4).toFixed(1), y: Math.max(12, y(points[li].v) - 10).toFixed(1), 'font-size': 12, 'font-weight': 700, fill: '#1c2321', 'text-anchor': 'end' }, _mkKg(points[li].v)));
+    return s;
+  }
+  function _mkSetLine(sets){
+    var st = _mkArr(sets).filter(function(x){ return x && typeof x === 'object'; }).slice().sort(function(a, b){ return (_mkNum(a.setNo) || 0) - (_mkNum(b.setNo) || 0); });
+    if (!st.length) return '';
+    function reps(x){ var n = _mkNum(x.reps); return n == null ? '—' : String(n); }
+    var oneW = st.every(function(x){ return _mkNum(x.weight) === _mkNum(st[0].weight); });
+    return oneW ? _mkKg(st[0].weight) + 'kg × ' + st.map(reps).join('・') : st.map(function(x){ return _mkKg(x.weight) + 'kg×' + reps(x); }).join('・');
+  }
+  function _mkItems(sess){ return _mkArr(sess && sess.items).filter(function(it){ return it && typeof it === 'object'; }); }
+  function _mkSetCount(sess){ var n = 0; _mkItems(sess).forEach(function(it){ n += _mkArr(it.sets).length; }); return n; }
+  function _mkExRows(sess){
+    var box = _mkEl('div', 'mk-card'); box.style.gap = '6px';
+    _mkItems(sess).forEach(function(it){ var r = _mkEl('div', 'mk-exrow'); r.appendChild(_mkEl('span', '', _mkStr(it.exercise))); r.appendChild(_mkEl('span', '', _mkSetLine(it.sets))); box.appendChild(r); });
+    return box;
+  }
+  function _mkTagChips(tags){ var c = _mkEl('div', 'mk-chips'); _mkArr(tags).forEach(function(tg){ if (tg != null && tg !== '') c.appendChild(_mkEl('span', 'mk-chip', _mkStr(tg))); }); return c; }
+
+  // ---- 概要（ホーム）に足す2枚：目標と進み具合・直近の指導
+  function _mkViewHome(box, data, opts){
+    var go = (opts && opts.goTab) || function(){};
+    var g = _mkGoal(data);
+    var row = _mkEl('div'); row.style.cssText = 'display:flex;gap:14px;align-items:center;';
+    if (g.pct != null) row.appendChild(_mkRing(g.pct, 72));
+    var grid = _mkEl('div', 'mk-grid3'); grid.style.cssText = 'flex:1;font-size:12px;';
+    function col(k, v, sub, strong){ var d = _mkEl('div'); d.appendChild(_mkEl('div', 'mk-sub', k)); var b = _mkEl('div', '', v); b.style.cssText = 'font-size:17px;font-weight:700;' + (strong ? 'color:var(--pri);' : ''); d.appendChild(b); d.appendChild(_mkEl('div', 'mk-sub', sub)); return d; }
+    grid.appendChild(col(t('mk_now'), g.now != null ? _mk1(g.now) : '—', 'kg'));
+    grid.appendChild(col(t('mk_target'), g.target != null ? _mk1(g.target) : '—', 'kg', true));
+    grid.appendChild(col(t('mk_deadline'), g.deadline ? _mkMd(g.deadline) : '—', g.daysLeft == null ? '' : (g.daysLeft >= 0 ? t('mk_days_left', { n: g.daysLeft }) : t('mk_days_over'))));
+    row.appendChild(grid);
+    var goalKids = [_mkHrow(t('mk_goal_title'), t('mk_to_body'), function(){ go('body'); }), row];
+    if (g.target == null) goalKids.push(_mkMuted(t('mk_goal_unset')));
+    box.appendChild(_mkCard(goalKids));
+    var notes = _mkShownNotes(data, false);   // ★直近の指導はタグだけの枚を飛ばす（お客様の画面と見え方の画面で同じ）
+    if (!notes.length) { box.appendChild(_mkCard([_mkHrow(t('mk_notes_title'), t('mk_to_notes'), function(){ go('notes'); }), _mkMuted(t('mk_no_notes'))])); return; }
+    var n = notes[0], todo = _mkTodo(n);
+    var chips = _mkEl('div', 'mk-chips');
+    if (n.trainerName) chips.appendChild(_mkEl('span', 'mk-chip gold', t('mk_by', { name: _mkStr(n.trainerName) })));
+    if (todo.length) chips.appendChild(_mkEl('span', 'mk-chip gold', t('mk_todo_n', { n: todo.length })));
+    box.appendChild(_mkCard([_mkHrow(t('mk_last_note', { date: _mkMd(n.date) }), t('mk_to_notes'), function(){ go('notes'); }),
+      n.message ? _mkEl('div', 'mk-text', _mkStr(n.message)) : null, chips.children.length ? chips : null]));
+  }
+
+  // ---- タブ：体組成（F2）
+  function _mkViewBody(box, data, ui){
+    var body = (data && data.body) || {}, g = _mkGoal(data);
+    var prog = [_mkEl('div', 'mk-h', t('mk_progress_title'))];
+    if (g.target != null) {
+      var row = _mkEl('div'); row.style.cssText = 'display:flex;gap:14px;align-items:center;';
+      if (g.pct != null) row.appendChild(_mkRing(g.pct, 84));
+      var col = _mkEl('div'); col.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;';
+      col.appendChild(_mkEl('div', '', g.deadline ? t('mk_weight_goal', { w: _mk1(g.target), d: _mkMd(g.deadline) }) : t('mk_weight_goal_nodl', { w: _mk1(g.target) })));
+      if (g.now != null) col.appendChild(_mkEl('div', 'mk-sub', t('mk_now_rest', { now: _mk1(g.now), rest: _mk1(Math.abs(g.now - g.target)) })));
+      if (g.now != null && g.first != null) { var dv = Math.round((g.now - g.first) * 10) / 10; var cw = _mkEl('div'); cw.appendChild(_mkEl('span', 'mk-chip gold', t('mk_since_join', { v: (dv > 0 ? '+' : (dv < 0 ? '−' : '±')) + Math.abs(dv).toFixed(1) }))); col.appendChild(cw); }
+      row.appendChild(col); prog.push(row);
+    } else prog.push(_mkMuted(t('mk_goal_unset')));
+    box.appendChild(_mkCard(prog));
+    var latest = body.latest && typeof body.latest === 'object' ? body.latest : null, prev = body.prev && typeof body.prev === 'object' ? body.prev : null;
+    if (!latest) { box.appendChild(_mkCard([_mkMuted(t('mk_no_body'))])); return; }
+    //   最新と前回比。良い向き：体重＝目標に近づく（目標が無ければ下がる）・体脂肪率＝下がる・骨格筋量＝上がる
+    var grid = _mkEl('div', 'mk-grid3'); grid.style.marginBottom = '10px';
+    [['weight', 'mk_weight', 'kg'], ['fat', 'mk_fat', '%'], ['muscle', 'mk_muscle', 'kg']].forEach(function(m){
+      var cur = _mkNum(latest[m[0]]), pv = prev ? _mkNum(prev[m[0]]) : null;
+      var c = _mkEl('div', 'mk-stat');
+      c.appendChild(_mkEl('div', 'mk-sub', t(m[1])));
+      var v = _mkEl('div', 'mk-statv', _mk1(cur)); v.appendChild(_mkEl('span', 'mk-sub', m[2])); c.appendChild(v);
+      if (cur != null && pv != null) {
+        var d = Math.round((cur - pv) * 10) / 10, good;
+        if (m[0] === 'weight') good = (g.target != null) ? Math.abs(cur - g.target) <= Math.abs(pv - g.target) : d <= 0;
+        else good = (m[0] === 'fat') ? d <= 0 : d >= 0;
+        c.appendChild(_mkEl('div', d === 0 ? 'mk-sub' : (good ? 'mk-sub mk-good' : 'mk-sub mk-bad'), (d < 0 ? '▼ ' : (d > 0 ? '▲ ' : '± ')) + Math.abs(d).toFixed(1) + ' ' + t('mk_vs_prev')));
+      }
+      grid.appendChild(c);
+    });
+    box.appendChild(grid);
+    //   推移
+    var series = _mkArr(body.series).filter(function(r){ return r && typeof r === 'object'; });
+    var mets = [['weight', 'mk_weight', 'kg'], ['fat', 'mk_fat', '%'], ['muscle', 'mk_muscle', 'kg']];
+    var sel = mets.filter(function(m){ return m[0] === ui.metric; })[0] || mets[0];
+    var hr = _mkEl('div', 'mk-hrow'); hr.appendChild(_mkEl('div', 'mk-h', t('mk_trend'))); if (g.firstDate) hr.appendChild(_mkEl('div', 'mk-sub', t('mk_since', { d: _mkMd(g.firstDate) })));
+    var pills = _mkEl('div', 'mk-pills');
+    var trend = _mkCard([hr, pills]);
+    mets.forEach(function(m){ var b = _mkBtn('mk-pill' + (m === sel ? ' on' : ''), t(m[1]), function(){ ui.metric = m[0]; box.innerHTML = ''; _mkViewBody(box, data, ui); }); b.setAttribute('aria-pressed', m === sel ? 'true' : 'false'); pills.appendChild(b); });
+    var pts = series.map(function(r){ return { d: r.date, v: _mkNum(r[sel[0]]) }; }).filter(function(p){ return p.v != null; });
+    trend.appendChild(pts.length ? _mkChart(pts, sel[0] === 'weight' ? g.target : null, sel[2], t(sel[1])) : _mkMuted(t('mk_no_body')));
+    box.appendChild(trend);
+    //   最近の記録
+    var rec = _mkCard([_mkEl('div', 'mk-h', t('mk_recent'))]); rec.style.gap = '0';
+    var head = _mkEl('div', 'mk-trow head'); [t('mk_mdate'), t('mk_weight'), t('mk_fat'), t('mk_muscle')].forEach(function(x){ head.appendChild(_mkEl('span', '', x)); }); rec.appendChild(head);
+    _mkArr(body.recent).filter(function(r){ return r && typeof r === 'object'; }).forEach(function(r){
+      var tr = _mkEl('div', 'mk-trow'); tr.appendChild(_mkEl('span', '', _mkMd(r.date)));
+      [['weight', 'kg'], ['fat', '%'], ['muscle', 'kg']].forEach(function(m){ var sp = _mkEl('span', '', _mk1(r[m[0]])); if (_mkNum(r[m[0]]) != null) sp.appendChild(_mkEl('span', 'mk-sub', m[1])); tr.appendChild(sp); });
+      rec.appendChild(tr);
+    });
+    box.appendChild(rec);
+  }
+
+  // ---- タブ：トレーニング（F3）
+  function _mkViewTraining(box, data, ui){
+    var sessions = _mkByDateDesc(data && data.training && data.training.sessions);
+    if (!sessions.length) { box.appendChild(_mkCard([_mkMuted(t('mk_no_training'))])); return; }
+    var last = sessions[0];
+    var hr = _mkEl('div', 'mk-hrow'); hr.appendChild(_mkEl('div', 'mk-h', t('mk_last', { date: _mkMd(last.date) }))); hr.appendChild(_mkEl('div', 'mk-sub', t('mk_counts', { e: _mkItems(last).length, s: _mkSetCount(last) })));
+    box.appendChild(_mkCard([hr, _mkExRows(last)]));
+    //   種目ごとの推移（その日の最大の重さ）・自己ベスト
+    var exList = [];
+    sessions.forEach(function(s){ _mkItems(s).forEach(function(it){ var ex = _mkStr(it.exercise); if (ex && exList.indexOf(ex) < 0) exList.push(ex); }); });
+    if (exList.length) {
+      var ex = exList.indexOf(ui.ex) >= 0 ? ui.ex : exList[0];
+      var pills = _mkEl('div', 'mk-pills');
+      exList.forEach(function(x){ var b = _mkBtn('mk-pill' + (x === ex ? ' on' : ''), x, function(){ ui.ex = x; redraw(); }); b.setAttribute('aria-pressed', x === ex ? 'true' : 'false'); pills.appendChild(b); });
+      var exCard = _mkCard([_mkEl('div', 'mk-h', t('mk_by_ex')), pills]);
+      var pts = sessions.slice().reverse().map(function(s){
+        var top = null; _mkItems(s).forEach(function(it){ if (_mkStr(it.exercise) !== ex) return; _mkArr(it.sets).forEach(function(st){ var w = st ? _mkNum(st.weight) : null; if (w != null && (top == null || w > top)) top = w; }); });
+        return { d: s.date, v: top };
+      }).filter(function(p){ return p.v != null; });
+      if (pts.length) exCard.appendChild(_mkChart(pts, null, 'kg', ex));
+      var best = _mkArr(data.training.best).filter(function(b){ return b && _mkStr(b.exercise) === ex; })[0];
+      if (best) {
+        var bl = _mkEl('div'); bl.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;flex-wrap:wrap;';
+        bl.appendChild(_mkEl('span', 'mk-chip gold', t('mk_best')));
+        bl.appendChild(_mkEl('span', '', _mkKg(best.weight) + 'kg × ' + (_mkNum(best.reps) == null ? '—' : String(_mkNum(best.reps))) + (best.date ? '（' + _mkMd(best.date) + '）' : '')));
+        exCard.appendChild(bl);
+      }
+      box.appendChild(exCard);
+    }
+    //   日別の記録（日のタグ・押すと中身が開く）
+    var days = _mkCard([_mkEl('div', 'mk-h', t('mk_days'))]); days.style.gap = '0';
+    sessions.forEach(function(s, i){
+      var key = _mkStr(s.date) + '#' + i, on = ui.openDay === key;
+      var it = _mkEl('div', 'mk-dayitem');
+      var b = _mkBtn('mk-day', null, function(){ ui.openDay = on ? '' : key; redraw(); });
+      b.setAttribute('aria-expanded', on ? 'true' : 'false');
+      var d0 = _mkEl('span', '', _mkMdw(s.date)); d0.style.fontWeight = '700'; b.appendChild(d0);
+      b.appendChild(_mkEl('span', 'mk-sub', t('mk_ex_n', { n: _mkItems(s).length }) + (on ? ' ▾' : ' ›')));
+      it.appendChild(b);
+      var tg = _mkTagChips(s.tags); if (tg.children.length) it.appendChild(tg);
+      if (on) it.appendChild(_mkExRows(s));
+      days.appendChild(it);
+    });
+    box.appendChild(days);
+    function redraw(){ box.innerHTML = ''; _mkViewTraining(box, data, ui); }   // ★同じ箱に描き直す（別の箱に描いて移すと、2回目以降の押下が外れた箱に描かれる）
+  }
+
+  // ---- タブ：指導の履歴（F4）。★✓は付けない（C3）
+  function _mkViewNotes(box, data, opts){
+    var shown = _mkShownNotes(data, false), notes = _mkShownNotes(data, !!(opts && opts.showTagOnly));
+    var todo = shown.length ? _mkTodo(shown[0]) : [];
+    var tc = _mkCard([_mkEl('div', 'mk-h', t('mk_todo_title'))]); tc.style.gap = '0';
+    if (todo.length) todo.forEach(function(x){ tc.appendChild(_mkEl('div', 'mk-todo', _mkStr(x))); });
+    else tc.appendChild(_mkMuted(t('mk_todo_none')));
+    var warn = _mkEl('div', 'mk-warn', t('mk_pain')); warn.style.marginTop = '8px'; tc.appendChild(warn);
+    box.appendChild(tc);
+    box.appendChild(_mkEl('div', 'sect-h', t('mk_notes_title')));
+    if (!notes.length) { box.appendChild(_mkCard([_mkMuted(t('mk_no_notes'))])); return; }
+    notes.forEach(function(n){
+      var hr = _mkEl('div', 'mk-hrow'); var dd = _mkEl('div', 'mk-h', _mkMdw(n.date)); hr.appendChild(dd);
+      if (n.trainerName) hr.appendChild(_mkEl('span', 'mk-chip gold', t('mk_by', { name: _mkStr(n.trainerName) })));
+      var nt = _mkTodo(n);
+      var c = _mkCard([hr, n.message ? _mkEl('div', 'mk-text', _mkStr(n.message)) : null,
+        (!n.message && nt.length) ? _mkEl('div', 'mk-sub', t('mk_todo_title') + '：' + nt.map(_mkStr).join('・')) : null,
+        (!n.message && !nt.length) ? _mkEl('div', 'mk-sub', '（日のタグだけの枚・お客様の指導の履歴には出ません）') : null]);
+      var act = opts && opts.noteActions ? opts.noteActions(n, c) : null;
+      if (act) c.appendChild(act);
+      box.appendChild(c);
+    });
+  }
+
+  // ---- タブ：契約（F5）。残り回数は今のホームの情報（opts.remain）。契約の欄は contract が null なら「担当トレーナーにお尋ねください」
+  function _mkViewContract(box, data, opts){
+    var rc = _mkCard([_mkEl('div', 'mk-h', t('mk_remain'))]);
+    var rem = opts && opts.remain ? opts.remain() : null;
+    if (rem) { rem.className = (rem.className ? rem.className + ' ' : '') + 'mk-remain'; rc.appendChild(rem); }
+    else if (opts && opts.remainNote) rc.appendChild(_mkMuted(opts.remainNote));
+    box.appendChild(rc);
+    box.appendChild(_mkEl('div', 'sect-h', t('mk_contract_h')));
+    var k = data && data.contract && typeof data.contract === 'object' ? data.contract : null;
+    if (!k) box.appendChild(_mkCard([_mkMuted(t('mk_contract_ask'))]));
+    else {
+      var today = _mkToday(), s0 = _mkYmd(k.startDate) ? _mkStr(k.startDate) : '', e0 = _mkYmd(k.endDate) ? _mkStr(k.endDate) : '';
+      var live = s0 && s0 <= today && (!e0 || today <= e0);
+      var hr = _mkEl('div', 'mk-hrow'); hr.appendChild(_mkEl('div', 'mk-h', [k.type, k.course].filter(function(x){ return x != null && x !== ''; }).map(_mkStr).join('・') || t('mk_contract_h')));
+      if (live) hr.appendChild(_mkEl('span', 'mk-chip', t('mk_live')));
+      var parts = [];
+      if (_mkNum(k.freq)) parts.push(t('mk_freq', { n: _mkNum(k.freq) }));
+      if (_mkNum(k.tickets)) parts.push(t('mk_tickets', { n: _mkNum(k.tickets) }));
+      if (k.trainerName) parts.push(t('trainer_colon') + _mkStr(k.trainerName));
+      var fmt = function(d){ var p = _mkYmd(d); return p ? p[0] + '/' + p[1] + '/' + p[2] : ''; };
+      var c = _mkCard([hr, s0 ? _mkEl('div', 'mk-sub', fmt(s0) + ' 〜 ' + (e0 ? fmt(e0) : t('no_expiry'))) : null, parts.length ? _mkEl('div', '', parts.join('　')) : null]);
+      c.style.gap = '4px';
+      box.appendChild(c);
+    }
+    var rule = _mkEl('div', 'mk-rule'); var rh = _mkEl('div', '', t('mk_rules_h')); rh.style.cssText = 'font-weight:700;color:var(--ink);margin-bottom:2px;';
+    rule.appendChild(rh); rule.appendChild(_mkEl('div', '', t('mk_rules'))); rule.appendChild(_mkEl('div', '', t('mk_consult')));
+    rule.style.marginTop = '10px';
+    box.appendChild(rule);
+  }
+  function _mkViewTab(box, data, tab, opts){
+    var ui = (opts && opts.ui) || _mkUi;
+    if (tab === 'body') _mkViewBody(box, data, ui);
+    else if (tab === 'training') _mkViewTraining(box, data, ui);
+    else if (tab === 'notes') _mkViewNotes(box, data, opts);
+    else if (tab === 'contract') _mkViewContract(box, data, opts);
+    else _mkViewHome(box, data, opts);
+  }
+  //   トレーナーの「お客様の見え方」（karte.js）からも同じ部品で描く
+  window.MemberKarteView = { tabs: MK_TABS, home: _mkViewHome, tab: _mkViewTab };
+
+  // ---- 会員の画面の配線
+  //   c_myKarte を Worker に1回だけ聞く（起動ごと）。★GAS へは送らない
+  function _mkFetch(){
+    if (!state.mk) state.mk = { st: 'idle', data: null };
+    if (state.mk.st !== 'idle') return;
+    state.mk = { st: 'loading', data: null };
+    var t0 = _nowMs();
+    function once(tok){
+      var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, MK_TIMEOUT_MS);
+      return fetch(EDGE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'c_myKarte', idToken: tok, lang: LANG }), signal: ctl ? ctl.signal : undefined })
+        .then(function(r){ return r.json(); })
+        .then(function(j){ clearTimeout(timer); return j; }, function(e){ clearTimeout(timer); throw e; });
+    }
+    var p;
+    try { p = once(idToken); } catch (e) { p = Promise.reject(e); }
+    p.then(function(j){
+      if (j && j.code === 'UNAUTHORIZED') {   // ID トークンを取り直して1回だけ（Worker の中で。GAS へは行かない）
+        var fresh = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : '';
+        if (fresh && fresh !== idToken) { idToken = fresh; return once(fresh); }
+      }
+      return j;
+    }).then(function(j){
+      var good = !!(j && j.success === true);
+      state.mk = good ? { st: 'ok', data: j } : { st: 'fail', data: null };
+      _perfAdd((good ? 'edge:myKarte' : 'edgeNG:myKarte（' + ((j && j.code) || '不明') + '）'), _nowMs() - t0);
+      _mkRefresh();
+    }).catch(function(e){
+      state.mk = { st: 'fail', data: null };
+      _perfAdd('edgeNG:myKarte（' + ((e && e.name === 'AbortError') ? '時間切れ' : '通信できず') + '）', _nowMs() - t0);
+      _mkRefresh();
+    });
+  }
+  function _mkVisible(id){ var e = document.getElementById(id); return !!(e && !e.hidden); }
+  function _mkRefresh(){
+    if (_mkVisible('s-home')) _mkHomeKarte();
+    else if (_mkVisible('s-mk')) renderMk(state.mkTab);
+  }
+  //   読み込み中・失敗・中身（ホームとタブで同じ扱い）
+  function _mkState(box){
+    var mk = state.mk || { st: 'idle' };
+    if (mk.st === 'ok' && mk.data) return true;
+    box.appendChild(_mkCard([_mkMuted(mk.st === 'fail' ? t('mk_unavail') : t('loading'))]));
+    return false;
+  }
+  function _mkHomeKarte(){
+    var box = document.getElementById('homeKarte'); if (!box) return;
+    box.innerHTML = '';
+    if (!state.mkOn) { box.hidden = true; return; }
+    box.hidden = false;
+    _mkFetch();
+    if (_mkState(box)) _mkViewHome(box, state.mk.data, { goTab: mkGo });
+  }
+  function _mkRemainEl(){
+    var res = state._homeRes || {};
+    var d = _mkEl('div');
+    d.innerHTML = homeInfoHtml(res.home || { type:null }, false) + _homeTcHtml(res);   // ホームの残り回数と同じ（値は homeInfoHtml の中で文字にしている）
+    return d;
+  }
+  function renderMk(tab){
+    if (!state.mkOn || !MK_TABS.some(function(x){ return x[0] === tab; }) || tab === 'home') { mkGo('home'); return; }
+    state.mkTab = tab;
+    state._repaint = function(){ renderMk(tab); };   // 言語切替：state から描き直す（再通信しない）
+    var title = document.getElementById('mkTitle'); if (title) title.textContent = t('mk_tab_' + tab);
+    var box = document.getElementById('mkBody'); box.innerHTML = '';
+    _mkFetch();
+    if (_mkState(box)) _mkViewTab(box, state.mk.data, tab, { ui: _mkUi, goTab: mkGo, remain: _mkRemainEl });
+    show('s-mk');
+  }
+  //   タブの切り替え（履歴に積まない）
+  function mkGo(tab){
+    if (!state.mkOn) return;
+    if (_busyEl && !_busyEl.hidden) return;
+    if (tab === 'home') { if (state._homeRes) renderHome(state._homeRes); else show('s-home'); }
+    else renderMk(tab);
+    try { document.documentElement.scrollTop = 0; document.body.scrollTop = 0; } catch (e) {}
+  }
+  //   下のタブの出し分け（show から呼ぶ）。ホームに戻ったら、言語切替の描き直しをホームに向け直す
+  function _mkTabsSync(id){
+    var bar = document.getElementById('mkTabs');
+    if (!bar || typeof state === 'undefined' || !state) return;
+    var on = !!state.mkOn && (id === 's-home' || id === 's-mk') && !document.body.classList.contains('staff');
+    bar.hidden = !on;
+    document.body.classList.toggle('mk-on', on);
+    if (id === 's-home' && state._homeRes) { state._repaint = function(){ renderHome(state._homeRes); }; _mkHomeNext(); }
+    if (!on) return;
+    var curTab = id === 's-home' ? 'home' : state.mkTab;
+    Array.prototype.forEach.call(bar.querySelectorAll('[data-mk]'), function(b){
+      var me = b.getAttribute('data-mk') === curTab;
+      b.className = 'mk-tab' + (me ? ' on' : '');
+      if (me) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('#mkTabs [data-mk]'), function(b){ b.onclick = function(){ mkGo(b.getAttribute('data-mk')); }; });
+  on('mkBack', function(){ mkGo('home'); });
+
+  //   次回のご予約（ホーム）。起動のまとめの予約一覧を api() で受け取る（起動では通信が増えない）。予約・取消の後は取り直す
+  function _mkNextReset(res){
+    state._homeNextGen = (state._homeNextGen || 0) + 1;   // 飛んでいる古い取得の結果は入れない
+    state._homeNextLoading = false;
+    state._homeNextRes = res === undefined ? undefined : (res && res.success ? res : null);
+  }
+  function _mkHomeNext(){
+    var box = document.getElementById('homeNext'); if (!box) return;
+    var res = state._homeNextRes;
+    if (res === undefined) {
+      box.hidden = true;
+      if (!state._homeNextLoading) {
+        state._homeNextLoading = true;
+        var gen = state._homeNextGen = (state._homeNextGen || 0) + 1;
+        var done = function(r){ if (gen !== state._homeNextGen) return; state._homeNextLoading = false; state._homeNextRes = (r && r.success) ? r : null; _mkHomeNext(); };
+        try { api({ action:'line_getMyReservations' }).then(done, function(){ done(null); }); } catch (e) { done(null); }
+      }
+      return;
+    }
+    box.innerHTML = '';
+    var nowIso = new Date().toISOString();
+    var list = (res ? _mkArr(res.reservations) : []).filter(function(r){ return r && typeof r === 'object' && (!r.startISO || String(r.startISO) >= nowIso); });
+    if (!list.length) { box.hidden = true; return; }
+    function when(r){
+      var ms = Date.parse(_mkStr(r.startISO));
+      if (!isFinite(ms)) return _mkStr(r.dateLabel);
+      var j = new Date(ms + 9 * 3600000), ymd = j.toISOString().slice(0, 10);
+      return _mkMdw(ymd) + ' ' + ('0' + j.getUTCHours()).slice(-2) + ':' + ('0' + j.getUTCMinutes()).slice(-2);
+    }
+    function dayOnly(r){ var ms = Date.parse(_mkStr(r.startISO)); return isFinite(ms) ? _mkMdw(new Date(ms + 9 * 3600000).toISOString().slice(0, 10)) : _mkStr(r.dateLabel); }
+    box.appendChild(_mkEl('div', 'mk-h', t('mk_next_title')));
+    var row = _mkEl('div'); row.style.cssText = 'display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;';
+    row.appendChild(_mkEl('span', 'mk-big', when(list[0])));
+    if (list[0].trainerName) row.appendChild(_mkEl('span', 'mk-sub', t('mk_next_trainer', { name: _mkStr(list[0].trainerName) })));
+    box.appendChild(row);
+    if (list.length > 1) box.appendChild(_mkEl('div', 'mk-sub', t('mk_next_more', { dates: list.slice(1, 3).map(dayOnly).join('・') })));
+    box.hidden = false;
+  }
+  // ---------------------------------------------------------------- 会員のカルテ ここまで
 
   // ===== 固定枠の自動予約（毎月25日に翌月分を自動予約）=====
   // トレーナー一覧を取得（会員/担当で共用・stateにキャッシュ）
@@ -2520,6 +3053,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     api({ action:'line_getMyReservations' }).then(function(res){
       if (!res.success) { showError(t('err_myres',{code:res.code||'?'})); return; }
       state._myResRes = res;
+      _mkNextReset(res);   // ホームの「次回のご予約」も同じ一覧で（戻ったときに古い予約を出さない）
       renderMyReservations();
     }).catch(function(e){ showError(t('comm_fail',{msg:e})); });
   }
@@ -3188,6 +3722,6 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   boot();
 </script>
 <!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
-<script src="karte.js?v=2026-11-06a"></script>
+<script src="karte.js?v=2026-11-06b"></script>
 </body>
 </html>

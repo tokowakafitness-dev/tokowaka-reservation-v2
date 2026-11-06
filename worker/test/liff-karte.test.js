@@ -219,7 +219,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
 {
   const evil = '<img src=x onerror="window.pwned=1">';
   const { w, sent } = boot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員', trainerId: 'T1' }, assigned: true,
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員', trainerId: 'T1' }, assigned: true,
       consent: { state: 'agreed' }, profile: { rev: 3, goal_text: evil, goal_deadline: '2027-03-31', hearing: { purposes: ['diet'], slimAreas: ['belly'], motivation: 7, targetWeight: 54, exerciseNow: evil } },
       safetyBrief: { pain: [{ region: 'shoulder_r', level: 6, symptom: evil }], diagnosis: null, medication: null, restrictions: null }, lastNote: null, nextReservation: null };
     if (b.action === 'k_body') return { success: true, ready: true, rows: [{ d: '2026-10-01', w: 60, pbf: 30, s: {} }, { d: '2026-11-01', w: 58.4, pbf: 29.1, s: { w: 'i' } }], goal: null, raw: [] };
@@ -247,7 +247,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   //   安全面の保存：painMap を送り、端末に退避しない
   const { w, sent } = boot(async (b) => {
     if (b.action === 'k_summary') return { success: true, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' }, safetyBrief: null, profile: null, lastNote: null, nextReservation: null };
-    if (b.action === 'k_safety') return { success: true, karteSchema: 31, consent: 'agreed', safety: { rev: 2, pain: [{ region: 'lower_back', level: 4, symptom: '朝' }] } };
+    if (b.action === 'k_safety') return { success: true, karteSchema: 32, consent: 'agreed', safety: { rev: 2, pain: [{ region: 'lower_back', level: 4, symptom: '朝' }] } };
     if (b.action === 'k_saveSafety') return { success: false, code: 'UNAUTHORIZED', detail: 'STALE_TOKEN' };
     return { success: true };
   });
@@ -321,7 +321,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   //   一度 31 を読んだ後、次の読み取りが失敗したら信用しない
   let n = 0;
   const { w, sent } = boot(async (b) => {
-    if (b.action === 'k_notes') { n++; return n === 1 ? { success: true, karteSchema: 31, notes: [] } : { success: false, code: 'INTERNAL' }; }
+    if (b.action === 'k_notes') { n++; return n === 1 ? { success: true, karteSchema: 32, notes: [] } : { success: false, code: 'INTERNAL' }; }
     return { success: true };
   });
   w.KarteUI.open('C1', '会員', 'notes'); await settle();
@@ -370,7 +370,7 @@ async function fromPrev(root) {
 {
   let addResp = { success: true, sessionId: 'N1' };
   const { w, sent } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     if (b.action === 'k_addTraining') return addResp;
     return { success: true, notes: [] };
   });
@@ -418,7 +418,7 @@ async function fromPrev(root) {
 {
   //   はっきり断られたら pending を解き、次は新しい送信番号
   const { w, sent } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     if (b.action === 'k_addTraining') return { success: false, code: 'TOTAL_SETS' };
     return { success: true };
   });
@@ -444,7 +444,7 @@ async function fromPrev(root) {
 {
   //   トークン切れの退避：sessionStorage には中身を入れない
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     if (b.action === 'k_addTraining') return { success: false, code: 'UNAUTHORIZED', detail: 'STALE_TOKEN' };
     return { success: true };
   });
@@ -461,7 +461,7 @@ async function fromPrev(root) {
 }
 {
   //   種目の選び方：この方の最近の種目が上・まとめて足す・新しい名前
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));
   w.confirm = () => true;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
@@ -485,7 +485,7 @@ async function fromPrev(root) {
   let release;
   const gate = new Promise((r) => { release = r; });
   const { w, sent } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     if (b.action === 'k_addTraining') { await gate; return { success: true, sessionId: 'N9' }; }
     return { success: true };
   });
@@ -512,7 +512,7 @@ async function fromPrev(root) {
 }
 {
   //   控えを端末に残せないなら送らない
-  const { w, sent } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w, sent } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));
   w.confirm = () => true;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
@@ -535,9 +535,9 @@ async function fromPrev(root) {
   //   送信中に別の顧客を開き、その後にトークン切れが返っても読み直さない
   let release; const gate = new Promise((r) => { release = r; });
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     if (b.action === 'k_addTraining') { await gate; return { success: false, code: 'UNAUTHORIZED', detail: 'STALE_TOKEN' }; }
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: b.customerId, name: b.customerId === 'C2' ? '会員二' : '会員' }, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: b.customerId, name: b.customerId === 'C2' ? '会員二' : '会員' }, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
     return { success: true };
   });
   w.confirm = () => true;
@@ -556,9 +556,9 @@ async function fromPrev(root) {
   //   名前なしで開いた顧客の概要が、別の顧客を開いた後に届いても混ぜない
   let release; const gate = new Promise((r) => { release = r; });
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_summary' && b.customerId === 'C1') { await gate; return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員一' }, consent: { state: 'none' }, nextReservation: { startAt: Date.UTC(2026, 10, 9, 1) } }; }
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C2', name: '会員二' }, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
-    return { success: true, sessions: [], karteSchema: 31 };
+    if (b.action === 'k_summary' && b.customerId === 'C1') { await gate; return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員一' }, consent: { state: 'none' }, nextReservation: { startAt: Date.UTC(2026, 10, 9, 1) } }; }
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C2', name: '会員二' }, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
+    return { success: true, sessions: [], karteSchema: 32 };
   });
   w.KarteUI.open('C1', '', 'training'); await settle();
   w.KarteUI.open('C2', '', 'contract'); await settle();
@@ -570,7 +570,7 @@ async function fromPrev(root) {
 
 // ================= 12. キーパッド・休憩の知らせ（2026-11-04 オーナー指示） =================
 {
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));
   //   見える範囲（visualViewport）の身代わり
   const listeners = {};
   const vv = { height: 800, width: 390, offsetTop: 0, addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); }, removeEventListener() {} };
@@ -636,8 +636,8 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 // ================= 13. 戻る・進む（スワイプ・LIFF を閉じない） =================
 {
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     return { success: true, notes: [], contracts: [] };
   });
   const pop = () => new Promise((r) => setTimeout(r, 30));
@@ -667,7 +667,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   //   入力中に戻ろうとしたら確かめる
   let asked = 0;
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
     return { success: true };
   });
   w.confirm = (m) => { if (String(m).includes('入力中')) { asked++; return false; } return true; };
@@ -683,8 +683,8 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   //   「進む」を途中でやめても、閉じるボタンで予約画面まで正しく戻る／ヒアリング・安全面に戻ったらその画面が出る
   let cancel = false;
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
-    if (b.action === 'k_safety') return { success: true, karteSchema: 31, consent: 'agreed', safety: null };
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_safety') return { success: true, karteSchema: 32, consent: 'agreed', safety: null };
     return { success: true, notes: [], contracts: [] };
   });
   w.confirm = (m) => (String(m).includes('入力中') ? !cancel : true);
@@ -719,7 +719,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   //   「進む」を入力中なのでやめた後も、閉じるボタンで予約画面まで正しく戻る
   let cancel = false;
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: { rev: 1, hearing: {} }, safetyBrief: null, lastNote: null, nextReservation: null };
     return { success: true, notes: [], contracts: [] };
   });
   w.confirm = (m) => (String(m).includes('入力中') ? !cancel : true);
@@ -743,7 +743,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 {
   //   スクロールの位置：端末の戻るで離れた画面も、進んで戻ると同じ位置。別の画面には当てない
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'none' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
     return { success: true, notes: [], contracts: [] };
   });
   const pop = () => new Promise((r) => setTimeout(r, 40));
@@ -765,7 +765,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   const HIST2 = [{ session_id: 'S5', session_date: '2026-11-01', created_at: 1, author_trainer_id: 'T1', rev: 1, sets: [
     { exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10, e1rm: 53.3, note: null }, { exercise: 'スクワット', set_no: 2, weight_kg: 40, reps: 8, e1rm: 50.7, note: '最後の2回は補助' }] }];
   const { w, sent } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: HIST2, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: HIST2, best: [] };
     if (b.action === 'k_addTraining') return { success: true, sessionId: 'N2' };
     return { success: true };
   });
@@ -795,7 +795,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 
 {
   //   メモ欄の真下に注記・よく使うメモ・記録されない入力の警告
-  const { w, sent } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true, sessionId: 'N3' }));
+  const { w, sent } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true, sessionId: 'N3' }));
   let msgs = []; w.confirm = (m) => { msgs.push(String(m)); return false; };
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
@@ -818,7 +818,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 
 {
   //   計算後の見た目で確かめる（CSS の強さの取り違えは文字列の検査では見つからない）
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));
   w.confirm = () => true;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
@@ -832,7 +832,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 {
   //   ★はみ出し（2026-11-04g・iPhone で日付の欄がカードの右端を越え、日付の下に空の緑の帯が出た）
   //     計算後の見た目で確かめる（inline に display を2つ書くと後が勝つ、は文字列の検査では見つからない）
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : b.action === 'k_body' ? { success: true, ready: true, rows: [], raw: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : b.action === 'k_body' ? { success: true, ready: true, rows: [], raw: [] } : { success: true }));
   w.confirm = () => true;
   //   ★今日の記録の日付は見出しに移った（2026-11-05 モック K3）＝日付の欄の見た目は体組成の記入画面で確かめる
   w.KarteUI.open('C1', '会員', 'body'); await settle();
@@ -876,9 +876,9 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 // ================= 16. 整理案（2026-11-05）：書くのは上のボタン→専用の記入画面・戻ると元のタブ =================
 {
   const { w, sent } = trBoot(async (b) => {
-    if (b.action === 'k_summary') return { success: true, karteSchema: 31, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_summary') return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' }, profile: null, safetyBrief: null, lastNote: null, nextReservation: null };
     if (b.action === 'k_body') return { success: true, ready: true, rows: [{ d: '2026-11-01', w: 70.3, pbf: 27.8 }], raw: [] };
-    if (b.action === 'k_notes') return { success: true, karteSchema: 31, notes: [] };
+    if (b.action === 'k_notes') return { success: true, karteSchema: 32, notes: [] };
     if (b.action === 'k_addMeasurement') return { success: true, id: 'm1', rev: 1 };
     return { success: true };
   });
@@ -908,7 +908,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 
 // ================= 17. 休憩：✓を押したセットの真下・秒数は種目ごと（15/30/60/90・基本60）（2026-11-05 オーナー） =================
 {
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));
   w.confirm = () => true;
   try { w.localStorage.removeItem('karte_rest_ex'); } catch (e) {}
   w.KarteUI.open('C1', '会員', 'training'); await settle();
@@ -940,7 +940,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
       { exercise: 'ラットプルダウン', set_no: 1, weight_kg: 30, reps: 12 }, { exercise: 'ラットプルダウン', set_no: 2, weight_kg: 30, reps: 10 }] },
     { session_id: 'P1', session_date: '2026-10-25', created_at: 100, author_trainer_id: 'T1', rev: 1, sets: [
       { exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }, { exercise: 'ヒップスラスト', set_no: 2, weight_kg: 40, reps: 12 }] }];
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: HIST2, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: HIST2, best: [] } : { success: true }));
   w.confirm = () => true;
   try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
   const pop = () => new Promise((r) => setTimeout(r, 40));
@@ -974,7 +974,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 }
 {
   //   休憩中に前のセットを消す／休憩中のセットを消す（関門②）
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));
   w.confirm = () => true;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const root = w.document.getElementById('karteRoot');
@@ -993,7 +993,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 
 {
   //   開いただけの空の下書きでは、次にタブを開いたとき自動で記録の画面を開かない（種目が入っていれば開く＝従来どおり）
-  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 31, sessions: TR_HIST, best: [] } : { success: true }));
+  const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));
   w.confirm = () => true;
   try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
   w.KarteUI.open('C1', '会員', 'training'); await settle();
@@ -1018,9 +1018,9 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
     { session_id: 'Q1', session_date: '2026-10-25', created_at: 100, author_trainer_id: 'T1', rev: 1, sets: [
       { exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10 }] }];
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: HIST3, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: HIST3, best: [] };
     if (b.action === 'k_body') return { success: true, ready: true, rows: [], raw: [] };
-    if (b.action === 'k_notes') return { success: true, karteSchema: 31, notes: [] };
+    if (b.action === 'k_notes') return { success: true, karteSchema: 32, notes: [] };
     return { success: true };
   });
   try { w.localStorage.removeItem('karte_tr_draft_v1:T1:C1'); } catch (e) {}
@@ -1057,7 +1057,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   //   「日別の記録を確かめる」の要求は、そのお客様だけ（読み込みに失敗した後、別のお客様に持ち越さない・関門②）
   let failC1 = false;
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_training') { if (b.customerId === 'C1' && failC1) return { success: false, code: 'INTERNAL' }; return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] }; }
+    if (b.action === 'k_training') { if (b.customerId === 'C1' && failC1) return { success: false, code: 'INTERNAL' }; return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] }; }
     return { success: true };
   });
   w.localStorage.setItem('karte_tr_draft_v1:T1:C1', JSON.stringify({ v: 1, tid: 'T1', cid: 'C1', sessionDate: '2026-11-05', items: [{ exercise: 'スクワット', sets: [{ w: 40, r: 10, done: true }] }], reqId: 'r1',
@@ -1081,10 +1081,10 @@ ok('20-3 ★見分けやすさ：入力・✓の枠は白地に3:1以上（#8692
 {
   let noteResp = { success: true, noteId: 'n1', rev: 1 };
   const { w, sent } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     if (b.action === 'k_addTraining') return { success: true, sessionId: 'N1' };
     if (b.action === 'k_addNote') return noteResp;
-    if (b.action === 'k_notes') return { success: true, karteSchema: 31, notes: [] };
+    if (b.action === 'k_notes') return { success: true, karteSchema: 32, notes: [] };
     return { success: true };
   });
   w.confirm = () => true;
@@ -1140,7 +1140,7 @@ ok('20-3 ★見分けやすさ：入力・✓の枠は白地に3:1以上（#8692
   //   記録の送信中に別のお客様を開いた：元のお客様のメモは、そのお客様の下書きに送信待ちとして残る（関門② High）
   let release = null;
   const { w } = trBoot(async (b) => {
-    if (b.action === 'k_training') return { success: true, karteSchema: 31, sessions: TR_HIST, best: [] };
+    if (b.action === 'k_training') return { success: true, karteSchema: 32, sessions: TR_HIST, best: [] };
     if (b.action === 'k_addTraining') return new Promise((r) => { release = () => r({ success: true, sessionId: 'N1' }); });
     return { success: true };
   });

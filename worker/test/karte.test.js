@@ -364,7 +364,7 @@ let noteId;
   }
   ok('10-10 ★痛みの不正（強さ0・部位の重複・知らない部位・余計な鍵・文字の強さ・配列でない）は 400', pAll, pw);
   const sm = await call('U_T2', 'k_summary', { customerId: 'C4' });
-  ok('10-11b 概要・メモ・安全面に窓口の版（31）', sm.karteSchema === 31);
+  ok('10-11b 概要・メモ・安全面に窓口の版（32）', sm.karteSchema === 32);
   ok('10-11 概要に痛み・診断・服薬・ヒアリング（同意があるとき・トレーナー全員）', sm.success && sm.safetyBrief && sm.safetyBrief.pain.length === 2
      && sm.safetyBrief.diagnosis === 'なし' && sm.profile.hearing && sm.profile.hearing.motivation === 7 && !('hearing_json' in sm.profile), JSON.stringify(sm.safetyBrief));
   //   一覧の印（担当 T1）
@@ -391,7 +391,7 @@ let noteId;
   const nl = await call('U_T2', 'k_notes', { customerId: 'C4' });
   const nn = (nl.notes || [])[0] || {};
   const sf = await call('U_T1', 'k_safety', { customerId: 'C4' });
-  ok('10-17b メモ・安全面の応答にも窓口の版（31）', nl.karteSchema === 31 && sf.karteSchema === 31);
+  ok('10-17b メモ・安全面の応答にも窓口の版（32）', nl.karteSchema === 32 && sf.karteSchema === 32);
   ok('10-17 ★理由は固定表の順で返す・生の JSON 列は返さない', nn.tag === 'body' && JSON.stringify(nn.reasons) === '["snack_down","self_training_up"]' && nn.next_check === '夕食のタンパク質' && !('reasons_json' in nn), JSON.stringify(nn));
   const nb = await call('U_T1', 'k_addNote', { customerId: 'C4', sessionDate: today, reasons: ['medication_changed'], clientReqId: crid() });
   ok('10-18 ★健康の理由（固定表に無い）は 400', nb.status === 400);
@@ -422,7 +422,7 @@ let noteId;
 {
   d.exec(`DELETE FROM karte_rate`);
   const e0 = await call('U_T1', 'k_training', { customerId: 'C2' });
-  ok('11-1 ★記録が0件でも窓口の版を返す', e0.success && e0.karteSchema === 31 && Array.isArray(e0.sessions) && !e0.sessions.length, JSON.stringify(e0));
+  ok('11-1 ★記録が0件でも窓口の版を返す', e0.success && e0.karteSchema === 32 && Array.isArray(e0.sessions) && !e0.sessions.length, JSON.stringify(e0));
   const mk = (n) => Array.from({ length: Math.ceil(n / 10) }, (_, i) => ({ exercise: '種目' + i, sets: Array.from({ length: Math.min(10, n - i * 10) }, () => ({ weight: 20, reps: 10 })) }));
   const ok60 = await call('U_T1', 'k_addTraining', { customerId: 'C2', sessionDate: today, items: mk(60), clientReqId: crid() });
   const ng61 = await call('U_T1', 'k_addTraining', { customerId: 'C2', sessionDate: today, items: mk(61), clientReqId: crid() });

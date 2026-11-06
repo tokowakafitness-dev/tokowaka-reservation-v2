@@ -72,6 +72,7 @@ D1                      その写し ＋ D1で作った枠・引当
 | `karte_profile` / `karte_safety` | customer_id | `k_saveProfile` / `k_saveSafety`（rev） | `k_summary` / `k_safety` | 安全面は同意の JOIN でだけ読む |
 | `karte_consent` / `karte_consent_log` | (customer_id, kind) / id | `k_saveConsent`（撤回で safety を同じ batch で消す） | 同意の判定 | log は追記だけ |
 | `karte_notes` / `karte_tr_sessions` / `karte_tr_sets` | TEXT の ID（Worker が作る） | `k_add*` / `k_edit*` / `k_delete*`（deleted_at） | `k_notes` / `k_training` | 1行1セット |
+| `karte_member_notes` | mnote_id（Worker が作る） | `k_addTraining`（member・トレーニングと同じ batch）／`k_saveMemberNote`（3つの形・rev）／`k_deleteMemberNote`・`k_deleteTraining`（同じ session の枚を同じ batch で deleted_at） | `buildMemberKarte`（`c_myKarte`・`k_memberPreview`） | ★会員に見せる文だけ（社内メモと別の表・設計35）。session に1枚（部分 UNIQUE・生きた行）／session なしは NULL。顧客・日付は参照先の session と一致（見張り）。req_id 列は持たない |
 | `karte_revisions` | id | 編集・削除の前の中身 | 監査 | 安全面の中身は入れない |
 | `karte_requests` / `body_requests` | (trainer,action,req) / (channel,req) | 書き込みと同じ batch | 二重送信の再送 | 成功だけ残る |
 | `karte_rate` | (trainer_id, window_start) | 先行 batch | 回数制限 | 10分の区切りごと60回 |
@@ -156,6 +157,14 @@ trg_alloc_return_pack       同
 | I57 | **トレーニングの記録は✓のセットだけ送る**（前回の呼び出し・複製・下書きの復元でも✓の初期値は false）。合計60セットまで（画面と Worker の TOTAL_SETS）（設計33） | `liff-karte.test.js` 10-1・10-5・10-6・10-9、`karte.test.js` 11-2 |
 | I58 | **トレーニングの下書きは localStorage（トレーナー×顧客）が正本**。氏名を入れない・24時間で実際に消す・中身の顧客が違えば戻さない。送ったが結果が分からないときは中身と clientReqId を固定し、同じ組でだけ送り直す。トークン切れの退避（sessionStorage）に中身を入れない（設計33） | `liff-karte.test.js` 10-7・10-8・10-10〜10-12・10-14〜10-17 |
 | I59 | **「前回」は入力中の日付より前の、session_id 単位の直近1回**（同じ日の2回を混ぜない・直近20回の中だけ）（設計33） | `liff-karte.test.js` 10-2・10-3 |
+| I-M1 | **会員のカルテ（c_myKarte）の本人は who.customerId だけで決める。body を一切読まない**（customerId・noteId・sessionId 等で他人を指させない）。customer 以外・who.customerId が無ければ 403（設計35） | `member-karte.test.js` 1-7〜1-15・2-17・5-7 |
+| I-M2 | **応答は専用の allowlist で組み立てる**（k_ の応答を流用して落とす形にしない）。SQL の段階で列を選ぶ（全部の列を取らない）。値が無いものは null／空配列（推測で埋めない）。体の記録は I51 のまま（verified の凍結＋d1） | `member-karte.test.js` 2-3〜2-16・5-3 |
+| I-M3 | **社内メモ（karte_notes の本文・次回の計画・確かめること・理由）・健康情報（karte_safety・同意）・セットのメモ・ヒアリングの自由文・契約の金額と報酬を読まない・返さない**。契約は I53 を満たすときだけ・期間の列が無ければ null・担当は名簿の表示名（当たらなければ null）。includeContract=false なら契約の SQL を1本も出さない | `member-karte.test.js` 2-2・3-1〜3-4・4-1〜4-3・5-1〜5-5・6-6 |
+| I-M4 | **会員に見せる文は karte_member_notes にだけ書く**。トレーニングと一緒の枚は同じ batch（全部か無か・ハッシュに正規化した member を含める）。session のある枚は参照先の生きた session と顧客・日付が一致（見張りで batch ごと戻す）・読むときも生きた session と JOIN。トレーニングを消すと同じ batch で枚も消える。編集・削除は本人か owner（owner の上書きは section=member_note_owner_override） | `member-karte.test.js` 7-1〜7-9・8-0〜8-12・9-1〜9-2・10-1〜10-10・11-1〜11-10 |
+| I-M5 | **MEMBER_KARTE が厳密に 'on' でなければ c_myKarte はサーバーで必ず 503**（入口で認証より前に止め、窓口の中でももう一度確かめる）。k_memberPreview・k_saveMemberNote は止めない（KARTE の守りだけ）。起動の印 memberKarte は env だけで決める真偽値 | `member-karte.test.js` 1-1〜1-6・12-1〜12-4・13-1 |
+| I-M6 | **verified でない会員の行は LINE の ID を送らない**（押し出し側。D1 で customer にならない＝c_myKarte に届かない）。Worker 側の確認は「LINE の ID が無い行は guest」 | `member-karte.test.js` 1-15（GAS 側の検査は gas/ の担当が足す） |
+| I-M7 | **会員本人と「お客様の見え方」は同じ組み立て関数（buildMemberKarte）を通る**。見え方は共有の範囲（canSeeKarteShared）で開け、契約は担当の範囲（canSeeCustomer）のときだけ。ID（mnoteId・rev・sessionId・authorIsMe）は見え方にだけ付く | `member-karte.test.js` 5-6・6-1〜6-8 |
+| I-M8 | **access_log に中身を書かない**。会員本人の閲覧は trainer_id=NULL・role='customer'・section='member_karte'・action='c_myKarte'・req_id=NULL。失敗の console に ID を出さない | `member-karte.test.js` 2-18・6-8・8-10・10-5 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。
@@ -338,6 +347,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 | `compatCustomerHome` | トレーナーが顧客カードを開くたび | ✅ |
 | `compatBookingOptions` / `routeBookingOptions` | ★**候補を選び直すたび** | ❌ 確定を遅くしない |
 | `customerDetail` | 上から連鎖 | ❌ |
+| `c_myKarte`（会員のカルテ・設計35） | 会員がホームを開いたときと、タブを開いたとき＝**起動ごとに最大1回**（画面側で持つ）。MEMBER_KARTE が 'on' のときだけ。GAS へ送り直さない（EDGE_MAP に載せない） | ❌ |
 
 ★`ctx`（`waitUntil`）は**すべての handler に一律で渡る**。
 　「`ctx` があるから比べる」にしてはいけない。入口の意思は別に渡す。

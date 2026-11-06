@@ -13,12 +13,26 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-06a 今日の記録の中に指導メモ（社内メモ）・見出しの戻る矢印を見えるように';
+  var KARTE_BUILD = '2026-11-06b お客様に見える欄（お客様へ・次回までに・日のタグ）・お客様の見え方（設計35 C2）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
-  var NEED_SCHEMA = 31;
+  var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
   var SCHEMA_MSG = 'システムの更新中です。少し時間をおいて、カルテを開き直してから保存してください（入力はまだ保存されていません）。';
   function schemaOk(r) { return !!(r && typeof r.karteSchema === 'number' && r.karteSchema >= NEED_SCHEMA); }
+  //   お客様に見える欄（設計35 C2）。版（32）で古い Worker への送信を止める。二重の守りとして、
+  //     member を送ったのに応答に mnoteId が無ければ「お客様の欄は保存されていません」（欄は下書きに残す・セットは保存済み）
+  //   日のタグ（お客様に見える・選ぶだけ）。社内メモのタグ（TAGS）とは別物
+  var DAY_TAGS = ['全身', '上半身', '下半身', '脚', '尻', '背中', '胸', '肩', '腕', '体幹', '有酸素', 'ストレッチ'];
+  var MEMBER_MAX = { message: 400, todo: 3, todoLen: 60, tags: 6 };
+  /** お客様に見える欄を送る形にそろえる。空なら null（＝送らない） */
+  function memberOf(m) {
+    if (!m || typeof m !== 'object') return null;
+    var message = String(m.message || '').trim().slice(0, MEMBER_MAX.message);
+    var todo = (Array.isArray(m.todo) ? m.todo : []).map(function (x) { return String(x == null ? '' : x).trim().slice(0, MEMBER_MAX.todoLen); }).filter(Boolean).slice(0, MEMBER_MAX.todo);
+    var tags = (Array.isArray(m.tags) ? m.tags : []).filter(function (x, i, a) { return DAY_TAGS.indexOf(x) >= 0 && a.indexOf(x) === i; }).slice(0, MEMBER_MAX.tags);
+    if (!message && !todo.length && !tags.length) return null;
+    return { message: message, todo: todo, tags: tags };
+  }
 
   // ---------------------------------------------------------------- 固定表（鍵は worker/src/lib/karte-hearing.js と同じ・検査で一致を確かめる）
   var PURPOSES = [['diet', 'ダイエット'], ['bodymake', 'ボディメイク'], ['strength', '筋力アップ'], ['posture', '姿勢改善'],
@@ -225,7 +239,8 @@
     BAD_STATE: 'この記録はできません（退会・再入会の順序、または取り消せるのは最後の記録だけです）。',
     FORBIDDEN: 'この操作の権限がありません。', NOT_FOUND: '見つかりませんでした。', REQ_REUSED: '送信が重なりました。開き直してください。',
     TOTAL_SETS: '1回の記録は合計60セットまでです。',
-    KARTE_OFF: 'カルテは一時停止中です。', TOO_LARGE: '入力が長すぎます。', BAD_REQUEST: '入力を確認してください。'
+    KARTE_OFF: 'カルテは一時停止中です。', TOO_LARGE: '入力が長すぎます。', BAD_REQUEST: '入力を確認してください。',
+    EXISTS: 'この記録には、すでにお客様に見える欄があります。「お客様の見え方」から直してください。'
   };
   function errText(r) { return (r && ERR[r.code]) || ('うまくいきませんでした（' + ((r && (r.code || r.detail)) || '通信') + '）'); }
 
@@ -564,6 +579,7 @@
 
   // ---------------------------------------------------------------- 概要
   function tabSummary(box, draft) {
+    if (draft && draft.kind === 'sub' && draft.sub === 'mpreview') { memberPreviewSub(box, draft.navMode); return; }   // 戻る・進む・送り直しの画面から
     box.appendChild(msg('読み込み中…'));
     cur.summary = null;
     Promise.all([loadSummary(), kRead('k_body', { customerId: cur.customerId })]).then(function (rs) {
@@ -641,6 +657,8 @@
       }
       if (p.goal_text) who.appendChild(el('div', { style: 'font-size:13px;line-height:1.7;background:var(--k-cream);border-radius:10px;padding:10px 12px;', text: '理想：' + p.goal_text }));
       box.appendChild(who);
+      //   お客様の見え方（設計35 C2）：会員の画面と同じ部品で、このお客様の画面を出す。★オーナーは会員として開けないので、確かめるのはここ
+      box.appendChild(el('button', { type: 'button', class: 'k-btn out', text: 'お客様の見え方', 'aria-label': 'お客様の画面での見え方を確かめる', onclick: function () { memberPreviewSub(box); } }));
       if (draft && draft.kind === 'profile') hearingForm(box, r, draft.data, draft.navMode);
       else if (draft && draft.kind === 'sub' && draft.sub === 'hearing') hearingForm(box, r, null, draft.navMode);
       else if (draft && draft.kind === 'sub' && draft.sub === 'safety' && agreed) safetyForm(box, draft.navMode);
@@ -1317,7 +1335,8 @@
     if (D.pending) {
       c.appendChild(el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: '前回の保存の結果を確かめられませんでした' }),
         msg('通信が途中で切れた可能性があります。同じ内容で送り直しても、二重には記録されません。'),
-        el('div', { style: 'font-size:13px;', text: md(D.pending.payload.sessionDate) + '・' + D.pending.payload.items.map(function (it) { return it.exercise + ' ' + it.sets.length + 'セット'; }).join('・') })]));
+        el('div', { style: 'font-size:13px;', text: md(D.pending.payload.sessionDate) + '・' + D.pending.payload.items.map(function (it) { return it.exercise + ' ' + it.sets.length + 'セット'; }).join('・') }),
+        D.pending.payload.member ? el('div', { class: 'k-sub', text: 'お客様に見える欄も一緒に送ります（同じ内容）' }) : null]));
       c.appendChild(el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { send(D.pending.payload, D.pending.reqId); } }));
       c.appendChild(el('button', { class: 'k-btn out', text: '日別の記録を確かめる', onclick: function () { cur.wantDayView = cid; goBack(); } }));   // ★お客様に紐づける（別のお客様に持ち越さない・関門②）   // 専用画面→トレーニングの画面に戻って日別を開く
       c.appendChild(el('button', { class: 'k-btn out k-danger', text: '破棄して入れ直す', onclick: function () {
@@ -1326,12 +1345,27 @@
       } }));
       return c;
     }
+    //   ---- お客様に見える欄だけを送ったが応答が分からない（mpending）＝編集させない（トレーニングの pending と同じ扱い）
+    if (D.mpending) {
+      var mq = D.mpending.payload || {};
+      c.appendChild(el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: 'お客様に見える欄の保存の結果を確かめられませんでした' }),
+        msg('同じ内容で送り直しても、二重には残りません。'),
+        el('div', { style: 'font-size:13px;white-space:pre-wrap;', text: md(mq.sessionDate) + '：' + String(mq.message || (mq.todo || []).join('・') || (mq.tags || []).join('・')).slice(0, 120) })]));
+      c.appendChild(el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { sendMember(D.mpending.payload, D.mpending.reqId); } }));
+      c.appendChild(el('button', { class: 'k-btn out', text: 'お客様の見え方を確かめる', onclick: function () { open(cid, cname, 'summary', { kind: 'sub', sub: 'mpreview' }); } }));
+      c.appendChild(el('button', { class: 'k-btn out k-danger', text: '送り直さずに破棄', onclick: function () {
+        if (!window.confirm('お客様に見える欄を送り直さずに破棄しますか？（残っていたかは「お客様の見え方を確かめる」で見られます）')) return;
+        D.mpending = null; D.member = null; D.mReqId = newReqId(); save();   // 社内メモの書きかけは残す
+        open(cid, cname, 'training', null, 'replace');
+      } }));
+      return c;
+    }
     if (D.memoPending) {
       var mp0 = D.memoPending;
       c.appendChild(el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: '指導メモの保存の結果を確かめられませんでした' }),
-        msg((mp0.withTraining ? 'トレーニングの記録は保存済みです。' : '') + '指導メモは同じ内容で送り直しても、二重には残りません。'),
+        msg((mp0.withTraining ? 'トレーニングの記録は保存済みです。' : '') + (mp0.memberSaved ? 'お客様に見える欄は保存済みです。' : '') + '指導メモは同じ内容で送り直しても、二重には残りません。'),
         el('div', { style: 'font-size:13px;white-space:pre-wrap;', text: md(mp0.date) + '：' + mp0.body.slice(0, 120) + (mp0.body.length > 120 ? '…' : '') })]));
-      var resend = el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { if (!sending) submitMemo(mp0.date, mp0.body, ''); } });
+      var resend = el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { if (!sending) submitMemo(mp0.date, mp0.body, '', !!mp0.memberSaved); } });
       saveBtn = resend; c.appendChild(resend);
       c.appendChild(el('button', { class: 'k-btn out', text: '指導の履歴を確かめる', onclick: function () { open(cid, cname, 'notes'); } }));
       c.appendChild(el('button', { class: 'k-btn out k-danger', text: '送り直さずに破棄', onclick: function () {
@@ -1506,16 +1540,59 @@
       });
     }
     drawMemoTags();
-    c.appendChild(el('div', { class: 'k-card', style: 'display:flex;flex-direction:column;gap:8px;' }, [
-      el('div', { class: 'k-headrow', style: 'margin:0;' }, [el('div', { style: 'font-size:14px;font-weight:700;', text: '社内メモ' }), el('span', { class: 'k-chip-h', style: 'background:#f0f3f7;color:var(--k-sub);', text: 'お客様には見えません' })]),
+    //   ★社内＝灰・お客様＝ネイビーの淡（設計35 C2）。見た目で取り違えないように色を分ける
+    c.appendChild(el('div', { class: 'k-card k-internal', style: 'display:flex;flex-direction:column;gap:8px;background:#f0f3f7;border-color:#e3e8ee;box-shadow:none;' }, [
+      el('div', { class: 'k-headrow', style: 'margin:0;' }, [el('div', { style: 'font-size:14px;font-weight:700;', text: '社内メモ' }), el('span', { class: 'k-chip-h', style: 'background:#fff;color:var(--k-sub);', text: 'お客様には見えません' })]),
       memoTa, memoTags,
       el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' })]));
+    //   お客様に見える欄（設計35 C2）：お客様へ・次回までに（3つ）・日のタグ。★保存するとお客様の画面にそのまま出る（下書き・公開の2段は設けない＝オーナー判断）
+    //   書きかけは記録の下書き（D.member）に残す。送るのは「保存する」の1回（セットがあれば k_addTraining に同梱・無ければ k_saveMemberNote）
+    if (!D.member || typeof D.member !== 'object') D.member = { message: '', todo: ['', '', ''], tags: [] };
+    if (!Array.isArray(D.member.todo)) D.member.todo = ['', '', ''];
+    while (D.member.todo.length < MEMBER_MAX.todo) D.member.todo.push('');
+    if (!Array.isArray(D.member.tags)) D.member.tags = [];
+    if (!D.mReqId) D.mReqId = newReqId();
+    var mTa = el('textarea', { rows: '3', maxlength: String(MEMBER_MAX.message), 'aria-label': 'お客様へ', placeholder: '例：スクワットが前回より深くしゃがめていました。次回は重さを少し上げます。', 'data-nodirty': '1', class: 'k-memo' });
+    mTa.value = D.member.message || '';
+    var mCount = el('div', { class: 'k-sub', style: 'text-align:right;' });
+    function drawCount() { mCount.textContent = String(mTa.value.length) + '／' + MEMBER_MAX.message + '字'; }
+    mTa.oninput = function () { D.member.message = mTa.value; drawCount(); save(); };
+    drawCount();
+    var todoBox = el('div', { style: 'display:flex;flex-direction:column;gap:6px;' });
+    D.member.todo.slice(0, MEMBER_MAX.todo).forEach(function (v, i) {
+      var ti = el('input', { type: 'text', maxlength: String(MEMBER_MAX.todoLen), 'aria-label': '次回までに ' + (i + 1) + 'つ目', placeholder: i === 0 ? '例：お風呂上がりに股関節のストレッチ 2分' : '', 'data-nodirty': '1', enterkeyhint: 'next', autocomplete: 'off',
+        style: 'box-sizing:border-box;width:100%;min-height:44px;border:1px solid #8692a6;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;color:var(--k-ink);font-family:inherit;' });
+      ti.value = v || '';
+      ti.oninput = function () { D.member.todo[i] = ti.value; save(); };
+      todoBox.appendChild(ti);
+    });
+    var dayTags = el('div', { class: 'k-pills', style: 'gap:6px;' });
+    function drawDayTags() {
+      dayTags.innerHTML = '';
+      DAY_TAGS.forEach(function (tg) {
+        var onTag = D.member.tags.indexOf(tg) >= 0;
+        dayTags.appendChild(el('button', { type: 'button', class: 'k-pill' + (onTag ? ' on' : ''), 'aria-pressed': onTag ? 'true' : 'false', text: tg, onclick: function () {
+          var k = D.member.tags.indexOf(tg);
+          if (k >= 0) D.member.tags.splice(k, 1);
+          else { if (D.member.tags.length >= MEMBER_MAX.tags) { window.alert('日のタグは' + MEMBER_MAX.tags + 'つまでです。'); return; } D.member.tags.push(tg); }
+          save(); drawDayTags();
+        } }));
+      });
+    }
+    drawDayTags();
+    function mLabel(text) { return el('div', { style: 'font-size:12px;font-weight:700;color:var(--k-acc);margin-top:4px;', text: text }); }
+    c.appendChild(el('div', { class: 'k-card k-member', style: 'display:flex;flex-direction:column;gap:8px;background:#edf2fb;border-color:#d2ddf0;' }, [
+      el('div', { class: 'k-headrow', style: 'margin:0;' }, [el('div', { style: 'font-size:14px;font-weight:700;color:var(--k-acc);', text: 'お客様に見える欄' }), el('span', { class: 'k-chip-h', style: 'background:var(--k-acc);color:#fff;font-weight:700;', text: 'お客様に見えます' })]),
+      mLabel('お客様へ（' + MEMBER_MAX.message + '字まで）'), mTa, mCount,
+      mLabel('次回までに（' + MEMBER_MAX.todo + 'つまで）'), todoBox,
+      mLabel('日のタグ（' + MEMBER_MAX.tags + 'つまで）'), dayTags,
+      el('div', { class: 'k-note-hint', style: 'margin:0;', text: '保存するとお客様の画面にそのまま出ます。痛み・診断・社内のことは書かない' })]));
     //   指導メモを送る。★結果が確定するまで、本文と送信番号を記録の下書き（D.memoPending）に残す（関門② High×3）
     //     ・結果が分からない（通信切れ・応答が読めない）＝同じ送信番号で「同じ内容で送り直す」＝二重にならない
     //     ・送信中に別のお客様を開いても、元のお客様の下書きに残る（鍵は開いた時点で固定）
     //     ・ログインが古いときは記録の下書きとして退避（お客様の番号を固定・別のお客様を開いていたら読み直さない）
-    function submitMemo(date, body, trainingLine) {
-      if (!D.memoPending) D.memoPending = { date: date, body: body, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: !!trainingLine };
+    function submitMemo(date, body, trainingLine, memberSaved) {
+      if (!D.memoPending) D.memoPending = { date: date, body: body, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: !!trainingLine, memberSaved: !!memberSaved };
       var mp = D.memoPending;
       if (!save()) { window.alert('この端末に送信の控えを残せないため、指導メモを送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
       sending = true;
@@ -1525,16 +1602,22 @@
       kWrite('k_addNote', { customerId: cid, sessionDate: mp.date, tag: mp.tag, condition: '', body: mp.body, nextPlan: '' }, mp.reqId, { kind: 'training', customerId: cid }).then(function (w) {
         if (!w || w.code === 'BAD_RESPONSE' || w.code === 'STALE') { unknownMemo(); return; }
         sending = false;
-        if (w.success) { lsDel(draftKey); if (same()) doneScreen(trainingLine, true, mp.body, mp.date); return; }
+        if (w.success) {
+          //   お客様の欄が保存されずに残っている（古い Worker）＝その欄だけ下書きに残す
+          if (memberOf(D.member)) { D.memoPending = null; D.memo = ''; D.memoReqId = newReqId(); save(); } else lsDel(draftKey);
+          if (same()) doneScreen(trainingLine, true, mp.body, mp.date, !!mp.memberSaved);
+          return;
+        }
         //   はっきり断られた＝残っていない。本文は下書きに残したまま、次は新しい送信番号
         D.memoPending = null; D.memoReqId = newReqId(); save();
         if (same()) { window.alert('指導メモは保存できませんでした（' + errText(w) + '）。内容は残っています。もう一度「保存する」を押してください。'); again(); }
       }, unknownMemo);
     }
-    function doneScreen(trainingLine, memoSaved, memoBody, date) {
+    function doneScreen(trainingLine, memoSaved, memoBody, date, memberSaved) {
       c.innerHTML = '';
       c.appendChild(el('div', { class: 'k-h', text: '記録しました' }));
       if (trainingLine) c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:4px;', text: trainingLine }));
+      if (memberSaved) c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:4px;', text: 'お客様に見える欄も保存しました（お客様の画面に出ます）' }));
       if (memoSaved) c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:8px;', text: '指導メモも保存しました' }));
       if (!memoBody) c.appendChild(el('button', { class: 'k-btn', text: '続けて指導メモを書く', onclick: function () { open(cid, cname, 'notes', { kind: 'note', data: { sessionDate: date, tag: 'training', condition: '', body: '', nextPlan: '' } }); } }));
       c.appendChild(el('button', { class: 'k-btn out', text: '記録の一覧を見る', onclick: function () { if (same()) open(cid, cname, 'training', null, 'replace'); } }));
@@ -1543,13 +1626,15 @@
 
     function send(payload, reqId) {
       if (sending) return;   // ★連打・送信中の再保存を止める（関門②）
+      //   ★古い Worker（版 32 未満）には送らない＝お客様の欄が session から切り離されない（Codex 関門②）。入力は下書きに残る
+      if (!schemaOk({ karteSchema: cur.trSchema })) { window.alert(SCHEMA_MSG); return; }
       //   ★送る直前に、トレーナー・顧客が下書きと同じかを確かめる（違えば送らない・下書きも消さない）
       if (!same() || D.tid !== tid || D.cid !== cid || payload.customerId !== cid) { window.alert('開いているお客様が変わったため送りませんでした。カルテを開き直してください。'); return; }
       D.pending = { payload: payload, reqId: reqId };
       //   ★送った中身を端末に固定できないなら送らない（送り直しで二重にしないための前提）
       if (!save()) { D.pending = null; window.alert('この端末に送信の控えを残せないため、送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
-      sending = true;
-      Array.prototype.forEach.call(c.querySelectorAll('button,input,select'), function (x) { x.disabled = true; });
+      sending = true;   // ★送信中はお客様の欄・メモも止める（送った後に書き足した分が、成功で下書きから消えないように）
+      Array.prototype.forEach.call(c.querySelectorAll('button,input,select,textarea'), function (x) { x.disabled = true; });
       if (saveBtn) saveBtn.textContent = '送信中…';
       function back() { if (same()) open(cid, cname, 'training', null, 'replace'); }
       function unknown() { sending = false; if (same()) { window.alert('通信の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); back(); } }
@@ -1558,15 +1643,22 @@
         sending = false;
         if (w.success) {
           var memoBody = String(D.memo || '').trim();
+          //   ★お客様の欄が書けたかは応答の mnoteId で確かめる（古い Worker は member を黙って捨てて success を返す）
+          var memberSent = !!payload.member && !!w.mnoteId, memberLost = !!payload.member && !w.mnoteId;
+          //   ★お客様の欄はセットと同じ1回で書けた＝セットと同じ時点で下書きから消す（設計35 改訂1-2）。書けていなければ欄は下書きに残す
+          if (!memberLost) { D.member = null; }
+          D.mReqId = newReqId();
           //   ★メモがあるなら下書きは消さない：セットだけを外し、メモは送信待ちとして残す（別のお客様を開いていても元のお客様の下書きに残る）
-          if (memoBody) { D.items = []; D.pending = null; D.reqId = newReqId(); D.memoPending = { date: payload.sessionDate, body: memoBody, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: true }; save(); }
+          if (memoBody) { D.items = []; D.pending = null; D.reqId = newReqId(); D.memoPending = { date: payload.sessionDate, body: memoBody, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: true, memberSaved: memberSent }; save(); }
+          else if (memberLost) { D.items = []; D.pending = null; D.reqId = newReqId(); save(); }
           else lsDel(draftKey);
+          if (memberLost) window.alert('トレーニングの記録は保存しました。お客様の欄は保存されていません（システムの更新中の可能性があります）。内容は今日の記録の画面に残っています。');
           if (!same()) return;   // 別の顧客を開いていたら画面は触らない
           var n = 0; payload.items.forEach(function (x) { n += x.sets.length; });
           var line = md(payload.sessionDate) + '・' + payload.items.length + '種目・' + n + 'セット';
-          if (!memoBody) { doneScreen(line, false, '', payload.sessionDate); return; }
+          if (!memoBody) { doneScreen(line, false, '', payload.sessionDate, memberSent); return; }
           c.innerHTML = ''; c.appendChild(msg('記録しました。指導メモを保存しています…'));
-          submitMemo(payload.sessionDate, memoBody, line);
+          submitMemo(payload.sessionDate, memoBody, line, memberSent);
           return;
         }
         //   はっきり断られた＝記録されていない。pending を解き、次は新しい送信番号（鍵は固定したもの）
@@ -1578,18 +1670,55 @@
         back();
       }, unknown);
     }
+    //   セットが無く、お客様に見える欄だけを送る（k_saveMemberNote・新規・トレーニングなし＝設計35 改訂3-1）。扱いはトレーニングの send と同じ
+    //     ・結果が分からない＝同じ送信番号で「同じ内容で送り直す」（D.mpending）。はっきり断られた＝欄は残したまま、次は新しい送信番号
+    function sendMember(payload, reqId) {
+      if (sending) return;
+      if (!schemaOk({ karteSchema: cur.trSchema })) { window.alert(SCHEMA_MSG); return; }   // 古い Worker には送らない（send と同じ）
+      if (!same() || D.tid !== tid || D.cid !== cid || payload.customerId !== cid) { window.alert('開いているお客様が変わったため送りませんでした。カルテを開き直してください。'); return; }
+      D.mpending = { payload: payload, reqId: reqId };
+      if (!save()) { D.mpending = null; window.alert('この端末に送信の控えを残せないため、送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
+      sending = true;
+      Array.prototype.forEach.call(c.querySelectorAll('button,input,select,textarea'), function (x) { x.disabled = true; });
+      if (saveBtn) saveBtn.textContent = '送信中…';
+      function back() { if (same()) open(cid, cname, 'training', null, 'replace'); }
+      function unknown() { sending = false; if (same()) { window.alert('通信の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); back(); } }
+      kWrite('k_saveMemberNote', payload, reqId, { kind: 'training', customerId: cid }).then(function (w) {
+        if (!w || w.code === 'BAD_RESPONSE') { unknown(); return; }
+        sending = false;
+        if (w.success) {
+          var memoBody = String(D.memo || '').trim();
+          D.mpending = null; D.member = null; D.mReqId = newReqId();
+          if (memoBody) { D.items = []; D.memoPending = { date: payload.sessionDate, body: memoBody, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: false, memberSaved: true }; save(); }
+          else lsDel(draftKey);
+          if (!same()) return;
+          if (!memoBody) { doneScreen('', false, '', payload.sessionDate, true); return; }
+          c.innerHTML = ''; c.appendChild(msg('お客様に見える欄を保存しました。指導メモを保存しています…'));
+          submitMemo(payload.sessionDate, memoBody, '', true);
+          return;
+        }
+        D.mpending = null; D.mReqId = newReqId(); save();
+        if (!same()) return;
+        window.alert('お客様に見える欄は保存できませんでした（' + errText(w) + '）。内容は残っています。');
+        back();
+      }, unknown);
+    }
     var saveBtn = null;
     var saveBar = el('div', { class: 'k-savebar' });
     c.appendChild(saveBar);
     saveBar.appendChild(saveBtn = el('button', { class: 'k-btn', text: '保存する', onclick: function () {
       var items = buildPayload(D.items);
       var memo = String(D.memo || '').trim();
+      var mem = memberOf(D.member);
       if (!items.length) {
-        if (!memo) { window.alert('実施したセットに✓を付けるか、指導メモを書いてください。'); return; }
+        if (!memo && !mem) { window.alert('実施したセットに✓を付けるか、指導メモ・お客様に見える欄を書いてください。'); return; }
+        //   ★トレーニングの無い日は、日のタグだけでは会員のどこにも出ない＝「お客様へ」か「次回までに」が要る（Codex 関門②）
+        if (mem && !mem.message && !(mem.todo && mem.todo.length)) { window.alert('トレーニングの記録が無い日は、日のタグだけでは保存できません。「お客様へ」か「次回までに」を書いてください。'); return; }
         var n0 = uncheckedCount(D.items);
-        if (n0 && !window.confirm('✓の付いたセットが無いため、指導メモだけを保存します。入力中の ' + n0 + ' セットは消えます。よいですか？')) return;
+        if (n0 && !window.confirm('✓の付いたセットが無いため、' + (mem ? 'お客様に見える欄' + (memo ? 'と指導メモ' : '') : '指導メモ') + 'だけを保存します。入力中の ' + n0 + ' セットは消えます。よいですか？')) return;
         if (sending) return;
         D.items = []; save();
+        if (mem) { sendMember({ rev: 0, customerId: cid, sessionDate: D.sessionDate, message: mem.message, todo: mem.todo, tags: mem.tags }, D.mReqId); return; }
         submitMemo(D.sessionDate, memo, '');
         return;
       }
@@ -1597,9 +1726,11 @@
       if (n && !window.confirm('記録されない入力が ' + n + ' セットあります（✓が無い・重量か回数が空）。保存すると、その入力は消えます。よいですか？')) return;
       var total = 0; items.forEach(function (it) { total += it.sets.length; });
       if (total > TR_TOTAL) { window.alert('1回の記録は合計60セットまでです。'); return; }
-      send({ customerId: cur.customerId, sessionDate: D.sessionDate, items: items }, D.reqId);
+      var payload = { customerId: cur.customerId, sessionDate: D.sessionDate, items: items };
+      if (mem) payload.member = mem;   // 空なら送らない（member なし＝今までと同じ形）
+      send(payload, D.reqId);
     } }));
-    saveBar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: '記録と指導メモをまとめて保存し、「トレーニング」の画面に戻ります' }));
+    saveBar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: '記録・指導メモ・お客様に見える欄をまとめて保存し、「トレーニング」の画面に戻ります' }));
     refreshTop(); draw();
     if (!restored) save();
     return c;
@@ -1906,6 +2037,106 @@
     });
   }
 
+  // ---------------------------------------------------------------- お客様の見え方（設計35 C2）
+  //   k_memberPreview の応答（会員の c_myKarte と同じ形＋枚の mnoteId・rev・sessionId・authorIsMe）を、会員の画面と同じ部品（index.html の MemberKarteView）で描く
+  //   ★「直す」「消す」は書いた本人（authorIsMe）かオーナーだけ。消すは確かめてから
+  //   ★表示は部品の中で textContent（ここでは HTML を組み立てない）
+  var PREVIEW_TABS = [['home', '概要'], ['body', '体組成'], ['training', 'トレーニング'], ['notes', '指導の履歴'], ['contract', '契約']];
+  function memberPreviewSub(box, mode, tab0) {
+    navPush({ cid: cur.customerId, tab: 'summary', sub: 'mpreview' }, mode);
+    box.innerHTML = '';
+    cur.dirty = false;
+    entryHead('お客様の見え方', '概要に戻る');
+    var askedFor = cur.customerId, tab = tab0 || 'home', data = null, ui = { metric: 'weight', ex: '', openDay: '' };
+    var seg = el('div', { class: 'k-pills', style: 'gap:6px;', role: 'tablist' });
+    var area = el('div', { class: 'k-mpreview', style: 'display:flex;flex-direction:column;gap:10px;' });
+    box.appendChild(el('div', { class: 'k-sub', text: 'お客様の画面と同じ組み立てで出しています。「お客様へ」は保存した時点でお客様に見えます。' }));
+    box.appendChild(seg); box.appendChild(area);
+    function reload() { memberPreviewSub(box, 'none', tab); }
+    function draw() {
+      seg.innerHTML = '';
+      PREVIEW_TABS.forEach(function (p) {
+        seg.appendChild(el('button', { type: 'button', role: 'tab', class: 'k-pill' + (p[0] === tab ? ' on' : ''), 'aria-selected': p[0] === tab ? 'true' : 'false', text: p[1], onclick: function () { tab = p[0]; draw(); } }));
+      });
+      area.innerHTML = '';
+      if (!window.MemberKarteView) { area.appendChild(msg('表示の部品が読み込まれていません。画面を開き直してください。', true)); return; }
+      if (!data) { area.appendChild(msg('読み込み中…')); return; }
+      if (!data.success) { area.appendChild(msg(errText(data), true)); return; }
+      window.MemberKarteView.tab(area, data, tab, { ui: ui, goTab: function (t2) { tab = t2; draw(); }, noteActions: noteActions, showTagOnly: true,
+        remainNote: '残り回数は、お客様の画面ではここに出ます（予約画面の残数と同じ）。' });
+    }
+    //   枚の操作（指導の履歴のタブ）
+    function noteActions(n, cardEl) {
+      if (!n || !n.mnoteId || !(n.authorIsMe === true || (window.state && state._isOwner))) return null;
+      return el('div', { style: 'display:flex;gap:12px;margin-top:4px;' }, [
+        el('button', { type: 'button', class: 'k-btn out small', text: '直す', 'aria-label': md(n.date) + 'のお客様への欄を直す', onclick: function () { editNote(n, cardEl); } }),
+        el('button', { type: 'button', class: 'k-btn out small k-danger', style: 'margin-left:auto;', text: '消す', 'aria-label': md(n.date) + 'のお客様への欄を消す', onclick: function () {
+          if (!window.confirm(md(n.date) + ' の「お客様へ」を消しますか？\nお客様の画面からも消えます。')) return;
+          kWrite('k_deleteMemberNote', { mnoteId: n.mnoteId, rev: n.rev }, newReqId()).then(function (w) {
+            if (!w || !w.success) { window.alert(errText(w)); return; }
+            if (cur.customerId === askedFor) reload();
+          });
+        } })]);
+    }
+    //   日のタグ：その枚の tags だけを使う（日付から推測しない＝同じ日に2回あっても取り違えない・Codex 関門②）。
+    //     載っていなければ null＝この画面ではタグを直させない（空から作って上書きしない）
+    function tagsOf(n) { return Array.isArray(n.tags) ? n.tags.slice() : null; }
+    function editNote(n, cardEl) {
+      var known = tagsOf(n);
+      //   タグを直せるのは、タグが分かっていて、トレーニングに付いた枚だけ（トレーニングの無い枚のタグは会員に出ない）
+      var tagsEditable = !!known && !!n.sessionId;
+      var m = { message: String(n.message || ''), todo: (Array.isArray(n.todo) ? n.todo : []).concat(['', '', '']).slice(0, MEMBER_MAX.todo), tags: (known || []).filter(function (x) { return DAY_TAGS.indexOf(x) >= 0; }) };
+      var reqId = newReqId(), busy = false, tagsTouched = false;   // ★編集は送った鍵だけ置き換わる＝タグは触ったときだけ送る
+      cardEl.innerHTML = '';
+      cardEl.appendChild(el('div', { style: 'font-size:14px;font-weight:700;color:var(--k-acc);', text: md(n.date) + ' のお客様に見える欄を直す' }));
+      var ta = el('textarea', { rows: '4', maxlength: String(MEMBER_MAX.message), 'aria-label': 'お客様へ', class: 'k-memo' }); ta.value = m.message;
+      ta.oninput = function () { m.message = ta.value; };
+      cardEl.appendChild(ta);
+      m.todo.forEach(function (v, i) {
+        var ti = el('input', { type: 'text', maxlength: String(MEMBER_MAX.todoLen), 'aria-label': '次回までに ' + (i + 1) + 'つ目', autocomplete: 'off', style: 'box-sizing:border-box;width:100%;min-height:44px;border:1px solid #8692a6;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;font-family:inherit;' });
+        ti.value = v || ''; ti.oninput = function () { m.todo[i] = ti.value; };
+        cardEl.appendChild(ti);
+      });
+      var tg = el('div', { class: 'k-pills', style: 'gap:6px;' });
+      function drawTags() {
+        tg.innerHTML = '';
+        DAY_TAGS.forEach(function (x) {
+          var onT = m.tags.indexOf(x) >= 0;
+          tg.appendChild(el('button', { type: 'button', class: 'k-pill' + (onT ? ' on' : ''), 'aria-pressed': onT ? 'true' : 'false', text: x, onclick: function () {
+            var k = m.tags.indexOf(x);
+            if (k >= 0) m.tags.splice(k, 1); else { if (m.tags.length >= MEMBER_MAX.tags) { window.alert('日のタグは' + MEMBER_MAX.tags + 'つまでです。'); return; } m.tags.push(x); }
+            tagsTouched = true; drawTags();
+          } }));
+        });
+      }
+      if (tagsEditable) { drawTags(); cardEl.appendChild(tg); }
+      var saveB = el('button', { type: 'button', class: 'k-btn', text: '保存する', onclick: function () {
+        if (busy) return;
+        var mem = memberOf(m);
+        if (!mem) { window.alert('空にするときは「消す」を使ってください。'); return; }
+        if (!n.sessionId && !mem.message && !(mem.todo && mem.todo.length)) { window.alert('トレーニングの記録が無い日は、「お客様へ」か「次回までに」を残してください。消すときは「消す」を使ってください。'); return; }
+        busy = true; saveB.textContent = '送信中…';
+        var body = { mnoteId: n.mnoteId, rev: n.rev, message: mem.message, todo: mem.todo };   // 本文の最上位に置く（member で包まない）
+        if (tagsTouched) body.tags = mem.tags;
+        kWrite('k_saveMemberNote', body, reqId).then(function (w) {
+          busy = false; saveB.textContent = '保存する';
+          if (!w || w.code === 'BAD_RESPONSE') { window.alert('結果を確かめられませんでした。もう一度「保存する」を押すと同じ内容で送ります（二重にはなりません）。'); return; }
+          if (w.code === 'BAD_STATE') { window.alert('全部を空にするときは「消す」を使ってください。'); return; }
+          if (!w.success) { window.alert(errText(w)); return; }
+          if (cur.customerId === askedFor) reload();
+        }, function () { busy = false; saveB.textContent = '保存する'; window.alert('結果を確かめられませんでした。もう一度「保存する」を押すと同じ内容で送ります（二重にはなりません）。'); });
+      } });
+      cardEl.appendChild(el('div', { class: 'k-grid2', style: 'margin-top:4px;' }, [saveB, el('button', { type: 'button', class: 'k-btn out', text: 'やめる', onclick: function () { cur.dirty = false; draw(); } })]));
+      cardEl.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '保存するとお客様の画面にそのまま出ます。痛み・診断・社内のことは書かない' }));
+    }
+    draw();
+    kRead('k_memberPreview', { customerId: askedFor }).then(function (r) {
+      if (cur.customerId !== askedFor || !area.isConnected) return;   // ★頼んだお客様＝いまのお客様のときだけ
+      data = r || { success: false, code: 'BAD_RESPONSE' };
+      draw();
+    });
+  }
+
   // ---------------------------------------------------------------- 一覧
   var FLAG = {
     caution: ['注意あり', null, 'soft'],
@@ -1992,6 +2223,6 @@
 
   window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
     //   検査用（純粋な部分だけ）
-    _t: { NEED_SCHEMA: NEED_SCHEMA, buildPayload: buildPayload, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
+    _t: { NEED_SCHEMA: NEED_SCHEMA, memberOf: memberOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
 })();
