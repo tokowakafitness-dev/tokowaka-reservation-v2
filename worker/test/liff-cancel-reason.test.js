@@ -348,7 +348,7 @@ const msg = (w) => ($(w, 'cxlBody').querySelector('.cxl-msg') || {}).textContent
 
 // ================= 8. 配線（版の印・画面の一覧）=================
 {
-  ok('8-1 版の印を上げた', /var LIFF_BUILD = '2026-11-06g /.test(HTML));
+  ok('8-1 版の印を上げた', /var LIFF_BUILD = '2026-11-(06[g-z]|0[7-9]|[1-3]\d)/.test(HTML));
   ok('8-2 画面の一覧に s-cxl（戻るの決まりに乗る）・会員の画面としてトレーナーの見た目を外す', /var SCREENS = \[[^\]]*'s-cxl'/.test(HTML) && /\['s-home', 's-register', 's-myres', 's-cxl', 's-mk'\]/.test(HTML));
   ok('8-3 ★予約ページのグローバルな viewport は変えていない', HTML.includes('<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'));
   ok('8-4 ひとことの欄は16px（iPhone で拡大されない）', /#s-cxl textarea \{[^}]*font-size:16px/.test(STYLE));

@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-06b お客様に見える欄（お客様へ・次回までに・日のタグ）・お客様の見え方（設計35 C2）';
+  var KARTE_BUILD = '2026-11-06c 保存の前にトークンを取り直す・種目を全員で共有し部位を付ける・自重・休憩タイマーの切り替え';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -55,12 +55,19 @@
     wrist_r: ['f', 22, 102], wrist_l: ['f', 98, 102], hip_r: ['f', 48, 114], hip_l: ['f', 72, 114], knee_r: ['f', 48, 150], knee_l: ['f', 72, 150],
     ankle_r: ['f', 48, 184], ankle_l: ['f', 72, 184], upper_back: ['b', 60, 62], lower_back: ['b', 60, 98] };
   var EXERCISES = ['ベンチプレス', 'チェストプレス', 'スクワット', 'レッグプレス', 'ヒップスラスト', 'デッドリフト', 'ラットプルダウン', 'シーテッドロウ', 'ショルダープレス', 'サイドレイズ', 'アームカール', 'プランク'];
-  //   上から順に当てる（「ショルダープレス」「プレスダウン」「レッグレイズ」を胸・脚に取られないよう、胸は最後）
-  var PARTS = [['体幹', /プランク|クランチ|腹筋|レッグレイズ|ドローイン|デッドバグ/],
-    ['脚・尻', /スクワット|レッグ|ランジ|ヒップ|デッドリフト|ブルガリアン|カーフ|アダクション|アブダクション/],
-    ['背中', /ラット|ロウ|懸垂|プルダウン|背筋|プルオーバー/],
-    ['肩', /ショルダー|サイドレイズ|リアレイズ|フロントレイズ|アップライト/], ['腕', /カール|トライセプス|キックバック|プレスダウン/],
-    ['胸', /ベンチ|チェスト|プレス|フライ|腕立て|ディップス/]];
+  //   部位の鍵と表示名（鍵は worker/src/lib/karte-exercises.js の EXERCISE_PARTS・表の CHECK と同じ＝検査で一致を確かめる）
+  var PART_KEYS = [['chest', '胸'], ['legs', '脚・尻'], ['back', '背中'], ['shoulder', '肩'], ['arm', '腕'], ['core', '体幹'], ['other', 'その他']];
+  //   種目名からの推定（共有の一覧に部位が無いときだけ使う）。上から順に当てる（「ショルダープレス」「プレスダウン」「レッグレイズ」を胸・脚に取られないよう、胸は最後）
+  var PART_RULES = [['core', /プランク|クランチ|腹筋|レッグレイズ|ドローイン|デッドバグ/],
+    ['legs', /スクワット|レッグ|ランジ|ヒップ|デッドリフト|ブルガリアン|カーフ|アダクション|アブダクション/],
+    ['back', /ラット|ロウ|懸垂|プルダウン|背筋|プルオーバー/],
+    ['shoulder', /ショルダー|サイドレイズ|リアレイズ|フロントレイズ|アップライト/], ['arm', /カール|トライセプス|キックバック|プレスダウン/],
+    ['chest', /ベンチ|チェスト|プレス|フライ|腕立て|ディップス/]];
+  //   共有の種目の一覧（k_exercises）：名前 → 部位の鍵（null＝まだ分類していない）。トレーニングのタブを開くたびに読み直す
+  var exMaster = {};
+  var exTruncated = false;   // k_exercises が上限で切れている（画面に「一部だけ表示」と出す）
+  var EX_NAME_MAX = 50;
+  function exName(v) { return String(v == null ? '' : v).trim(); }   // Worker の normalizeExerciseName と同じ（前後の空白だけ・50字）
   var MEASURE = [
     ['weight_kg', '体重', 'kg', 0.1], ['body_fat_pct', '体脂肪率', '%', 0.1], ['skeletal_muscle_kg', '骨格筋量', 'kg', 0.1],
     ['lean_kg', '除脂肪量', 'kg', 0.1], ['body_water_l', '体水分量', 'L', 0.1], ['visceral_fat', '内臓脂肪', '', 1],
@@ -182,6 +189,8 @@
     '#karteRoot .k-headrow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-10px 0 2px;}',
     '#karteRoot .k-link{min-height:44px;padding:0 2px 0 8px;border:none;background:transparent;color:var(--k-acc);font-size:13px;font-family:inherit;white-space:nowrap;}',
     '#karteRoot .k-caution .k-link{color:var(--k-warn);}',
+    '#karteRoot .k-rtg{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid #8692a6;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
+    '#karteRoot .k-rtg[aria-pressed=true]{border:1.5px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}'
   ].join('\n');
   function ensureStyle() {
@@ -240,7 +249,9 @@
     FORBIDDEN: 'この操作の権限がありません。', NOT_FOUND: '見つかりませんでした。', REQ_REUSED: '送信が重なりました。開き直してください。',
     TOTAL_SETS: '1回の記録は合計60セットまでです。',
     KARTE_OFF: 'カルテは一時停止中です。', TOO_LARGE: '入力が長すぎます。', BAD_REQUEST: '入力を確認してください。',
-    EXISTS: 'この記録には、すでにお客様に見える欄があります。「お客様の見え方」から直してください。'
+    EXISTS: 'この記録には、すでにお客様に見える欄があります。「お客様の見え方」から直してください。',
+    STALE: 'ログインの更新が必要です。LINE から開き直してください（入力内容は端末に残っています）。',
+    EX_LIMIT: '種目の登録は500件までです。'
   };
   function errText(r) { return (r && ERR[r.code]) || ('うまくいきませんでした（' + ((r && (r.code || r.detail)) || '通信') + '）'); }
 
@@ -261,35 +272,93 @@
     });
   }
   // 書き込み：reqId は呼ぶ側が「保存1回」につき1つ作って渡す。draft は退避用（読み直して戻す）
+  //   ★送る前に手元のトークンの発行時刻を見る。9分を超えていたら送らずに取り直す（Worker は10分超を 401 で断る＝I46・2026-11-06）
   function kWrite(action, params, reqId, draft) {
+    adoptFreshToken();
+    if (tokenNeedsRefresh()) return reauth(draft);
     var body = { action: action, idToken: idToken, clientReqId: reqId };
     for (var k in params) body[k] = params[k];
     return post(body).then(function (r) {
       if (r && r.code === 'UNAUTHORIZED') {
         var fresh = (window.liff && liff.getIDToken) ? (liff.getIDToken() || '') : '';
-        if (fresh && fresh !== idToken) { idToken = fresh; body.idToken = fresh; return post(body).then(function (r2) { return handleStale(r2, draft); }); }
+        if (fresh && fresh !== idToken) { idToken = fresh; body.idToken = fresh; return post(body).then(function (r2) { return Promise.resolve(handleStale(r2, draft)).then(doneWrite); }); }
         return handleStale(r, draft);
       }
-      return r;
+      return doneWrite(r);
     });
   }
-  //   ★トークンが古い（発行から10分超）＝入力を退避して読み直す。読み直しても同じなら、開き直しを案内
+  //   新しいトークンで書けた＝読み直しの印を消す（次にトークンが古くなったら、また1回だけ読み直せる）
+  function doneWrite(r) { if (r && r.success) { try { sessionStorage.removeItem(REAUTH_KEY); } catch (e) {} } return r; }
+  //   ---- トークンの鮮度（画面の側の見積もり。最終の判定は Worker）
+  var TOKEN_REFRESH_S = 540;          // 9分。Worker の上限（KARTE_LIMITS.TOKEN_MAX_AGE_S=600）より1分早く取り直す
+  var REAUTH_KEY = 'karte_reauth';    // 読み直し済みの印（sessionStorage・中身は印を付けた時刻）
+  var REAUTH_TTL = 10 * 60 * 1000;    // 印が効くのは10分（それより前の印は無いものとして扱う）
+  function adoptFreshToken() {
+    try { var f = (window.liff && liff.getIDToken) ? (liff.getIDToken() || '') : ''; if (f && f !== idToken) idToken = f; } catch (e) {}
+  }
+  /** 送るトークンの iat（秒）。読めなければ null（＝画面では判定しない・送って Worker に任せる） */
+  function tokenIat() {
+    try {
+      //   LIFF が持っているトークンが送るものと同じなら、LIFF の読み解きを使う
+      if (window.liff && typeof liff.getDecodedIDToken === 'function' && liff.getIDToken && liff.getIDToken() === idToken) {
+        var dd = liff.getDecodedIDToken();
+        if (dd && typeof dd.iat === 'number') return dd.iat;
+      }
+    } catch (e) {}
+    try {
+      var p = String(idToken || '').split('.');
+      if (p.length !== 3) return null;
+      var s = p[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (s.length % 4) s += '=';
+      var o = JSON.parse(atob(s));
+      return (o && typeof o.iat === 'number') ? o.iat : null;
+    } catch (e) { return null; }
+  }
+  function reauthMarked() {
+    try {
+      var v = Number(sessionStorage.getItem(REAUTH_KEY) || 0), age = Date.now() - v;
+      if (v > 0 && age >= 0 && age < REAUTH_TTL) return true;
+      if (v > 0 && age < 0) sessionStorage.removeItem(REAUTH_KEY);   // ★未来の時刻（時計を戻した等）は無効にして消す＝印が永久に効かない
+      return false;
+    } catch (e) { return false; }
+  }
+  /**
+   * 送る前に取り直すか。★読み直したばかり（印が効いている）なら画面では判定しない＝そのまま送る
+   *   （端末の時計が進んでいると、新しいトークンでも古く見えて読み直しが止まらないため。判定は Worker の 401 に任せる）
+   */
+  function tokenNeedsRefresh() {
+    var iat = tokenIat();
+    if (iat == null || reauthMarked()) return false;
+    return (Date.now() / 1000 - iat) > TOKEN_REFRESH_S;
+  }
+  //   ★トークンが古い（発行から10分超）＝入力を退避して取り直す。読み直しても同じなら、開き直しを案内
   function handleStale(r, draft) {
     if (!r || r.code !== 'UNAUTHORIZED') return r;
+    return reauth(draft);
+  }
+  //   取り直し：入力を端末に退避 → LINE からいったんログアウト → 読み直し（liff.init が新しいトークンを取る）
+  //     ★LINE アプリの中でも logout する（読み直しだけでは liff.init が保存済みの同じトークンを使い、直らない）
+  //     ★印（REAUTH_KEY）は新しいトークンで書けたときに消す（doneWrite）。印が効いているあいだにまた古ければ案内（入力は端末に残る）
+  function reauth(draft) {
     //   ★トレーニングの送信中に別の顧客を開いていたら、読み直さない（その顧客の画面を奪わない・下書きの pending は端末に残る）
-    if (draft && draft.kind === 'training' && draft.customerId && draft.customerId !== cur.customerId) return { success: false, code: 'BAD_RESPONSE' };
+    if (draft && draft.kind === 'training' && draft.customerId && draft.customerId !== cur.customerId) return Promise.resolve({ success: false, code: 'BAD_RESPONSE' });
     try {
-      if (!sessionStorage.getItem('karte_reauth')) {
-        sessionStorage.setItem('karte_reauth', '1');
+      if (!reauthMarked()) {
+        sessionStorage.setItem(REAUTH_KEY, String(Date.now()));
         var isTr = !!(draft && draft.kind === 'training');
-        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ customerId: isTr ? draft.customerId : cur.customerId, name: isTr ? '' : cur.name, tab: isTr ? 'training' : cur.tab, draft: isTr ? { kind: 'training' } : (draft || null), at: Date.now() }));   // ★トレーニングは氏名を残さない（開き直したら概要から取る）
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ customerId: isTr ? draft.customerId : cur.customerId, name: '', tab: (draft && draft.tab) || (isTr ? 'training' : cur.tab), draft: isTr ? (draft.ex ? { kind: 'training', ex: draft.ex } : { kind: 'training' }) : (draft || null), at: Date.now() }));   // ★氏名は残さない（どの画面も・開き直したら概要から取る）。トレーニングの中身は下書き（localStorage）にある
+        try { if (window.liff && typeof liff.logout === 'function') liff.logout(); } catch (e) {}
         reloadPage();
         return new Promise(function () {});
       }
     } catch (e) {}
-    return { success: false, code: 'STALE', message: 'ログインの更新が必要です。LINE から開き直してください（入力内容は端末に残っています）。' };
+    return Promise.resolve({ success: false, code: 'STALE', message: ERR.STALE });
   }
+  /** 送る前に取り直しが要るか（トレーニングの保存が下書きに「送信中」を固定する前に確かめる＝送っていないのに「結果が分からない」にしない） */
+  function needReauthBeforeSend() { adoptFreshToken(); return tokenNeedsRefresh(); }
   //   読み直しは1か所（検査では window.__karteReload で差し替える）
+  //   退避した入力が「いま開いている顧客」のものか（読み直し後に戻すときに照合する）
+  function draftFor(draft, kind) { return !!(draft && draft.kind === kind && draft.cid && draft.cid === cur.customerId); }
   function reloadPage() { if (typeof window.__karteReload === 'function') window.__karteReload(); else location.reload(); }
 
   // ---------------------------------------------------------------- 画面の枠
@@ -579,7 +648,7 @@
 
   // ---------------------------------------------------------------- 概要
   function tabSummary(box, draft) {
-    if (draft && draft.kind === 'sub' && draft.sub === 'mpreview') { memberPreviewSub(box, draft.navMode); return; }   // 戻る・進む・送り直しの画面から
+    if (draft && draft.kind === 'sub' && draft.sub === 'mpreview') { memberPreviewSub(box, draft.navMode, draft.edit && draft.cid === cur.customerId ? 'notes' : null, draft.edit && draft.cid === cur.customerId ? draft.edit : null); return; }   // 戻る・進む・送り直しの画面から
     box.appendChild(msg('読み込み中…'));
     cur.summary = null;
     Promise.all([loadSummary(), kRead('k_body', { customerId: cur.customerId })]).then(function (rs) {
@@ -842,11 +911,11 @@
     });
   }
 
-  function membershipCard() {
-    var d = field('発効日', today(), 'date'); d.el.max = today();
+  function membershipCard(dd) {   // dd＝読み直しの前に入れていた発効日（退避から戻す）
+    var d = field('発効日', (dd && dd.effectiveDate) || today(), 'date'); d.el.max = today();
     function rec(kind) {
       if (!window.confirm((kind === 'withdrawn' ? '退会' : '再入会') + '（' + d.get() + '）を記録しますか？')) return;
-      kWrite('k_recordMembership', { customerId: cur.customerId, kind: kind, effectiveDate: d.get() }, newReqId()).then(function (r) {
+      kWrite('k_recordMembership', { customerId: cur.customerId, kind: kind, effectiveDate: d.get() }, newReqId(), { kind: 'membership', cid: cur.customerId, tab: 'contract', data: { effectiveDate: d.get() } }).then(function (r) {
         window.alert(r && r.success ? '記録しました。' : errText(r));
       });
     }
@@ -984,7 +1053,9 @@
         el('div', { class: 'k-sub', style: 'margin-top:6px;', text: '※ 数字の動きから出す目安で、診断ではありません。' })]));
       box.appendChild(el('button', { class: 'k-btn out', text: '変化の理由を確かめる（指導の履歴へ）', onclick: function () { open(cur.customerId, cur.name, 'notes', { kind: 'reflect', data: {} }); } }));
 
-      box.appendChild(goalForm(r.goal));
+      var gf = goalForm(r.goal, draftFor(draft, 'goalLine') ? draft.data : null);
+      box.appendChild(gf);
+      if (draftFor(draft, 'goalLine')) { gf.classList.add('k-restored'); try { gf.scrollIntoView({ block: 'center' }); } catch (e) {} }
       var hist = card('最近の記録', []);
       (r.raw || []).forEach(function (m) {
         var parts = MEASURE.filter(function (f) { return m[f[0]] != null; }).map(function (f) { return f[1] + ' ' + m[f[0]] + f[2]; });
@@ -1041,15 +1112,16 @@
     return el('div', {}, [c, mbar]);
   }
 
-  function goalForm(goal) {
+  function goalForm(goal, dd) {   // dd＝読み直しの前に入れていた値（退避から戻す）
     var g = goal && goal.kind === 'line' ? goal.points : null;
-    var sd = field('開始日', g ? g[0].d : today(), 'date'), ed = field('目標の期限', g ? g[1].d : '', 'date');
-    var sw = field('開始体重（kg）', g ? g[0].v : '', 'number'), tw = field('目標体重（kg）', g ? g[1].v : '', 'number');
+    var sd = field('開始日', dd ? dd.startDate : (g ? g[0].d : today()), 'date'), ed = field('目標の期限', dd ? dd.endDate : (g ? g[1].d : ''), 'date');
+    var sw = field('開始体重（kg）', dd ? dd.startWeight : (g ? g[0].v : ''), 'number'), tw = field('目標体重（kg）', dd ? dd.targetWeight : (g ? g[1].v : ''), 'number');
     var c = card('体重の目標線（グラフの点線）', [el('div', { class: 'k-grid2' }, [sd.row, ed.row, sw.row, tw.row])]);
     if (goal && goal.kind === 'phases') c.appendChild(msg('いまは期ごとの目標（シートから写したもの）が使われています。ここで保存しても、期の目標が優先されます。'));
-    var reqId = newReqId();
+    var reqId = (dd && dd.reqId) || newReqId();
     c.appendChild(el('button', { class: 'k-btn out', text: '目標線を保存', onclick: function () {
-      kWrite('k_saveGoalLine', { customerId: cur.customerId, startDate: sd.get(), endDate: ed.get(), startWeight: sw.get(), targetWeight: tw.get() }, reqId).then(function (w) {
+      var gd = { startDate: sd.get(), endDate: ed.get(), startWeight: sw.get(), targetWeight: tw.get(), reqId: reqId };
+      kWrite('k_saveGoalLine', { customerId: cur.customerId, startDate: gd.startDate, endDate: gd.endDate, startWeight: gd.startWeight, targetWeight: gd.targetWeight }, reqId, { kind: 'goalLine', cid: cur.customerId, tab: 'body', data: gd }).then(function (w) {
         if (!w || !w.success) { window.alert(errText(w)); return; }
         window.alert('保存しました。'); open(cur.customerId, cur.name, 'body', null, 'replace');
       });
@@ -1058,7 +1130,17 @@
   }
 
   // ---------------------------------------------------------------- トレーニング
-  function partOf(ex) { for (var i = 0; i < PARTS.length; i++) if (PARTS[i][1].test(String(ex || ''))) return PARTS[i][0]; return 'その他'; }
+  //   部位：共有の一覧の部位 → 無ければ名前からの推定 → それも無ければ「その他」
+  function guessPart(ex) { for (var i = 0; i < PART_RULES.length; i++) if (PART_RULES[i][1].test(String(ex || ''))) return PART_RULES[i][0]; return 'other'; }
+  function partKeyOf(ex) { var k = exMaster[String(ex || '')]; return (k && PART_KEYS.some(function (p) { return p[0] === k; })) ? k : guessPart(ex); }
+  function partOf(ex) { return label(PART_KEYS, partKeyOf(ex)); }
+  //   重量の表示：0 は「自重」（自重の種目は重量を空のまま✓して 0 で保存する・2026-11-06）
+  function isBw(w) { return w !== '' && w != null && Number(w) === 0; }
+  function wLabel(w) { return isBw(w) ? '自重' : w + 'kg'; }
+  function setLineOf(st) {   // 「50kg × 10・10・8」／重さが混ざるときは「50kg×10・自重×12」
+    var oneW = st.every(function (x) { return x.weight_kg === st[0].weight_kg; });
+    return oneW ? wLabel(st[0].weight_kg) + ' × ' + st.map(function (x) { return x.reps; }).join('・') : st.map(function (x) { return wLabel(x.weight_kg) + '×' + x.reps; }).join('・');
+  }
   /** 種目ごとのまとめ（自己ベスト＝重量が最大のセット・同じなら回数が多い方） */
   function exerciseStats(sessions, ex) {
     var sets = [], days = {};
@@ -1116,19 +1198,19 @@
     return Object.keys(last).map(function (p) { var d = dayDiff(date, last[p]); return { part: p, days: d, text: d === 0 ? p + ' 今日実施済み' : p + ' ' + d + '日ぶり' }; })
       .sort(function (a, b) { return b.days - a.days; });
   }
-  /** 送る中身：✓のセットだけ（関門①-1） */
+  /** 送る中身：✓のセットだけ（関門①-1）。★重量が空の✓は自重＝0 で送る（回数が空のセットは今までどおり送らない・2026-11-06） */
   function buildPayload(items) {
     return items.map(function (it) {
-      return { exercise: String(it.exercise || '').trim(), sets: (it.sets || []).filter(function (s) { return s.done === true && s.w !== '' && s.r !== '' && s.w != null && s.r != null; })
-        .map(function (s) { var o = { weight: Number(s.w), reps: Number(s.r) }; var n = String(s.note || '').trim(); if (n) o.note = n.slice(0, 200); return o; }) };
+      return { exercise: String(it.exercise || '').trim(), sets: (it.sets || []).filter(function (s) { return s.done === true && s.r !== '' && s.r != null; })
+        .map(function (s) { var o = { weight: (s.w === '' || s.w == null) ? 0 : Number(s.w), reps: Number(s.r) }; var n = String(s.note || '').trim(); if (n) o.note = n.slice(0, 200); return o; }) };
     }).filter(function (it) { return it.exercise && it.sets.length; });
   }
-  //   記録されない入力：✓が無い・重量か回数が欠けている、のどちらかで、重量・回数・メモのどれかが入っているセット
+  //   記録されない入力：✓が無い・回数が欠けている、のどちらかで、重量・回数・メモのどれかが入っているセット（重量の空は自重＝記録される）
   function uncheckedCount(items) {
     var n = 0;
     items.forEach(function (it) { (it.sets || []).forEach(function (s) {
       var hasW = s.w !== '' && s.w != null, hasR = s.r !== '' && s.r != null, hasN = String(s.note || '').trim() !== '';
-      var recorded = s.done === true && hasW && hasR;
+      var recorded = s.done === true && hasR;
       if (!recorded && (hasW || hasR || hasN)) n++;
     }); });
     return n;
@@ -1160,7 +1242,11 @@
   function restMap() { try { var m = JSON.parse(localStorage.getItem('karte_rest_ex') || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; } }
   function restSecondsFor(ex) { var v = Number(restMap()[String(ex || '')]); return REST_CHOICES.indexOf(v) >= 0 ? v : REST_DEFAULT; }
   function setRestSecondsFor(ex, v) { if (REST_CHOICES.indexOf(Number(v)) < 0) return; var m = restMap(); m[String(ex || '')] = Number(v); try { localStorage.setItem('karte_rest_ex', JSON.stringify(m)); } catch (e) {} }
+  //   休憩タイマーを使うか（端末に覚える・既定はあり＝今までの動き・2026-11-06 オーナー）。なしなら✓で数えず、帯も秒数・終了音の行も出さない
+  function restOn() { try { return localStorage.getItem('karte_rest_on') !== 'off'; } catch (e) { return true; } }
+  function setRestOn(on) { try { localStorage.setItem('karte_rest_on', on ? 'on' : 'off'); } catch (e) {} if (!on) restStop(); }
   function restStart(sec) {
+    if (!restOn()) { restStop(); return; }   // ★二重の守り：呼ぶ側が止め忘れても数えない
     rest.endAt = Date.now() + (REST_CHOICES.indexOf(Number(sec)) >= 0 ? Number(sec) : REST_DEFAULT) * 1000; rest.buzzed = false; audioUnlock();
     if (rest.box) rest.box.classList.remove('k-rest-done');
     if (rest.iv) clearInterval(rest.iv);
@@ -1199,14 +1285,22 @@
     var viaNav = nav.restoring;   // ★戻る・進むで来たか（open の中で同期に読む）。戻ってきたときに途中の記録を自動で開き直すと、記録の画面から出られなくなる
     box.appendChild(msg('読み込み中…'));
     var askedFor = cur.customerId;
-    kRead('k_training', { customerId: cur.customerId }).then(function (r) {
+    //   共有の種目の一覧（部位つき）も一緒に読む。読めなければ（古い Worker・失敗）固定の種目と名前からの推定だけで続ける
+    var exP = kRead('k_exercises', {}).then(function (x) { return x; }, function () { return null; });
+    Promise.all([kRead('k_training', { customerId: cur.customerId }), exP]).then(function (rr) {
+      var r = rr[0], ex = rr[1];
+      if (ex && ex.success && Array.isArray(ex.exercises)) {
+        var m = {};
+        ex.exercises.forEach(function (e) { if (e && typeof e.name === 'string' && e.name) m[e.name] = (typeof e.part === 'string' ? e.part : null); });
+        exMaster = m; exTruncated = ex.truncated === true;
+      }
       if (cur.customerId !== askedFor || cur.tab !== 'training') return;   // ★頼んだ顧客＝いまの顧客のときだけ
       box.innerHTML = '';
       if (!r || !r.success) { cur.wantDayView = null; box.appendChild(msg(errText(r), true)); return; }
       cur.trSchema = r.karteSchema;   // 指導メモのタグを送ってよいか（今日の記録の中の指導メモ）
       var sessions = r.sessions || [];
       //   ★今日の記録は専用の画面（2026-11-05 モックどおり）。読み直し後の復元・戻る/進むでも専用画面を開き直す
-      if (draft && (draft.kind === 'training' || (draft.kind === 'sub' && draft.sub === 'trform'))) { trainingSub(box, sessions, draft.navMode); return; }
+      if (draft && (draft.kind === 'training' || (draft.kind === 'sub' && draft.sub === 'trform'))) { trainingSub(box, sessions, draft.navMode, draft.kind === 'training' ? draft.ex : null); return; }
       if (draft && draft.kind === 'sub' && draft.sub === 'trpick') { trPickSub(sessions, draft.navMode); return; }
       var d0 = lsGet(trKey());
       //   ★「途中」は種目が入っている（または送り直し待ち）ときだけ。開いただけの空の下書きで毎回自動で開かない
@@ -1235,11 +1329,11 @@
   var DOW = ['日', '月', '火', '水', '木', '金', '土'];
   function mdw(d) { var p = String(d || '').split('-'); if (p.length !== 3) return String(d || ''); var t = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])); return (+p[1]) + '/' + (+p[2]) + '(' + DOW[t.getUTCDay()] + ')'; }
   //   今日の記録を入れる（専用の画面）：ネイビーの見出し・下のタブは隠す・保存は下に固定（2026-11-05 モック K3）
-  function trainingSub(box, sessions, mode) {
+  function trainingSub(box, sessions, mode, exRestore) {
     navPush({ cid: cur.customerId, tab: 'training', sub: 'trform' }, mode);
     box.innerHTML = '';
     entryHead('今日の記録を入れる', 'トレーニングの画面に戻る');
-    box.appendChild(trainingForm(sessions));
+    box.appendChild(trainingForm(sessions, exRestore));
   }
   //   過去の記録から写す（専用の画面・モック K3b）：前回の日を最初から選んでおく＝「写す画面を開く→写す」の2タップで前回から始められる
   //   ★写した結果は端末の下書きに書いてから記録の画面に戻る（下書きの仕組みをそのまま使う）
@@ -1248,7 +1342,7 @@
   function copyInto(D, sess, withNums) {
     var o = exOrder(sess), cut = false;
     o.order.forEach(function (ex) {
-      var sets = o.by[ex].map(function (x) { return withNums ? { w: x.weight_kg, r: x.reps, done: false } : { w: '', r: '', done: false }; });
+      var sets = o.by[ex].map(function (x) { return withNums ? { w: isBw(x.weight_kg) ? '' : x.weight_kg, r: x.reps, done: false } : { w: '', r: '', done: false }; });   // 自重（0）は空で写す
       var same0 = D.items.filter(function (it) { return it.exercise === ex; })[0];   // ★同じ種目は1つにまとめる（1種目10セットまで・関門②）
       if (!same0 && D.items.length >= 20) { cut = true; return; }
       var cap = 10 - (same0 ? same0.sets.length : 0), room = TR_TOTAL - totalSets(D.items);
@@ -1291,7 +1385,7 @@
         var kids = [el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;' }, [el('b', { style: 'font-size:15px;', text: mdw(x.session_date) }), on ? el('span', { style: 'font-size:12px;color:var(--k-acc);font-weight:700;', text: '選択中' }) : null]),
           el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, partsOf(x).map(function (pt) { return el('span', { class: 'k-tag', text: pt }); }))];
         if (on) kids.push(el('div', { style: 'display:flex;flex-direction:column;gap:4px;font-size:14px;' }, o.order.map(function (ex) {
-          return el('div', { style: 'display:flex;justify-content:space-between;gap:8px;' }, [el('span', { text: ex }), el('span', { class: 'k-sub', style: 'font-size:13px;', text: o.by[ex][0].weight_kg + 'kg × ' + o.by[ex].map(function (st) { return st.reps; }).join('・') })]);
+          return el('div', { style: 'display:flex;justify-content:space-between;gap:8px;' }, [el('span', { text: ex }), el('span', { class: 'k-sub', style: 'font-size:13px;', text: setLineOf(o.by[ex]) })]);
         })));
         else kids.push(el('div', { class: 'k-sub', style: 'font-size:13px;', text: o.order.join('・') }));
         cards.appendChild(el('button', { type: 'button', 'aria-pressed': on ? 'true' : 'false', class: 'k-card k-pick' + (on ? ' on' : ''), onclick: function () { sel = x; draw(); } }, kids));
@@ -1316,7 +1410,7 @@
     }
     draw();
   }
-  function trainingForm(sessions) {
+  function trainingForm(sessions, exRestore) {
     var c = el('div', { class: 'k-trform' });
     var tid = String((window.state && state.trainerId) || ''), cid = cur.customerId, cname = cur.name;
     //   ★鍵・顧客・名前はフォームを作った時点で固定する（送信中に別の顧客を開いても、その顧客の下書きを触らない・関門②）
@@ -1383,6 +1477,13 @@
     else c.appendChild(d.row);
     //   過去の記録から写す（専用の画面・モック K3b）
     if ((sessions || []).length) c.appendChild(el('button', { type: 'button', class: 'k-btn k-btn-line', text: '過去の記録から写す', onclick: function () { trPickSub(sessions); } }));
+    //   休憩タイマーの切り替え（端末に覚える・2026-11-06 オーナー）。なし＝✓で数えない・帯と秒数・終了音の行を出さない
+    var restTg = el('button', { type: 'button', class: 'k-rtg', 'data-nodirty': '1', onclick: function () {
+      setRestOn(!restOn()); drawRestTg(); draw();   // ★なしにした瞬間に動いているタイマーは止める（setRestOn の中）
+    } });
+    function drawRestTg() { var on = restOn(); restTg.setAttribute('aria-pressed', on ? 'true' : 'false'); restTg.textContent = on ? '休憩タイマー：あり' : '休憩タイマー：なし'; }
+    drawRestTg();
+    c.appendChild(el('div', { style: 'display:flex;justify-content:flex-end;margin:0 0 8px;' }, [restTg]));
     var restBar = el('div', { class: 'k-restbar', style: 'display:none;' });   // ★見た目は CSS の .k-restbar（inline に display を2つ書くと後の flex が勝ち、空の帯が出ていた）
     rest.box = restBar;   // ★置き場所は draw() が決める：✓を押したセットの真下（無ければ一覧の先頭＝空なので見えない）
     //   ★休憩中に上の「記録の入力」をもう一度押すと、この欄ごと作り直される。この時点の欄はまだ画面に無い（返してから置かれる）ので、
@@ -1399,8 +1500,7 @@
       var p = prevOfExercise(sessions, ex, D.sessionDate);
       if (!p) return '前回の記録なし（直近20回の中）';
       var st = p.sets.slice().sort(function (a, b) { return a.set_no - b.set_no; });
-      var oneW = st.every(function (x) { return x.weight_kg === st[0].weight_kg; });
-      var body = oneW ? st[0].weight_kg + 'kg × ' + st.map(function (x) { return x.reps; }).join('・') : st.map(function (x) { return x.weight_kg + 'kg×' + x.reps; }).join('・');
+      var body = setLineOf(st);   // 0 は「自重」
       var pn = st.filter(function (x) { return x.note; }).map(function (x) { return x.note; });
       return '前回 ' + md(p.s.session_date) + '：' + body + (pn.length ? '（メモ：' + pn[pn.length - 1].slice(0, 30) + (pn[pn.length - 1].length > 30 ? '…' : '') + '）' : '');
     }
@@ -1411,8 +1511,8 @@
     function trimTotal() { var n = 0; D.items.forEach(function (it) { it.sets = it.sets.filter(function () { n++; return n <= TR_TOTAL; }); }); D.items = D.items.filter(function (it) { return it.sets.length; }); }
     d.el.onchange = function () { D.sessionDate = d.get() || today(); save(); refreshTop(); draw(); };
 
-    function numInput(val, ph, label, onv) {
-      var i = el('input', { type: 'number', step: ph === 'kg' ? '0.5' : '1', placeholder: ph, 'aria-label': label, enterkeyhint: 'next', autocomplete: 'off' });
+    function numInput(val, kind, label, onv) {   // kind：'kg'（重量）／'回'
+      var i = el('input', { type: 'number', step: kind === 'kg' ? '0.5' : '1', placeholder: kind === 'kg' ? '自重なら空のまま' : '回', 'aria-label': label, enterkeyhint: 'next', autocomplete: 'off' });
       //   キーパッドの「次へ」で、重量→回数→次のセットの重量…と進む（最後はキーパッドを閉じる）
       i.onkeydown = function (ev) {
         if (ev.key !== 'Enter') return;
@@ -1421,7 +1521,7 @@
         var k = all.indexOf(i);
         if (k >= 0 && k < all.length - 1) all[k + 1].focus(); else i.blur();
       };
-      i.inputMode = ph === 'kg' ? 'decimal' : 'numeric';
+      i.inputMode = kind === 'kg' ? 'decimal' : 'numeric';
       if (val !== '' && val != null) i.value = val;
       i.oninput = function () { onv(i.value.trim()); save(); };
       return i;
@@ -1439,7 +1539,7 @@
             el('span', { class: 'k-sub', text: it.sets.length + 'セット' + (nd ? '（✓' + nd + '）' : '') + ' ›' })]));
           return;
         }
-        var hasVal = it.sets.some(function (s) { return s.w !== '' && s.r !== '' && s.w != null && s.r != null; });
+        var hasVal = it.sets.some(function (s) { return s.r !== '' && s.r != null; });   // 重量の空は自重
         var noneDone = !it.sets.some(function (s) { return s.done === true; });
         var blk = el('div', { style: 'border:1px solid ' + (hasVal && noneDone ? '#f5c9bb' : 'var(--k-line)') + ';border-radius:12px;padding:10px;margin-bottom:10px;background:' + (hasVal && noneDone ? '#fff7f4' : '#fff') + ';' });
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
@@ -1451,7 +1551,7 @@
         it.sets.forEach(function (s, si) {
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
             style: 'min-width:44px;min-height:44px;border-radius:12px;font-size:18px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#8692a6;border:1px solid #8692a6;'),
-            text: '✓', onclick: function () { s.done = !s.done; if (s.done) rest.pos = { ei: ei, si: si }; save(); draw(); if (s.done) restStart(restSecondsFor(it.exercise)); } });
+            text: '✓', onclick: function () { var go = !s.done && restOn(); s.done = !s.done; if (go) rest.pos = { ei: ei, si: si }; save(); draw(); if (go) restStart(restSecondsFor(it.exercise)); } });   // ★タイマーなしなら数えない
           blk.appendChild(el('div', { class: 'k-setrow' }, [
             el('span', { style: 'color:var(--k-sub);font-size:13px;text-align:center;', text: String(si + 1) }),
             numInput(s.w, 'kg', (si + 1) + 'セット目の重量', function (v) { s.w = v; }),
@@ -1481,7 +1581,7 @@
               el('div', { class: 'k-sub', style: 'margin-top:4px;color:var(--k-warn);', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }),
               el('button', { type: 'button', class: 'k-btn out small k-danger k-setdel2', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
           }
-          if (rest.pos && rest.pos.ei === ei && rest.pos.si === si) { blk.appendChild(restBar); placed = true; }   // ★休憩の帯は✓を押したセットの真下（2026-11-05 オーナー：スクロールが煩わしい）
+          if (restOn() && rest.pos && rest.pos.ei === ei && rest.pos.si === si) { blk.appendChild(restBar); placed = true; }   // ★休憩の帯は✓を押したセットの真下（2026-11-05 オーナー：スクロールが煩わしい）
         });
         //   セットを足す＝直前のセットを複製（✓は外す）
         blk.appendChild(el('button', { type: 'button', class: 'k-addset', text: '＋ セット', 'aria-label': 'セットを足す（前のセットを複製）', onclick: function () {
@@ -1499,10 +1599,11 @@
           if (on) audioUnlock();   // ★この操作の中で用意する（後からでは iPhone は鳴らせない）
           draw();   // 終了音は端末で1つ＝ほかの種目の表示もそろえる
         } });
-        blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;' }, [rs, snd, el('span', { class: 'k-sub', text: '✓を押すと休憩タイマーが始まります（記録には保存されません）' })]));
+        if (restOn()) blk.appendChild(el('div', { class: 'k-restrow', style: 'display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;' }, [rs, snd, el('span', { class: 'k-sub', text: '✓を押すと休憩タイマーが始まります（記録には保存されません）' })]));   // タイマーなしなら行ごと出さない
         list.appendChild(blk);
       });
-      if (!placed) list.insertBefore(restBar, list.firstChild);   // ✓のセットが無い・消えた：一覧の先頭（数えていれば見える・空なら隠れる）
+      if (!placed && restOn()) list.insertBefore(restBar, list.firstChild);
+      else if (!placed && restBar.parentNode) restBar.parentNode.removeChild(restBar);   // ✓のセットが無い・消えた：一覧の先頭（数えていれば見える・空なら隠れる）
       if (!D.items.length) list.appendChild(msg('「前回の内容で始める」か「種目を足す」から始めてください。'));
       var t = totalSets(D.items), rec = 0;
       buildPayload(D.items).forEach(function (x) { rec += x.sets.length; });
@@ -1514,15 +1615,15 @@
         if (D.items.length >= 20 || totalSets(D.items) >= TR_TOTAL) return;
         var p = prevOfExercise(sessions, ex, D.sessionDate);
         var first = { w: '', r: '', done: false };
-        if (p) { var top = p.sets.slice().sort(function (a, b) { return b.weight_kg - a.weight_kg || b.reps - a.reps; })[0]; first = { w: top.weight_kg, r: top.reps, done: false }; }
+        if (p) { var top = p.sets.slice().sort(function (a, b) { return b.weight_kg - a.weight_kg || b.reps - a.reps; })[0]; first = { w: isBw(top.weight_kg) ? '' : top.weight_kg, r: top.reps, done: false }; }
         D.items.push({ exercise: ex, sets: [first] });
       });
       D.openEi = D.items.length - 1;
       save(); draw();
     }
     c.appendChild(el('button', { type: 'button', class: 'k-btn out', text: '＋ 種目を足す', onclick: function () { picker.style.display = picker.style.display === 'none' ? '' : 'none'; } }));
-    var picker = exercisePicker(sessions, function (names) { addExercises(names); picker.style.display = 'none'; });
-    picker.style.display = 'none';
+    var picker = exercisePicker(sessions, function (names) { addExercises(names); picker.style.display = 'none'; }, cid, exRestore && exRestore.cid === cid ? exRestore : null);
+    picker.style.display = (exRestore && exRestore.cid === cid) ? '' : 'none';   // 種目の登録の途中で読み直したら、種目を選ぶ欄を開いたまま戻す
     c.appendChild(picker);
     //   指導メモ（2026-11-05 モック K3：セッション中にそのまま書く）。社内メモ＝既存の指導メモ（k_addNote）にそのまま残す
     //   ★書きかけは記録の下書き（D.memo）に残す＝セットと同じく画面を離れても消えない。「お客様へ」は第2弾（保存先を作る）
@@ -1592,6 +1693,7 @@
     //     ・送信中に別のお客様を開いても、元のお客様の下書きに残る（鍵は開いた時点で固定）
     //     ・ログインが古いときは記録の下書きとして退避（お客様の番号を固定・別のお客様を開いていたら読み直さない）
     function submitMemo(date, body, trainingLine, memberSaved) {
+      if (needReauthBeforeSend()) { save(); reauth({ kind: 'training', customerId: cid }).then(function (w) { if (w && w.code === 'STALE' && same()) window.alert(errText(w)); }); return; }   // send と同じ
       if (!D.memoPending) D.memoPending = { date: date, body: body, tag: schemaOk({ karteSchema: cur.trSchema }) ? (D.memoTag || '') : '', reqId: D.memoReqId, withTraining: !!trainingLine, memberSaved: !!memberSaved };
       var mp = D.memoPending;
       if (!save()) { window.alert('この端末に送信の控えを残せないため、指導メモを送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
@@ -1630,6 +1732,8 @@
       if (!schemaOk({ karteSchema: cur.trSchema })) { window.alert(SCHEMA_MSG); return; }
       //   ★送る直前に、トレーナー・顧客が下書きと同じかを確かめる（違えば送らない・下書きも消さない）
       if (!same() || D.tid !== tid || D.cid !== cid || payload.customerId !== cid) { window.alert('開いているお客様が変わったため送りませんでした。カルテを開き直してください。'); return; }
+      //   ★トークンが古ければ送らずに取り直す（送信中の控えを固定する前＝送っていないのに「結果が分からない」にしない。入力は下書きに残っている）
+      if (needReauthBeforeSend()) { save(); reauth({ kind: 'training', customerId: cid }).then(function (w) { if (w && w.code === 'STALE' && same()) window.alert(errText(w)); }); return; }
       D.pending = { payload: payload, reqId: reqId };
       //   ★送った中身を端末に固定できないなら送らない（送り直しで二重にしないための前提）
       if (!save()) { D.pending = null; window.alert('この端末に送信の控えを残せないため、送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
@@ -1676,6 +1780,7 @@
       if (sending) return;
       if (!schemaOk({ karteSchema: cur.trSchema })) { window.alert(SCHEMA_MSG); return; }   // 古い Worker には送らない（send と同じ）
       if (!same() || D.tid !== tid || D.cid !== cid || payload.customerId !== cid) { window.alert('開いているお客様が変わったため送りませんでした。カルテを開き直してください。'); return; }
+      if (needReauthBeforeSend()) { save(); reauth({ kind: 'training', customerId: cid }).then(function (w) { if (w && w.code === 'STALE' && same()) window.alert(errText(w)); }); return; }   // send と同じ
       D.mpending = { payload: payload, reqId: reqId };
       if (!save()) { D.mpending = null; window.alert('この端末に送信の控えを残せないため、送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
       sending = true;
@@ -1736,40 +1841,138 @@
     return c;
   }
 
-  //   種目の選び方：この方の最近の種目 → 部位 → 検索・名前を入れて足す。複数選んでまとめて足す
-  function exercisePicker(sessions, onAdd) {
+  //   種目の選び方：この方の最近の種目 → 部位ごと（固定の種目＋共有の一覧）→ 検索・名前を入れて部位を選んで登録。複数選んでまとめて足す
+  //   ★共有の一覧（k_exercises）は画面で登録された種目だけ（記録の自由文は読まない＝CEO 決定 2026-11-06）。新しく足した種目と部位は全員に出る
+  //   ★「最近の種目」から選んだ名前が共有の一覧に無ければ、選んだ下にその場で部位を選んで登録する欄を出す（ダイアログを増やさない）
+  //   ★部位を直すのは「部位を直す」を押してから種目を押す（選ぶ操作と取り違えない）
+  //   ★登録の途中でトークンを取り直したら、検索の文字・部位・モード・送信番号を退避して、読み直し後に同じ欄で戻す（restore）
+  function exercisePicker(sessions, onAdd, cid, restore) {
     var cnt = {};
     (sessions || []).forEach(function (s) { var seen = {}; (s.sets || []).forEach(function (x) { if (!seen[x.exercise]) { seen[x.exercise] = 1; cnt[x.exercise] = (cnt[x.exercise] || 0) + 1; } }); });
     var recent = Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; }).slice(0, 8);
-    var all = recent.concat(EXERCISES.filter(function (x) { return recent.indexOf(x) < 0; }));
-    var picked = [];
-    var box = el('div', { class: 'k-card', style: 'margin-top:8px;background:var(--k-cream);' });
-    var q = el('input', { 'data-nodirty': '1', type: 'search', placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
+    var local = [];   // この画面で足したが、共有の一覧に保存できなかった名前
+    function allNames() {
+      var out = [];
+      [recent, EXERCISES, Object.keys(exMaster), local].forEach(function (l) { l.forEach(function (x) { if (x && out.indexOf(x) < 0) out.push(x); }); });
+      return out;
+    }
+    function registered(x) { return EXERCISES.indexOf(x) >= 0 || Object.prototype.hasOwnProperty.call(exMaster, x); }
+    var picked = [], editMode = false, editing = null, editPart = null, newPart = null, busy = false, lastReq = {}, regPart = {};
+    var box = el('div', { class: 'k-card k-picker', style: 'margin-top:8px;background:var(--k-cream);' });
+    var q = el('input', { 'data-nodirty': '1', type: 'search', maxlength: String(EX_NAME_MAX), placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
+    var editBtn = el('button', { type: 'button', class: 'k-btn out small k-exedit', 'data-nodirty': '1', onclick: function () { editMode = !editMode; editing = null; draw(); } });
     var area = el('div');
     var go = el('button', { type: 'button', class: 'k-btn k-picker-go', text: '選んだ種目を足す' });
+    if (restore) {
+      q.value = String(restore.q || '');
+      newPart = restore.newPart || null; editMode = !!restore.editMode; editing = restore.editing || null; editPart = restore.editPart || null;
+      (Array.isArray(restore.picked) ? restore.picked : []).forEach(function (x) { if (typeof x === 'string' && picked.indexOf(x) < 0) picked.push(x); });
+      if (restore.name && restore.part && restore.reqId) lastReq[restore.name + '\u0000' + restore.part] = restore.reqId;   // 同じ名前・部位なら同じ送信番号
+      if (restore.regName && restore.part) regPart[restore.regName] = restore.part;
+    }
+    function partPills(cur0, onPick, labelFor) {
+      var p = el('div', { class: 'k-pills', role: 'radiogroup', 'aria-label': labelFor, style: 'gap:6px;margin-top:6px;' });
+      PART_KEYS.forEach(function (pk) {
+        p.appendChild(el('button', { type: 'button', role: 'radio', class: 'k-pill' + (cur0 === pk[0] ? ' on' : ''), 'aria-checked': cur0 === pk[0] ? 'true' : 'false', 'data-part': pk[0], text: pk[1], onclick: function () { onPick(pk[0]); } }));
+      });
+      return p;
+    }
+    //   共有の一覧へ保存する。結果が分からないときは同じ名前・部位なら同じ送信番号で送り直す（二重にならない）
+    //   how：'new'（検索から新しく）／'edit'（部位を直す）／'reg'（最近の種目から選んで登録）
+    function saveEx(name, part, how, done) {
+      if (busy) return;
+      var k = name + '\u0000' + part;
+      var reqId = lastReq[k] || (lastReq[k] = newReqId());
+      var ex = { cid: cid, q: q.value, newPart: newPart, editMode: editMode, editing: editing, editPart: editPart, picked: picked.slice(), name: name, part: part, reqId: reqId, regName: how === 'reg' ? name : '' };
+      busy = true; draw();
+      kWrite('k_saveExercise', { name: name, part: part }, reqId, { kind: 'training', customerId: cid, ex: ex }).then(function (w) {
+        busy = false;
+        if (w && w.success) { delete lastReq[k]; exMaster[name] = part; done(true); return; }
+        if (!w || w.code === 'BAD_RESPONSE') { done(false, '部位の保存の結果を確かめられませんでした。必要なら「部位を直す」からもう一度保存してください。'); return; }
+        delete lastReq[k];
+        done(false, '部位を保存できませんでした（' + (w.code === 'BAD_STATE' ? ERR.EX_LIMIT : errText(w)) + '）。');
+      }, function () { busy = false; done(false, '部位の保存の結果を確かめられませんでした。必要なら「部位を直す」からもう一度保存してください。'); });
+    }
     function chip(ex) {
       var on = picked.indexOf(ex) >= 0;
+      if (editMode) return el('button', { type: 'button', class: 'k-pill', 'aria-label': ex + 'の部位を直す', text: ex + ' ✎', onclick: function () { editing = ex; editPart = partKeyOf(ex); draw(); } });
       return el('button', { type: 'button', class: 'k-pill' + (on ? ' on' : ''), 'aria-pressed': on ? 'true' : 'false', text: ex, onclick: function () { var i = picked.indexOf(ex); if (i >= 0) picked.splice(i, 1); else picked.push(ex); draw(); } });
     }
     function draw() {
       area.innerHTML = '';
-      var t = q.value.trim();
+      editBtn.textContent = editMode ? '部位を直すのをやめる' : '部位を直す';
+      editBtn.setAttribute('aria-pressed', editMode ? 'true' : 'false');
+      go.style.display = editMode ? 'none' : '';
+      if (exTruncated) area.appendChild(el('div', { class: 'k-sub k-extrunc', style: 'margin-top:8px;color:var(--k-warn);', text: '共有の種目は一部だけ表示しています。見つからなければ名前を入力してください。' }));
+      //   部位を直す（1つずつ・上にまとめて出す＝片手で探さない）
+      if (editMode && editing) {
+        var ed = el('div', { class: 'k-card k-exeditor', style: 'margin-top:10px;display:flex;flex-direction:column;gap:6px;' }, [
+          el('div', { style: 'font-weight:700;', text: '「' + editing + '」の部位' }),
+          el('div', { class: 'k-sub', text: 'いま：' + label(PART_KEYS, partKeyOf(editing)) + (exMaster[editing] ? '' : '（種目名からの推定）') + '。保存すると全トレーナー・全お客様の一覧で変わります' }),
+          partPills(editPart, function (pk) { editPart = pk; draw(); }, editing + 'の部位'),
+          el('div', { class: 'k-grid2', style: 'margin-top:4px;' }, [
+            el('button', { type: 'button', class: 'k-btn', text: busy ? '送信中…' : '保存する', onclick: function () {
+              var name = editing; saveEx(name, editPart, 'edit', function (ok2, m) { if (!ok2) { window.alert(m); draw(); return; } editing = null; draw(); });
+            } }),
+            el('button', { type: 'button', class: 'k-btn out', text: 'やめる', onclick: function () { editing = null; draw(); } })])]);
+        if (busy) ed.querySelector('.k-btn').disabled = true;
+        area.appendChild(ed);
+      }
+      if (editMode && !editing) area.appendChild(el('div', { class: 'k-sub', style: 'margin-top:8px;', text: '部位を直す種目を押してください。' }));
+      var t = exName(q.value), all = allNames();
       if (t) {
         var hit = all.filter(function (x) { return x.indexOf(t) >= 0; });
         var p1 = el('div', { class: 'k-pills', style: 'margin-top:10px;' }); hit.forEach(function (x) { p1.appendChild(chip(x)); });
         area.appendChild(p1);
-        if (hit.indexOf(t) < 0 && t.length <= 50) area.appendChild(el('button', { type: 'button', class: 'k-btn out small', style: 'margin-top:8px;', text: '「' + t + '」を新しく足す', onclick: function () { if (picked.indexOf(t) < 0) picked.push(t); all.push(t); q.value = ''; draw(); } }));
+        if (!editMode && hit.indexOf(t) < 0 && t.length <= EX_NAME_MAX) {
+          var np = newPart || guessPart(t);
+          var addBtn = el('button', { type: 'button', class: 'k-btn k-exadd', text: busy ? '送信中…' : '「' + t + '」を' + label(PART_KEYS, np) + 'で登録して選ぶ', onclick: function () {
+            var name = t;
+            saveEx(name, np, 'new', function (ok2, m) {
+              //   ★保存できなくても今日の記録には足せる（部位は後で直せる）。記録を止めない
+              if (!ok2) { if (local.indexOf(name) < 0 && !(name in exMaster)) local.push(name); window.alert(m + '「' + name + '」は今日の記録用に選びました。'); }
+              if (picked.indexOf(name) < 0) picked.push(name);
+              q.value = ''; newPart = null; draw();
+            });
+          } });
+          if (busy) addBtn.disabled = true;
+          area.appendChild(el('div', { class: 'k-card k-exnew', style: 'margin-top:10px;display:flex;flex-direction:column;gap:6px;' }, [
+            el('div', { style: 'font-weight:700;', text: '新しい種目「' + t + '」の部位' }),
+            partPills(np, function (pk) { newPart = pk; draw(); }, '新しい種目の部位'),
+            addBtn,
+            el('div', { class: 'k-sub', text: '登録した種目は、全トレーナー・全お客様の一覧に出ます。' }),
+            el('div', { class: 'k-note-hint', style: 'margin:0;', text: '種目名だけを書く（痛み・診断・服薬は「注意すること」へ）' })]));
+        }
       } else {
         if (recent.length) { area.appendChild(el('div', { class: 'k-sub', style: 'margin:10px 0 6px;font-weight:700;', text: 'この方の最近の種目' })); var p2 = el('div', { class: 'k-pills' }); recent.forEach(function (x) { p2.appendChild(chip(x)); }); area.appendChild(p2); }
+        //   最近の種目から選んだが共有の一覧に無い名前：選んだまま足せる。部位を選んで登録すると全員の一覧に出る（任意）
+        if (!editMode) picked.filter(function (x) { return recent.indexOf(x) >= 0 && !registered(x) && local.indexOf(x) < 0; }).forEach(function (x) {
+          var rp = regPart[x] || guessPart(x);
+          var rb = el('button', { type: 'button', class: 'k-btn out small k-exreg', text: busy ? '送信中…' : label(PART_KEYS, rp) + 'で登録する', onclick: function () {
+            saveEx(x, rp, 'reg', function (ok2, m) { if (!ok2) { local.push(x); window.alert(m + '「' + x + '」は今日の記録用に選んだままです。'); } draw(); });
+          } });
+          if (busy) rb.disabled = true;
+          area.appendChild(el('div', { class: 'k-card k-exunreg', 'data-name': x, style: 'margin-top:8px;display:flex;flex-direction:column;gap:6px;' }, [
+            el('div', { style: 'font-weight:700;', text: '「' + x + '」は共有の一覧にありません' }),
+            el('div', { class: 'k-sub', text: '部位を選んで登録すると、全トレーナー・全お客様の一覧に出ます（登録しなくても今日の記録には足せます）。' }),
+            partPills(rp, function (pk) { regPart[x] = pk; draw(); }, x + 'の部位'), rb,
+            el('div', { class: 'k-note-hint', style: 'margin:0;', text: '種目名に痛み・診断・服薬が入っていたら登録しない（「注意すること」へ）' })]));
+        });
         var groups = {};
-        all.forEach(function (x) { if (recent.indexOf(x) >= 0) return; var p = partOf(x); (groups[p] = groups[p] || []).push(x); });
-        Object.keys(groups).forEach(function (g) { area.appendChild(el('div', { class: 'k-sub', style: 'margin:10px 0 6px;font-weight:700;', text: g })); var p3 = el('div', { class: 'k-pills' }); groups[g].forEach(function (x) { p3.appendChild(chip(x)); }); area.appendChild(p3); });
+        all.forEach(function (x) { if (recent.indexOf(x) >= 0) return; var p = partKeyOf(x); (groups[p] = groups[p] || []).push(x); });
+        PART_KEYS.forEach(function (pk) {
+          var g = groups[pk[0]]; if (!g) return;
+          area.appendChild(el('div', { class: 'k-sub k-partgroup', 'data-part': pk[0], style: 'margin:10px 0 6px;font-weight:700;', text: pk[1] }));
+          var p3 = el('div', { class: 'k-pills' }); g.forEach(function (x) { p3.appendChild(chip(x)); }); area.appendChild(p3);
+        });
       }
       go.textContent = picked.length ? '選んだ ' + picked.length + ' 種目を足す' : '選んだ種目を足す';
     }
-    q.oninput = draw;
+    q.oninput = function () { newPart = null; draw(); };
     go.onclick = function () { if (!picked.length) { window.alert('種目を選んでください。'); return; } onAdd(picked.slice()); picked = []; q.value = ''; draw(); };
-    box.appendChild(q); box.appendChild(area); box.appendChild(go);
+    box.appendChild(q);
+    box.appendChild(el('div', { style: 'display:flex;justify-content:flex-end;margin-top:6px;' }, [editBtn]));
+    box.appendChild(area); box.appendChild(go);
     draw();
     return box;
   }
@@ -1781,9 +1984,7 @@
     if (!sessions.length) { box.appendChild(msg('まだ記録がありません。')); cur.showDayView = function () {}; return; }
     var sorted = sessions.slice().sort(byNewest);
     function setLine(sets) {
-      var st = sets.slice().sort(function (a, b) { return a.set_no - b.set_no; });
-      var oneW = st.every(function (x) { return x.weight_kg === st[0].weight_kg; });
-      return oneW ? st[0].weight_kg + 'kg × ' + st.map(function (x) { return x.reps; }).join('・') : st.map(function (x) { return x.weight_kg + 'kg×' + x.reps; }).join('・');
+      return setLineOf(sets.slice().sort(function (a, b) { return a.set_no - b.set_no; }));   // 0 は「自重」
     }
     function exRows(sess, withNotes) {
       var o = exOrder(sess), out = el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:14px;' });
@@ -1811,8 +2012,9 @@
       exCard.appendChild(chips);
       var st = exerciseStats(sessions, exSel);
       if (!st) return;
-      exCard.appendChild(lineChart(st.days.filter(function (x) { return x.v != null; }).map(function (x) { return { d: x.d, v: x.v }; }), null, 'kg'));
-      exCard.appendChild(el('div', { class: 'k-sub', style: 'font-size:13px;', text: '自己ベスト ' + st.best.w + 'kg × ' + st.best.r + '（' + md(st.best.d) + '）' }));
+      var pts = st.days.filter(function (x) { return x.v != null; }).map(function (x) { return { d: x.d, v: x.v }; });
+      if (pts.some(function (x) { return x.v > 0; })) exCard.appendChild(lineChart(pts, null, 'kg'));   // 自重だけの種目（推定MAXが全部0）は線を出さない
+      exCard.appendChild(el('div', { class: 'k-sub', style: 'font-size:13px;', text: '自己ベスト ' + wLabel(st.best.w) + ' × ' + st.best.r + '（' + md(st.best.d) + '）' }));
     }
     drawEx();
     //   日別の記録（いまは種目から分かる部位で絞る。日のタグは第2弾）
@@ -1998,7 +2200,7 @@
   // ---------------------------------------------------------------- 契約
   //   契約・会員（2026-11-05 整理：契約の一覧＋末尾に「管理」＝同意の記録・退会と再入会の記録。概要から移した）
   //   ★契約が読めない（担当外）・契約が無いときも「管理」は出す（同意の記録は従来どおり誰でも・退会と再入会は担当だけ＝従来の条件のまま）
-  function tabContract(box) {
+  function tabContract(box, draft) {
     box.appendChild(msg('読み込み中…'));
     var askedFor = cur.customerId;
     Promise.all([kRead('k_contract', { customerId: askedFor }), loadSummary()]).then(function (rs) {
@@ -2032,7 +2234,7 @@
           el('div', { style: 'font-size:14px;font-weight:700;', text: '健康情報の取り扱いの同意' }),
           el('div', { style: 'font-size:12px;color:' + (cs === 'agreed' ? 'var(--k-acc)' : 'var(--k-warn)') + ';', text: cs === 'agreed' ? '同意済み ' + cAt + cHow : (cs === 'revoked' ? '撤回済み ' + cAt : '同意待ち') })]),
         consentRow(sm.consent)]));
-      if (sm.assigned) adm.appendChild(membershipCard());
+      if (sm.assigned) adm.appendChild(membershipCard(draftFor(draft, 'membership') ? draft.data : null));
       box.appendChild(adm);
     });
   }
@@ -2042,7 +2244,7 @@
   //   ★「直す」「消す」は書いた本人（authorIsMe）かオーナーだけ。消すは確かめてから
   //   ★表示は部品の中で textContent（ここでは HTML を組み立てない）
   var PREVIEW_TABS = [['home', '概要'], ['body', '体組成'], ['training', 'トレーニング'], ['notes', '指導の履歴'], ['contract', '契約']];
-  function memberPreviewSub(box, mode, tab0) {
+  function memberPreviewSub(box, mode, tab0, restoreEdit) {   // restoreEdit＝読み直しの前に直していた枚（退避から戻す）
     navPush({ cid: cur.customerId, tab: 'summary', sub: 'mpreview' }, mode);
     box.innerHTML = '';
     cur.dirty = false;
@@ -2068,6 +2270,8 @@
     //   枚の操作（指導の履歴のタブ）
     function noteActions(n, cardEl) {
       if (!n || !n.mnoteId || !(n.authorIsMe === true || (window.state && state._isOwner))) return null;
+      //   ★読み直しの前に直していた枚なら、同じカードで編集を開き直して入力を戻す（1回だけ）
+      if (restoreEdit && restoreEdit.mnoteId === n.mnoteId) { var re = restoreEdit; restoreEdit = null; setTimeout(function () { if (cardEl.isConnected) editNote(n, cardEl, re); }, 0); }
       return el('div', { style: 'display:flex;gap:12px;margin-top:4px;' }, [
         el('button', { type: 'button', class: 'k-btn out small', text: '直す', 'aria-label': md(n.date) + 'のお客様への欄を直す', onclick: function () { editNote(n, cardEl); } }),
         el('button', { type: 'button', class: 'k-btn out small k-danger', style: 'margin-left:auto;', text: '消す', 'aria-label': md(n.date) + 'のお客様への欄を消す', onclick: function () {
@@ -2081,12 +2285,17 @@
     //   日のタグ：その枚の tags だけを使う（日付から推測しない＝同じ日に2回あっても取り違えない・Codex 関門②）。
     //     載っていなければ null＝この画面ではタグを直させない（空から作って上書きしない）
     function tagsOf(n) { return Array.isArray(n.tags) ? n.tags.slice() : null; }
-    function editNote(n, cardEl) {
+    function editNote(n, cardEl, re) {   // re＝退避から戻す入力（rev はいまの枚のものを使う＝古ければ Worker が CONFLICT）
       var known = tagsOf(n);
       //   タグを直せるのは、タグが分かっていて、トレーニングに付いた枚だけ（トレーニングの無い枚のタグは会員に出ない）
       var tagsEditable = !!known && !!n.sessionId;
       var m = { message: String(n.message || ''), todo: (Array.isArray(n.todo) ? n.todo : []).concat(['', '', '']).slice(0, MEMBER_MAX.todo), tags: (known || []).filter(function (x) { return DAY_TAGS.indexOf(x) >= 0; }) };
-      var reqId = newReqId(), busy = false, tagsTouched = false;   // ★編集は送った鍵だけ置き換わる＝タグは触ったときだけ送る
+      var reqId = newReqId(), busy = false, tagsTouched = false;
+      if (re && re.rev === n.rev) {
+        m.message = String(re.message || ''); m.todo = (Array.isArray(re.todo) ? re.todo : []).concat(['', '', '']).slice(0, MEMBER_MAX.todo);
+        if (re.tagsTouched && Array.isArray(re.tags)) { m.tags = re.tags.filter(function (x) { return DAY_TAGS.indexOf(x) >= 0; }); tagsTouched = true; }
+        if (typeof re.reqId === 'string') reqId = re.reqId;
+      } else if (re) window.alert('この欄はほかの操作で更新されていたため、入力していた内容は戻せませんでした。いまの内容を確かめてから直してください。');   // ★編集は送った鍵だけ置き換わる＝タグは触ったときだけ送る
       cardEl.innerHTML = '';
       cardEl.appendChild(el('div', { style: 'font-size:14px;font-weight:700;color:var(--k-acc);', text: md(n.date) + ' のお客様に見える欄を直す' }));
       var ta = el('textarea', { rows: '4', maxlength: String(MEMBER_MAX.message), 'aria-label': 'お客様へ', class: 'k-memo' }); ta.value = m.message;
@@ -2118,7 +2327,7 @@
         busy = true; saveB.textContent = '送信中…';
         var body = { mnoteId: n.mnoteId, rev: n.rev, message: mem.message, todo: mem.todo };   // 本文の最上位に置く（member で包まない）
         if (tagsTouched) body.tags = mem.tags;
-        kWrite('k_saveMemberNote', body, reqId).then(function (w) {
+        kWrite('k_saveMemberNote', body, reqId, { kind: 'sub', sub: 'mpreview', tab: 'summary', cid: askedFor, edit: { mnoteId: n.mnoteId, rev: n.rev, message: m.message, todo: m.todo.slice(), tags: m.tags.slice(), tagsTouched: tagsTouched, reqId: reqId } }).then(function (w) {
           busy = false; saveB.textContent = '保存する';
           if (!w || w.code === 'BAD_RESPONSE') { window.alert('結果を確かめられませんでした。もう一度「保存する」を押すと同じ内容で送ります（二重にはなりません）。'); return; }
           if (w.code === 'BAD_STATE') { window.alert('全部を空にするときは「消す」を使ってください。'); return; }
@@ -2212,7 +2421,8 @@
         var m = navState() ? 'replace' : undefined;
         if (d.draft && m) d.draft.navMode = 'replace';
         open(d.customerId, d.name, d.tab, d.draft, m);
-        try { sessionStorage.removeItem('karte_reauth'); } catch (e) {}
+        //   ★読み直し済みの印はここでは消さない：新しいトークンで書けたとき（doneWrite）に消す。
+        //     読み直した後もまだ古ければ、もう一度読み直さずに「LINE から開き直して」を出す（無限に読み直さない）。印は10分で効かなくなる
         window.alert('ログインを更新しました。入力内容を戻したので、もう一度「保存」を押してください。');
         return;
       }
@@ -2223,6 +2433,6 @@
 
   window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
     //   検査用（純粋な部分だけ）
-    _t: { NEED_SCHEMA: NEED_SCHEMA, memberOf: memberOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
+    _t: { NEED_SCHEMA: NEED_SCHEMA, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
 })();

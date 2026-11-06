@@ -17,6 +17,7 @@ import { canSeeCustomer } from '../perms.js';
 import { synthesizeBody, pickGoalLine } from '../lib/body-series.js';
 import { normalizeHearing, normalizePainMap, normalizeReasons, normalizeTag, parseJsonCol, has, HEARING_REVISION_SQL } from '../lib/karte-hearing.js';
 import { buildMemberKarte } from '../lib/member-karte.js';
+import { EXERCISE_LIMITS, normalizeExerciseName, normalizePart } from '../lib/karte-exercises.js';
 
 export const KARTE_LIMITS = {
   BODY_BYTES: 16 * 1024,
@@ -1183,7 +1184,61 @@ async function board(c) {
   return { customers: out, next: more ? page[page.length - 1].customer_id : null };
 }
 
+// ================================================================ 種目の一覧（全員で共有・部位つき）2026-11-06
+//   ★共有の範囲（トレーナー全員）。顧客に結び付かない＝customerId を取らない
+//   ★読みは表（karte_exercises の生きた行）だけ。記録（karte_tr_sets）の自由文は読まない（CEO 決定・関門②）：
+//     全セットの走査の負荷（索引なし・タブを開くたび）と、自由文に混じった個人・健康の情報が顧客と切り離されて全員に並ぶのを避ける。
+//     既存の記録の名前は、その顧客の「最近の種目」（k_training）にだけ出る
+async function exercises(c) {
+  const env = c.env, L = EXERCISE_LIMITS;
+  const t = await env.DB.prepare(
+    `SELECT name, part FROM karte_exercises WHERE deleted_at IS NULL ORDER BY name LIMIT ${L.MAX_ROWS + 1}`
+  ).all();
+  const rows = (t.results || []).map((r) => ({ name: String(r.name), part: String(r.part) }));
+  await logAccess(env, c.who, null, 'exercises', 'k_exercises', 'ok');
+  return { karteSchema: KARTE_SCHEMA, exercises: rows.slice(0, L.MAX_ROWS), truncated: rows.length > L.MAX_ROWS };
+}
+
+//   書き込み：追加、または部位の変更（名前と部位だけ）。消した行（deleted_at）は書き直すと生き返る
+//     ★同時に2人が部位を変えたら後の方が残る（rev は持たない＝種目の部位は共有の分類で、取り合いの害が小さい）
+async function saveExercise(c) {
+  const b = c.body, L = EXERCISE_LIMITS;
+  let name, part;
+  try {
+    for (const k of Object.keys(b)) if (['action', 'idToken', 'clientReqId', 'name', 'part'].indexOf(k) < 0) throw new RangeError('UNKNOWN_KEY');
+    name = normalizeExerciseName(b.name);
+    part = normalizePart(b.part);
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  //   表の上限（読みの上限と同じ）。★「同名の生きた行が無い」ときに数える（消した行の復活も生きた行を1つ増やす・関門②）。
+  //     並行の取りこぼしは batch の見張りでもう一度、同じ条件で止める
+  const have = await c.env.DB.prepare('SELECT 1 AS x FROM karte_exercises WHERE name = ? AND deleted_at IS NULL').bind(name).first();
+  if (!have) {
+    const n = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM karte_exercises WHERE deleted_at IS NULL').first();
+    if (n && Number(n.n) >= L.MAX_ROWS) return err('EX_LIMIT', 409);
+  }
+  const tid = String(c.who.trainerId || '');
+  return runWrite(c, {
+    action: 'k_saveExercise', section: 'exercises', customerId: null, payload: { name, part },
+    plan: (now) => ({
+      stmts: [
+        S(`INSERT INTO karte_guard (state) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM karte_exercises WHERE name = ? AND deleted_at IS NULL)
+             AND (SELECT COUNT(*) FROM karte_exercises WHERE deleted_at IS NULL) >= ?`, name, L.MAX_ROWS),
+        //   変える前の部位を控える（名前と部位だけ）
+        S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at)
+           SELECT 'karte_exercises', name, 0, json_object('part', part, 'deleted_at', deleted_at), ?, ?
+             FROM karte_exercises WHERE name = ?`, tid, now, name),
+        S(`INSERT INTO karte_exercises (name, part, created_by, created_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(name) DO UPDATE SET part = excluded.part, updated_by = ?, updated_at = ?, deleted_at = NULL`,
+          name, part, tid, now, tid, now),
+      ],
+      result: { name, part },
+    }),
+  });
+}
+
 export const KARTE_HANDLERS = {
+  k_exercises: exercises,
+  k_saveExercise: saveExercise,
   k_summary: summary,
   k_notes: notes,
   k_training: training,

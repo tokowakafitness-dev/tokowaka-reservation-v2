@@ -103,6 +103,9 @@ const TABLE = {
   'k_memberPreview':    ['trainer'],
   'k_saveMemberNote':   ['trainer'],
   'k_deleteMemberNote': ['trainer'],
+  //   種目の一覧（全トレーナー・全顧客で共有・部位つき・2026-11-06）。k_saveExercise は isKarteWrite に当たる＝Origin・トークン10分の守り
+  'k_exercises':        ['trainer'],
+  'k_saveExercise':     ['trainer'],
 
   // ---- 顧客マスタ ----
   'customerCreate':   ['trainer'],

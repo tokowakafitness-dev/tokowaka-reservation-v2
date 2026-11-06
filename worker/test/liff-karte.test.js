@@ -146,7 +146,8 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   await new Promise((r) => setTimeout(r, 30)); await settle();
   const ta = w.document.querySelectorAll('#karteRoot textarea');
   ok('4-2 読み直した後に入力が戻る・もう一度押すよう案内', ta.length && ta[0].value === '戻ってきたメモ' && w.alerts.some((a) => String(a).includes('もう一度')), ta.length ? ta[0].value : 'no textarea');
-  ok('4-3 戻したら退避を消す', !w.sessionStorage.getItem('karte_draft_v1') && !w.sessionStorage.getItem('karte_reauth'));
+  //   ★2026-11-06：読み直し済みの印は戻したときではなく、新しいトークンで書けたときに消す（読み直し後もまだ古ければ案内を出し、無限に読み直さない）
+  ok('4-3 戻したら退避を消す（読み直し済みの印は書けるまで残す）', !w.sessionStorage.getItem('karte_draft_v1') && w.sessionStorage.getItem('karte_reauth') === '1');
 }
 {
   //   安全面は退避しない（健康情報を端末に残さない）

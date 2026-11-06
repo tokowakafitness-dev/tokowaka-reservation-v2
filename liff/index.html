@@ -386,7 +386,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-06g キャンセルの確認の画面（理由・ひとこと）・トレーナーのキャンセルの見え方（設計36）';
+  var LIFF_BUILD = '2026-11-06h カルテ：保存の前のトークンの取り直し・共有の種目と部位・自重・休憩タイマーの切り替え（karte.js 2026-11-06c）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -478,7 +478,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_progress_title:'目標までの進み具合', mk_weight_goal:'体重 {w}kg（{d}まで）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'いま {now}kg ／ あと {rest}kg', mk_since_join:'入会から {v}kg',
       mk_weight:'体重', mk_fat:'体脂肪率', mk_muscle:'骨格筋量', mk_vs_prev:'前回比', mk_trend:'推移', mk_since:'入会 {d} から', mk_goal_line:'目標 {v}', mk_trend_aria:'{name}の推移 {a}から{b}',
       mk_recent:'最近の記録', mk_mdate:'測定日', mk_no_body:'体組成の記録はまだありません。',
-      mk_last:'前回（{date}）', mk_counts:'{e}種目・{s}セット', mk_by_ex:'種目ごとの推移', mk_best:'自己ベスト', mk_days:'日別の記録', mk_ex_n:'{n}種目', mk_no_training:'トレーニングの記録はまだありません。',
+      mk_last:'前回（{date}）', mk_counts:'{e}種目・{s}セット', mk_by_ex:'種目ごとの推移', mk_best:'自己ベスト', mk_bw:'自重', mk_days:'日別の記録', mk_ex_n:'{n}種目', mk_no_training:'トレーニングの記録はまだありません。',
       mk_todo_title:'次回までに', mk_todo_none:'次回までのことは、まだありません。', mk_pain:'痛みが出たら無理をせず、次回トレーナーにお伝えください', mk_notes_title:'指導の履歴', mk_no_notes:'指導の記録はまだありません。', mk_by:'担当 {name}',
       mk_remain:'残り回数', mk_contract_h:'契約', mk_contract_ask:'契約の内容は担当トレーナーにお尋ねください。', mk_live:'いま有効', mk_freq:'月{n}回', mk_tickets:'チケット{n}枚',
       mk_rules_h:'キャンセルと振替', mk_rules:'前日17時まで無料でキャンセルできます。それ以降のキャンセルは1回分の消化になります。', mk_consult:'契約の内容についてのご相談は担当トレーナーへ。',
@@ -568,7 +568,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_progress_title:'Progress to your goal', mk_weight_goal:'Weight {w}kg (by {d})', mk_weight_goal_nodl:'Weight {w}kg', mk_now_rest:'Now {now}kg / {rest}kg to go', mk_since_join:'{v}kg since joining',
       mk_weight:'Weight', mk_fat:'Body fat', mk_muscle:'Muscle', mk_vs_prev:'vs last', mk_trend:'Trend', mk_since:'Since {d}', mk_goal_line:'Goal {v}', mk_trend_aria:'{name} trend from {a} to {b}',
       mk_recent:'Recent records', mk_mdate:'Date', mk_no_body:'No body records yet.',
-      mk_last:'Last session ({date})', mk_counts:'{e} exercises · {s} sets', mk_by_ex:'By exercise', mk_best:'Personal best', mk_days:'By day', mk_ex_n:'{n} exercises', mk_no_training:'No training records yet.',
+      mk_last:'Last session ({date})', mk_counts:'{e} exercises · {s} sets', mk_by_ex:'By exercise', mk_best:'Personal best', mk_bw:'Bodyweight', mk_days:'By day', mk_ex_n:'{n} exercises', mk_no_training:'No training records yet.',
       mk_todo_title:'Before next time', mk_todo_none:'Nothing yet.', mk_pain:"If you feel pain, don't push yourself. Please tell your trainer next time.", mk_notes_title:'Coaching history', mk_no_notes:'No coaching notes yet.', mk_by:'with {name}',
       mk_remain:'Sessions left', mk_contract_h:'Plan', mk_contract_ask:'Please ask your trainer about your plan.', mk_live:'Active', mk_freq:'{n}/month', mk_tickets:'{n} tickets',
       mk_rules_h:'Cancellations & transfers', mk_rules:'You can cancel free of charge until 5 pm the day before. Later cancellations use one session.', mk_consult:'For questions about your plan, please ask your trainer.',
@@ -658,7 +658,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_progress_title:'目标进度', mk_weight_goal:'体重 {w}kg（{d}前）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'现在 {now}kg ／ 还差 {rest}kg', mk_since_join:'入会以来 {v}kg',
       mk_weight:'体重', mk_fat:'体脂肪率', mk_muscle:'骨骼肌量', mk_vs_prev:'比上次', mk_trend:'变化', mk_since:'自入会 {d}', mk_goal_line:'目标 {v}', mk_trend_aria:'{name}的变化 {a}到{b}',
       mk_recent:'最近记录', mk_mdate:'测量日', mk_no_body:'暂无体成分记录。',
-      mk_last:'上次（{date}）', mk_counts:'{e}个动作・{s}组', mk_by_ex:'各动作的变化', mk_best:'个人最佳', mk_days:'每日记录', mk_ex_n:'{n}个动作', mk_no_training:'暂无训练记录。',
+      mk_last:'上次（{date}）', mk_counts:'{e}个动作・{s}组', mk_by_ex:'各动作的变化', mk_best:'个人最佳', mk_bw:'自重', mk_days:'每日记录', mk_ex_n:'{n}个动作', mk_no_training:'暂无训练记录。',
       mk_todo_title:'下次之前', mk_todo_none:'暂时没有。', mk_pain:'如果感到疼痛请不要勉强，下次请告诉教练', mk_notes_title:'指导记录', mk_no_notes:'暂无指导记录。', mk_by:'教练 {name}',
       mk_remain:'剩余次数', mk_contract_h:'合同', mk_contract_ask:'合同内容请咨询您的教练。', mk_live:'有效中', mk_freq:'每月{n}次', mk_tickets:'课券{n}张',
       mk_rules_h:'取消与改期', mk_rules:'前一天17点前可免费取消。之后取消将消耗一次。', mk_consult:'关于合同内容的咨询，请联系您的教练。',
@@ -748,7 +748,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_progress_title:'目標進度', mk_weight_goal:'體重 {w}kg（{d}前）', mk_weight_goal_nodl:'體重 {w}kg', mk_now_rest:'現在 {now}kg ／ 還差 {rest}kg', mk_since_join:'入會以來 {v}kg',
       mk_weight:'體重', mk_fat:'體脂肪率', mk_muscle:'骨骼肌量', mk_vs_prev:'比上次', mk_trend:'變化', mk_since:'自入會 {d}', mk_goal_line:'目標 {v}', mk_trend_aria:'{name}的變化 {a}到{b}',
       mk_recent:'最近記錄', mk_mdate:'測量日', mk_no_body:'尚無體組成記錄。',
-      mk_last:'上次（{date}）', mk_counts:'{e}個動作・{s}組', mk_by_ex:'各動作的變化', mk_best:'個人最佳', mk_days:'每日記錄', mk_ex_n:'{n}個動作', mk_no_training:'尚無訓練記錄。',
+      mk_last:'上次（{date}）', mk_counts:'{e}個動作・{s}組', mk_by_ex:'各動作的變化', mk_best:'個人最佳', mk_bw:'自重', mk_days:'每日記錄', mk_ex_n:'{n}個動作', mk_no_training:'尚無訓練記錄。',
       mk_todo_title:'下次之前', mk_todo_none:'暫時沒有。', mk_pain:'如果感到疼痛請不要勉強，下次請告訴教練', mk_notes_title:'指導記錄', mk_no_notes:'尚無指導記錄。', mk_by:'教練 {name}',
       mk_remain:'剩餘次數', mk_contract_h:'合約', mk_contract_ask:'合約內容請詢問您的教練。', mk_live:'有效中', mk_freq:'每月{n}次', mk_tickets:'課券{n}張',
       mk_rules_h:'取消與改期', mk_rules:'前一天17點前可免費取消。之後取消將消耗一次。', mk_consult:'關於合約內容的諮詢，請聯絡您的教練。',
@@ -2659,6 +2659,8 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   function _mkNum(v){ if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null; var n = Number(v); return isFinite(n) ? n : null; }
   function _mk1(v){ var n = _mkNum(v); return n == null ? '—' : (Math.round(n * 10) / 10).toFixed(1); }
   function _mkKg(v){ var n = _mkNum(v); return n == null ? '—' : String(Math.round(n * 100) / 100); }
+  //   トレーニングの重量：0 は「自重」（自重の種目は重量 0 で記録される・2026-11-06）
+  function _mkW(v){ var n = _mkNum(v); return n === 0 ? t('mk_bw') : _mkKg(v) + 'kg'; }
   function _mkStr(x){ return (x === null || x === undefined) ? '' : String(x); }
   function _mkArr(x){ return Array.isArray(x) ? x : []; }
   function _mkYmd(d){ var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(_mkStr(d)); return m ? [+m[1], +m[2], +m[3]] : null; }
@@ -2724,7 +2726,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     if (!st.length) return '';
     function reps(x){ var n = _mkNum(x.reps); return n == null ? '—' : String(n); }
     var oneW = st.every(function(x){ return _mkNum(x.weight) === _mkNum(st[0].weight); });
-    return oneW ? _mkKg(st[0].weight) + 'kg × ' + st.map(reps).join('・') : st.map(function(x){ return _mkKg(x.weight) + 'kg×' + reps(x); }).join('・');
+    return oneW ? _mkW(st[0].weight) + ' × ' + st.map(reps).join('・') : st.map(function(x){ return _mkW(x.weight) + '×' + reps(x); }).join('・');
   }
   function _mkItems(sess){ return _mkArr(sess && sess.items).filter(function(it){ return it && typeof it === 'object'; }); }
   function _mkSetCount(sess){ var n = 0; _mkItems(sess).forEach(function(it){ n += _mkArr(it.sets).length; }); return n; }
@@ -2833,12 +2835,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
         var top = null; _mkItems(s).forEach(function(it){ if (_mkStr(it.exercise) !== ex) return; _mkArr(it.sets).forEach(function(st){ var w = st ? _mkNum(st.weight) : null; if (w != null && (top == null || w > top)) top = w; }); });
         return { d: s.date, v: top };
       }).filter(function(p){ return p.v != null; });
-      if (pts.length) exCard.appendChild(_mkChart(pts, null, 'kg', ex));
+      if (pts.some(function(p){ return p.v > 0; })) exCard.appendChild(_mkChart(pts, null, 'kg', ex));   // 自重だけの種目（重量が全部0）は線を出さない
       var best = _mkArr(data.training.best).filter(function(b){ return b && _mkStr(b.exercise) === ex; })[0];
       if (best) {
         var bl = _mkEl('div'); bl.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;flex-wrap:wrap;';
         bl.appendChild(_mkEl('span', 'mk-chip gold', t('mk_best')));
-        bl.appendChild(_mkEl('span', '', _mkKg(best.weight) + 'kg × ' + (_mkNum(best.reps) == null ? '—' : String(_mkNum(best.reps))) + (best.date ? '（' + _mkMd(best.date) + '）' : '')));
+        bl.appendChild(_mkEl('span', '', _mkW(best.weight) + ' × ' + (_mkNum(best.reps) == null ? '—' : String(_mkNum(best.reps))) + (best.date ? '（' + _mkMd(best.date) + '）' : '')));
         exCard.appendChild(bl);
       }
       box.appendChild(exCard);
@@ -3969,6 +3971,6 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   boot();
 </script>
 <!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
-<script src="karte.js?v=2026-11-06b"></script>
+<script src="karte.js?v=2026-11-06c"></script>
 </body>
 </html>

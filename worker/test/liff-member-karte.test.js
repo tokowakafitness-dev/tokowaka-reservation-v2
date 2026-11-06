@@ -216,7 +216,7 @@ for (const [label, f] of [['503（MEMBER_KARTE_OFF）', () => ({ success: false,
   ok('4b-5 会員の既定に important を足していない', !/\.mk-[^{]*\{[^}]*!important/.test(STYLE));
   ok('4b-6 予約ページの viewport は変えていない', HTML.includes('<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'));
   //   ★画面の版は後の変更でも上がる（設計36 で 2026-11-06g）。設計35 の版以降であることだけを見る
-  ok('4b-7 版の印を上げた', /var LIFF_BUILD = '2026-11-(06[f-z]|0[7-9]|[1-3]\d)/.test(HTML) && /karte\.js\?v=2026-11-06b/.test(HTML) && /KARTE_BUILD = '2026-11-06b/.test(KSRC));
+  ok('4b-7 版の印を上げた', /var LIFF_BUILD = '2026-11-(06[f-z]|0[7-9]|[1-3]\d)/.test(HTML) && /karte\.js\?v=2026-11-(06[b-z]|0[7-9]|[1-3]\d)/.test(HTML) && /KARTE_BUILD = '2026-11-(06[b-z]|0[7-9]|[1-3]\d)/.test(KSRC));
 }
 
 // ================= 6. トレーナー：お客様に見える欄（karte.js だけで動かす） =================
@@ -465,6 +465,75 @@ const PREV = Object.assign({}, KARTE, { notes: [
   kbtn(mine, '直す').click(); await settle();
   kbtn(root, '保存する').click(); await settle();
   ok('7-13 ★BAD_STATE（全部空）は「消す」を使うよう案内し、画面は編集のまま', w.alerts.some((a) => a.includes('全部を空にするときは「消す」')) && !!root.querySelector('.k-mpreview textarea[aria-label="お客様へ"]'));
+}
+
+// ================= 8b. お客様の見え方の編集中にトークンを取り直しても、同じカードで入力が戻る（2026-11-06 関門② 高1） =================
+{
+  const b64u = (x) => Buffer.from(x).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const jwt = (ageS) => b64u('{"alg":"ES256"}') + '.' + b64u(JSON.stringify({ sub: 'U_TEST', iat: Math.floor(Date.now() / 1000) - ageS })) + '.sig';
+  const kfetch = (b) => {
+    if (b.action === 'k_summary') return { success: true, customer: { customerId: 'C1', name: '会員', trainerId: 'T1' }, assigned: true, consent: { state: 'none' }, profile: null, lastNote: null, nextReservation: null };
+    if (b.action === 'k_memberPreview') return PREV;
+    if (b.action === 'k_saveMemberNote') return { success: true, mnoteId: 'M1', rev: 4 };
+    return { success: true, ready: true, rows: [] };
+  };
+  const { w, root } = await previewEnv(false, kfetch);
+  w.reloaded = 0; w.__karteReload = () => { w.reloaded++; }; w.logouts = 0; w.liff.logout = () => { w.logouts++; };
+  const old = jwt(11 * 60); w.liff.getIDToken = () => old;
+  kbtn(root, '指導の履歴').click(); await settle();
+  kbtn([...root.querySelectorAll('.k-mpreview .card')].find((c) => c.textContent.includes('わたしの枚')), '直す').click(); await settle();
+  const ta = root.querySelector('.k-mpreview textarea[aria-label="お客様へ"]'); ta.value = '読み直しの前に直した文'; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const t2 = root.querySelector('.k-mpreview input[aria-label="次回までに 2つ目"]'); t2.value = '水を飲む'; t2.dispatchEvent(new w.Event('input', { bubbles: true }));
+  [...root.querySelectorAll('.k-mpreview .k-pill')].find((b) => b.textContent === '脚').click(); await settle();
+  const nSave = w.fetched.filter((b) => b.action === 'k_saveMemberNote').length;
+  kbtn(root, '保存する').click(); await settle();
+  const ss = JSON.parse(w.sessionStorage.getItem('karte_draft_v1') || 'null');
+  ok('8b-1 ★古いトークンでは送らず、直していた入力（文・次回までに・触ったタグ・送信番号）を退避して logout → 読み直し', w.fetched.filter((b) => b.action === 'k_saveMemberNote').length === nSave && w.reloaded === 1 && w.logouts === 1
+     && ss && ss.draft && ss.draft.sub === 'mpreview' && ss.draft.cid === 'C1' && ss.draft.edit.mnoteId === 'M1' && ss.draft.edit.message === '読み直しの前に直した文' && ss.draft.edit.todo[1] === '水を飲む' && ss.draft.edit.tagsTouched === true && !!ss.draft.edit.reqId, JSON.stringify(ss));
+  ok('8b-2 ★退避に氏名を残さない', ss && ss.name === '' && !JSON.stringify(ss).includes('会員'), JSON.stringify(ss));
+  //   読み直した後（新しいトークン）
+  async function after(stash, fetchFn) {
+    const w2 = boot({ bootRes: HOME, fetch: fetchFn || kfetch }); await settle();
+    for (const [k, v] of Object.entries(stash)) w2.sessionStorage.setItem(k, v);
+    w2.__g.state.trainerId = 'T1'; w2.__g.state._isOwner = false; w2.__g.state._allTrainers = [{ id: 'T1', name: '一郎' }];
+    w2.eval(KSRC);
+    for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 5));
+    return w2;
+  }
+  const stash = { karte_draft_v1: w.sessionStorage.getItem('karte_draft_v1'), karte_reauth: w.sessionStorage.getItem('karte_reauth') };
+  const w2 = await after(stash);
+  const r2 = w2.document.getElementById('karteRoot');
+  const ta2 = r2 && r2.querySelector('.k-mpreview textarea[aria-label="お客様へ"]');
+  ok('8b-3 ★読み直した後、お客様の見え方の同じ枚の編集が開き、入力が戻る', !!ta2 && ta2.value === '読み直しの前に直した文' && r2.querySelector('.k-mpreview input[aria-label="次回までに 2つ目"]').value === '水を飲む'
+     && [...r2.querySelectorAll('.k-mpreview .k-pill.on')].map((b) => b.textContent).includes('脚'), r2 ? r2.textContent.slice(0, 200) : 'no root');
+  kbtn(r2, '保存する').click(); await settle();
+  const sv = w2.fetched.filter((b) => b.action === 'k_saveMemberNote').pop();
+  ok('8b-4 保存すると同じ送信番号・戻した中身で送る（タグも）・書けたら印を消す', sv && sv.clientReqId === ss.draft.edit.reqId && sv.message === '読み直しの前に直した文' && Array.isArray(sv.tags) && sv.tags.includes('脚') && !w2.sessionStorage.getItem('karte_reauth'), JSON.stringify(sv));
+  //   枚がその間に更新されていた（rev が違う）→ 戻さずに知らせる
+  const PREV2 = Object.assign({}, PREV, { notes: PREV.notes.map((n) => (n.mnoteId === 'M1' ? Object.assign({}, n, { rev: 4 }) : n)) });
+  const w3 = await after(stash, (b) => (b.action === 'k_memberPreview' ? PREV2 : kfetch(b)));
+  const r3 = w3.document.getElementById('karteRoot');
+  const ta3 = r3 && r3.querySelector('.k-mpreview textarea[aria-label="お客様へ"]');
+  ok('8b-5 ★その間に枚が更新されていたら（rev 違い）古い入力で上書きしない・知らせる', !!ta3 && ta3.value === 'わたしの枚' && w3.alerts.some((a) => a.includes('戻せませんでした')));
+  //   顧客が違う退避は戻さない
+  const bad = JSON.parse(stash.karte_draft_v1); bad.draft.cid = 'C2';
+  const w4 = await after({ karte_draft_v1: JSON.stringify(bad), karte_reauth: stash.karte_reauth });
+  const r4 = w4.document.getElementById('karteRoot');
+  ok('8b-6 ★退避の顧客と開く顧客が違えば、入力を戻さない', !!r4 && !r4.querySelector('.k-mpreview textarea[aria-label="お客様へ"]'));
+}
+
+// ================= 9. 自重（重量0）は「自重」と出す（2026-11-06） =================
+{
+  const BW = JSON.parse(JSON.stringify(KARTE));
+  BW.training = { sessions: [{ date: '2026-11-01', items: [{ exercise: 'ディップス', sets: [{ setNo: 1, weight: 0, reps: 12 }, { setNo: 2, weight: 0, reps: 10 }] }, { exercise: 'チンニング', sets: [{ setNo: 1, weight: 0, reps: 8 }, { setNo: 2, weight: 5, reps: 6 }] }], tags: [] }],
+    best: [{ exercise: 'ディップス', weight: 0, reps: 12, date: '2026-11-01' }] };
+  for (const [lang, word] of [['ja', '自重'], ['en', 'Bodyweight']]) {
+    const w = boot({ bootRes: KON, lang, fetch: () => BW }); await settle();
+    tab(w, 'training').click(); await settle();
+    const tt = $(w, 'mkBody').textContent;
+    ok('9-1 ★会員のトレーニング：重量0は「' + word + '」（前回・混ざるときも）・0kg と出さない（' + lang + '）', tt.includes(word + ' × 12・10') && tt.includes(word + '×8・5kg×6') && !tt.includes('0kg'), tt.slice(0, 300));
+    ok('9-2 自己ベストも「' + word + '」・自重だけの種目は推移の線を出さない（' + lang + '）', tt.includes(word + ' × 12') && !$(w, 'mkBody').querySelector('svg.mk-chart'), tt.slice(0, 300));
+  }
 }
 
 console.log('');
