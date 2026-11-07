@@ -74,6 +74,7 @@ D1                      その写し ＋ D1で作った枠・引当
 | `karte_notes` / `karte_tr_sessions` / `karte_tr_sets` | TEXT の ID（Worker が作る） | `k_add*` / `k_edit*` / `k_delete*`（deleted_at） | `k_notes` / `k_training` | 1行1セット |
 | `karte_member_notes` | mnote_id（Worker が作る） | `k_addTraining`（member・トレーニングと同じ batch）／`k_saveMemberNote`（3つの形・rev）／`k_deleteMemberNote`・`k_deleteTraining`（同じ session の枚を同じ batch で deleted_at） | `buildMemberKarte`（`c_myKarte`・`k_memberPreview`） | ★会員に見せる文だけ（社内メモと別の表・設計35）。session に1枚（部分 UNIQUE・生きた行）／session なしは NULL。顧客・日付は参照先の session と一致（見張り）。req_id 列は持たない |
 | `karte_exercises` | name（前後の空白を落とした1〜50字） | `k_saveExercise`（追加・部位の変更・消した行の復活＝名前と部位だけ・後勝ち・rev なし・控えは karte_revisions の before_json に **part と deleted_at**（名前は row_id）） | `k_exercises`（★**表の生きた行だけ**・500件まで・入りきらなければ truncated。karte_tr_sets は読まない） | ★**全トレーナー・全顧客で共有**（顧客に結び付かない）。part は CHECK（chest/legs/back/shoulder/arm/core/other）・NOT NULL。karte_tr_sets.exercise（自由文）は変えない・読まない（既存の名前はその顧客の「最近の種目」にだけ出る）。生きた行は500まで（新しい名前・消した行の復活は EX_LIMIT 409） |
+| `karte_tr_exercises` / `karte_tr_set_ext` / `karte_tr_drops` | (session_id, ord) / set_id（**INT NOT NULL PRIMARY KEY**＝rowid の別名にしない）/ (set_id, drop_seq) | `k_addTraining` だけ（本セットの INSERT の直後に `SELECT MAX(set_id) … WHERE session_id=?` で親を指す・同じ batch・最後に `G.trShape`） | `k_training`・`buildMemberKarte`（**生きた session の id を通してだけ**） | 設計38。種目の並び・数字の無い種目（done_only）・補助・無理やり・ドロップ。**既存の表に ALTER しない**（0029 は CREATE IF NOT EXISTS だけ）。ドロップは karte_tr_sets に置かない（古い読み手が本セットと数えない）。古い回は行が無い＝今までどおりの読み方。受付は `KARTE_TRAINING_EXT`（off／allow／on） |
 | `karte_revisions` | id | 編集・削除の前の中身 | 監査 | 安全面の中身は入れない |
 | `karte_requests` / `body_requests` | (trainer,action,req) / (channel,req) | 書き込みと同じ batch | 二重送信の再送 | 成功だけ残る |
 | `karte_rate` | (trainer_id, window_start) | 先行 batch | 回数制限 | 10分の区切りごと60回 |
@@ -165,12 +166,23 @@ trg_alloc_return_pack       同
 | I54 | **カルテの保存は、要求に鍵がある列だけを置き換える**（hearing・painMap・diagnosis と既存の列。null・空は消す、鍵が無ければそのまま）＝古い画面からの保存で新しい項目を消さない（設計31） | `karte.test.js` 10-3・10-9・10-20 |
 | I55 | **健康情報は karte_safety にだけ置く**：変化の理由（REASONS）に健康の選択肢を入れない・知らない鍵は400。一覧の「注意あり」は同意の JOIN の中で SQL が決め、部位や強さは返さない。改訂の控えにヒアリングの自由文を入れない。**自由文（メモ・セットのメモ・ヒアリング）は健康情報を書く場所ではない＝入力欄の真下に「痛み・診断・服薬は『注意すること』へ」を置き、よく使うメモの選択肢に健康の言葉を入れない**（サーバーで意味は判定しない・設計31 確定事項2）（設計31） | `liff-karte.test.js` 14-8・14-10、`karte.test.js` 10-6・10-7・10-12・10-14・10-15・10-18、`liff-karte.test.js` 8-5・8-7 |
 | I56 | **画面の固定表（目的・部位・痛み・タグ・理由）の鍵と表示名は Worker（lib/karte-hearing.js）と同じ** | `liff-karte.test.js` 7-1 |
-| I57 | **トレーニングの記録は✓のセットだけ送る**（前回の呼び出し・複製・下書きの復元でも✓の初期値は false）。合計60セットまで（画面と Worker の TOTAL_SETS）（設計33）。★回数が空のセットは送らない／重量の空は自重＝0（I61） | `liff-karte.test.js` 10-1・10-5・10-6・10-9、`karte.test.js` 11-2 |
+| I57 | **トレーニングの記録は✓のセットだけ送る**（前回の呼び出し・複製・下書きの復元・**メモの取り込み（設計38）**でも✓の初期値は false。ドロップは本セットの✓に従う。数字の無い種目は「実施した」の✓があるときだけ送る）。合計60セットまで（画面と Worker の TOTAL_SETS）（設計33）。★回数が空のセットは送らない／重量の空は自重＝0（I61） | `liff-karte.test.js` 10-1・10-5・10-6・10-9、`karte.test.js` 11-2 |
 | I58 | **トレーニングの下書きは localStorage（トレーナー×顧客）が正本**。氏名を入れない・24時間で実際に消す・中身の顧客が違えば戻さない。送ったが結果が分からないときは中身と clientReqId を固定し、同じ組でだけ送り直す。トークン切れの退避（sessionStorage）に中身を入れない（設計33） | `liff-karte.test.js` 10-7・10-8・10-10〜10-12・10-14〜10-17 |
 | I59 | **「前回」は入力中の日付より前の、session_id 単位の直近1回**（同じ日の2回を混ぜない・直近20回の中だけ）（設計33） | `liff-karte.test.js` 10-2・10-3 |
 | I60 | **種目の一覧（karte_exercises）は全員で共有し、書くのは `k_saveExercise` だけ**（名前と部位だけ・知らない鍵は400・名前は前後の空白を落とした1〜50字＝画面と同じ正規化・isKarteWrite に当たる＝I46/I49 の守り）。**読みは表の生きた行だけ**（記録の自由文 karte_tr_sets は読まない＝走査の負荷と、自由文の個人・健康の情報を顧客と切り離して全員に並べないため・CEO 決定）。500件まで・切れたら truncated（画面は「一部だけ表示・見つからなければ名前を入力」）。**生きた行は500まで**：事前の検査も batch の見張りも「同名の生きた行が無い、かつ生きた行が500以上」で止める（消した行の復活も数える）。**部位の鍵は画面（PART_KEYS）＝ Worker（lib/karte-exercises.js の EXERCISE_PARTS）＝ 表の CHECK**。画面の部位は「一覧の部位 → 無ければ名前からの推定」。その顧客の「最近の種目」から選んだ名前が一覧に無ければ、その場で部位を選んで登録できる（任意・ダイアログなし）。種目名は健康の言葉を書く場所ではない（I55・注記） | `karte-exercises.test.js` E1-1〜E1-5・E2-1〜E2-3・E3-1〜E3-4・E4-1〜E4-9・E5-1〜E5-6・E6-1〜E6-4、`liff-karte-exercises.test.js` P0-1・P1-1〜P8-2 |
 | I61 | **自重は重量0で保存する**：画面は重量が空の✓を 0 で送る（回数が空は送らない・「記録されない入力」に重量の空を数えない）。表示は 0 を「自重」（トレーナーの記録・見る側・写す画面・会員の画面 4言語）。写す・前回の値では 0 を空に戻す。D1 の weight_kg は作り直さない（0 は CHECK を通る） | `karte-exercises.test.js` E7-1〜E7-4、`liff-karte-exercises.test.js` B1-1〜B3-2、`liff-member-karte.test.js` 9-1・9-2 |
 | I62 | **カルテの書き込みは送る前にトークンの発行時刻を見る**：59分（TOKEN_REFRESH_S=3540・決定0142）を超えていたら送らずに、入力を端末に退避 → 読み直し（`liff.logout()` は LINE アプリの外＝isInClient()===false のときだけ。アプリの中で logout すると最初のページに戻った）。401 が返った経路も同じ。**入力のあるフォームは全部、読み直し後に同じ画面・同じカードで戻す**（トレーニング・お客様の欄・指導メモは下書き、ヒアリング・測定・メモ・振り返り・目標線・退会の発効日・お客様の見え方の編集・種目の登録/部位を直す途中は sessionStorage の退避。戻すのは退避の顧客＝開く顧客のときだけ・**氏名を残さない**・30分を過ぎた退避は次の起動で捨てる・読んだら消す。安全面（健康情報）は退避しない＝I48）。読み直しの印（sessionStorage `karte_reauth`・時刻）は 0≦経過<10分のときだけ効き、未来の時刻は消す。**新しいトークンで書けたときに消す**。印が効く間は画面で判定せず送り、また 401 なら読み直さず「LINE から開き直して」（無限に読み直さない）。Worker の上限は1時間（I46・決定0142） | `liff-karte-exercises.test.js` S1-1〜S12-1、`liff-member-karte.test.js` 8b-1〜8b-6、`liff-karte.test.js` 4-1〜4-5 |
+| I63 | **メモの原文と決定待ちは端末のメモリの中だけ**：サーバーへ送らない・localStorage／sessionStorage に入れない・console に出さない。取り込みの画面は何も送らない（設計38） | `liff-memo-parse.test.js` P0、`liff-karte-import.test.js` M1・M17 |
+| I64 | **読み取れない行を黙って捨てない・黙って数値にしない**：文法に合わない・2つ目の日付以降・実在しない/未来の日付・種目の無い数値・上限超え・行の残り・0.1 刻みでない小数・×の無い形・`50×10×3`・`20回`・`60秒` は決定待ちにし、トレーナーが選ぶまで記録の画面に入れない（設計38） | `liff-memo-parse.test.js` P1〜P63、`liff-karte-import.test.js` M2 |
+| I65 | **migration 0029 は新しい表を作るだけ**（CREATE … IF NOT EXISTS・既存の表に ALTER しない）＝途中で失敗しても、記録が残らなくても、次の実行で同じファイルがそのまま通る（設計38） | `karte-training-ext.test.js` T1・T1b・T1c |
+| I65b | **トレーニングの1回の形**：種目は ord 1〜20 の連続（数字の無い種目＝done_only=1・本セット0）／本セットは ord ごとに set_no 1〜10 の連続／ドロップは drop_seq 1〜3 の連続（別の表）／合計60（ドロップを数える）／補助は1〜100で回数に足さない／知らない鍵は400（古い形の要求にも）／doneOnly とセットの両方は400。自己矛盾は trShape（Worker が数えた数との照合を含む）で batch ごと戻す（設計38） | `karte-training-ext.test.js` T2〜T20・T16c |
+| I66 | **自己ベスト・種目別推移・推定1RM は本セットかつ無理やりでない行だけ（種目名ごと）**。回数は自分の回数。日別・写す・前回は ord ごと。トレーナーの前回の値には無理やりも印つきで出す（設計38） | `karte-training-ext.test.js` T21〜T24、`liff-karte-import.test.js` M10〜M12・M20、`member-karte.test.js` 38-14-1〜38-14-3b |
+| I67 | **会員の応答に無理やりのセットを出さない**（オーナー確定 2026-11-06）。SELECT 句に forced を書かない（WHERE・JOIN の条件にだけ）。無理やりの本セットの下のドロップ・全部が無理やりの種目も出さない。補助・ドロップ・数字の無い種目は出す（設計38） | `member-karte.test.js` 38-14-4〜38-14-7 |
+| I68 | **新しい鍵（doneOnly・assist・forced・drops）を使う保存は、すべての送信経路で毎回 karteSchema>=33 を確かめる**（payload の中身＝鍵があるかで判定）。使わない保存は32以上で送れる。印の無い鍵は送らない（null・空配列で送らない）（設計38） | `liff-karte-import.test.js` M13〜M19 |
+| I69 | **旧ハッシュで一致させるのは、新しい鍵を使わず、同じ種目名が2つ以上の種目に無い要求だけ**。それ以外の不一致は 409（設計38） | `karte-training-ext.test.js` T25〜T27b |
+| I70 | **3つの表は生きた session の id を通してだけ読む**。k_exercises は karte_tr_exercises を読まない（I60）（設計38） | `karte-training-ext.test.js` T28・T29、`karte-exercises.test.js` E5-7 |
+| I71 | **取り込みは健康の言葉を自動でどこにも入れない**（I55）：自動で種目にするのは autoKnown（固定の EXERCISES ＋ 共有の種目の生きた行）と完全一致した名前だけ。この方の最近の種目は候補として押させるだけ（押しても名前の欄に仮に入るだけ）。括弧書きで構造にするのは無理やりの確定語だけ。それ以外はトレーナーが選ぶまで保存しない（設計38） | `liff-memo-parse.test.js` P52〜P61、`liff-karte-import.test.js` M21 |
+| I72 | **新しい鍵の受付はサーバーの切替 KARTE_TRAINING_EXT で決める**：厳密に 'on'、または 'allow' で KARTE_TRAINING_EXT_TRAINERS に trainer_id が完全一致のときだけ受け付けて karteSchema 33。それ以外は新しい鍵を含む k_addTraining を何も書かずに 409 TRAINING_EXT_OFF・karteSchema 32。旧形は切替に関わらず保存。replay は切替の判定より先。一覧に氏名を書かない。止める手段に古い Worker への巻き戻しを使わない（設計38） | `karte-training-ext.test.js` T30〜T35、`liff-karte-import.test.js` M23 |
 | I-M1 | **会員のカルテ（c_myKarte）の本人は who.customerId だけで決める。body を一切読まない**（customerId・noteId・sessionId 等で他人を指させない）。customer 以外・who.customerId が無ければ 403（設計35） | `member-karte.test.js` 1-7〜1-15・2-17・5-7 |
 | I-M2 | **応答は専用の allowlist で組み立てる**（k_ の応答を流用して落とす形にしない）。SQL の段階で列を選ぶ（全部の列を取らない）。値が無いものは null／空配列（推測で埋めない）。体の記録は I51 のまま（verified の凍結＋d1） | `member-karte.test.js` 2-3〜2-16・5-3 |
 | I-M3 | **社内メモ（karte_notes の本文・次回の計画・確かめること・理由）・健康情報（karte_safety・同意）・セットのメモ・ヒアリングの自由文・契約の金額と報酬を読まない・返さない**。契約は I53 を満たすときだけ・期間の列が無ければ null・担当は名簿の表示名（当たらなければ null）。includeContract=false なら契約の SQL を1本も出さない | `member-karte.test.js` 2-2・3-1〜3-4・4-1〜4-3・5-1〜5-5・6-6 |
@@ -213,6 +225,18 @@ trg_alloc_return_pack       同
 | 部位がまだ無い（共有の一覧に無い名前） | 名前からの推定（`PART_RULES`）・当たらなければ「その他」 | 表に行が無い（`k_exercises` に出ない） | `liff/karte.js` の `partKeyOf` |
 | 自重 | 重量の欄が空／表示は「自重」（会員の画面は `mk_bw`） | weight_kg **0** | 画面の `buildPayload`（空→0）・`wLabel`／index.html の `_mkW` |
 ★「一覧に無い」と「その他（other）」は別の事実（無い＝誰も分類していない・other＝分類した結果その他）。
+
+### トレーニングの記録の印（★2026-11-07・設計38）
+| 意味 | メモ | 画面（表示） | D1・Worker |
+|---|---|---|---|
+| 補助 | `50×10+5` | `+補助5`（会員 `mk_assist`） | `karte_tr_set_ext.assist_reps` 5（reps は10のまま）。ドロップの段は `karte_tr_drops.assist_reps` |
+| ドロップ | `10×10+0×10` | `10kg×10→自重×10` | `karte_tr_drops`（親の set_id・drop_seq 1）。**karte_tr_sets には無い** |
+| 無理やり | `80×5(できない)` | `（無理）`（**会員には出さない**） | `forced` 1（印なし＝NULL）。要求では `forced: true` のときだけ鍵を付ける |
+| 数字の無い種目 | autoKnown と一致する名前だけの行 | `実施のみ`（会員 `mk_done`） | `karte_tr_exercises.done_only` 1・本セット0行。要求では `doneOnly: true`・`sets: []` |
+| 種目の並び | 行の順 | 新しい回は入力の順 | `ord`（古い回は karte_tr_exercises が無い＝名前順／会員は set_id の順） |
+| 種目（構造の単位） | — | ord ごとのかたまり | (session_id, ord)。自己ベスト・推移だけ exercise の名前 |
+| 受付の版 | — | 取り込みのボタン・補助の欄は33のときだけ | `karteSchemaFor(env, who)`＝切替が開けば33・閉じれば32（定数 KARTE_SCHEMA=33 は最大値） |
+★新しい鍵は「値ではなく鍵があるか」で判定する（`drops: []` も新しい鍵・`assist: null` は400）。
 
 ### 流入元（`utm_source`）の値の意味（★2026-11-05 に確定）
 
@@ -400,6 +424,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 | GASの実行時間 | 6分 | 押し出しは打ち切り方式 | 途中から再開する作りが必須 |
 | D1の書き込み | 1日10万行 | 差分同期で抑えている | 書き込みが止まる |
 | D1の読み取り | 1日500万行 | 余裕 | — |
+| トレーニングの1回（`k_addTraining`・設計38） | 種目20（数字の無い種目を含む）・本セット10/ord・ドロップ3/セット・合計60（ドロップを数える）・本文16KB | 1回の保存の文の数は最大でおよそ150（本セットごとに付加の文が1つ増える・以前はおよそ63）。D1 の公式の上限（2026-11-07 確認）：**batch() は文の数に関わらず1回の呼び出しで1クエリと数える**（呼び出しあたり Paid 1000／Free 50）。文ごとの上限＝引数100・文の長さ100KB。**30秒は batch 全体にかかる** | 30秒を超えれば保存全体が失敗（全部か無か）。関門③で最大に近い記録を1件保存して時間を確かめる |
 | 種目の一覧（`k_exercises`） | 表の生きた行500件・返すのも500件 | 2026-11-06 に作成 | 新しい名前・消した行の復活は EX_LIMIT。読みは表の主キー順に最大501行だけ（記録のセットは走査しない） |
 ★だから**反映はまとめて1回**。小分けに頼むと天井に当たる。
 

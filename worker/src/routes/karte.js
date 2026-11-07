@@ -27,8 +27,10 @@ export const KARTE_LIMITS = {
   NOTE_CHARS: 2000,
   TEXT_CHARS: 500,
   EXERCISES: 20,
-  SETS_PER_EXERCISE: 10,
-  TOTAL_SETS: 60,          // 1回の記録の合計（設計33・本文16KB の余裕）
+  SETS_PER_EXERCISE: 10,   // ord（その回の何番目の種目か）ごと。同じ名前の2つの種目は別々に数える（設計38）
+  DROPS_PER_SET: 3,        // 1つの本セットのドロップの段（設計38）
+  ASSIST_MAX: 100,         // 補助の回数（reps と同じ上限・回数に足さない）
+  TOTAL_SETS: 60,          // 1回の記録の合計（設計33・本文16KB の余裕）。設計38 からドロップの段も1つと数える
   PAGE: 20,
   BOARD_PAGE: 50,
   //   会員に見せる文（設計35）。表の CHECK と同じ上限
@@ -41,7 +43,28 @@ export const KARTE_LIMITS = {
 
 //   カルテの窓口の版（設計31）。画面はこれが自分の想定以上のときだけ新しい項目を保存する
 //   （新しい画面が古い Worker に当たると、新しい項目が黙って捨てられ「保存しました」と出るため・関門②）
-export const KARTE_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2）。古い Worker に member を送らせない
+//   ★応答で返すのは karteSchemaFor(env, who) の結果だけ。この定数は「この Worker が受け付けられる最大」
+export const KARTE_SCHEMA = 33;   // 33＝トレーニングの新しい項目（補助・無理やり・ドロップ・数字の無い種目＝設計38）
+const KARTE_SCHEMA_BASE = 32;     // 32＝お客様に見える欄（設計35 C2）。古い Worker に member を送らせない
+
+/**
+ * トレーニングの新しい項目を受け付けるか（設計38 §3-7・I72）。判定はこの1か所だけ
+ *   KARTE_TRAINING_EXT が厳密に 'on'＝全員／厳密に 'allow'＝KARTE_TRAINING_EXT_TRAINERS に trainer_id が完全一致で載っている人だけ
+ *   それ以外（'off'・未設定・打ち間違い・trainer_id が空）は偽＝止まる側に倒れる
+ */
+export function trainingExtOn(env, who) {
+  const mode = String((env && env.KARTE_TRAINING_EXT) || '');
+  if (mode === 'on') return true;
+  if (mode !== 'allow') return false;
+  const tid = String((who && who.trainerId) || '');
+  if (!tid) return false;
+  const list = String((env && env.KARTE_TRAINING_EXT_TRAINERS) || '').split(',').map((x) => x.trim()).filter((x) => x !== '');
+  return list.indexOf(tid) >= 0;
+}
+/** 応答に載せる窓口の版。切替が偽なら32（画面は新しい項目を出さない・送らない）、真なら33 */
+export function karteSchemaFor(env, who) {
+  return trainingExtOn(env, who) ? KARTE_SCHEMA : KARTE_SCHEMA_BASE;
+}
 
 export function isKarteWrite(action) {
   return /^k_(save|add|edit|delete|record)/.test(String(action || ''));
@@ -167,7 +190,58 @@ const G = {
   // 体の記録の切り替え（凍結）が済んでいる
   ready: () => S(`INSERT INTO karte_guard (ready) SELECT 1 WHERE NOT EXISTS (
                     SELECT 1 FROM body_freeze WHERE state IN ('frozen', 'copying', 'copied', 'verified'))`),
+  // ★トレーニングの1回の形（設計38 §3-3・I65b）。Worker が組んだ行の自己矛盾を batch の最後に確かめる二重の守り
+  //   どれか1つでも当たれば BAD_STATE で batch 全体が戻る。NULL を比べる箇所は IS／IS NOT／COALESCE（= は NULL で素通りする）
+  //   expect：Worker が数えた行数（本セット・ドロップ・種目）。ドロップは session を持たないので、別の回へ付いたものは数で捕まえる
+  trShape: (sid, expect) => S(`WITH p AS (SELECT ? AS sid, ? AS n_sets, ? AS n_drops, ? AS n_ex)
+    INSERT INTO karte_guard (state) SELECT 1 FROM p WHERE ${TR_SHAPE_CONDS.map((x) => `(${x[1]})`).join('\n       OR ')}`,
+    sid, expect.sets, expect.drops, expect.exercises),
 };
+//   trShape の条件（設計38 §3-3 の番号）。[名前, 条件]。1行1条件＝1つずつ外して検査が落ちることを確かめられる形にしておく
+//   ★条件は重なっている（同じ壊れ方を2つ以上で捕まえる）。どの条件も実際に当たることは検査（karte-training-ext T16c）で確かめる
+export const TR_SHAPE_CONDS = [
+  // 0 数：本セット・ドロップ・種目が Worker の数えた数と違う（行を落とした・別の回へ付いた）
+  ['n_sets', `(SELECT COUNT(*) FROM karte_tr_sets t WHERE t.session_id IS p.sid) IS NOT p.n_sets`],
+  ['n_drops', `(SELECT COUNT(*) FROM karte_tr_drops dr JOIN karte_tr_sets t ON t.set_id IS dr.set_id WHERE t.session_id IS p.sid) IS NOT p.n_drops`],
+  ['n_ex', `(SELECT COUNT(*) FROM karte_tr_exercises x WHERE x.session_id IS p.sid) IS NOT p.n_ex`],
+  // 1 本セットの行数と付加の行数が違う
+  ['ext_count', `(SELECT COUNT(*) FROM karte_tr_sets t WHERE t.session_id IS p.sid) IS NOT (SELECT COUNT(*) FROM karte_tr_set_ext e WHERE e.session_id IS p.sid)`],
+  // 2 付加の指す先：付加の無い本セット
+  ['set_without_ext', `EXISTS (SELECT 1 FROM karte_tr_sets t WHERE t.session_id IS p.sid
+             AND NOT EXISTS (SELECT 1 FROM karte_tr_set_ext e WHERE e.set_id IS t.set_id))`],
+  //   親の無い付加
+  ['ext_without_parent', `EXISTS (SELECT 1 FROM karte_tr_set_ext e WHERE e.session_id IS p.sid
+             AND NOT EXISTS (SELECT 1 FROM karte_tr_sets t WHERE t.set_id IS e.set_id))`],
+  //   別の session を指す付加（付加の側・本セットの側のどちらから見ても）
+  ['ext_other_session', `EXISTS (SELECT 1 FROM karte_tr_set_ext e JOIN karte_tr_sets t ON t.set_id IS e.set_id
+            WHERE (e.session_id IS p.sid OR t.session_id IS p.sid)
+              AND (t.session_id IS NOT e.session_id OR e.session_id IS NOT p.sid))`],
+  //   種目の不一致：付加の (session_id, ord) に種目の行が無い、または本セットの種目名と違う
+  ['ext_exercise', `EXISTS (SELECT 1 FROM karte_tr_set_ext e JOIN karte_tr_sets t ON t.set_id IS e.set_id
+            WHERE e.session_id IS p.sid
+              AND NOT EXISTS (SELECT 1 FROM karte_tr_exercises x
+                               WHERE x.session_id IS e.session_id AND x.ord IS e.ord AND x.exercise IS t.exercise))`],
+  // 3 ord が1からの連続でない（種目の行が無い回も当たる＝新しい回が古い回として読まれない）
+  //   （GROUP BY の無い HAVING は古い SQLite で通らないので、数・最大・最小をそれぞれ引く）
+  ['ord_seq', `(SELECT COUNT(*) FROM karte_tr_exercises x WHERE x.session_id IS p.sid) = 0
+     OR (SELECT COUNT(*) FROM karte_tr_exercises x WHERE x.session_id IS p.sid) IS NOT (SELECT MAX(x.ord) FROM karte_tr_exercises x WHERE x.session_id IS p.sid)
+     OR (SELECT MIN(x.ord) FROM karte_tr_exercises x WHERE x.session_id IS p.sid) IS NOT 1`],
+  // 4 本セットの set_no が ord の中で重複している、または1からの連続でない
+  ['set_no_seq', `EXISTS (SELECT 1 FROM karte_tr_set_ext e JOIN karte_tr_sets t ON t.set_id IS e.set_id WHERE e.session_id IS p.sid
+           GROUP BY e.ord HAVING COUNT(*) IS NOT COUNT(DISTINCT t.set_no) OR MAX(t.set_no) IS NOT COUNT(*))`],
+  // 5 done_only の値：数字の無い種目に本セットがある／数字の無い種目でないのに本セットが無い
+  ['done_with_sets', `EXISTS (SELECT 1 FROM karte_tr_exercises x WHERE x.session_id IS p.sid AND COALESCE(x.done_only, 0) = 1
+             AND EXISTS (SELECT 1 FROM karte_tr_set_ext e WHERE e.session_id IS x.session_id AND e.ord IS x.ord))`],
+  ['sets_missing', `EXISTS (SELECT 1 FROM karte_tr_exercises x WHERE x.session_id IS p.sid AND x.done_only IS NULL
+             AND NOT EXISTS (SELECT 1 FROM karte_tr_set_ext e WHERE e.session_id IS x.session_id AND e.ord IS x.ord))`],
+  // 6 ドロップの段が親ごとに1からの連続でない（親が別の回の本セットになったものは n_drops の数で捕まえる）
+  ['drop_seq', `EXISTS (SELECT 1 FROM karte_tr_drops dr JOIN karte_tr_sets t ON t.set_id IS dr.set_id WHERE t.session_id IS p.sid
+           GROUP BY dr.set_id HAVING COUNT(*) IS NOT MAX(dr.drop_seq) OR MIN(dr.drop_seq) IS NOT 1)`],
+  // 7 合計（本セット＋ドロップ）が60を超える／ord が20を超える（CHECK と Worker の検査に加えて三重目）
+  ['total', `(SELECT COUNT(*) FROM karte_tr_sets t WHERE t.session_id IS p.sid)
+     + (SELECT COUNT(*) FROM karte_tr_drops dr JOIN karte_tr_sets t ON t.set_id IS dr.set_id WHERE t.session_id IS p.sid) > ${KARTE_LIMITS.TOTAL_SETS}`],
+  ['ord_max', `COALESCE((SELECT MAX(x.ord) FROM karte_tr_exercises x WHERE x.session_id IS p.sid), 0) > ${KARTE_LIMITS.EXERCISES}`],
+];
 
 // ---------------------------------------------------------------- 書き込みの流れ
 async function readReq(env, tid, action, crid) {
@@ -176,8 +250,9 @@ async function readReq(env, tid, action, crid) {
       WHERE trainer_id = ? AND action = ? AND client_req_id = ?`
   ).bind(tid, action, crid).first();
 }
-function replay(prev, hash) {
-  if (prev.payload_hash !== hash) return err('REQ_REUSED', 409);
+//   alt：保存済みの行と照合してよい旧いハッシュ（設計38 §3-4。条件を満たす要求のときだけ runWrite が渡す）
+function replay(prev, hash, alt) {
+  if (prev.payload_hash !== hash && !(alt || []).includes(prev.payload_hash)) return err('REQ_REUSED', 409);
   let r = {};
   try { r = prev.result_json ? JSON.parse(prev.result_json) : {}; } catch (_) { r = {}; }
   return { ...r, replayed: true };
@@ -185,6 +260,8 @@ function replay(prev, hash) {
 
 /**
  * spec = { action, customerId, payload, plan(now) → { stmts:[{sql,args}], result:{…}（安全な項目だけ）, resultSql?:'…' } }
+ *   altPayloads?：保存済みの行と照合してもよい旧い形のハッシュの元（保存するのは常に payload のハッシュ・設計38 §3-4）
+ *   extUsed?   ：トレーニングの新しい項目を使っている（切替が偽なら replay の後・回数の前に 409・設計38 §3-7）
  */
 async function runWrite(c, spec) {
   const { env, who, body } = c;
@@ -193,10 +270,19 @@ async function runWrite(c, spec) {
   const tid = String(who.trainerId || '');
   if (!tid) return err('FORBIDDEN', 403);
   const hash = await sha256(JSON.stringify(spec.payload));
+  const alt = [];
+  for (const p of (spec.altPayloads || [])) alt.push(await sha256(JSON.stringify(p)));
 
   //   ① 同じ要求が既に完了していれば、保存した成功を返す（本体を読み直さない）
   const prev = await readReq(env, tid, spec.action, crid);
-  if (prev) return replay(prev, hash);
+  if (prev) return replay(prev, hash, alt);
+
+  //   ①-2 新しい項目の受付（設計38 §3-7）。★replay より後：on で保存できた要求を off の後に送り直しても「保存できていない」と伝えない
+  //        回数の先行 batch より前：何も書かない。どのトレーナーが許可されているかは返さない
+  if (spec.extUsed && !trainingExtOn(env, who)) {
+    await logAccess(env, who, spec.customerId, spec.section, spec.action, 'denied', crid);
+    return err('TRAINING_EXT_OFF', 409);
+  }
 
   //   ② 回数（本体とは別の先行 batch。通ったら1回を消費し、本体が失敗しても戻さない）
   const win = Math.floor(Date.now() / KARTE_LIMITS.WINDOW_MS) * KARTE_LIMITS.WINDOW_MS;
@@ -236,7 +322,7 @@ async function runWrite(c, spec) {
     //   並行して同じ鍵が先に完了した＝引き直して同じ判定
     if (/karte_requests/.test(String(e && e.message))) {
       const p2 = await readReq(env, tid, spec.action, crid);
-      if (p2) return replay(p2, hash);
+      if (p2) return replay(p2, hash, alt);
     }
     await logAccess(env, who, spec.customerId, spec.section, spec.action, 'error', crid);
     try { console.error('[karte] write failed', spec.action); } catch (_) {}
@@ -495,30 +581,128 @@ async function deleteNote(c) {
   });
 }
 
+//   トレーニングの要求の鍵（設計38 §3-3）。★知らない鍵は 400（SET_KEY）。古い画面が送る鍵（exercise・sets／weight・reps・note）は全部ここにある
+const TR_ITEM_KEYS = ['exercise', 'sets', 'doneOnly'];
+const TR_SET_KEYS = ['weight', 'reps', 'note', 'assist', 'forced', 'drops'];
+const TR_DROP_KEYS = ['weight', 'reps', 'assist', 'forced'];   // drop に note・drops は持たない
+const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
+function onlyKeys(o, keys) {
+  for (const k of Object.keys(o)) if (keys.indexOf(k) < 0) throw new RangeError('SET_KEY');
+}
+/** 新しい鍵（doneOnly・assist・forced・drops）を1つでも使っているか。★鍵があれば値に関わらず「使っている」（ドロップの中の鍵は drops がある時点で使っている） */
+export function trainingExtUsed(items) {
+  return (Array.isArray(items) ? items : []).some((it) => has(it, 'doneOnly')
+    || (Array.isArray(it && it.sets) && it.sets.some((st) => has(st, 'assist') || has(st, 'forced') || has(st, 'drops'))));
+}
+/** 新しい鍵を使う要求の重さ：0.1 刻みでなければ丸めずに 400（設計38 §3-3。古い形の要求は今までどおり numOrNull で丸める） */
+function weightStrict(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n > 500) throw new RangeError('OUT_OF_RANGE');
+  if (Math.abs(n * 10 - Math.round(n * 10)) > 1e-9) throw new RangeError('SET_VALUE');
+  return Math.round(n * 10) / 10;
+}
+function repsOf(v) {
+  const r = Number(v);
+  if (!Number.isInteger(r) || r < 1 || r > 100) throw new RangeError('SET_VALUE');
+  return r;
+}
+//   補助は 1〜100 の整数だけ・無理やりは true だけ（false・1・"true" は 400）。鍵が無ければ印なし＝null
+function assistOf(o) {
+  if (!has(o, 'assist')) return null;
+  if (!Number.isInteger(o.assist) || o.assist < 1 || o.assist > KARTE_LIMITS.ASSIST_MAX) throw new RangeError('SET_VALUE');
+  return o.assist;
+}
+function forcedOf(o) {
+  if (!has(o, 'forced')) return null;
+  if (o.forced !== true) throw new RangeError('SET_VALUE');
+  return 1;
+}
+
+/**
+ * トレーニングの要求を行の形に直す（設計38 §3-3）。種目の並び i を ord、ord の中の本セットの並びを set_no、ドロップの並びを drop_seq
+ *   返す値：{ extUsed, items:[{ exercise, done_only, sets:[{ set_no, weight_kg, reps, note, assist_reps, forced, drops:[…] }] }], total }
+ *   不正は RangeError（理由の鍵）。合計の上限（TOTAL_SETS）は呼ぶ側が専用のコードで返す
+ */
+export function normalizeTraining(rawItems) {
+  const L = KARTE_LIMITS;
+  const items = Array.isArray(rawItems) ? rawItems : [];
+  if (!items.length || items.length > L.EXERCISES) throw new RangeError('ITEMS');
+  const extUsed = trainingExtUsed(items);
+  const weightOf = (v) => (extUsed ? weightStrict(v) : numOrNull(v, 0, 500, 1));
+  const out = [];
+  let total = 0;
+  for (const it of items) {
+    if (isObj(it)) onlyKeys(it, TR_ITEM_KEYS);
+    const ex = text(it && it.exercise, 50);
+    if (!ex) throw new RangeError('EXERCISE');
+    //   ★種目の並びの表は前後に空白を持たない（CHECK）。画面は trim して送る＝前後に空白のある名前は 400 にする（黙って直さない）
+    if (ex !== ex.trim()) throw new RangeError('EXERCISE');
+    const ss = Array.isArray(it.sets) ? it.sets : [];
+    let doneOnly = null;
+    if (has(it, 'doneOnly')) {
+      if (it.doneOnly !== true || ss.length) throw new RangeError('DONE_ONLY');   // doneOnly は sets:[] のときだけ
+      doneOnly = 1;
+    } else if (!ss.length) throw new RangeError('SETS');
+    if (ss.length > L.SETS_PER_EXERCISE) throw new RangeError('SETS');
+    const sets = ss.map((st, i) => {
+      if (isObj(st)) onlyKeys(st, TR_SET_KEYS);
+      const w = weightOf(st && st.weight);
+      if (w === null) throw new RangeError('SET_VALUE');
+      const r = repsOf(st && st.reps);
+      const assist = assistOf(st), forced = forcedOf(st);
+      let drops = [];
+      if (has(st, 'drops')) {
+        if (!Array.isArray(st.drops) || st.drops.length > L.DROPS_PER_SET) throw new RangeError('DROPS');
+        drops = st.drops.map((dp, k) => {
+          if (!isObj(dp)) throw new RangeError('SET_VALUE');
+          onlyKeys(dp, TR_DROP_KEYS);
+          const dw = weightStrict(dp.weight);
+          if (dw === null) throw new RangeError('SET_VALUE');
+          return { drop_seq: k + 1, weight_kg: dw, reps: repsOf(dp.reps), assist_reps: assistOf(dp), forced: forcedOf(dp) };
+        });
+      }
+      total += 1 + drops.length;
+      return { set_no: i + 1, weight_kg: w, reps: r, note: text(st.note, 200), assist_reps: assist, forced, drops };
+    });
+    out.push({ exercise: ex, done_only: doneOnly, sets });
+  }
+  return { extUsed, items: out, total };
+}
+/** 新しいハッシュの元（設計38 §3-4）。新しい鍵は値があるときだけ載せる */
+function trainingHashItems(items) {
+  return items.map((it) => {
+    const o = { exercise: it.exercise };
+    if (it.done_only) o.doneOnly = true;
+    o.sets = it.sets.map((s) => {
+      const so = { weight_kg: s.weight_kg, reps: s.reps, note: s.note };
+      if (s.assist_reps != null) so.assist = s.assist_reps;
+      if (s.forced) so.forced = true;
+      if (s.drops.length) {
+        so.drops = s.drops.map((d) => {
+          const dob = { weight_kg: d.weight_kg, reps: d.reps };
+          if (d.assist_reps != null) dob.assist = d.assist_reps;
+          if (d.forced) dob.forced = true;
+          return dob;
+        });
+      }
+      return so;
+    });
+    return o;
+  });
+}
+
 async function addTraining(c) {
   const cid = cidOf(c.body);
   if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
   const b = c.body, L = KARTE_LIMITS;
-  const sets = [];
+  let tr;
   try {
     if (!isPastOrToday(b.sessionDate)) throw new RangeError('BAD_DATE');
-    const items = Array.isArray(b.items) ? b.items : [];
-    if (!items.length || items.length > L.EXERCISES) throw new RangeError('ITEMS');
-    for (const it of items) {
-      const ex = text(it && it.exercise, 50);
-      if (!ex) throw new RangeError('EXERCISE');
-      const ss = Array.isArray(it.sets) ? it.sets : [];
-      if (!ss.length || ss.length > L.SETS_PER_EXERCISE) throw new RangeError('SETS');
-      ss.forEach((st, i) => {
-        const w = numOrNull(st && st.weight, 0, 500, 1);
-        const r = Number(st && st.reps);
-        if (w === null || !Number.isInteger(r) || r < 1 || r > 100) throw new RangeError('SET_VALUE');
-        sets.push({ exercise: ex, set_no: i + 1, weight_kg: w, reps: r, note: text(st.note, 200) });
-      });
-    }
+    tr = normalizeTraining(b.items);
   } catch (e) { return err('BAD_REQUEST', 400, e.message); }
-  //   ★合計の上限は正規化の後に数える。専用のコードで返す（画面が「合計60セットまで」と出せるように・関門①）
-  if (sets.length > L.TOTAL_SETS) return err('TOTAL_SETS', 400);
+  //   ★合計の上限は正規化の後に数える。専用のコードで返す（画面が「合計60セットまで」と出せるように・関門①）。設計38 からドロップの段も数える
+  if (tr.total > L.TOTAL_SETS) return err('TOTAL_SETS', 400);
   //   お客様に見える欄（設計35 改訂1-2）。正規化してハッシュに必ず含める（無ければ null・改訂2-5）
   let member;
   try { member = has(b, 'member') ? normalizeMember(b.member) : null; } catch (e) { return err('BAD_REQUEST', 400, e.message); }
@@ -526,15 +710,44 @@ async function addTraining(c) {
   const sid = newId();
   const mid = member ? newId() : null;
   const date = String(b.sessionDate);
+  //   旧ハッシュ（設計38 より前の {cid, date, sets, member}）。照合してよいのは、新しい鍵を使わず、
+  //   同じ種目名が2つ以上の種目に無い要求だけ（旧ハッシュは種目の境目を持たない＝曖昧なら 409・I69）
+  const names = tr.items.map((x) => x.exercise);
+  const oldOk = !tr.extUsed && new Set(names).size === names.length;
+  const oldSets = [];
+  for (const it of tr.items) for (const s of it.sets) oldSets.push({ exercise: it.exercise, set_no: s.set_no, weight_kg: s.weight_kg, reps: s.reps, note: s.note });
+  let nSets = 0, nDrops = 0;
+  for (const it of tr.items) for (const s of it.sets) { nSets++; nDrops += s.drops.length; }
+  //   親の指し方：本セットの INSERT の直後に、その回の最大の set_id（＝直前に入れた行）を引く。
+  //   見えなければ MAX は NULL＝付加・ドロップの NOT NULL で batch 全体が失敗する（黙って誤った親を指さない・設計38 §3-1・§11-1）
+  const parent = `FROM karte_tr_sets WHERE session_id = ?`;
+  const rows = [];
+  tr.items.forEach((it, i) => {
+    const ord = i + 1;
+    rows.push(S(`INSERT INTO karte_tr_exercises (session_id, ord, exercise, done_only) VALUES (?, ?, ?, ?)`, sid, ord, it.exercise, it.done_only));
+    for (const x of it.sets) {
+      rows.push(S(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps, note)
+                   VALUES (?, ?, ?, ?, ?, ?)`, sid, it.exercise, x.set_no, x.weight_kg, x.reps, x.note));
+      rows.push(S(`INSERT INTO karte_tr_set_ext (set_id, session_id, ord, assist_reps, forced)
+                   SELECT MAX(set_id), ?, ?, ?, ? ${parent}`, sid, ord, x.assist_reps, x.forced, sid));
+      for (const dp of x.drops) {
+        rows.push(S(`INSERT INTO karte_tr_drops (set_id, drop_seq, weight_kg, reps, assist_reps, forced)
+                     SELECT MAX(set_id), ?, ?, ?, ?, ? ${parent}`, dp.drop_seq, dp.weight_kg, dp.reps, dp.assist_reps, dp.forced, sid));
+      }
+    }
+  });
   return runWrite(c, {
-    action: 'k_addTraining', section: 'training', customerId: cid, payload: { cid, date, sets, member },
+    action: 'k_addTraining', section: 'training', customerId: cid,
+    payload: { v: 2, cid, date, items: trainingHashItems(tr.items), member },
+    altPayloads: oldOk ? [{ cid, date, sets: oldSets, member }] : [],
+    extUsed: tr.extUsed,
     plan: (now) => ({
       stmts: [
         G.target(cid),
         S(`INSERT INTO karte_tr_sessions (session_id, customer_id, session_date, author_trainer_id, rev, created_at)
            VALUES (?, ?, ?, ?, 1, ?)`, sid, cid, date, tid, now),
-        ...sets.map((x) => S(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps, note)
-                              VALUES (?, ?, ?, ?, ?, ?)`, sid, x.exercise, x.set_no, x.weight_kg, x.reps, x.note)),
+        //   ★古い形の要求も3つの表に行を作る（ord は並び・印なし）＝新しい回の読み方を1つにする（設計38 §3-3）
+        ...rows,
         //   ★同じ batch で枚を書く＝トレーニングと全部か無か（作成者は送ったトレーナー・改訂2-2）
         ...(member ? [
           S(`INSERT INTO karte_member_notes (mnote_id, customer_id, session_id, session_date, message, todo_json, tags_json,
@@ -542,6 +755,7 @@ async function addTraining(c) {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`, mid, cid, sid, date, member.message, member.todo_json, member.tags_json, tid, now, now),
           G.mnoteMatch(mid),
         ] : []),
+        G.trShape(sid, { sets: nSets, drops: nDrops, exercises: tr.items.length }),
       ],
       result: member ? { sessionId: sid, rev: 1, mnoteId: mid, mnoteRev: 1 } : { sessionId: sid, rev: 1 },
     }),
@@ -1000,7 +1214,7 @@ async function summary(c) {
     ]);
     if (!cust) return err('NOT_FOUND', 404);
     return {
-      karteSchema: KARTE_SCHEMA,
+      karteSchema: karteSchemaFor(c.env, c.who),
       customer: { customerId: cust.customer_id, name: cust.name, age: ageOf(cust.birthday, now),
                   trainerId: cust.default_trainer_id || null,
                   //   ★契約の状態は担当（＋担当なし・オーナー）だけ（設計28 4-2）
@@ -1024,7 +1238,7 @@ async function notes(c) {
          FROM karte_notes WHERE customer_id = ? AND deleted_at IS NULL ${before ? 'AND session_date < ?' : ''}
         ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
     ).bind(...(before ? [cid, before] : [cid])).all();
-    return { karteSchema: KARTE_SCHEMA, notes: (r.results || []).map(noteOut) };
+    return { karteSchema: karteSchemaFor(c.env, c.who), notes: (r.results || []).map(noteOut) };
   });
 }
 
@@ -1037,22 +1251,56 @@ async function training(c) {
         ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
     ).bind(...(before ? [cid, before] : [cid])).all();
     const sessions = ss.results || [];
-    if (!sessions.length) return { karteSchema: KARTE_SCHEMA, sessions: [], best: [] };   // ★空でも版を返す
+    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), sessions: [], best: [] };   // ★空でも版を返す
+    //   ★3つの表（種目の並び・付加・ドロップ）は生きた session の id を通してだけ読む（設計38 I70）
     const ids = sessions.map((x) => x.session_id);
-    const st = await c.env.DB.prepare(
-      `SELECT session_id, exercise, set_no, weight_kg, reps, note FROM karte_tr_sets
-        WHERE session_id IN (${ids.map(() => '?').join(',')}) ORDER BY session_id, exercise, set_no`
-    ).bind(...ids).all();
+    const ph = ids.map(() => '?').join(',');
+    const [st, xs, ds] = await Promise.all([
+      //   並び：新しい回（付加あり）は ord, set_no。古い回は ord が NULL＝今までどおり exercise, set_no
+      c.env.DB.prepare(
+        `SELECT t.set_id, t.session_id, t.exercise, t.set_no, t.weight_kg, t.reps, t.note, e.ord, e.assist_reps, e.forced
+           FROM karte_tr_sets t LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
+          WHERE t.session_id IN (${ph}) ORDER BY t.session_id, e.ord, t.exercise, t.set_no`
+      ).bind(...ids).all(),
+      c.env.DB.prepare(
+        `SELECT session_id, ord, exercise, done_only FROM karte_tr_exercises WHERE session_id IN (${ph}) ORDER BY session_id, ord`
+      ).bind(...ids).all(),
+      c.env.DB.prepare(
+        `SELECT d.set_id, d.drop_seq, d.weight_kg, d.reps, d.assist_reps, d.forced
+           FROM karte_tr_drops d JOIN karte_tr_sets t ON t.set_id = d.set_id
+          WHERE t.session_id IN (${ph}) ORDER BY d.set_id, d.drop_seq`
+      ).bind(...ids).all(),
+    ]);
+    //   新しい形の回か古い回かは「種目の並びの行があるか」だけで決める（設計38 §3-5）
+    const exBy = {};
+    for (const x of (xs.results || [])) (exBy[x.session_id] = exBy[x.session_id] || []).push({ ord: x.ord, exercise: x.exercise, doneOnly: x.done_only === 1 });
+    const dropBy = {};
+    for (const d of (ds.results || [])) {
+      (dropBy[d.set_id] = dropBy[d.set_id] || []).push({ weight_kg: d.weight_kg, reps: d.reps, assist_reps: d.assist_reps, forced: d.forced === 1 });
+    }
     const by = {};
-    for (const s of (st.results || [])) (by[s.session_id] = by[s.session_id] || []).push({ ...s, e1rm: e1rm(s.weight_kg, s.reps) });
-    //   グラフ：種目ごとに、その日の推定1RMの最大
+    for (const s of (st.results || [])) {
+      //   ★古い回のセットは今までと同じ鍵だけ（set_id は返さない）。新しい回は ord・補助・無理やり（真偽値）・ドロップを足す
+      //     ★ドロップは本セットの下にだけ置く（平らな配列に混ぜない＝古い画面が本セットと数えない）
+      const o = { session_id: s.session_id, exercise: s.exercise, set_no: s.set_no, weight_kg: s.weight_kg, reps: s.reps, note: s.note,
+                  e1rm: e1rm(s.weight_kg, s.reps) };
+      if (exBy[s.session_id]) Object.assign(o, { ord: s.ord, assist_reps: s.assist_reps, forced: s.forced === 1, drops: dropBy[s.set_id] || [] });
+      (by[s.session_id] = by[s.session_id] || []).push(o);
+    }
+    //   グラフ：種目名ごとに、その日の推定1RMの最大。★本セットだけ（ドロップは別の表）・無理やりを除く・回数は自分の回数（I66）
     const best = [];
     for (const se of sessions) {
       const day = {};
-      for (const s of (by[se.session_id] || [])) if (s.e1rm != null && (!(s.exercise in day) || s.e1rm > day[s.exercise])) day[s.exercise] = s.e1rm;
+      for (const s of (by[se.session_id] || [])) {
+        if (s.forced === true) continue;
+        if (s.e1rm != null && (!(s.exercise in day) || s.e1rm > day[s.exercise])) day[s.exercise] = s.e1rm;
+      }
       for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
     }
-    return { karteSchema: KARTE_SCHEMA, sessions: sessions.map((x) => ({ ...x, sets: by[x.session_id] || [] })), best };
+    return { karteSchema: karteSchemaFor(c.env, c.who),
+             sessions: sessions.map((x) => (exBy[x.session_id]
+               ? { ...x, sets: by[x.session_id] || [], exercises: exBy[x.session_id] }
+               : { ...x, sets: by[x.session_id] || [] })), best };
   });
 }
 
@@ -1064,7 +1312,7 @@ async function safety(c) {
         WHERE s.customer_id = ?`
     ).bind(cid).first();
     const k = await c.env.DB.prepare(`SELECT state FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first();
-    return { karteSchema: KARTE_SCHEMA, consent: k ? k.state : 'none', safety: r ? Object.assign({}, r, { pain: parseJsonCol(r.pain_json) || [], pain_json: undefined }) : null };
+    return { karteSchema: karteSchemaFor(c.env, c.who), consent: k ? k.state : 'none', safety: r ? Object.assign({}, r, { pain: parseJsonCol(r.pain_json) || [], pain_json: undefined }) : null };
   });
 }
 
@@ -1196,7 +1444,7 @@ async function exercises(c) {
   ).all();
   const rows = (t.results || []).map((r) => ({ name: String(r.name), part: String(r.part) }));
   await logAccess(env, c.who, null, 'exercises', 'k_exercises', 'ok');
-  return { karteSchema: KARTE_SCHEMA, exercises: rows.slice(0, L.MAX_ROWS), truncated: rows.length > L.MAX_ROWS };
+  return { karteSchema: karteSchemaFor(c.env, c.who), exercises: rows.slice(0, L.MAX_ROWS), truncated: rows.length > L.MAX_ROWS };
 }
 
 //   書き込み：追加、または部位の変更（名前と部位だけ）。消した行（deleted_at）は書き直すと生き返る

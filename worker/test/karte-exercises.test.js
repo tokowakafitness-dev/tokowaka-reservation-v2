@@ -177,6 +177,12 @@ ok('E2-3 名前の正規化：前後の空白だけ落とす・全角半角は�
   const ow = await call('U_OWN', 'k_exercises', {});
   ok('E5-5 オーナーも読める', ow.status === 200 && ow.exercises.length === ex.exercises.length);
   ok('E5-6 ★読みの SQL は karte_tr_sets を走査しない', !/karte_tr_sets/.test(readFileSync(join(W, 'src/routes/karte.js'), 'utf8').split('async function exercises(c)')[1].split('async function saveExercise')[0]));
+  //   ★設計38 I70：その回の種目の並び（karte_tr_exercises）も記録の名前＝顧客に結び付いた自由文。共有の一覧には出さない
+  d.exec(`INSERT INTO karte_tr_exercises (session_id, ord, exercise, done_only) VALUES ('見本の回', 1, '並びにだけある名前', 1)`);
+  const ex2 = await call('U_T1', 'k_exercises', {});
+  ok('E5-7 ★k_exercises は karte_tr_exercises を読まない（ソースにも応答にも無い・I70）', ex2.status === 200 && !(ex2.exercises || []).some((x) => x.name === '並びにだけある名前')
+     && !/karte_tr_exercises/.test(readFileSync(join(W, 'src/routes/karte.js'), 'utf8').split('async function exercises(c)')[1].split('async function saveExercise')[0]));
+  d.exec(`DELETE FROM karte_tr_exercises WHERE session_id = '見本の回'`);
 }
 
 // ================= E6. 上限（500） =================

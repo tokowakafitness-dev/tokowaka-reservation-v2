@@ -232,8 +232,9 @@ let mine;
   const tr = mine.training;
   ok('2-10 トレーニングは新しい→古い・自分の分だけ', tr.sessions.length === 2 && tr.sessions[0].date === dayOffset(-2) && tr.sessions[1].date === dayOffset(-7));
   const s7 = tr.sessions[1];
-  ok('2-11 種目は入力の順・セットは {setNo,weight,reps} の数だけ', s7.items.map((x) => x.exercise).join(',') === 'スクワット,ベンチプレス'
-     && JSON.stringify(s7.items[0].sets) === JSON.stringify([{ setNo: 1, weight: 40, reps: 10 }, { setNo: 2, weight: 50, reps: 8 }]), JSON.stringify(s7));
+  //   設計38 から補助（assist）が足された。印が無ければ null（ドロップは在るときだけ drops）
+  ok('2-11 種目は入力の順・セットは {setNo,weight,reps,assist} の数だけ', s7.items.map((x) => x.exercise).join(',') === 'スクワット,ベンチプレス'
+     && JSON.stringify(s7.items[0].sets) === JSON.stringify([{ setNo: 1, weight: 40, reps: 10, assist: null }, { setNo: 2, weight: 50, reps: 8, assist: null }]), JSON.stringify(s7));
   ok('2-12 日のタグはその session の枚の tags（無ければ空配列）', JSON.stringify(s7.tags) === '["脚","全身"]' && JSON.stringify(tr.sessions[0].tags) === '[]');
   const sq = tr.best.find((x) => x.exercise === 'スクワット');
   ok('2-13 自己ベスト：重さ最大→回数最大→日付', sq && sq.weight === 50 && sq.reps === 10 && sq.date === dayOffset(-2), JSON.stringify(tr.best));
@@ -581,6 +582,49 @@ let dayNote, addNote;
   ok('14-1 ★契約の SQL は row_json の全体を SELECT しない（必要な列だけ json_extract）', r.status === 200 && qs.length >= 1 && qs.every((q) => /json_extract\(row_json/.test(q) && !/row_json/.test(q.replace(/json_extract\(row_json/g, ''))), qs.join(' | ').slice(0, 300));
   ok('14-2 契約の中身はこれまでどおり返る', r.contract && r.contract.tickets === 8, JSON.stringify(r.contract));
 }
+
+// ================= 15. 設計38：無理やりのセットは会員に出さない・補助・ドロップ・数字の無い種目（I66・I67） =================
+//   設計38 §12-2 の「member-karte 14-1〜14-6」（この検査の 14 は既に使っているので 38-14-x の名前で置く）
+{
+  clearRate();
+  env.KARTE_TRAINING_EXT = 'on';
+  const tr = await call('U_T1', 'k_addTraining', { customerId: 'C3', sessionDate: dayOffset(-3), clientReqId: crid(), items: [
+    { exercise: 'ヒップリフト', sets: [{ weight: 60, reps: 10, assist: 5 }, { weight: 80, reps: 5, forced: true, drops: [{ weight: 40, reps: 10 }] },
+                                     { weight: 50, reps: 10, drops: [{ weight: 30, reps: 10 }, { weight: 20, reps: 10, forced: true }] }] },
+    { exercise: 'フロアアブ', sets: [{ weight: 10, reps: 10, drops: [{ weight: 0, reps: 10, assist: 3 }] }] },
+    { exercise: '腸腰筋ストレッチ', sets: [], doneOnly: true },
+    { exercise: 'デッドリフト', sets: [{ weight: 100, reps: 1, forced: true }] },
+    { exercise: 'ヒップリフト', sets: [{ weight: 70, reps: 8 }] },
+  ] });
+  delete env.KARTE_TRAINING_EXT;
+  const pv = await call('U_T1', 'k_memberPreview', { customerId: 'C3' });
+  const t = pv.training || {};
+  const s0 = (t.sessions || [])[0] || { items: [] };
+  const hb = (t.best || []).find((x) => x.exercise === 'ヒップリフト');
+  ok('38-14-1 ★会員の自己ベストに無理やりが入らない（80×5 でなく 70×8）', tr.status === 200 && hb && hb.weight === 70 && hb.reps === 8, JSON.stringify([tr, t.best]));
+  ok('38-14-2 ★全部が無理やりの種目は自己ベストにも日別にも出ない', !(t.best || []).some((x) => x.exercise === 'デッドリフト') && !s0.items.some((x) => x.exercise === 'デッドリフト'));
+  ok('38-14-3 ★種目は ord の順・同じ名前の2つの種目は2行・数字の無い種目は {exercise, sets:[], done:true}',
+     same38(s0.items.map((x) => x.exercise), ['ヒップリフト', 'フロアアブ', '腸腰筋ストレッチ', 'ヒップリフト'])
+     && same38(s0.items[2], { exercise: '腸腰筋ストレッチ', sets: [], done: true }), JSON.stringify(s0.items));
+  ok('38-14-3b セットは {setNo, weight, reps, assist}・ドロップは本セットの下（無理やりの本セットの下のドロップ・無理やりの段は出さない）',
+     same38(s0.items[0].sets, [{ setNo: 1, weight: 60, reps: 10, assist: 5 }, { setNo: 3, weight: 50, reps: 10, assist: null, drops: [{ weight: 30, reps: 10, assist: null }] }])
+     && same38(s0.items[1].sets, [{ setNo: 1, weight: 10, reps: 10, assist: null, drops: [{ weight: 0, reps: 10, assist: 3 }] }]), JSON.stringify(s0.items));
+  const js = JSON.stringify(pv);
+  ok('38-14-4 ★応答の JSON 全体に forced の鍵が無い', !/forced/.test(js));
+  ok('38-14-5 ★80kg の無理やりのセット・その下のドロップ（40kg）・無理やりの段（20kg）・100kg がどこにも無い', !/"weight":80\b/.test(js) && !/"weight":40\b/.test(js) && !/"weight":20\b/.test(js) && !/"weight":100\b/.test(js), js.slice(0, 400));
+  const SRC = readFileSync(join(W, 'src/lib/member-karte.js'), 'utf8');
+  const sqls = SRC.match(/`[^`]*\bSELECT\b[^`]*`/g) || [];
+  const selects = [];
+  for (const q of sqls) { const re = /\bSELECT\b([\s\S]*?)\bFROM\b/g; let m; while ((m = re.exec(q))) selects.push(m[1]); }
+  ok('38-14-6 ★ソースの SELECT 句に forced が無い（WHERE と JOIN の条件にだけ出る）・条件は日別・自己ベスト・ドロップの段・ドロップの親の4つ', selects.length >= 5 && selects.every((x) => !/forced/.test(x))
+     && (SRC.match(/forced IS NULL/g) || []).length >= 4, selects.filter((x) => /forced/.test(x)).join(' | '));
+  const direct = await buildMemberKarte(env, 'C3', { includeContract: false, includeIds: false });
+  ok('38-14-6b 見え方も同じ（buildMemberKarte を直接呼んだ結果とトレーニングが一致）', JSON.stringify(direct.training) === JSON.stringify(t));
+  //   古い回（3つの表に行が無い）は今までどおり入力の順・名前でまとめる
+  const s7 = (await call('U_T1', 'k_memberPreview', { customerId: 'C1' })).training.sessions.find((x) => x.date === dayOffset(-7));
+  ok('38-14-7 古い形の要求で作った回も同じ形（補助 null・drops なし）で返る', s7 && s7.items.every((it) => it.sets.every((x) => x.assist === null && !('drops' in x))), JSON.stringify(s7));
+}
+function same38(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
 console.log(`\n${fail ? '❌' : '✅'} 会員画面 C2（入口から） 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

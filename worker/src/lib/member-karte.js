@@ -115,13 +115,16 @@ async function readTraining(db, cid) {
       ORDER BY session_date DESC, created_at DESC LIMIT ${MEMBER_LIMITS.SESSIONS}`
   ).bind(cid).all();
   const sessions = (ss && ss.results) || [];
-  //   自己ベスト：生きた記録すべてから、種目ごとに重さ最大→同じなら回数最大→同じなら早い日
+  //   ★無理やりのセットは会員に出さない（設計38 §6-3・オーナー確定・I67）。出さない集合は SQL の WHERE で決める
+  //     ＝日別・自己ベスト・推移が同じ集合から作られ、食い違わない。印の列は WHERE と JOIN の条件にだけ書き、SELECT 句には書かない
+  //   自己ベスト：生きた記録すべてから、種目ごとに重さ最大→同じなら回数最大→同じなら早い日。本セットだけ（ドロップは別の表）
   const bestQ = db.prepare(
     `SELECT exercise, weight_kg, reps, session_date FROM (
        SELECT t.exercise, t.weight_kg, t.reps, s.session_date,
               ROW_NUMBER() OVER (PARTITION BY t.exercise ORDER BY t.weight_kg DESC, t.reps DESC, s.session_date ASC) AS rn
          FROM karte_tr_sets t JOIN karte_tr_sessions s ON s.session_id = t.session_id
-        WHERE s.customer_id = ? AND s.deleted_at IS NULL)
+         LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
+        WHERE s.customer_id = ? AND s.deleted_at IS NULL AND e.forced IS NULL)
       WHERE rn = 1 ORDER BY exercise LIMIT ${MEMBER_LIMITS.BEST}`
   ).bind(cid).all();
   if (!sessions.length) {
@@ -130,11 +133,25 @@ async function readTraining(db, cid) {
   }
   const ids = sessions.map((x) => x.session_id);
   const ph = ids.map(() => '?').join(',');
-  const [st, tg, bs] = await Promise.all([
-    //   ★セットは種目・番号・重さ・回数だけ（セットに付けた文は読まない）。入力の順＝set_id の順
+  const [st, xs, ds, tg, bs] = await Promise.all([
+    //   ★セットは種目・番号・重さ・回数・補助だけ（セットに付けた文は読まない）。
+    //     新しい回（付加あり）は ord の順、古い回は ord が NULL＝今までどおり入力の順（set_id の順）
     db.prepare(
-      `SELECT session_id, exercise, set_no, weight_kg, reps FROM karte_tr_sets
-        WHERE session_id IN (${ph}) ORDER BY session_id, set_id`
+      `SELECT t.set_id, t.session_id, t.exercise, t.set_no, t.weight_kg, t.reps, e.ord, e.assist_reps
+         FROM karte_tr_sets t LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
+        WHERE t.session_id IN (${ph}) AND e.forced IS NULL ORDER BY t.session_id, e.ord, t.set_id`
+    ).bind(...ids).all(),
+    //   種目の並び（新しい形の回だけ行がある）
+    db.prepare(
+      `SELECT session_id, ord, exercise, done_only FROM karte_tr_exercises
+        WHERE session_id IN (${ph}) ORDER BY session_id, ord`
+    ).bind(...ids).all(),
+    //   ドロップ：その段が無理やりでなく、親の本セットも無理やりでないものだけ
+    db.prepare(
+      `SELECT d.set_id, d.weight_kg, d.reps, d.assist_reps
+         FROM karte_tr_drops d JOIN karte_tr_sets t ON t.set_id = d.set_id
+         LEFT JOIN karte_tr_set_ext e ON e.set_id = d.set_id
+        WHERE t.session_id IN (${ph}) AND d.forced IS NULL AND e.forced IS NULL ORDER BY d.set_id, d.drop_seq`
     ).bind(...ids).all(),
     //   日のタグ＝その session に付いた生きた枚の tags
     db.prepare(
@@ -145,15 +162,40 @@ async function readTraining(db, cid) {
   ]);
   const setsBy = {};
   for (const s of ((st && st.results) || [])) (setsBy[s.session_id] = setsBy[s.session_id] || []).push(s);
+  const exBy = {};
+  for (const x of ((xs && xs.results) || [])) (exBy[x.session_id] = exBy[x.session_id] || []).push(x);
+  const dropBy = {};
+  for (const d of ((ds && ds.results) || [])) {
+    (dropBy[d.set_id] = dropBy[d.set_id] || []).push({ weight: numOrNull(d.weight_kg), reps: numOrNull(d.reps), assist: numOrNull(d.assist_reps) });
+  }
+  //   セット { setNo, weight, reps, assist }。ドロップがあるときだけ drops（古い会員の画面はドロップが見えないだけ）
+  const setOut = (s) => {
+    const o = { setNo: numOrNull(s.set_no), weight: numOrNull(s.weight_kg), reps: numOrNull(s.reps), assist: numOrNull(s.assist_reps) };
+    if (dropBy[s.set_id]) o.drops = dropBy[s.set_id];
+    return o;
+  };
   const tagsBy = {};
   for (const t of ((tg && tg.results) || [])) tagsBy[t.session_id] = strArray(t.tags_json);
   const out = sessions.map((se) => {
     const items = [];
-    const at = {};
-    for (const s of (setsBy[se.session_id] || [])) {
-      const ex = String(s.exercise);
-      if (!(ex in at)) { at[ex] = items.length; items.push({ exercise: ex, sets: [] }); }
-      items[at[ex]].sets.push({ setNo: numOrNull(s.set_no), weight: numOrNull(s.weight_kg), reps: numOrNull(s.reps) });
+    const xl = exBy[se.session_id];
+    if (xl) {
+      //   新しい形の回：ord の順。同じ名前の2つの種目は2行。数字の無い種目は「実施」
+      //   ★本セットが全部出せない種目（全部無理やり）は、数字の無い種目でなければ種目ごと出さない（名前だけの空の行を出さない）
+      const byOrd = {};
+      for (const s of (setsBy[se.session_id] || [])) (byOrd[s.ord] = byOrd[s.ord] || []).push(s);
+      for (const x of xl) {
+        if (x.done_only === 1) { items.push({ exercise: String(x.exercise), sets: [], done: true }); continue; }
+        const ss = byOrd[x.ord] || [];
+        if (ss.length) items.push({ exercise: String(x.exercise), sets: ss.map(setOut) });
+      }
+    } else {
+      const at = {};
+      for (const s of (setsBy[se.session_id] || [])) {
+        const ex = String(s.exercise);
+        if (!(ex in at)) { at[ex] = items.length; items.push({ exercise: ex, sets: [] }); }
+        items[at[ex]].sets.push(setOut(s));
+      }
     }
     return { date: se.session_date, items, tags: tagsBy[se.session_id] || [] };
   });

@@ -536,6 +536,44 @@ const PREV = Object.assign({}, KARTE, { notes: [
   }
 }
 
+// ================= 14. 補助・ドロップ・数字の無い種目（設計38 §6-2）。無理やりのセットは応答に無い（Worker の SQL で外す＝I67） =================
+{
+  //   Worker（lib/member-karte.js）の本物の形：セットは assist を必ず持つ（印なしは null）・drops は見せる段があるときだけ・数字の無い種目は { sets: [], done: true }
+  const X = JSON.parse(JSON.stringify(KARTE));
+  X.training = { sessions: [
+    { date: '2026-10-25', items: [{ exercise: 'スクワット', sets: [{ setNo: 1, weight: 55, reps: 10, assist: null }] }], tags: [] },
+    { date: '2026-11-03', items: [
+      { exercise: 'ヒップリフト', sets: [{ setNo: 1, weight: 50, reps: 10, assist: 5 }] },
+      { exercise: 'フロアアブ', sets: [{ setNo: 1, weight: 10, reps: 10, assist: null, drops: [{ weight: 0, reps: 10, assist: null }] }] },
+      { exercise: '腸腰筋ストレッチ', sets: [], done: true },
+      { exercise: 'スクワット', sets: [{ setNo: 1, weight: 60, reps: 10, assist: null }] },
+      { exercise: 'スクワット', sets: [{ setNo: 1, weight: 50, reps: 8, assist: null }] }], tags: [] }],
+    best: [{ exercise: 'スクワット', weight: 60, reps: 10, date: '2026-11-03' }] };
+  const L = { ja: ['+補助5回', 'ドロップ', '実施', '5種目・4セット'], en: ['+5 assisted', 'Drop set', 'Done', '5 exercises · 4 sets'], zh: ['+辅助5次', '递减组', '已完成', '5个动作・4组'], 'zh-Hant': ['+輔助5次', '遞減組', '已完成', '5個動作・4組'] };
+  for (const [lang, [as, dr, dn, cnt]] of Object.entries(L)) {
+    const w = boot({ bootRes: KON, lang, fetch: () => X }); await settle();
+    tab(w, 'training').click(); await settle();
+    const body = $(w, 'mkBody');
+    const lastCard = body.querySelector('.mk-card');
+    const rows = [...lastCard.querySelectorAll('.mk-exrow')];
+    const rowOf = (n) => rows.filter((r) => r.firstChild.firstChild.textContent === n);
+    const bw = lang === 'en' ? 'Bodyweight' : '自重';
+    ok('14-1 ★補助：「50kg×10 ' + as + '」（' + lang + '）', rowOf('ヒップリフト')[0] && rowOf('ヒップリフト')[0].lastChild.textContent === '50kg×10 ' + as, rows.map((r) => r.textContent).join(' | '));
+    ok('14-2 ★ドロップ：「10kg×10 → ' + bw + '×10」・その行にだけ「' + dr + '」のチップ（' + lang + '）', rowOf('フロアアブ')[0] && rowOf('フロアアブ')[0].lastChild.textContent === '10kg×10 → ' + bw + '×10' && rowOf('フロアアブ')[0].querySelector('.mk-dropchip').textContent === dr && lastCard.querySelectorAll('.mk-dropchip').length === 1);
+    ok('14-3 ★数字の無い種目は名前の右に「' + dn + '」（' + lang + '）', rowOf('腸腰筋ストレッチ')[0] && rowOf('腸腰筋ストレッチ')[0].lastChild.textContent === dn);
+    ok('14-4 ★同じ名前の2つの種目は2行（応答の items の順）・mk_counts は種目5（数字の無い種目を含む）・セット4（ドロップは数えない）（' + lang + '）', rowOf('スクワット').length === 2 && rowOf('スクワット')[0].lastChild.textContent === '60kg × 10' && rowOf('スクワット')[1].lastChild.textContent === '50kg × 8' && lastCard.textContent.includes(cnt), lastCard.textContent);
+    ok('14-5 値は文字として（要素を作らない）（' + lang + '）', !body.querySelector('img') && !w.pwned);
+  }
+  //   日別・自己ベスト・推移が同じ集合から作られて一致する（スクワット：日別の最大 60・自己ベスト 60×10・推移 55→60）
+  const w = boot({ bootRes: KON, lang: 'ja', fetch: () => X }); await settle();
+  tab(w, 'training').click(); await settle();
+  const body = $(w, 'mkBody');
+  ok('14-6 数字の無い種目（推移が無い）は推移の選ぶ欄に出さない', ![...body.querySelectorAll('.mk-pill')].some((b) => b.textContent === '腸腰筋ストレッチ'));
+  [...body.querySelectorAll('.mk-pill')].find((b) => b.textContent === 'スクワット').click(); await settle();
+  const svg = body.querySelector('svg.mk-chart');
+  ok('14-7 ★日別・自己ベスト・推移が一致（推移の最後＝60kg・自己ベスト 60kg × 10・日別の最大 60kg）', !!svg && /60kg/.test(svg.getAttribute('aria-label')) && /55kg/.test(svg.getAttribute('aria-label')) && body.textContent.includes('60kg × 10（11/3）') && body.textContent.includes('60kg × 10'), svg && svg.getAttribute('aria-label'));
+}
+
 console.log('');
 console.log(`${fail ? '❌' : '✅'} 会員画面 C2（設計35） 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

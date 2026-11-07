@@ -286,7 +286,9 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
 {
   const K = await import('../src/routes/karte.js');
   const { w } = boot(async () => ({ success: true }));
-  ok('9-1 ★画面が必要とする版と Worker の版が同じ', w.KarteUI._t.NEED_SCHEMA === K.KARTE_SCHEMA);
+  //   設計38：Worker の最大は33。応答に載る版は切替（KARTE_TRAINING_EXT）で決まり、既定（off）では32＝画面の NEED_SCHEMA と同じ
+  ok('9-1 ★画面が必要とする版と Worker の版が同じ（切替が既定のとき）・Worker の最大は画面の必要以上', w.KarteUI._t.NEED_SCHEMA === K.karteSchemaFor({}, { trainerId: 'T1' })
+     && w.KarteUI._t.NEED_SCHEMA <= K.KARTE_SCHEMA);
   const { w: w2, sent } = boot(async (b) => {
     if (b.action === 'k_summary') return { success: true, customer: { customerId: 'C1', name: '会員' }, assigned: true, consent: { state: 'agreed' },
       profile: { rev: 1, hearing: { purposes: ['diet'] } }, safetyBrief: null, lastNote: null, nextReservation: null };   // 版なし＝古い Worker
