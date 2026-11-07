@@ -72,9 +72,9 @@ MEMBER_KARTE = "off"
 #   "on"        … 全トレーナーで受け付ける。karteSchema は 33
 #   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる
 #   ★止めるときは "off" にして push（古い Worker への巻き戻しを止める手段に使わない）。値を変えた push は decisions に記録する
-KARTE_TRAINING_EXT = "off"
+KARTE_TRAINING_EXT = "allow"
 #   allow のときに受け付けるトレーナーの trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
-KARTE_TRAINING_EXT_TRAINERS = ""
+KARTE_TRAINING_EXT_TRAINERS = "A"
 
 # 契約・顧客・予約。正確さが要るものを置く
 [[d1_databases]]

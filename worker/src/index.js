@@ -31,6 +31,10 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatBoot, compatCustomerCard, rolesTooOld,
          compatTrainerSlots, compatMyReservations } from './routes/compat.js';
 
+// 版の印（/health に載せる・認証不要・個人情報なし）。★Worker を変えて出すたびに上げる。
+//   無いと「反映したつもりで入っていない」を外から見分けられない（2026-11-07・設計38 の設置で気づいた）
+export const WORKER_BUILD = '2026-11-07b 設計38 受付の切替 allow（オーナーだけ）';
+
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
   'https://reservation.tokowaka-gym.com',
@@ -114,7 +118,7 @@ export default {
         const r = await env.DB.prepare('SELECT key, synced_at, rows, ok FROM sync_state').all();
         sync = r.results || [];
       } catch (_) {}
-      return json({ ok: true, now: Date.now(), sync }, origin);
+      return json({ ok: true, now: Date.now(), build: WORKER_BUILD, sync }, origin);
     }
 
     // メールのリンクが踏まれたことの記録（2026-10-16）。
