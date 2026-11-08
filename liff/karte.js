@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-07a メモから取り込む・補助/無理やり/ドロップ/実施（設計38）';
+  var KARTE_BUILD = '2026-11-08a メモの取り込み：種目の下のメモをその種目のメモにできる';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -1456,6 +1456,10 @@
    *            pending: [{ kind, lines, text, parsed?, candidates?, item? }] }
    *   w・r は文字列（重さ0は ''＝自重）。items に入るのは autoKnown と完全一致した名前だけ。
    *   pending.item は「その決定待ちがどの種目（items の添字）に付くか」。pending が付いた種目は doneOnly にしない（決まるまで）
+   *   pending.after は「名前の決定待ちの直前にある種目（items の添字）」。種目の下に書いたメモ（例：肘を上げる意識）を、その種目のメモにする選択肢に使う（2026-11-08）
+   *   pending.prevPend は「直前が名前の決定待ちのとき、その pending の添字」。宛先は画面で、その決定待ちをどう決めたかから後で決める
+   *     （種目にした→その種目・種目のメモにした→同じ宛先・それ以外→出さない＝Codex 関門② 高：引き継ぐと別の種目へ入る）
+   *     ・数値と同じ行の名前（「名前 50×10」）には付けない
    */
   function parseMemo(text, todayYmd, autoKnown, suggestKnown) {
     var auto = memoList(autoKnown), sugg = memoList(suggestKnown);
@@ -1594,6 +1598,10 @@
 
       //   それ以外は全部、決定待ちの名前（健康の文を含む）
       var p = pend({ kind: 'name', lines: [ln], text: otext, parsed: { exercise: split ? split.name : body, sets: [] }, candidates: [] });
+      if (!split && cur) {
+        if (cur.item != null && cur.item >= 0) p.after = cur.item;
+        else if (cur.pend && cur.pend.kind === 'name') p.prevPend = res.pending.indexOf(cur.pend);
+      }
       if (split) split.r.chunks.forEach(function (c) { if (c.paren == null) p.parsed.sets.push(c.set); });
       p.candidates = candidatesOf(p.parsed.exercise);
       cur = { pend: p };
@@ -1906,15 +1914,25 @@
         if (it.doneOnly) o.doneOnly = false;   // 数字の無い種目：「実施した」の✓は外して入れる
         return o;
       });
-      var memos = [], named = [];
+      var memos = [], named = [], exnotes = [], namedBy = {};
       res.pending.forEach(function (p, j) {
         var d = dec[j];
         if (d.act === 'memo') memos.push(p.text);
+        else if (d.act === 'exnote') {
+          //   種目の下に書いたメモ：その種目の1セット目のメモへ（お客様には出ない）。名前の決定待ちの下の数値は、その種目のセットにする（メモの行が種目と数値の間にあった）
+          //   ★宛先は今の決定から解き直す（画面で選んだ後に前の決定が変わっていたら入れない・黙って別の種目へ入れない）
+          var tg = exTarget(j), tit = !tg ? null : tg.base != null ? base[tg.base] : namedBy[tg.pend];
+          if (!tit) { memos.push(p.text); return; }
+          var carried = ((p.parsed && p.parsed.sets) || []).map(impSet);
+          if (carried.length) { tit.sets = tit.sets.concat(carried); delete tit.doneOnly; }
+          exnotes.push({ it: tit, text: exNoteText(p) });
+        }
         else if (d.act === 'set' && p.item != null && base[p.item]) { var st = impSet(p.parsed.sets[0]); if (d.note && p.parsed.paren) st.note = String(p.parsed.paren).slice(0, 200); base[p.item].sets.push(st); }
         else if (d.act === 'item') {
           var it = { exercise: d.name, sets: ((p.parsed && p.parsed.sets) || []).map(impSet), fromMemo: true };
           if (!it.sets.length) it.doneOnly = false;
           if (d.part) it.regPart = d.part;
+          namedBy[j] = it;
           named.push({ pos: posOf(p), item: it });
         }
       });
@@ -1924,7 +1942,14 @@
         if (i < base.length) items.push(base[i]);
       }
       named.forEach(function (x) { if (x.pos > base.length) items.push(x.item); });
-      return { items: items, memos: memos };
+      //   ★黙って捨てない：セットが無い種目（実施のみ）・200字を超える分は、種目名を付けて社内メモへ
+      var nNote = 0;
+      exnotes.forEach(function (x) {
+        var it = x.it, s0 = it.sets[0], cur0 = s0 ? String(s0.note || '') : '', nx = (cur0 ? cur0 + '・' : '') + x.text;
+        if (s0 && nx.length <= 200) { s0.note = nx; nNote++; }
+        else memos.push(it.exercise + '：' + x.text);
+      });
+      return { items: items, memos: memos, nNote: nNote };
     }
     //   下書きへ入れる（5-3）。空なら日付をメモの日付に。種目があれば、日付が違えば入れない・同じ（または日付の行が無い）なら2択
     function place() {
@@ -1955,9 +1980,44 @@
       if (!lsSet(key, T)) { err = 'この端末に下書きを残せないため、入れられませんでした。'; ask = false; draw(); return; }
       var ns = 0, nd = 0; b.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
       trImportMsg = { cid: cid, text: 'メモから ' + b.items.length + '種目・' + ns + 'セット' + (nd ? '（ドロップ' + nd + '）' : '') + 'を入れました。✓を付けて保存してください（✓の無いセットは保存されません）。'
+        + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
         + (res.date ? '' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。') };
       res = null; dec = []; ui = [];
       goBack();
+    }
+    function exNoteText(p) { return p.kind === 'name' ? String(lines0[p.lines[0] - 1] || p.parsed.exercise).trim() : String(p.text).trim(); }
+    //   メモの宛先：{ base: items の添字 } か { pend: 種目にした名前の決定待ちの添字 }。決まらないときは null（ボタンを出さない）
+    //   ★prevPend は必ず自分より小さい添字＝たどるたびに減る（循環しない・件数の上限を置かない）
+    function exTarget(j) {
+      var p = res.pending[j];
+      if (!p) return null;
+      if (p.kind === 'line' || p.kind === 'tail') return p.item != null && res.items[p.item] ? { base: p.item } : null;
+      while (p && p.kind === 'name') {
+        if (p.after != null) return res.items[p.after] ? { base: p.after } : null;
+        var pp = p.prevPend;
+        if (pp == null || pp < 0 || pp >= j) return null;
+        var dp = dec[pp];
+        if (dp && dp.act === 'item') return { pend: pp };
+        if (!dp || dp.act !== 'exnote') return null;
+        j = pp; p = res.pending[pp];
+      }
+      return null;
+    }
+    function exTargetName(t) { return !t ? '' : t.base != null ? res.items[t.base].exercise : dec[t.pend].name; }
+    function exNoteBtn(p, j) {   // 「直前の種目『〇〇』の1セット目のメモにする」（直前の種目が決まっているときだけ）
+      var t = exTarget(j);
+      if (!t) return null;
+      return act('直前の種目「' + exTargetName(t) + '」の1セット目のメモにする', function () { decide(j, { act: 'exnote' }); }, '');
+    }
+    //   前の決定を選び直したら、それを宛先にしていた「種目のメモ」の決定も外す（宛先が変わったまま残さない）
+    function dropDependents(j) {
+      res.pending.forEach(function (q, k) {
+        if (k <= j || !dec[k] || dec[k].act !== 'exnote') return;
+        for (var x = q, at = k; x && x.kind === 'name' && x.prevPend != null && x.prevPend >= 0 && x.prevPend < at; ) {
+          if (x.prevPend === j) { dec[k] = null; dropDependents(k); return; }
+          at = x.prevPend; x = res.pending[at];
+        }
+      });
     }
     function btnCol(kids) { return el('div', { class: 'k-impbtns' }, kids); }
     function act(text, fn, cls) { return el('button', { type: 'button', class: 'k-btn ' + (cls || 'out'), text: text, onclick: fn }); }
@@ -1970,10 +2030,12 @@
         el('div', { class: 'k-imptext', text: p.text })]);
       if (p.parsed && p.parsed.sets && p.parsed.sets.length && p.kind !== 'paren') c.appendChild(el('div', { class: 'k-sub', text: '読めた数値：' + impLine(p.parsed.sets) }));
       if (d) {
-        var t = d.act === 'discard' ? '捨てる' : d.act === 'memo' ? '社内メモに足す' : d.act === 'set' ? (d.note ? '括弧の中をセットのメモに入れてセットにする' : '括弧を除いてセットにする')
+        var t = d.act === 'discard' ? '捨てる' : d.act === 'memo' ? '社内メモに足す'
+          : d.act === 'exnote' ? (function () { var nm = exTargetName(exTarget(j)); return '「' + nm + '」の1セット目のメモにする（お客様には見えません）' + (p.parsed && p.parsed.sets && p.parsed.sets.length ? '。下の数値も「' + nm + '」のセットにする' : ''); })()
+          : d.act === 'set' ? (d.note ? '括弧の中をセットのメモに入れてセットにする' : '括弧を除いてセットにする')
           : '種目「' + d.name + '」にする' + (d.part ? '（' + label(PART_KEYS, d.part) + '）' : '');
         c.appendChild(el('div', { class: 'k-impdone', style: 'font-weight:700;color:var(--k-acc);', text: '→ ' + t }));
-        c.appendChild(btnCol([act('選び直す', function () { dec[j] = null; if (u) u.open = false; draw(); })]));
+        c.appendChild(btnCol([act('選び直す', function () { dec[j] = null; dropDependents(j); if (u) u.open = false; draw(); })]));
         return c;
       }
       if (p.kind === 'name') {
@@ -2011,6 +2073,7 @@
             if (isAuto(exName(u.name))) { decide(j, { act: 'item', name: exName(u.name), part: null }); return; }   // 登録済みの名前を打ち直した
             u.open = true; draw();
           }, ''),
+          exNoteBtn(p, j),
           act('社内メモに足す', function () { decide(j, { act: 'memo' }); }),
           act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
         c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: I55_HINT }));
@@ -2031,7 +2094,7 @@
         c.appendChild(btnCol([act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
         return c;
       }
-      c.appendChild(btnCol([act('社内メモに足す', function () { decide(j, { act: 'memo' }); }), act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
+      c.appendChild(btnCol([exNoteBtn(p, j), act('社内メモに足す', function () { decide(j, { act: 'memo' }); }), act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
       c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '社内メモはお客様には見えません。' + I55_HINT }));
       return c;
     }
@@ -2600,7 +2663,7 @@
       }); });
       if (badA) { window.alert('補助の回数は1〜100の数で入れてください。'); return; }
       var n = uncheckedCount(D.items);
-      if (n && !window.confirm('記録されない入力が ' + n + ' セットあります（✓が無い・重量か回数が空）。保存すると、その入力は消えます。よいですか？')) return;
+      if (n && !window.confirm('記録されない入力が ' + n + ' セットあります（✓が無い・重量か回数が空）。保存すると、その入力（セットのメモも）は消えます。よいですか？')) return;
       var total = 0; items.forEach(function (it) { it.sets.forEach(function (st) { total += 1 + (st.drops ? st.drops.length : 0); }); });   // ドロップも1つと数える
       if (total > TR_TOTAL) { window.alert('1回の記録は合計60セットまでです。'); return; }
       var payload = { customerId: cur.customerId, sessionDate: D.sessionDate, items: items };

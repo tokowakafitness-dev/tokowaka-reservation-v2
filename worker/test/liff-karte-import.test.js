@@ -433,5 +433,77 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   ok('M23-4 次の保存は新しい送信番号で送る', tr.length === 2 && tr[0].clientReqId === 'kfixedreq0001' && tr[1].clientReqId !== tr[0].clientReqId && first);
 }
 
+// ================= M24 種目の下に書いたメモを、その種目のメモにする（2026-11-08 オーナー指摘：社内メモか種目かしか選べなかった） =================
+{
+  const { w, sent } = boot();
+  await openImport(w);
+  paste(w, 'ベンチプレス\n肘を上げる意識\n40×10 50×10\n胸を張る\nプランク\n体幹を意識\nヒップリフト\n30×10\n50キロ10回');
+  btn(R(w), '読み取る').click(); await settle();
+  const names = [...R(w).querySelectorAll('.k-impcard')];
+  ok('M24-1 種目の直下の名前の決定待ち：直前の種目「ベンチプレス」の1セット目のメモにする が出る・プランクの下はプランク', !!btn(card(w, 'name', 0), '直前の種目「ベンチプレス」の1セット目のメモにする') && !!btn(card(w, 'name', 2), '直前の種目「プランク」'), names.map((c) => c.textContent).join(' | '));
+  ok('M24-1b ★直前が決まっていない名前の決定待ちの下には出さない（どの種目か決まらない）', !btn(card(w, 'name', 1), '直前の種目'));
+  ok('M24-2 種目の下の読めない数値の行：直前の種目「ヒップリフト」が出る', !!btn(card(w, 'line', 0), '直前の種目「ヒップリフト」'));
+  btn(card(w, 'name', 0), '直前の種目').click(); await settle();
+  ok('M24-2b 前を「種目のメモ」にすると、続く名前にも同じ宛先が出る', !!btn(card(w, 'name', 1), '直前の種目「ベンチプレス」'));
+  for (const c of [card(w, 'name', 1), card(w, 'name', 2), card(w, 'line', 0)]) { btn(c, '直前の種目').click(); await settle(); }
+  ok('M24-3 選んだ後の表示：1セット目のメモ・お客様には見えない・下の数値もその種目のセットにする', card(w, 'name', 0).textContent.includes('「ベンチプレス」の1セット目のメモにする（お客様には見えません）') && card(w, 'name', 0).textContent.includes('下の数値も「ベンチプレス」のセットにする'));
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  const d = draftOf(w);
+  eq('M24-4 ★1セット目のメモに入る・名前の下の数値はその種目のセット・セットの無い種目は種目名を付けて社内メモへ（黙って捨てない）', d && { items: d.items.map((x) => [x.exercise, x.sets.map((s) => [s.w, s.r, s.note || '']), x.doneOnly]), memo: d.memo },
+    { items: [['ベンチプレス', [['40', '10', '肘を上げる意識・胸を張る'], ['50', '10', '']], undefined], ['プランク', [], false], ['ヒップリフト', [['30', '10', '50キロ10回']], undefined]], memo: 'プランク：体幹を意識' });
+  ok('M24-5 案内の1行に件数（種目のメモ 3件）', R(w).textContent.includes('種目のメモ 3件は、その種目の1セット目のメモに入れました'));
+  ok('M24-6 記録の画面で1セット目のメモが開いて見える', [...R(w).querySelectorAll('input,textarea')].some((x) => x.value === '肘を上げる意識・胸を張る'));
+  for (let i = 0; i < 3; i++) { const b = R(w).querySelector('button.k-allchk'); if (!b) break; b.click(); await settle(); }
+  for (let i = 0; i < 2; i++) { const b = R(w).querySelector('button.k-donechk[aria-pressed="false"]'); if (!b) break; b.click(); await settle(); }
+  btn(R(w), '保存する').click(); await settle();
+  const tr = adds(sent);
+  eq('M24-7 ★保存の本文：メモはセットの note で送る（新しい鍵は使わない）', tr.length === 1 ? tr[0].items : null, [
+    { exercise: 'ベンチプレス', sets: [{ weight: 40, reps: 10, note: '肘を上げる意識・胸を張る' }, { weight: 50, reps: 10 }] },
+    { exercise: 'プランク', sets: [], doneOnly: true },
+    { exercise: 'ヒップリフト', sets: [{ weight: 30, reps: 10, note: '50キロ10回' }] }]);
+}
+{
+  //   直前に種目が無い名前・数値と同じ行の名前には出さない（どの種目のメモか分からない）
+  const { w } = boot();
+  await openImport(w);
+  paste(w, '謎の行\nベンチプレス\n40×10\n架空の種目 50×10');
+  btn(R(w), '読み取る').click(); await settle();
+  ok('M24-8 先頭の名前・「名前 数値」の行には「〜のメモにする」を出さない', !btn(card(w, 'name', 0), '直前の種目') && !btn(card(w, 'name', 1), '直前の種目'), [...R(w).querySelectorAll('.k-impcard')].map((c) => c.textContent).join(' | '));
+}
+{
+  //   200字を超えるなら1セット目に入れず、種目名を付けて社内メモへ
+  const { w } = boot();
+  await openImport(w);
+  const long = 'あ'.repeat(199);
+  paste(w, 'ベンチプレス\n40×10\n' + long + '\n' + 'い'.repeat(5));
+  btn(R(w), '読み取る').click(); await settle();
+  for (let i = 0; i < 2; i++) { const c = card(w, 'name', i); if (c) { btn(c, '直前の種目').click(); await settle(); } }
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  const d = draftOf(w);
+  ok('M24-9 ★200字を超える分は社内メモへ（切らない）', d && d.items[0].sets[0].note === long && d.memo === 'ベンチプレス：' + 'い'.repeat(5), JSON.stringify(d && { n: d.items[0].sets[0].note.length, m: d.memo }));
+}
+
+{
+  //   ★Codex 関門② 高：知らない名前を「種目にする」と、その下のメモはその種目へ（一つ前の種目へ入れない）・選び直すと外れる
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'ベンチプレス\n架空の新種目\n肘を上げる意識\n40×10');
+  btn(R(w), '読み取る').click(); await settle();
+  ok('M24-10 前の名前が決まるまで、下のメモには宛先を出さない', !btn(card(w, 'name', 1), '直前の種目'));
+  btn(card(w, 'name', 0), '種目にする').click(); await settle();
+  card(w, 'name', 0).querySelector('button[data-part="chest"]').click(); await settle();
+  ok('M24-11 ★前を種目にしたら、宛先はその種目（ベンチプレスではない）', !!btn(card(w, 'name', 1), '直前の種目「架空の新種目」') && !btn(card(w, 'name', 1), '直前の種目「ベンチプレス」'));
+  btn(card(w, 'name', 1), '直前の種目').click(); await settle();
+  btn(card(w, 'name', 0), '選び直す').click(); await settle();
+  ok('M24-12 ★前を選び直すと、それを宛先にしていたメモの決定も外れる（押せない）', !card(w, 'name', 1).querySelector('.k-impdone') && btn(R(w), '記録の画面に入れる').disabled === true);
+  btn(card(w, 'name', 0), '種目にする').click(); await settle();
+  card(w, 'name', 0).querySelector('button[data-part="chest"]').click(); await settle();
+  btn(card(w, 'name', 1), '直前の種目').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  const d = draftOf(w);
+  eq('M24-13 ★メモと下の数値は「架空の新種目」へ・ベンチプレスは触らない', d && d.items.map((x) => [x.exercise, x.sets.map((s) => [s.w, s.r, s.note || '']), x.regPart || '']),
+    [['ベンチプレス', [], ''], ['架空の新種目', [['40', '10', '肘を上げる意識']], 'chest']]);
+}
+
 console.log(`\n${fail ? '❌' : '✅'} 設計38 メモから取り込む（画面） 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
