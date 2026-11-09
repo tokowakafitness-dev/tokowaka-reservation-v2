@@ -505,5 +505,68 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
     [['ベンチプレス', [], ''], ['架空の新種目', [['40', '10', '肘を上げる意識']], 'chest']]);
 }
 
+// ================= M25 設計40 普段の書き方・提案どおりに決める（入口から保存まで） =================
+const M25 = '11/3(火)12:30～\n山田様1回目\nベンチプレス　パワーフォームで\n65×3 足も背中も使えてる\n65×3 余力あり\n・次は67.5\nスクワット\n50×10\nたなかさんでした\n腰が痛いと言っていた';   // ★どちらも文の終わり（た）＝判定を外すと計画に入る形
+{
+  const { w, sent } = boot();
+  await openImport(w);
+  paste(w, M25);
+  btn(R(w), '読み取る').click(); await settle();
+  const pb = btn(R(w), '提案どおりに決める');
+  ok('M25-1 「提案どおりに決める（5件）」が出る（名前・tail×3・箇条書き。健康の言葉・たなかさんは入らない）', !!pb && pb.textContent === '提案どおりに決める（5件）', pb && pb.textContent);
+  ok('M25-2 カードに「提案：」が出る（セットのメモ）', R(w).textContent.includes('提案：「ベンチプレス」の1セット目のメモ（お客様には見えません）'));
+  pb.click(); await settle();
+  const box = R(w).querySelector('.k-impplanbox');
+  ok('M25-3 ★開いただけでは決まらない（記録の画面に入れる は押せないまま・のこり7件）', !!box && btn(R(w), '記録の画面に入れる').disabled && R(w).textContent.includes('7件のこり'));
+  ok('M25-4 ★名前の行は〇〇にして出す・「山田」は計画に出ない', box.textContent.includes('〇〇様1回目') && box.textContent.includes('→ 捨てる') && !box.textContent.includes('山田'));
+  ok('M25-5 原文は切り詰めない・行き先は同じ行', [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('足も背中も使えてる') && r.textContent.includes('→ 「ベンチプレス」の1セット目のメモ')));
+  ok('M25-6 確認のボタンは一覧の末尾（行の後ろ）', (() => { const go = btn(box, 'この内容で決める'); const rows = box.querySelectorAll('.k-impplanrow'); return !!go && !!(rows[rows.length - 1].compareDocumentPosition(go) & w.Node.DOCUMENT_POSITION_FOLLOWING); })());
+  ok('M25-7 ★健康の言葉・名前らしい行は計画に入らない', !box.textContent.includes('腰が痛い') && !box.textContent.includes('たなかさん'));
+  ok('M25-8 ★I63：計画を開いても原文は保存領域に無い', !/パワーフォーム|山田|余力/.test(storeText(w.localStorage) + storeText(w.sessionStorage)));
+  btn(box, 'この内容で決める').click(); await settle();
+  ok('M25-9 計画の5件だけ決まる（のこり2件）', !R(w).querySelector('.k-impplanbox') && R(w).textContent.includes('2件のこり'));
+  btn(card(w, 'name', 2), '捨てる').click(); await settle();
+  btn(card(w, 'name', 3), '捨てる').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  const d = draftOf(w);
+  eq('M25-10 ★下書き：セットのメモ・種目のメモ（箇条書きの記号なし）・自動の種目と数値', d && d.items.map((x) => [x.exercise, x.sets.map((s) => [s.w, s.r, s.note || ''])]),
+    [['ベンチプレス', [['65', '3', '足も背中も使えてる・パワーフォームで・次は67.5'], ['65', '3', '余力あり']]], ['スクワット', [['50', '10', '']]]]);
+  ok('M25-11 ★名前・健康の言葉は下書きに入らない（社内メモにも）', !/山田|たなか|腰が痛い/.test(JSON.stringify(d)) && !String(d.memo || '').trim());
+  ok('M25-12 日付はメモの 11/3', /-11-03$/.test(d.sessionDate));
+  ok('M25-13 案内：セットのメモ 2件・種目のメモ 2件', R(w).textContent.includes('種目のメモ 2件') && R(w).textContent.includes('セットのメモ 2件'));
+  for (let i = 0; i < 3; i++) { const b = R(w).querySelector('button.k-allchk'); if (!b) break; b.click(); await settle(); }
+  btn(R(w), '保存する').click(); await settle();
+  const tr = adds(sent);
+  eq('M25-14 ★保存の本文：メモはセットの note', tr.length === 1 ? tr[0].items : null, [
+    { exercise: 'ベンチプレス', sets: [{ weight: 65, reps: 3, note: '足も背中も使えてる・パワーフォームで・次は67.5' }, { weight: 65, reps: 3, note: '余力あり' }] },
+    { exercise: 'スクワット', sets: [{ weight: 50, reps: 10 }] }]);
+}
+{
+  //   決めたものは計画に入らない（上書きしない）・計画を開いた後に別のカードを決めたら閉じて作り直す
+  const { w } = boot();
+  await openImport(w);
+  paste(w, M25);
+  btn(R(w), '読み取る').click(); await settle();
+  btn(card(w, 'tail', 1), '社内メモに足す').click(); await settle();
+  ok('M25-15 決めたものは計画に入らない（4件）', btn(R(w), '提案どおりに決める')?.textContent === '提案どおりに決める（4件）');
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  btn(card(w, 'name', 2), '捨てる').click(); await settle();
+  ok('M25-16 計画を開いた後に別のカードを決めたら閉じる', !R(w).querySelector('.k-impplanbox') && !!btn(R(w), '提案どおりに決める'));
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  btn(R(w).querySelector('.k-impplanbox'), 'この内容で決める').click(); await settle();
+  ok('M25-17 社内メモに決めたものはそのまま', card(w, 'tail', 1).textContent.includes('→ 社内メモに足す'));
+}
+{
+  //   計画の順序：前の決定で後ろの宛先が解ける（種目の下の箇条書きが2つ続く）。件数と実際に決まる数が同じ
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'スクワット\n50×10\n・ひざを前に\n・かかと重心');
+  btn(R(w), '読み取る').click(); await settle();
+  ok('M25-18 ★2つ目の箇条書きも計画に入る（2件）', btn(R(w), '提案どおりに決める')?.textContent === '提案どおりに決める（2件）');
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  btn(R(w).querySelector('.k-impplanbox'), 'この内容で決める').click(); await settle();
+  ok('M25-19 2件とも決まり、記録の画面に入れる が押せる', !btn(R(w), '記録の画面に入れる').disabled);
+}
+
 console.log(`\n${fail ? '❌' : '✅'} 設計38 メモから取り込む（画面） 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

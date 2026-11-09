@@ -295,5 +295,157 @@ one('P62', '45度レッグプレス50×10', '45度レッグプレス:50×10', ['
   ok('G6 知らない名前の下の行の読めない残りは別の決定待ち', kinds(r6) === 'name,line' && r6.pending[0].parsed.sets.length === 2 && r6.pending[1].text === 'ああ', show(r6));
 }
 
+// ================= 設計40 普段の書き方（P64〜） =================
+const pro = (r) => r.pending.map((p) => p.propose || '-').join(',');
+{
+  // G1 日付＋時刻
+  const r1 = run('11/3(火)12:30～\nスクワット\n50×10');
+  ok('P64 G1 日付＋時刻（～）：日付として読む', r1.date === '2025-11-03' || r1.date === '2026-11-03', show(r1));
+  ok('P64b G1 時刻は保存しない・決定待ちなし', r1.pending.length === 0 && itemsS(r1) === 'スクワット:50×10', show(r1));
+  const r2 = run('11/3 99:99\nスクワット\n50×10');
+  ok('P65 G1 実在しない時刻（99:99）は日付にしない', r2.date === null, show(r2));
+  // G2 known 名＋数値（空白なし）＋残り
+  const r3 = run('ラットプルダウン25×10 25×10 背中に入った');
+  ok('P66 G2 known名＋数値（空白なし）＋所感：種目と2セットは自動', itemsS(r3) === 'ラットプルダウン:25×10 25×10', show(r3));
+  ok('P66b G3 所感は tail・提案「そのセットのメモ」（2セット目）', kinds(r3) === 'tail' && r3.pending[0].propose === 'setnote' && r3.pending[0].setAt === 1 && r3.pending[0].text === '背中に入った', show(r3));
+  // G5 かな・漢字の区切り／単位は読まない
+  const r4 = run('スクワット\n20×10トップで抜ける');
+  ok('P67 G5 数値の直後のかな・漢字は区切り：20×10 は自動・残りは提案つき tail', itemsS(r4) === 'スクワット:20×10' && kinds(r4) === 'tail' && r4.pending[0].propose === 'setnote', show(r4));
+  for (const [id, t] of [['P68a', '50×10キロ'], ['P68b', '60×5秒'], ['P68c', '50×10セット'], ['P68d', '50×10ずつ'], ['P68e', '50×10回3セット'], ['P68f', '50×10回目']]) {
+    const r = run('スクワット\n' + t);
+    ok(`${id} G5 ★${t}：数値も items に入らない（行ごと決定待ち）`, r.items[0]?.sets.length === 0 && kept(r, t), show(r));
+  }
+  // G6 重さ無し
+  const r5 = run('ディップス\n×20 ×20\n×10+5');
+  ok('P69 G6 重さ無しの ×20 は自重・+5 は補助', itemsS(r5) === 'ディップス:0×20 0×20 0×10+5' && r5.pending.length === 0, show(r5));
+  const r6 = run('スクワット\n×8クリア');
+  ok('P70 G6 ★×8クリア（かなが直結）は行ごと決定待ち', r6.items[0]?.sets.length === 0 && kept(r6, '×8クリア'), show(r6));
+  const r7 = run('スクワット×8クリア');
+  ok('P70b G6 ★スクワット×8クリア も自動で種目＋セットにしない', !r7.items.some((it) => it.sets.length), show(r7));
+  const r8 = run('スクワット\n50×10+×10');
+  ok('P71 G6 ドロップの段の重さ無しは読まない', r8.items[0]?.sets.length === 0, show(r8));
+  // G7 矢印
+  const r9 = run('ベンチプレス\n50×3→60×2 70×1->75×1');
+  ok('P72 G7 矢印は区切り', itemsS(r9) === 'ベンチプレス:50×3 60×2 70×1 75×1' && r9.pending.length === 0, show(r9));
+  // G4 known 名＋空白＋文
+  const r10 = run('ベンチプレス　パワーフォームで\n65×3');
+  ok('P73 G4 known名＋全角空白＋文：種目は自動・文は tail で提案「種目のメモ」', itemsS(r10) === 'ベンチプレス:65×3' && kinds(r10) === 'tail' && r10.pending[0].propose === 'exnote' && r10.pending[0].text === 'パワーフォームで' && r10.pending[0].item === 0, show(r10));
+  const r10b = run('スクワット 50×10×3');
+  ok('P73b G4 は数値らしい残りには使わない（今どおり line）', r10b.items.length === 0 && kinds(r10b) === 'line', show(r10b));
+  // G8 箇条書き
+  const r11 = run('ベンチプレス\n65×3\n・3×3余裕で上がったので次67.5×');
+  ok('P74 G8 ★箇条書きの中の 3×3 はセットにしない・提案「種目のメモ」', itemsS(r11) === 'ベンチプレス:65×3' && kinds(r11) === 'name' && r11.pending[0].propose === 'exnote' && r11.pending[0].after === 0, show(r11));
+  const r12 = run('スクワット\n50×10\n・ベンチ台の高さ\n40×10');
+  ok('P75 sealed ★箇条書きの後の数値は前の種目に付けない（item の無い line）', itemsS(r12) === 'スクワット:50×10' && kinds(r12) === 'name,line' && r12.pending[1].item === undefined && r12.pending[1].parsed === undefined && !r12.pending[1].propose, show(r12));
+  const r13 = run('スクワット\n・ひざ\n40×10\n50×10\nベンチプレス\n60×5');
+  ok('P76 sealed は続く数値行すべてに効き、次の種目で解ける', kinds(r13) === 'name,line,line' && itemsS(r13) === 'スクワット(実施): / ベンチプレス:60×5', show(r13));
+  one('P77', '1. スクワット\n・ベンチプレス\n40×10', 'スクワット(実施): / ベンチプレス:40×10');   // P42 と同じ（箇条書き＋完全一致は種目）
+  // G9 敬称
+  const r14 = run('スクワット\n田中様1回目\n40×10');
+  ok('P78 G9 敬称の行：提案 drop・pii・名前を〇〇に', r14.pending[0].propose === 'drop' && r14.pending[0].pii === true && r14.pending[0].masked === '〇〇様1回目', show(r14));
+  ok('P78b G9 ★名前の行の後の数値はスクワットに付けない（item・下見・提案の無い line で残る）', r14.items[0].sets.length === 0 && kinds(r14) === 'name,line' && r14.pending[1].text === '40×10' && r14.pending[1].item === undefined && r14.pending[1].parsed === undefined && r14.pending[1].propose === undefined, show(r14));
+  const r14b = run('田中様1回目\nたなかさん\nスクワット\n50×10', AUTO.concat(['田中様1回目', 'たなかさん']));
+  ok('P78c ★共有の種目に名前が登録されていても種目にしない（提案なし・〇〇にしない＝原文で1件ずつ）', itemsS(r14b) === 'スクワット:50×10' && kinds(r14b) === 'name,name' && r14b.pending.every((p) => !p.propose && !p.pii), show(r14b));
+  const HELD = AUTO.concat(['たなかさん', '赤ちゃんのポーズ']);
+  const r14c = run('スクワット\n50×10\nたなかさん50×10\nたなかさん フォーム確認', HELD);
+  ok('P78d ★登録済みの名前は G2（名前＋数値）・G4（名前＋文）でも種目にしない', itemsS(r14c) === 'スクワット:50×10' && !r14c.items.some((i) => i.exercise === 'たなかさん') && kept(r14c, 'たなかさん50×10') && kept(r14c, 'たなかさん フォーム確認') && r14c.pending.every((p) => !p.propose), show(r14c));
+  const r14d = run('赤ちゃんのポーズ\n赤ちゃんのポーズ10×10\n王様のポーズ', HELD);
+  ok('P78e ★登録済みの「赤ちゃんのポーズ」は捨てる提案にしない（pii なし・提案なし）・数値は下見に残る', r14d.pending.length >= 2 && r14d.pending.slice(0, 2).every((p) => !p.pii && !p.propose) && r14d.pending.some((p) => p.parsed && p.parsed.sets && p.parsed.sets.length === 1), show(r14d));
+  ok('P78f 未登録の「王様のポーズ」は名前の印として捨てる提案（〇〇様のポーズ・原文は計画で判別できる）', r14d.pending[r14d.pending.length - 1].propose === 'drop' && r14d.pending[r14d.pending.length - 1].masked === '〇〇様のポーズ', show(r14d));
+  for (const t of ['ヤマダさん', '佐藤氏', '健太くん', '花子ちゃん', '鈴木君']) {
+    const r = run('スクワット\n50×10\n' + t);
+    ok(`P79 G9 ${t}：drop`, r.pending[0]?.propose === 'drop' && r.pending[0]?.masked.startsWith('〇〇'), show(r));
+  }
+  for (const t of ['たくさんできた', '君側を意識']) {
+    const r = run('スクワット\n50×10\n' + t);
+    ok(`P80 G9 ★${t}：drop にしない・G9b で提案もしない（1件ずつ）`, r.pending.length === 1 && !r.pending[0].pii && !r.pending[0].propose, show(r));
+  }
+  // G9b 弱い名前の印
+  for (const t of ['たなかさん 1回目', 'たなかさんでした', '田中太郎 1回目', '初回の方']) {
+    const r = run('スクワット\n50×10\n' + t);
+    ok(`P81 G9b ★${t}：提案なし・自動で捨てない`, r.pending.length === 1 && !r.pending[0].propose && kept(r, t), show(r));
+  }
+  const r15 = run('スクワット\n50×10 たなかさん');
+  ok('P81b G9b ★tail の敬称にも提案しない', kinds(r15) === 'tail' && !r15.pending[0].propose, show(r15));
+  // §5 健康の言葉
+  for (const t of ['腰が痛い感じ', '体調が悪い', '血圧が高いと言っていた', 'めまいあり', '頭痛あり', '薬を飲んでいた', '腰が痛かった']) {
+    const r = run('スクワット\n50×10\n' + t);
+    ok(`P82 §5 ★${t}：提案なし`, r.pending.length === 1 && !r.pending[0].propose, show(r));
+  }
+  const r16 = run('スクワット\n50×10 膝に違和感');
+  ok('P82b §5 ★tail の健康の言葉にも提案しない（数値は入る）', itemsS(r16) === 'スクワット:50×10' && !r16.pending[0].propose, show(r16));
+  // G10 閉じない括弧
+  const r17 = run('(ベンチプレス\n9×15 9×10+5');
+  ok('P83 G10 閉じない括弧で始まる行は括弧を外して読む', itemsS(r17) === 'ベンチプレス:9×15 9×10+5', show(r17));
+  // G11 種目の下の文／短い名詞
+  const r18 = run('スクワット\n50×10\n首入れやすくなった\nブックオープニング');
+  ok('P84 G11 文は提案「種目のメモ」・短い名詞は提案なし', pro(r18) === 'exnote,-', show(r18));
+  const r19 = run('スクワット\n50×10\nゴブレット 片足\n30×10');
+  ok('P85 下に数値が続く名前（種目かもしれない）は提案を外す', kinds(r19) === 'name' && !r19.pending[0].propose && r19.pending[0].parsed.sets.length === 1, show(r19));
+  // 名前と数値が空白なしで続く形
+  const r20 = run('スクワット\n50×10\nインクラインスミス20×10トップで抜ける');
+  ok('P86 名前＋数値（空白なし）：名前の決定待ち（下見1セット）＋残りは別の決定待ち（prevPend・note）', kinds(r20) === 'name,name' && r20.pending[0].parsed.exercise === 'インクラインスミス' && r20.pending[0].parsed.sets.length === 1 && r20.pending[1].prevPend === 0 && r20.pending[1].note === 'トップで抜ける' && r20.pending[1].propose === 'exnote', show(r20));
+  const r21 = run('スクワット\n50×10\n赤チューブ×10');
+  ok('P87 道具＋×10（名前が×で終わる）は名前に切らない', kinds(r21) === 'line' || kinds(r21) === 'name', show(r21));
+}
+// ================= 設計40 実例（トレーナー2人のメモ・お客様名と所感は架空に置換） =================
+const MEMO_A = `デッドバグ　×15ずつ 3種類　きつそう
+・ 体幹を使う意識
+
+エクスターナルローテーション　肘90度
+×20 ×20
+
+背中を台に押しつけて胸椎ストレッチ
+
+ベンチプレス　パワーフォームで
+50×3→60×2
+65×3 足も背中も使えてる
+65×3 安定してる　背中に圧をかける
+65×3 余力あり
+・3×3余裕で上がったので次67.5×
+
+足上げベンチ
+55×10(+3更新)余裕あり
+57.5×8 6まで一呼吸　×8クリア
+60×5+3 スピード早い
+・ 胸を立てる意識
+
+ディップス　初
+×5+5自重　フォームうまい
+赤チューブ×10
+赤チューブ×10+5 テンポよく
+
+(ダンベルフライ9×15 9×10+5
+・ 前腕がきつい→グリップを試す`;
+const MEMO_B = `11/3(火)12:30～
+山田様1回目
+ポール
+姿勢説明
+仰向けチェック 肩が浮く
+ブックオープニング
+仰向けチェック 肩がつく感覚あり
+ラットプルパラレル15×15 挙上あり
+チューブプルオーバー 脇締まる感覚〇
+壁付けチンイン 下制の感覚あり
+ラットプル25×10 25×10 背中に入った
+首入れやすくなった
+インクラインスミスベンチ20×10トップで圧が抜ける
+後ろから背中を支えて腕を曲げ伸ばし
+肩の後ろで圧をかける感覚が入った
+インクラインスミスベンチ20×10 20×7 トップでも圧が抜けなくなった`;
+{
+  const FIX = ['ベンチプレス', 'チェストプレス', 'スクワット', 'レッグプレス', 'ヒップスラスト', 'デッドリフト', 'ラットプルダウン', 'シーテッドロウ', 'ショルダープレス', 'サイドレイズ', 'アームカール', 'プランク'];
+  const REG = FIX.concat(['デッドバグ', 'エクスターナルローテーション', '足上げベンチ', 'ディップス', 'ダンベルフライ', 'ポール', 'ブックオープニング', 'ラットプルパラレル', 'チューブプルオーバー', '壁付けチンイン', 'ラットプル', 'インクラインスミスベンチ']);
+  const cnt = (r) => ({ items: r.items.length, pend: r.pending.length, pro: r.pending.filter((p) => p.propose).length });
+  const a1 = run(MEMO_A, FIX, []), a2 = run(MEMO_A, REG, []), b1 = run(MEMO_B, FIX, []), b2 = run(MEMO_B, REG, []);
+  ok('P88 実例A 初回：ベンチプレスだけ自動（5セット）', itemsS(a1) === 'ベンチプレス:50×3 60×2 65×3 65×3 65×3', show(a1));
+  ok('P88b 実例A 登録後：6種目が自動', a2.items.map((i) => i.exercise).join() === 'デッドバグ,エクスターナルローテーション,ベンチプレス,足上げベンチ,ディップス,ダンベルフライ', show(a2));
+  ok('P88c 実例A 登録後：1件ずつはちょうど3件（黙って消えていない）', cnt(a2).pend - cnt(a2).pro === 3, JSON.stringify(cnt(a2)));
+  ok('P89 実例B：日付 11/3・名前の行は drop（〇〇様1回目）', b1.date?.endsWith('-11-03') && b1.pending[0].propose === 'drop' && b1.pending[0].masked === '〇〇様1回目', show(b1));
+  ok('P89b 実例B 登録後：8種目が自動', b2.items.length === 8, show(b2));
+  ok('P89c 実例B 登録後：1件ずつはちょうど1件（黙って消えていない）', cnt(b2).pend - cnt(b2).pro === 1, JSON.stringify(cnt(b2)));
+  ok('P89d ★実例B：「山田」はどの提案の行き先の文にも入らない（masked のみ）', !b2.pending.some((p) => p.propose && p.propose !== 'drop' && p.text.includes('山田')), show(b2));
+}
+
 console.log(`\nliff-memo-parse: ${pass} 通過 / ${fail} 失敗`);
 process.exit(fail ? 1 : 0);

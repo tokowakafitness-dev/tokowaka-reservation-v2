@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-08a メモの取り込み：種目の下のメモをその種目のメモにできる';
+  var KARTE_BUILD = '2026-11-09a メモの取り込み：普段の書き方を読む・提案どおりに決める（設計40）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -1319,8 +1319,21 @@
   //   seg ::= WEIGHT WS* MUL WS* REPS（NFKC の後）。値の範囲は memoW・memoInt で見る（正規表現では丸めない）
   var MEMO_SEG = /(\d+(?:\.\d+)?)(?:\s*kg)?\s*(?:×|x|\*|✕|✖|かける)\s*(\d+)(?:\s*回)?/iy;
   var MEMO_ASSIST = /(\d+)(?:\s*回)?/y;
+  //   設計40 G6：重さを書かない回数（×20）＝自重。セットの先頭だけ（ドロップの段には使わない）
+  var MEMO_SEG0 = /(?:×|x|\*|✕|✖)\s*(\d+)(?:\s*回)?/iy;
+  //   設計40 G5：重さのあるセットの直後がかな・漢字なら区切り。ただし単位・構造の語で始まるならセット全体を読まない（50×10キロ・60×5秒・50×10セット＝I64）
+  var MEMO_JA = /[ぁ-ゖァ-ヺー一-鿿々]/;
+  var MEMO_UNIT = /^(?:キロ|kg|秒|分|セット|set|回|目|レップ|rep|本|周|m|メートル|往復|段|枚|ずつ|種類|か所|箇所|ヶ所|sec|min)/i;
+  //   設計40 §5・G9b：提案（propose）を付けない文＝健康の言葉（I55）・名前らしい印。自動で捨てもしない（1件ずつ選ぶ）
+  var MEMO_HEALTH = /痛|痺|しびれ|怪我|ケガ|けが|診断|薬|手術|違和感|腫|骨折|捻|ヘルニア|病院|通院|体調|血圧|めまい|熱|妊娠|アレルギー|生理|持病|リハビリ|吐き気|頭痛|不調|医師|医者|治療|炎症|つった|つる/;
+  var MEMO_PII_WEAK = /様|さん|氏|くん|君|ちゃん|回目|初回|体験/;
+  //   設計40 G9：行頭の漢字・カタカナ1〜6字＋敬称＝お客様の名前らしい行（提案「捨てる」・計画では名前の部分を〇〇にする）
+  var MEMO_PII_STRONG = /^([一-鿿々〆ヵヶァ-ヺー]{1,6})(様|さん|氏|くん|君|ちゃん)/;
+  var MEMO_NOTE_END = /(た|る|い|く|あり|なし|〇|○|感覚|意識)$/;
+  function memoQuiet(t) { t = String(t || ''); return MEMO_HEALTH.test(t) || MEMO_PII_WEAK.test(t); }
   //   date ::= ( YEAR SEP_D )? MONTH SEP_D DAY 日? ( "(" WEEKDAY ")" )?   SEP_D＝/ . 月
-  var MEMO_DATE = /^\s*(?:(\d{4})[\/.月])?(\d{1,2})[\/.月](\d{1,2})日?\s*(?:\([月火水木金土日]\))?\s*$/;
+  //   設計40 G1：日付の後ろの時刻（00〜23:00〜59）と「〜」は捨てる（保存しない）。例：11/3(火)12:30〜
+  var MEMO_DATE = /^\s*(?:(\d{4})[\/.月])?(\d{1,2})[\/.月](\d{1,2})日?\s*(?:\([月火水木金土日]\))?\s*(?:(?:[01]?\d|2[0-3]):[0-5]\d\s*[~〜\-]?)?\s*$/;
   //   ★「.」区切りは年があるときだけ日付（2026.9.18）。年の無い「12.5」は重さを書いた行かもしれない＝日付にしない（関門② Codex 高）
   var MEMO_DATE_NOYEAR_DOT = /^\s*\d{1,2}\./;
   /** 1行に NFKC をかける。map[i]＝正規化後の i 文字目が元の何文字目から来たか（読めなかった部分を元の文字で返すため） */
@@ -1356,10 +1369,19 @@
     if (w == null || r == null) return null;
     return { v: { w: w, r: String(r), assist: null, forced: false }, end: p + m[0].length };
   }
+  function memoSeg0(s, p) {
+    MEMO_SEG0.lastIndex = p;
+    var m = MEMO_SEG0.exec(s);
+    if (!m) return null;
+    var r = memoInt(m[1]);
+    if (r == null) return null;
+    return { v: { w: '', r: String(r), assist: null, forced: false }, end: p + m[0].length };
+  }
   /** set ::= seg ( + seg )* ( + assist )? ( "(" … ")" )?。読めなければ null（そのかたまりから後ろは読めなかった部分） */
   function memoSet(s, p) {
-    var segs = [], assist = null, q, m;
+    var segs = [], assist = null, q, m, noW = false;
     m = memoSeg(s, p);
+    if (!m) { m = memoSeg0(s, p); noW = true; }   // G6
     if (!m) return null;
     segs.push(m.v); p = m.end;
     for (;;) {
@@ -1385,8 +1407,10 @@
       //   括弧書きで構造にするのは無理やりの確定語だけ。それ以外はそのかたまりごと決定待ち（I71）
       if (FORCED_WORDS.indexOf(inner) >= 0) forced = true; else paren = inner;
       p = c + 1;                                     // 括弧の直後は区切りなしで次のセットへ続いてよい
-    } else if (p < s.length && !/[\s、,]/.test(s.charAt(p))) {
-      return null;                                   // 区切りでも行の終わりでもない（50×10×3・50×10kg 等）
+    } else if (p < s.length && !/[\s、,→]/.test(s.charAt(p)) && !(s.charAt(p) === '-' && s.charAt(p + 1) === '>')) {
+      //   区切りでも行の終わりでもない（50×10×3・50×10kg 等）＝読まない。
+      //   設計40 G5：重さのあるセットの直後がかな・漢字なら区切り（20×10トップで…）。単位・構造の語なら読まない。重さ無しには使わない（×8クリア）
+      if (noW || !MEMO_JA.test(s.charAt(p)) || MEMO_UNIT.test(s.slice(p))) return null;
     }
     var main = segs[0], drops = segs.slice(1);
     if (assist != null) (drops.length ? drops[drops.length - 1] : main).assist = assist;   // 補助は最後の段に付く
@@ -1404,7 +1428,8 @@
       if (!r) return { chunks: out, tailAt: p };
       out.push({ from: p, to: r.end, set: r.set, paren: r.paren, nDrops: r.nDrops });
       p = memoWs(s, r.end);
-      if (s.charAt(p) === '、' || s.charAt(p) === ',') p = memoWs(s, p + 1);
+      if (s.charAt(p) === '、' || s.charAt(p) === ',' || s.charAt(p) === '→') p = memoWs(s, p + 1);   // G7：矢印も区切り
+      else if (s.charAt(p) === '-' && s.charAt(p + 1) === '>') p = memoWs(s, p + 2);
     }
     return { chunks: out, tailAt: -1 };
   }
@@ -1462,7 +1487,11 @@
    *     ・数値と同じ行の名前（「名前 50×10」）には付けない
    */
   function parseMemo(text, todayYmd, autoKnown, suggestKnown) {
-    var auto = memoList(autoKnown), sugg = memoList(suggestKnown);
+    //   設計40（関門②）：名前らしい印（敬称・回目・初回・体験）を含む共有の種目は、自動の照合（完全一致・G2・G4・候補）から外す＝held。
+    //     登録された名前を自動で種目にしない。held で始まる行は G9 の「捨てる」にもしない（赤ちゃんのポーズ等の正しい種目を名前と取り違えない）＝1件ずつ
+    var autoAll = memoList(autoKnown), sugg = memoList(suggestKnown);
+    var auto = autoAll.filter(function (a) { return !MEMO_PII_WEAK.test(a.n); });
+    var held = autoAll.filter(function (a) { return MEMO_PII_WEAK.test(a.n); });
     var autoLong = auto.slice().sort(function (a, b) { return b.n.length - a.n.length; });
     var res = { date: null, items: [], pending: [] };
     var meta = [];        // items と同じ添字：{ pend: 決定待ちが付いたか }
@@ -1483,6 +1512,7 @@
       p.lines.push(ln);
       p.text += '\n' + otext;
       if (p.parsed && chunks) chunks.forEach(function (c) { if (c.paren == null) p.parsed.sets.push(c.set); });
+      if (p.kind === 'name' && p.parsed && p.parsed.sets.length) delete p.propose;   // 設計40：下に数値が続く名前は種目かもしれない＝メモを提案しない
     }
     function newItem(name, ln, otext) {
       if (res.items.length >= MEMO_LIMITS.items) {   // 種目20を超えた：入れない（捨てるだけ選べる）
@@ -1512,19 +1542,30 @@
         total += 1 + c.nDrops;
       });
     }
-    function addTail(idx, r, ln, nm) {
+    function addTail(idx, r, ln, nm, n0) {
       if (r.tailAt < 0) return;
       var t = memoSlice(nm, r.tailAt);
       if (!t) return;
       meta[idx].pend = true;
-      pend({ kind: 'tail', lines: [ln], text: t, item: idx });
+      var tp = pend({ kind: 'tail', lines: [ln], text: t, item: idx });
+      //   設計40 G3：その行で入ったセットがあれば「そのセットのメモ」を提案（健康の言葉・名前らしい印があれば提案しない）
+      if (res.items[idx].sets.length > n0 && !memoQuiet(t)) { tp.setAt = res.items[idx].sets.length - 1; tp.propose = 'setnote'; }
+    }
+    //   メモの宛先の手がかり：直前が種目ならその添字、直前が名前の決定待ちならその pending の添字（宛先は画面で決定から解く）
+    function linkPrev(p) {
+      if (!cur) return;
+      if (cur.item != null && cur.item >= 0) p.after = cur.item;
+      else if (cur.pend && cur.pend.kind === 'name') p.prevPend = res.pending.indexOf(cur.pend);
     }
 
     for (var i = 0; i < lines.length; i++) {
       var ln = i + 1, otext = lines[i].trim();
       if (stop) { if (otext) append(stop, ln, otext); continue; }   // 2つ目の日付から後ろは全部 second_date
       if (!otext) continue;
-      var nm = memoNorm(lines[i]), s = nm.s;
+      var raw = lines[i];
+      //   設計40 G10：閉じない括弧で始まる行（「(ダンベルフライ9×15」）は、先頭の括弧だけ外して読む
+      if (/^\s*[(（]/.test(raw) && !/[)）]/.test(raw)) raw = raw.replace(/^(\s*)[(（]/, '$1');
+      var nm = memoNorm(raw), s = nm.s;
 
       //   日付の行：最初の1つだけ。2つ目が出たら止める
       var dm = MEMO_DATE.exec(s);
@@ -1538,14 +1579,26 @@
         continue;
       }
 
-      var name0 = memoName(lines[i]), body = memoBullet(name0);
-      //   known_line：autoKnown と完全一致（suggestKnown は使わない）
+      var name0 = memoName(raw), body = memoBullet(name0), isBullet = body !== name0;
+      //   設計40 G9：お客様の名前らしい行（行頭の漢字・カタカナ＋敬称）。提案は「捨てる」。宛先の手がかりは付けない。
+      //     ★known_line より先（共有の種目に名前が登録されていても種目にしない・関門②）
+      //     ★sealed：次の数値行を直前の種目に足さない（名前の行の後ろの数値はどの種目か決まらない）
+      var pm = MEMO_PII_STRONG.exec(body);
+      if (pm && held.some(function (a) { return body.indexOf(a.n) === 0; })) pm = null;   // 登録済みの種目で始まる＝名前と決めない（下で提案なしの決定待ちになる）
+      if (pm) {
+        pend({ kind: 'name', lines: [ln], text: otext, parsed: { exercise: body, sets: [] }, candidates: [], propose: 'drop', pii: true, masked: '〇〇' + body.slice(pm[1].length) });
+        if (cur) cur = { item: cur.item, pend: cur.pend, sealed: true };
+        continue;
+      }
+      //   known_line：autoKnown と完全一致（suggestKnown は使わない）。箇条書き＋完全一致も種目（P42）。
+      //     ★名前らしい印（敬称・回目・初回・体験）を含む名前は、一致しても自動で種目にしない＝提案なしの名前の決定待ち（関門②）
       var k = autoOf(name0) || autoOf(body);
       if (k) { newItem(k, ln, otext); continue; }
 
       //   sets_line：直前の種目に足す
       var r = memoSets(s);
       if (r.chunks.length) {
+        if (cur && cur.sealed) { pend({ kind: 'line', lines: [ln], text: otext }); continue; }   // 設計40 sealed：item も下見も付けない
         if (!cur) {
           cur = { pend: pend({ kind: 'no_exercise', lines: [ln], text: otext, parsed: { sets: [] } }) };
           r.chunks.forEach(function (c) { if (c.paren == null) cur.pend.parsed.sets.push(c.set); });
@@ -1556,26 +1609,53 @@
           r.chunks.forEach(function (c) { if (c.paren != null) pend({ kind: 'line', lines: [ln], text: memoSlice(nm, c.from, c.to) }); });
           if (r.tailAt >= 0) { var tt = memoSlice(nm, r.tailAt); if (tt) pend({ kind: 'line', lines: [ln], text: tt }); }
         } else {
+          var n0 = res.items[cur.item].sets.length;
           addChunks(cur.item, r.chunks, ln, nm);
-          addTail(cur.item, r, ln, nm);
+          addTail(cur.item, r, ln, nm, n0);
         }
         continue;
       }
 
-      //   known_sets_line：autoKnown を長い順に行の先頭と比べ、残り全体が sets_line として成立する候補がちょうど1つのときだけ採る
+      //   known_sets_line：autoKnown を長い順に行の先頭と比べ、残りの先頭から1つ以上のセットが読める候補がちょうど1つのときだけ採る
+      //     設計40 G2：残りに読めない部分があってもよい（ラットプルダウン25×10 背中に入った）。読めない残りは tail（G3）
       var cands = [];
       autoLong.forEach(function (a) {
         if (body.indexOf(a.n) !== 0 || body.length <= a.n.length) return;
         var rnm = memoNorm(body.slice(a.n.length)), rr = memoSets(rnm.s);
-        if (memoFull(rr)) cands.push({ a: a, nm: rnm, r: rr });
+        if (rr.chunks.length) cands.push({ a: a, nm: rnm, r: rr });
       });
       if (cands.length === 1) {
         var idx = newItem(cands[0].a.orig, ln, otext);
-        if (idx >= 0) addChunks(idx, cands[0].r.chunks, ln, cands[0].nm);
-        else cands[0].r.chunks.forEach(function (c) { if (c.paren == null) cur.pend.parsed.sets.push(c.set); });   // 種目20を超えた：数値も一緒に limit の中へ
+        if (idx >= 0) { addChunks(idx, cands[0].r.chunks, ln, cands[0].nm); addTail(idx, cands[0].r, ln, cands[0].nm, 0); }
+        else {   // 種目20を超えた：数値も一緒に limit の中へ（行の文字は limit の text に全部ある）
+          cands[0].r.chunks.forEach(function (c) { if (c.paren == null) cur.pend.parsed.sets.push(c.set); });
+        }
         continue;
       }
       if (cands.length > 1) { pend({ kind: 'line', lines: [ln], text: otext }); cur = null; continue; }   // どちらの名前か決めない
+
+      //   設計40 G8：箇条書きの行（完全一致の種目でない）は数値・種目として読まない＝直前の種目のメモの候補。★sealed
+      if (isBullet) {
+        var bp = pend({ kind: 'name', lines: [ln], text: otext, parsed: { exercise: body, sets: [] }, candidates: [] });
+        linkPrev(bp);
+        bp.candidates = candidatesOf(body);
+        if ((bp.after != null || bp.prevPend != null) && !memoQuiet(body)) bp.propose = 'exnote';
+        cur = { pend: bp, sealed: true };
+        continue;
+      }
+
+      //   設計40 G4：autoKnown の名前＋空白＋文（数値なし）＝種目と、その種目のメモの候補（ベンチプレス　パワーフォームで）
+      var g4 = [];
+      autoLong.forEach(function (a) {
+        if (body.indexOf(a.n) !== 0 || !/\s/.test(body.charAt(a.n.length))) return;
+        var rest = body.slice(a.n.length).trim();
+        if (rest && !memoSetish(memoNorm(rest).s)) g4.push({ a: a, rest: rest });
+      });
+      if (g4.length === 1) {
+        var gi = newItem(g4[0].a.orig, ln, otext);
+        if (gi >= 0) { var gp = pend({ kind: 'tail', lines: [ln], text: g4[0].rest, item: gi }); if (!memoQuiet(g4[0].rest)) gp.propose = 'exnote'; }
+        continue;
+      }
 
       //   一致しない名前＋空白＋数値（autoKnown が空のときの「スクワット 50×10」等）：名前の決定待ちにし、数値は下見に入れる
       var split = null;
@@ -1583,8 +1663,18 @@
         var pre = body.slice(0, sp), rr2 = memoSets(memoNorm(body.slice(sp + 1)).s);
         if (!memoSetish(pre) && memoFull(rr2)) split = { name: pre, r: rr2 };
       }
+      //   設計40：名前と数値が空白なしで続く形（インクラインスミスベンチ20×10トップで…）。数字の直前で切る。読めない残りは別の決定待ち（I64）
+      var dg = split ? -1 : body.search(/\d/), splitTail = null;
+      if (dg >= 2 && !memoSetish(body.slice(0, dg)) && !/[×✕✖*xX+]\s*$/.test(body.slice(0, dg))) {
+        var snm = memoNorm(body.slice(dg)), rr3 = memoSets(snm.s);
+        if (rr3.chunks.length && rr3.chunks.every(function (c) { return c.paren == null; })) {
+          split = { name: body.slice(0, dg).trim(), r: rr3 };
+          if (rr3.tailAt >= 0) splitTail = memoSlice(snm, rr3.tailAt) || null;
+        }
+      }
       //   数値を書こうとしたが文法に合わない行（50×10×3・20回・60秒・50キロ10回・12.34×10・名前と数値がつながる形）
       if (!split && memoSetish(s)) {
+        if (cur && cur.sealed) { pend({ kind: 'line', lines: [ln], text: otext }); continue; }   // 設計40 sealed
         if (/^\s*\d/.test(s) && cur) {
           //   ★決定待ちのかたまりに混ぜない：混ぜると「種目にする」を選んだときに黙って消える（I64・関門② 画面担当の指摘）
           if (cur.pend) pend({ kind: 'line', lines: [ln], text: otext });
@@ -1598,13 +1688,16 @@
 
       //   それ以外は全部、決定待ちの名前（健康の文を含む）
       var p = pend({ kind: 'name', lines: [ln], text: otext, parsed: { exercise: split ? split.name : body, sets: [] }, candidates: [] });
-      if (!split && cur) {
-        if (cur.item != null && cur.item >= 0) p.after = cur.item;
-        else if (cur.pend && cur.pend.kind === 'name') p.prevPend = res.pending.indexOf(cur.pend);
-      }
+      if (!split) linkPrev(p);
+      //   設計40 G11：直前の種目（か名前の決定待ち）の下の「文」は、その種目のメモを提案する。短い名詞（新しい種目かもしれない）には付けない
+      if (!split && (p.after != null || p.prevPend != null) && !memoQuiet(body) && (/\s/.test(body) || body.length > 15 || MEMO_NOTE_END.test(body))) p.propose = 'exnote';
       if (split) split.r.chunks.forEach(function (c) { if (c.paren == null) p.parsed.sets.push(c.set); });
       p.candidates = candidatesOf(p.parsed.exercise);
       cur = { pend: p };
+      if (splitTail) {   // 名前＋数値の後ろの文：その名前を種目にしたら、その種目のメモにできる（prevPend）
+        var stp = pend({ kind: 'name', lines: [ln], text: splitTail, parsed: { exercise: splitTail, sets: [] }, candidates: [], prevPend: res.pending.indexOf(p), note: splitTail });
+        if (!memoQuiet(splitTail)) stp.propose = 'exnote';
+      }
     }
 
     //   数字の無い種目＝セットが0で、決定待ちも付いていない種目だけ
@@ -1892,11 +1985,11 @@
     wrap.appendChild(out);
     var bar = el('div', { class: 'k-savebar' });
     box.appendChild(wrap); box.appendChild(bar);
-    var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [];
-    ta.oninput = function () { if (res || err || ask) { res = null; dec = []; ui = []; ask = false; err = ''; draw(); } };
+    var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [], planOpen = false;
+    ta.oninput = function () { if (res || err || ask) { res = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; draw(); } };
     function allDecided() { return !!res && dec.every(function (d) { return !!d; }); }
     function read() {
-      err = ''; ask = false;
+      err = ''; ask = false; planOpen = false;
       lines0 = String(ta.value || '').split(/\r\n|\r|\n/);
       res = parseMemo(ta.value, today(), autoKnown, sugg);
       dec = res.pending.map(function () { return null; });
@@ -1914,7 +2007,7 @@
         if (it.doneOnly) o.doneOnly = false;   // 数字の無い種目：「実施した」の✓は外して入れる
         return o;
       });
-      var memos = [], named = [], exnotes = [], namedBy = {};
+      var memos = [], named = [], exnotes = [], namedBy = {}, nSet = 0;
       res.pending.forEach(function (p, j) {
         var d = dec[j];
         if (d.act === 'memo') memos.push(p.text);
@@ -1926,6 +2019,13 @@
           var carried = ((p.parsed && p.parsed.sets) || []).map(impSet);
           if (carried.length) { tit.sets = tit.sets.concat(carried); delete tit.doneOnly; }
           exnotes.push({ it: tit, text: exNoteText(p) });
+        }
+        else if (d.act === 'setnote') {
+          //   設計40 G3：数値の後ろの文を、その行の最後のセットのメモへ（お客様には出ない）。入らないときは種目名を付けて社内メモへ（切らない）
+          var bi = p.item != null ? base[p.item] : null, bs = bi && p.setAt != null ? bi.sets[p.setAt] : null;
+          if (!bs) { memos.push(p.text); return; }
+          var bx = (bs.note ? bs.note + '・' : '') + String(p.text).trim();
+          if (bx.length <= 200) { bs.note = bx; nSet++; } else memos.push(bi.exercise + '：' + String(p.text).trim());
         }
         else if (d.act === 'set' && p.item != null && base[p.item]) { var st = impSet(p.parsed.sets[0]); if (d.note && p.parsed.paren) st.note = String(p.parsed.paren).slice(0, 200); base[p.item].sets.push(st); }
         else if (d.act === 'item') {
@@ -1949,7 +2049,7 @@
         if (s0 && nx.length <= 200) { s0.note = nx; nNote++; }
         else memos.push(it.exercise + '：' + x.text);
       });
-      return { items: items, memos: memos, nNote: nNote };
+      return { items: items, memos: memos, nNote: nNote, nSet: nSet };
     }
     //   下書きへ入れる（5-3）。空なら日付をメモの日付に。種目があれば、日付が違えば入れない・同じ（または日付の行が無い）なら2択
     function place() {
@@ -1981,11 +2081,39 @@
       var ns = 0, nd = 0; b.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
       trImportMsg = { cid: cid, text: 'メモから ' + b.items.length + '種目・' + ns + 'セット' + (nd ? '（ドロップ' + nd + '）' : '') + 'を入れました。✓を付けて保存してください（✓の無いセットは保存されません）。'
         + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
+        + (b.nSet ? 'セットのメモ ' + b.nSet + '件は、そのセットのメモに入れました。' : '')
         + (res.date ? '' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。') };
       res = null; dec = []; ui = [];
       goBack();
     }
-    function exNoteText(p) { return p.kind === 'name' ? String(lines0[p.lines[0] - 1] || p.parsed.exercise).trim() : String(p.text).trim(); }
+    function exNoteText(p) { if (p.note != null) return String(p.note).trim(); return p.kind === 'name' ? memoBullet(String(lines0[p.lines[0] - 1] || p.parsed.exercise).trim()) : String(p.text).trim(); }   // 箇条書きの記号は外す（設計40 G8）
+    //   設計40：提案の行き先の文（計画の一覧・カードの「提案：」・決めた後の表示で同じ文を使う）
+    function setNoteOk(p) { return p.setAt != null && p.item != null && !!res.items[p.item] && !!res.items[p.item].sets[p.setAt]; }
+    function setNoteDest(p) { return '「' + res.items[p.item].exercise + '」の' + (p.setAt + 1) + 'セット目のメモ'; }
+    function exNoteDest(p, j) { var nm = exTargetName(exTarget(j)); return '「' + nm + '」の1セット目のメモ' + (p.parsed && p.parsed.sets && p.parsed.sets.length ? '。下の数値も「' + nm + '」のセットにする' : ''); }
+    function proposeDest(p, j) {
+      if (p.propose === 'drop') return '捨てる';
+      if (p.propose === 'setnote') return setNoteOk(p) ? setNoteDest(p) + '（お客様には見えません）' : null;
+      if (p.propose === 'exnote') return exTarget(j) ? exNoteDest(p, j) + '（お客様には見えません）' : null;
+      return null;
+    }
+    //   設計40 §4「提案どおりに決める」の計画：dec の写しの上で、添字の小さい順に、未決定で提案があり行き先が解けるものを決めていく
+    //   （前の決定で後ろの宛先が解ける）。★dec 本体は変えない（開いただけでは決まらない）
+    function makePlan() {
+      var real = dec, dd = dec.slice(), list = [];
+      dec = dd;
+      try {
+        res.pending.forEach(function (p, j) {
+          if (dd[j] || !p.propose) return;
+          var dest = proposeDest(p, j);
+          if (!dest) return;
+          var d = p.propose === 'drop' ? { act: 'discard' } : { act: p.propose };
+          dd[j] = d;
+          list.push({ j: j, d: d, text: p.pii ? p.masked : p.text, dest: dest });
+        });
+      } finally { dec = real; }
+      return list;
+    }
     //   メモの宛先：{ base: items の添字 } か { pend: 種目にした名前の決定待ちの添字 }。決まらないときは null（ボタンを出さない）
     //   ★prevPend は必ず自分より小さい添字＝たどるたびに減る（循環しない・件数の上限を置かない）
     function exTarget(j) {
@@ -2021,7 +2149,7 @@
     }
     function btnCol(kids) { return el('div', { class: 'k-impbtns' }, kids); }
     function act(text, fn, cls) { return el('button', { type: 'button', class: 'k-btn ' + (cls || 'out'), text: text, onclick: fn }); }
-    function decide(j, d) { dec[j] = d; draw(); }
+    function decide(j, d) { dec[j] = d; planOpen = false; draw(); }
     function card(p, j) {
       var d = dec[j], u = ui[j];
       var c = el('div', { class: 'k-card k-impcard', 'data-kind': p.kind }, [
@@ -2029,13 +2157,15 @@
         el('div', { class: 'k-sub', text: p.lines.join('・') + '行目' }),
         el('div', { class: 'k-imptext', text: p.text })]);
       if (p.parsed && p.parsed.sets && p.parsed.sets.length && p.kind !== 'paren') c.appendChild(el('div', { class: 'k-sub', text: '読めた数値：' + impLine(p.parsed.sets) }));
+      if (!d && p.propose) { var pd = proposeDest(p, j); if (pd) c.appendChild(el('div', { class: 'k-sub k-imppro', text: '提案：' + pd })); }
       if (d) {
         var t = d.act === 'discard' ? '捨てる' : d.act === 'memo' ? '社内メモに足す'
           : d.act === 'exnote' ? (function () { var nm = exTargetName(exTarget(j)); return '「' + nm + '」の1セット目のメモにする（お客様には見えません）' + (p.parsed && p.parsed.sets && p.parsed.sets.length ? '。下の数値も「' + nm + '」のセットにする' : ''); })()
+          : d.act === 'setnote' ? (setNoteOk(p) ? setNoteDest(p) + 'にする（お客様には見えません）' : '社内メモに足す')
           : d.act === 'set' ? (d.note ? '括弧の中をセットのメモに入れてセットにする' : '括弧を除いてセットにする')
           : '種目「' + d.name + '」にする' + (d.part ? '（' + label(PART_KEYS, d.part) + '）' : '');
         c.appendChild(el('div', { class: 'k-impdone', style: 'font-weight:700;color:var(--k-acc);', text: '→ ' + t }));
-        c.appendChild(btnCol([act('選び直す', function () { dec[j] = null; dropDependents(j); if (u) u.open = false; draw(); })]));
+        c.appendChild(btnCol([act('選び直す', function () { dec[j] = null; dropDependents(j); if (u) u.open = false; planOpen = false; draw(); })]));
         return c;
       }
       if (p.kind === 'name') {
@@ -2094,7 +2224,7 @@
         c.appendChild(btnCol([act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
         return c;
       }
-      c.appendChild(btnCol([exNoteBtn(p, j), act('社内メモに足す', function () { decide(j, { act: 'memo' }); }), act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
+      c.appendChild(btnCol([setNoteOk(p) ? act(setNoteDest(p) + 'にする', function () { decide(j, { act: 'setnote' }); }, '') : null, exNoteBtn(p, j), act('社内メモに足す', function () { decide(j, { act: 'memo' }); }), act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
       c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '社内メモはお客様には見えません。' + I55_HINT }));
       return c;
     }
@@ -2112,7 +2242,19 @@
           btnCol([act('いまの入力の後ろに足す', function () { commit(); }, ''), act('やめる', function () { ask = false; draw(); })])]));
         return;
       }
-      if (res && !err) res.pending.forEach(function (p, j) { out.appendChild(card(p, j)); });
+      if (res && !err) {
+        //   設計40 §4：提案どおりに決める。押すと「決める内容」を全部並べ、末尾の「この内容で決める」で計画をそのまま適用する（ダイアログなし）
+        var plan = makePlan();
+        if (plan.length && !planOpen) out.appendChild(el('button', { type: 'button', class: 'k-btn k-impplan', text: '提案どおりに決める（' + plan.length + '件）', onclick: function () { planOpen = true; draw(); } }));
+        if (plan.length && planOpen) {
+          var pb = el('div', { class: 'k-card k-impplanbox', style: 'display:flex;flex-direction:column;gap:8px;' }, [el('div', { style: 'font-weight:700;', text: '決める内容（' + plan.length + '件）' })]);
+          plan.forEach(function (x) { pb.appendChild(el('div', { class: 'k-impplanrow' }, [el('div', { class: 'k-imptext', text: x.text }), el('div', { class: 'k-sub', style: 'font-weight:700;', text: '→ ' + x.dest })])); });
+          pb.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: I55_HINT + '。違うものは「閉じる」を押し、そのカードで選んでください。' }));
+          pb.appendChild(btnCol([act('この内容で決める', function () { plan.forEach(function (x) { dec[x.j] = x.d; }); planOpen = false; draw(); }, 'k-impplango'), act('閉じる', function () { planOpen = false; draw(); })]));
+          out.appendChild(pb);
+        }
+        res.pending.forEach(function (p, j) { out.appendChild(card(p, j)); });
+      }
       if (res && res.pending.length && !err) {
         var go = el('button', { type: 'button', class: 'k-btn k-impput', text: '記録の画面に入れる', onclick: function () { if (allDecided()) place(); } });
         if (!allDecided()) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
