@@ -300,7 +300,12 @@ async function ingest(env, b) { const r = await handleIngest(new Request('https:
   const toml = readFileSync(join(W, 'wrangler.toml'), 'utf8');
   ok('⑦-1 ★wrangler.toml に会員 ID（C+数字）が無い', !/\bC\d{8,}\b/.test(toml));
   ok('⑦-2 LB_D1_REMAIN_MODE は shadow か on だけ（段階0から on）', /LB_D1_REMAIN_MODE\s*=\s*"(shadow|on)"/.test(toml));
-  ok('⑦-3 全員（LB_D1_REMAIN_ALL）はまだ入れていない（段階2はオーナー承認）', !/LB_D1_REMAIN_ALL\s*=\s*"1"/.test(toml));
+  //   2026-11-10 段階2はオーナー承認済み。入れるなら値は厳密に "1"・1か所だけ・承認の記録を添える
+  const allLines = toml.split('\n').filter((l) => /^\s*LB_D1_REMAIN_ALL\s*=/.test(l));
+  ok('⑦-3 全員（LB_D1_REMAIN_ALL）は無いか、"1" が1か所だけ（"true" 等は全員扱いにならない書き間違い）',
+     allLines.length === 0 || (allLines.length === 1 && /^\s*LB_D1_REMAIN_ALL\s*=\s*"1"\s*$/.test(allLines[0])));
+  ok('⑦-4 全員にしたなら、段階2のオーナー承認の記録が設定の横にある',
+     allLines.length === 0 || /段階2（設計21・オーナー承認）/.test(toml));
 }
 
 // ---------- ⑧ 計算の材料が届いていなければ写し（設計30） ----------
