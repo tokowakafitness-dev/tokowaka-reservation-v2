@@ -1907,7 +1907,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-06b キャンセル理由（cancel_notes・通知の時間予算・送り直しの本文を30日で空に）とトレーナーのキャンセルの見え方（設計36）';
+var LB_HEALTH_BUILD = '2026-11-10a 契約の終了日を当日の終わりまで有効に（_lbFindContract・_lbContractRows・月額の種別）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -3123,7 +3123,7 @@ function testLbRegistrationReadiness() {
     var start = cols.start >= 0 ? _lbParseResvDate(r[cols.start]) : null;
     var end = cols.end >= 0 ? _lbParseResvDate(r[cols.end]) : null;
     var startOk = !start || start.getTime() <= now;
-    var endOk = !end || end.getTime() >= now;
+    var endOk = !end || _lbEndOfJstDayMs(end) >= now;   // 終了日の当日は有効（_lbFindContract とそろえる・2026-11-10）
     if (startOk && endOk) mem[key].hasActive = true;   // 現在有効な契約が1行でもあれば登録可
     if (!end) mem[key].noEnd = true; else if (end.getTime() > mem[key].latestEnd) mem[key].latestEnd = end.getTime();
   }
@@ -4116,7 +4116,7 @@ function _lbFindContract(customerName, phone, opts) {
     var start = cols.start >= 0 ? _lbParseResvDate(r[cols.start]) : null;
     var end = cols.end >= 0 ? _lbParseResvDate(r[cols.end]) : null;
     if (start && start.getTime() > now && !(opts && opts.allowFuture === true)) continue;   // 契約開始前（登録の照合では対象にする）
-    if (end && end.getTime() < now) continue;        // 契約終了後
+    if (end && _lbEndOfJstDayMs(end) < now) continue;   // 契約終了後（終了日の日本時間 23:59:59.999 まで有効＝残数の Allocate.js expEnd とそろえる）
     var st = start ? start.getTime() : 0;
     if (st >= bestStart) { bestStart = st; best = { row: r, cols: cols, start: start, end: end }; }
     // 同名区別：電話が渡され一致する行を優先（数値型セル対策で_lbNormPhone）
@@ -4152,7 +4152,7 @@ function _lbContractRows(customerName, phone) {
     var start = cols.start >= 0 ? _lbParseResvDate(r[cols.start]) : null;
     var end = cols.end >= 0 ? _lbParseResvDate(r[cols.end]) : null;
     if (start && start.getTime() > now) continue;   // 契約開始前
-    if (end && end.getTime() < now) continue;        // 契約終了後
+    if (end && _lbEndOfJstDayMs(end) < now) continue;   // 契約終了後（終了日の日本時間 23:59:59.999 まで有効＝残数の Allocate.js expEnd とそろえる）
     // 同名区別：電話が記入され「別人」の行のみ除外。電話一致 or 電話空（同一人物の月額/チケット別行）は含める。
     if (normPhone && cols.phone >= 0) {
       var rp = _lbNormPhone(r[cols.phone]);
@@ -4438,7 +4438,7 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
   for (var _mr = 0; _mr < rows.length; _mr++) {
     var _rr = rows[_mr];
     if (_rr.start && _rr.start.getTime() > tMs) continue;
-    if (_rr.end && _rr.end.getTime() < tMs) continue;
+    if (_rr.end && _lbEndOfJstDayMs(_rr.end) < tMs) continue;   // 終了日の当日の予約も月額として数える
     var _mt = String((_rr.cols.type >= 0 ? _rr.row[_rr.cols.type] : '') || '');
     if (!_mt || _mt.indexOf('チケット') >= 0 || _mt.indexOf('レンタル') >= 0 || _mt.indexOf('ペア') >= 0) continue;
     var _st = _rr.start ? _rr.start.getTime() : 0;
@@ -7612,6 +7612,14 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   sh.appendRow(rowArr);
   try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e) {}   // 残数キャッシュ破棄→即反映
   return { success: true, tickets: qty, pair: isPair, total: qty, expire: Utilities.formatDate(expire, SETTINGS.TIMEZONE, 'yyyy年M月d日') };
+}
+
+// 契約の終了日を「その日の日本時間 23:59:59.999」に直す（2026-11-10）。
+//   以前は終了日の 0時と比べていた＝終了日の当日 0時から契約が無いことになっていた（月末の最終日に予約・登録・残数の判定から外れる）。
+//   残数の計算（Allocate.js の expEnd）と同じ式。セルに時刻が入っていても（23:59 等）当日の終わりに正規化する
+function _lbEndOfJstDayMs(d) {
+  var j = d.getTime() + 9 * 3600000;
+  return Math.floor(j / 86400000) * 86400000 - 9 * 3600000 + 86399999;
 }
 
 function _lbParseResvDate(v) {

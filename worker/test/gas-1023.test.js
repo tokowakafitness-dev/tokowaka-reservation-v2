@@ -39,7 +39,7 @@ console.log('=== ① 契約の探し方 ===');
     _lbParseResvDate: (v) => { const m = String(v).match(/(\d+)\/(\d+)\/(\d+)/); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; },
     _lbNormPhone: (p) => String(p || '').replace(/\D/g, '').replace(/^0/, '') };
   vm.createContext(ctx);
-  vm.runInContext(pluckFn(LB, '_lbNormName') + '\n' + pluckFn(LB, '_lbFindContract'), ctx);
+  vm.runInContext(pluckFn(LB, '_lbNormName') + '\n' + pluckFn(LB, '_lbEndOfJstDayMs') + '\n' + pluckFn(LB, '_lbFindContract'), ctx);   // 2026-11-10：終了日は当日の終わりまで
   ok('①-1 既定（残数や予約の判定）は開始前の契約を対象にしない＝今までどおり', ctx._lbFindContract('新規 花子') === null);
   const f = ctx._lbFindContract('新規花子様', '090-1111-2222', { allowFuture: true });
   ok('①-2 ★登録の照合（allowFuture）は開始前の契約も見つける', f && f.row[0] === '新規 花子');

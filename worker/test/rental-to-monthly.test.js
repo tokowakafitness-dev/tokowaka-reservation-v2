@@ -86,7 +86,7 @@ function runGBR(rows, sessions, nowMs, at) {
     _lbContractRowsAll: () => rows, _lbPhoneByCustomerId: () => '', _lbResvSessions: () => sessions,
     _lbMemberOpeningWithFloor: () => null };
   vm.createContext(ctx);
-  vm.runInContext(AL.replace(/if \(typeof module[\s\S]*$/, '') + '\n' + pluckFn(LB, '_lbMonthlyResumesAfter') + '\n' + pluckFn(LB, 'getBookableRemaining'), ctx);
+  vm.runInContext(AL.replace(/if \(typeof module[\s\S]*$/, '') + '\n' + pluckFn(LB, '_lbMonthlyResumesAfter') + '\n' + pluckFn(LB, '_lbEndOfJstDayMs') + '\n' + pluckFn(LB, 'getBookableRemaining'), ctx);
   return ctx.getBookableRemaining('C1', '', 'テスト', at);
 }
 {
@@ -105,6 +105,12 @@ function runGBR(rows, sessions, nowMs, at) {
   //   10月中に11月を取る（月額行は未開始＝ct はレンタル）も レンタル_
   const rem3 = runGBR(ROWS, [], jst(2026, 10, 27, 12), jst(2026, 11, 3, 10));
   ok('②-7 10月中に取る11月の予約も レンタル_', P('line', rem3.packKind, 'レンタル', rem3.consumeType, rem3.monthlyType, rem3.consumeRental) === 'レンタル_', rem3.consumeType + '/' + rem3.consumeRental);
+  //   2026-11-10：月額行の終了日の当日（夜）の予約も月額の種別で数える（以前は終了日の 0時と比べて外れていた）
+  const endRows = [Object.assign(monthlyRow(4, jst(2026, 10, 1)), { end: new Date(jst(2026, 11, 30)) })];
+  const rem4 = runGBR(endRows, [], jst(2026, 11, 29, 12), jst(2026, 11, 30, 19));
+  ok('②-8 ★終了日 11/30 の 19時の予約：月額の種別は通常', rem4.monthlyType === '通常', JSON.stringify({ ok: rem4.ok, t: rem4.monthlyType }));
+  const rem5 = runGBR(endRows, [], jst(2026, 11, 29, 12), jst(2026, 12, 1, 10));
+  ok('②-9 翌日 12/1 の予約：その月額行は種別に使わない', rem5.monthlyType !== '通常', JSON.stringify({ ok: rem5.ok, t: rem5.monthlyType }));
 }
 
 console.log('=== ③ 種別の決め方 ===');
