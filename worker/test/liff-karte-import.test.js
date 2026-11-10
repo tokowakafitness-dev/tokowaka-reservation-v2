@@ -437,7 +437,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
 {
   const { w, sent } = boot();
   await openImport(w);
-  paste(w, 'ベンチプレス\n肘を上げる意識\n40×10 50×10\n胸を張る\nプランク\n体幹を意識\nヒップリフト\n30×10\n50キロ10回');
+  paste(w, 'ベンチプレス\n肘を上げる意識\n40×10 50×10\n胸を張る\nプランク\n体幹を意識\nヒップリフト\n30×10\n50キロ10回やろう');   // 設計41：「50キロ10回」は R10 で読むので、読めない形（相談の言い方）にした
   btn(R(w), '読み取る').click(); await settle();
   const names = [...R(w).querySelectorAll('.k-impcard')];
   ok('M24-1 種目の直下の名前の決定待ち：直前の種目「ベンチプレス」の1セット目のメモにする が出る・プランクの下はプランク', !!btn(card(w, 'name', 0), '直前の種目「ベンチプレス」の1セット目のメモにする') && !!btn(card(w, 'name', 2), '直前の種目「プランク」'), names.map((c) => c.textContent).join(' | '));
@@ -450,7 +450,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   btn(R(w), '記録の画面に入れる').click(); await nav();
   const d = draftOf(w);
   eq('M24-4 ★1セット目のメモに入る・名前の下の数値はその種目のセット・セットの無い種目は種目名を付けて社内メモへ（黙って捨てない）', d && { items: d.items.map((x) => [x.exercise, x.sets.map((s) => [s.w, s.r, s.note || '']), x.doneOnly]), memo: d.memo },
-    { items: [['ベンチプレス', [['40', '10', '肘を上げる意識・胸を張る'], ['50', '10', '']], undefined], ['プランク', [], false], ['ヒップリフト', [['30', '10', '50キロ10回']], undefined]], memo: 'プランク：体幹を意識' });
+    { items: [['ベンチプレス', [['40', '10', '肘を上げる意識・胸を張る'], ['50', '10', '']], undefined], ['プランク', [], false], ['ヒップリフト', [['30', '10', '50キロ10回やろう']], undefined]], memo: 'プランク：体幹を意識' });
   ok('M24-5 案内の1行に件数（種目のメモ 3件）', R(w).textContent.includes('種目のメモ 3件は、その種目の1セット目のメモに入れました'));
   ok('M24-6 記録の画面で1セット目のメモが開いて見える', [...R(w).querySelectorAll('input,textarea')].some((x) => x.value === '肘を上げる意識・胸を張る'));
   for (let i = 0; i < 3; i++) { const b = R(w).querySelector('button.k-allchk'); if (!b) break; b.click(); await settle(); }
@@ -460,7 +460,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   eq('M24-7 ★保存の本文：メモはセットの note で送る（新しい鍵は使わない）', tr.length === 1 ? tr[0].items : null, [
     { exercise: 'ベンチプレス', sets: [{ weight: 40, reps: 10, note: '肘を上げる意識・胸を張る' }, { weight: 50, reps: 10 }] },
     { exercise: 'プランク', sets: [], doneOnly: true },
-    { exercise: 'ヒップリフト', sets: [{ weight: 30, reps: 10, note: '50キロ10回' }] }]);
+    { exercise: 'ヒップリフト', sets: [{ weight: 30, reps: 10, note: '50キロ10回やろう' }] }]);
 }
 {
   //   直前に種目が無い名前・数値と同じ行の名前には出さない（どの種目のメモか分からない）
@@ -519,7 +519,7 @@ const M25 = '11/3(火)12:30～\n山田様1回目\nベンチプレス　パワー
   const box = R(w).querySelector('.k-impplanbox');
   ok('M25-3 ★開いただけでは決まらない（記録の画面に入れる は押せないまま・のこり7件）', !!box && btn(R(w), '記録の画面に入れる').disabled && R(w).textContent.includes('7件のこり'));
   ok('M25-4 ★名前の行は〇〇にして出す・「山田」は計画に出ない', box.textContent.includes('〇〇様1回目') && box.textContent.includes('→ 捨てる') && !box.textContent.includes('山田'));
-  ok('M25-5 原文は切り詰めない・行き先は同じ行', [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('足も背中も使えてる') && r.textContent.includes('→ 「ベンチプレス」の1セット目のメモ')));
+  ok('M25-5 原文は切り詰めない・行き先は同じ行', [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('足も背中も使えてる') && r.textContent.includes('→ 「ベンチプレス」の 65kg×3 のセットのメモ')));
   ok('M25-6 確認のボタンは一覧の末尾（行の後ろ）', (() => { const go = btn(box, 'この内容で決める'); const rows = box.querySelectorAll('.k-impplanrow'); return !!go && !!(rows[rows.length - 1].compareDocumentPosition(go) & w.Node.DOCUMENT_POSITION_FOLLOWING); })());
   ok('M25-7 ★健康の言葉・名前らしい行は計画に入らない', !box.textContent.includes('腰が痛い') && !box.textContent.includes('たなかさん'));
   ok('M25-8 ★I63：計画を開いても原文は保存領域に無い', !/パワーフォーム|山田|余力/.test(storeText(w.localStorage) + storeText(w.sessionStorage)));
@@ -566,6 +566,107 @@ const M25 = '11/3(火)12:30～\n山田様1回目\nベンチプレス　パワー
   btn(R(w), '提案どおりに決める').click(); await settle();
   btn(R(w).querySelector('.k-impplanbox'), 'この内容で決める').click(); await settle();
   ok('M25-19 2件とも決まり、記録の画面に入れる が押せる', !btn(R(w), '記録の画面に入れる').disabled);
+}
+
+// ================= M26 設計41：新しく読む数字は確認の一覧を通す・セットの順番と宛先は通し番号・上限は計画で数える（入口から保存まで） =================
+const setsOf = (d) => d && d.items.map((x) => [x.exercise, x.sets.map((s) => s.w + '×' + s.r + (s.assist ? '+' + s.assist : '') + (s.note ? '[' + s.note + ']' : ''))]);
+{
+  //   話した数値（R10）は予告：計画で確かめてから入る。前後の普通のセットと順番がそろう。後ろの文の宛先も正しいセット
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'ベンチプレス\n50×10\n55キロで5回いきます\n60×3 足を使えた');
+  btn(R(w), '読み取る').click(); await settle();
+  ok('M26-1 ★R10 は読み取っただけでは記録に入らない（確認の一覧に出る）', !!card(w, 'rule', 0) && R(w).querySelector('.k-impsum').textContent.includes('本セット2'));
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  const box = R(w).querySelector('.k-impplanbox');
+  ok('M26-2 計画に原文と行き先（「ベンチプレス」に 55kg×5 を足す）', !!box && [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('55キロで5回いきます') && r.textContent.includes('「ベンチプレス」に 55kg×5 を足す')), box && box.textContent);
+  btn(box, 'この内容で決める').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  eq('M26-3 ★順番はメモの行の順（50×10 → 55×5 → 60×3）・「足を使えた」は 60×3 のメモ', setsOf(draftOf(w)), [['ベンチプレス', ['50×10', '55×5', '60×3[足を使えた]']]]);
+}
+{
+  //   話した数値を「捨てる」と、そのセットは入らない。後ろの普通のセットのメモはずれない
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'ベンチプレス\n55キロで5回いきます\n60×3 足を使えた');
+  btn(R(w), '読み取る').click(); await settle();
+  btn(card(w, 'rule', 0), '捨てる').click(); await settle();
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  btn(R(w).querySelector('.k-impplanbox'), 'この内容で決める').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  eq('M26-4 ★捨てた数値は入らない・メモは 60×3 のまま（添字ずれなし）', setsOf(draftOf(w)), [['ベンチプレス', ['60×3[足を使えた]']]]);
+}
+{
+  //   既存の不具合：括弧のセットを数値にすると下のセットより後ろに並んでいた → 通し番号で並べ直す
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'スクワット\n55×10(+3更新)\n57.5×8');
+  btn(R(w), '読み取る').click(); await settle();
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  btn(R(w).querySelector('.k-impplanbox'), 'この内容で決める').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  eq('M26-5 ★括弧のセットも行の順（55×10 → 57.5×8）・括弧の中はそのセットのメモ', setsOf(draftOf(w)), [['スクワット', ['55×10[+3更新]', '57.5×8']]]);
+}
+{
+  //   上限：自動9セット＋R7 の2セット → 計画に入らない。カードで選んでも決まらず理由が出る
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'スクワット\n' + Array.from({ length: 9 }, (_, i) => (40 + i) + '×10').join('\n') + '\n×10ずつ 2種類');
+  btn(R(w), '読み取る').click(); await settle();
+  ok('M26-6 ★上限を超える addset は計画に入らない（提案どおりに決める が出ない）', !btn(R(w), '提案どおりに決める'), R(w).textContent.slice(0, 200));
+  ok('M26-6b カードのボタンに足す数値（重さなし×10 を2セット）', !!btn(card(w, 'rule', 0), '「スクワット」に 自重×10・自重×10 を足す'), card(w, 'rule', 0).textContent);
+  btn(card(w, 'rule', 0), '「スクワット」に').click(); await settle();
+  ok('M26-7 ★カードで選んでも決まらず理由が出る', card(w, 'rule', 0).textContent.includes('上限') && btn(R(w), '記録の画面に入れる').disabled);
+}
+{
+  //   選び直し：規則のセットを捨てに変えると、それを宛先にしたセットのメモの決定も外れる
+  const { w } = boot({ cfg: { shared: SHARED.concat([{ name: 'ディップス', part: 'chest' }]) } });
+  await openImport(w);
+  paste(w, 'ディップス\n×5+5自重　フォームうまい');
+  btn(R(w), '読み取る').click(); await settle();
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  btn(R(w).querySelector('.k-impplanbox'), 'この内容で決める').click(); await settle();
+  ok('M26-8 計画で2件とも決まる（R5 と、その後ろの文）', btn(R(w), '記録の画面に入れる') && !btn(R(w), '記録の画面に入れる').disabled);
+  btn(card(w, 'rule', 0), '選び直す').click(); await settle();
+  ok('M26-9 ★規則のセットを選び直すと、そのセットのメモの決定も外れる', R(w).textContent.includes('2件のこり'));
+  btn(card(w, 'rule', 0), '捨てる').click(); await settle();
+  btn(card(w, 'tail', 0), '社内メモに足す').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  const d = draftOf(w);
+  ok('M26-10 ★捨てたセットは入らない・文は社内メモに（黙って消えない）', d && d.items[0].sets.length === 0 && String(d.memo || '').includes('フォームうまい'), JSON.stringify(d && { s: d.items, m: d.memo }));
+}
+{
+  //   宛先のセットを捨てたのに「セットのメモ」を決めたまま入れた場合：種目名を付けて社内メモへ（どの種目の所感か分かる）
+  const { w } = boot({ cfg: { shared: SHARED.concat([{ name: 'ディップス', part: 'chest' }]) } });
+  await openImport(w);
+  paste(w, 'ディップス\n×5+5自重　フォームうまい');
+  btn(R(w), '読み取る').click(); await settle();
+  btn(card(w, 'rule', 0), '捨てる').click(); await settle();
+  btn(card(w, 'tail', 0), '社内メモに足す').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  const d2 = draftOf(w);
+  ok('M26-10b 社内メモに選び直した文はそのまま社内メモ', d2 && String(d2.memo || '').includes('フォームうまい'), JSON.stringify(d2 && d2.memo));
+}
+{
+  //   R3：行の途中の種目名。計画には入らず、カードで選ぶ。原文の全体がその種目のメモ（セットが無いので種目名を付けて社内メモ）
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'ベンチプレス\n50×10\n背中を台に押しつけてスクワット');
+  btn(R(w), '読み取る').click(); await settle();
+  ok('M26-11 ★R3 の行は計画に入らない', !btn(R(w), '提案どおりに決める'));
+  btn(card(w, 'name', 0), '「スクワット」を種目にして').click(); await settle();
+  btn(R(w), '記録の画面に入れる').click(); await nav();
+  const d = draftOf(w);
+  ok('M26-12 R3 で種目「スクワット」が入り、原文の全体が残る（つながない）', d && d.items.some((x) => x.exercise === 'スクワット') && String(d.memo || '').includes('スクワット：背中を台に押しつけてスクワット'), JSON.stringify(d && { i: d.items.map((x) => x.exercise), m: d.memo }));
+}
+{
+  //   I63：規則の行を読んで計画を開いても、原文は保存領域に無い
+  const { w } = boot();
+  await openImport(w);
+  paste(w, 'ベンチプレス\n55キロで5回いきます');
+  btn(R(w), '読み取る').click(); await settle();
+  btn(R(w), '提案どおりに決める').click(); await settle();
+  ok('M26-13 ★I63：原文は保存領域に無い', !/55キロ/.test(storeText(w.localStorage) + storeText(w.sessionStorage)));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} 設計38 メモから取り込む（画面） 検証: ${pass} passed / ${fail} failed`);

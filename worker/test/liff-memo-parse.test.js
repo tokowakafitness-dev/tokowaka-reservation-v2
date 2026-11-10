@@ -386,7 +386,8 @@ const pro = (r) => r.pending.map((p) => p.propose || '-').join(',');
   const r20 = run('スクワット\n50×10\nインクラインスミス20×10トップで抜ける');
   ok('P86 名前＋数値（空白なし）：名前の決定待ち（下見1セット）＋残りは別の決定待ち（prevPend・note）', kinds(r20) === 'name,name' && r20.pending[0].parsed.exercise === 'インクラインスミス' && r20.pending[0].parsed.sets.length === 1 && r20.pending[1].prevPend === 0 && r20.pending[1].note === 'トップで抜ける' && r20.pending[1].propose === 'exnote', show(r20));
   const r21 = run('スクワット\n50×10\n赤チューブ×10');
-  ok('P87 道具＋×10（名前が×で終わる）は名前に切らない', kinds(r21) === 'line' || kinds(r21) === 'name', show(r21));
+  //   設計41 R2（オーナー決定）：種目の下の「色＋チューブ×回数」はその種目のセット。★items には入れず確認の一覧へ（addset）
+  ok('P87 道具＋×10：名前に切らない・設計41 R2 で確認の一覧へ（重さなし×10・メモ「赤チューブ」）', kinds(r21) === 'rule' && r21.pending[0].propose === 'addset' && r21.pending[0].parsed.sets[0].note === '赤チューブ' && itemsS(r21) === 'スクワット:50×10', show(r21));
 }
 // ================= 設計40 実例（トレーナー2人のメモ・お客様名と所感は架空に置換） =================
 const MEMO_A = `デッドバグ　×15ずつ 3種類　きつそう
@@ -440,11 +441,116 @@ const MEMO_B = `11/3(火)12:30～
   const a1 = run(MEMO_A, FIX, []), a2 = run(MEMO_A, REG, []), b1 = run(MEMO_B, FIX, []), b2 = run(MEMO_B, REG, []);
   ok('P88 実例A 初回：ベンチプレスだけ自動（5セット）', itemsS(a1) === 'ベンチプレス:50×3 60×2 65×3 65×3 65×3', show(a1));
   ok('P88b 実例A 登録後：6種目が自動', a2.items.map((i) => i.exercise).join() === 'デッドバグ,エクスターナルローテーション,ベンチプレス,足上げベンチ,ディップス,ダンベルフライ', show(a2));
-  ok('P88c 実例A 登録後：1件ずつはちょうど3件（黙って消えていない）', cnt(a2).pend - cnt(a2).pro === 3, JSON.stringify(cnt(a2)));
+  //   設計41 で 3件 → 0件（55×10(+3更新)・余裕あり＝R4、赤チューブ×10＝R2 が提案になった）。胸椎ストレッチを登録すると R3 の1件（一括に入れない）
+  ok('P88c 実例A 登録後：1件ずつは0件（設計41）', cnt(a2).pend - cnt(a2).pro === 0, JSON.stringify(cnt(a2)));
+  const a3 = run(MEMO_A, REG.concat(['胸椎ストレッチ']), []);
+  ok('P88d 設計41 R3：胸椎ストレッチを登録すると、行の途中の種目名は R3（提案なし＝一括に入れない）の1件だけ', cnt(a3).pend - cnt(a3).pro === 1 && a3.pending.some((p) => p.r3 === '胸椎ストレッチ' && !p.propose), JSON.stringify(cnt(a3)));
   ok('P89 実例B：日付 11/3・名前の行は drop（〇〇様1回目）', b1.date?.endsWith('-11-03') && b1.pending[0].propose === 'drop' && b1.pending[0].masked === '〇〇様1回目', show(b1));
   ok('P89b 実例B 登録後：8種目が自動', b2.items.length === 8, show(b2));
   ok('P89c 実例B 登録後：1件ずつはちょうど1件（黙って消えていない）', cnt(b2).pend - cnt(b2).pro === 1, JSON.stringify(cnt(b2)));
   ok('P89d ★実例B：「山田」はどの提案の行き先の文にも入らない（masked のみ）', !b2.pending.some((p) => p.propose && p.propose !== 'drop' && p.text.includes('山田')), show(b2));
+}
+
+// ================= 設計41 オーナーに聞いて決めた読み方（R2〜R11）。★新しく読む数字は items に入れず確認の一覧へ（addset） =================
+{
+  const rk = (r) => r.pending.filter((p) => p.kind === 'rule');
+  const rs = (p) => p.parsed.sets.map((x) => setS(x) + (x.note ? '[' + x.note + ']' : '')).join(' ');
+  const noRule = (r) => rk(r).length === 0;
+  const noSets = (r) => r.items.every((it) => it.sets.length === 0);   // 数字が1つも入っていない（実施のみの表示かどうかは問わない）
+  //   R10 話し言葉
+  let r = run('ベンチプレス、55キロで5回いきます');
+  ok('P90 R10 実際にお願いする言い方：種目は入る・数字は確認の一覧（items に入らない）', itemsS(r) === 'ベンチプレス:' && rk(r).length === 1 && rs(rk(r)[0]) === '55×5' && rk(r)[0].propose === 'addset' && rk(r)[0].item === 0, show(r));
+  r = run('スクワット\n50×10\n55キロで5回');
+  ok('P91 R10 名前なし：直前の確定済みの種目へ', itemsS(r) === 'スクワット:50×10' && rk(r).length === 1 && rk(r)[0].item === 0 && rs(rk(r)[0]) === '55×5', show(r));
+  r = run('スクワット\n55キロで5回、次60キロで3回');
+  ok('P92 ★R10 2組の文は読まない（1件ずつ）', noRule(r) && noSets(r) && kept(r, '60キロ'), show(r));
+  r = run('スクワット\n55キロで5回にしましょうか');
+  ok('P93 ★R11 相談の言い方は読まない', noRule(r) && noSets(r), show(r));
+  r = run('スクワット\n五十五キロで五回');
+  ok('P94 ★R11 漢数字は読まない', noRule(r) && noSets(r), show(r));
+  r = run('スクワット\n５５キロで５レップ');
+  ok('P95 R10 全角・レップ', rk(r).length === 1 && rs(rk(r)[0]) === '55×5', show(r));
+  r = run('スクワット\n自重で10回');
+  ok('P96 R10 自重で＝重さなし', rk(r).length === 1 && rs(rk(r)[0]) === '0×10', show(r));
+  r = run('スクワット\n55キロで5回を3セット');
+  ok('P97 R10 〜を3セット＝同じセットを3つ', rk(r).length === 1 && rs(rk(r)[0]) === '55×5 55×5 55×5', show(r));
+  r = run('スクワット\n55キロで5回を11セット');
+  ok('P97b ★R10 11セットは読まない（天井 10）', noRule(r), show(r));
+  //   健康・名前・sealed・種目なし・held
+  r = run('スクワット\n腰が痛いので自重で10回');
+  ok('P98 ★健康の言葉の行には新しい規則を当てない（数字も読まない）', noRule(r) && noSets(r) && kept(r, '腰が痛い'), show(r));
+  r = run('スクワット\n赤チューブ×10 違和感あり');
+  ok('P98b ★健康の言葉の行：R2 も当てない', noRule(r) && kept(r, '違和感'), show(r));
+  r = run('スクワット\n田中さん55キロで5回');
+  ok('P99 ★名前らしい印の行には当てない', noRule(r) && kept(r, '田中さん'), show(r));
+  r = run('スクワット\n・意識する\n55キロで5回');
+  ok('P100 ★sealed 中は当てない', noRule(r), show(r));
+  r = run('55キロで5回');
+  ok('P101 R10 種目が無ければ読まない（1件ずつ）', noRule(r) && r.items.length === 0 && kept(r, '55キロ'), show(r));
+  r = run('赤ちゃんのポーズ、自重で10回', AUTO.concat(['赤ちゃんのポーズ']));
+  ok('P102 ★held の名前で始まる行には当てない', noRule(r) && noAutoName(r, '赤ちゃんのポーズ'), show(r));
+  //   R9 次・次回
+  r = run('スクワット\n50×10\n次60×5');
+  ok('P103 R9 次の数字はセットにしない・種目のメモを提案', itemsS(r) === 'スクワット:50×10' && r.pending[0].rule === 'R9' && r.pending[0].propose === 'exnote', show(r));
+  r = run('スクワット\n50×10\n次のセットで55キロ5回いきます');
+  ok('P103b ★R9 は R10 より先（次の〜は数値にしない）', noRule(r) && r.pending[0].rule === 'R9', show(r));
+  //   R7
+  r = run('スクワット\n×15ずつ 3種類');
+  ok('P104 R7 ×15 を3セット（1つ目にメモ「3種類」）', rk(r).length === 1 && rs(rk(r)[0]) === '0×15[3種類] 0×15 0×15', show(r));
+  for (const [t, why] of [['×15ずつ 1種類', 'M=1'], ['×15ずつ 11種類', 'M=11'], ['×0ずつ 3種類', 'N=0'], ['×101ずつ 3種類', 'N=101'], ['×15ずつ 3種類だけ', '後ろに空白なしの文字']]) {
+    const x = run('スクワット\n' + t);
+    ok('P104x ★R7 読まない：' + why, noRule(x) && noSets(x), show(x));
+  }
+  r = run('スクワット\n×15ずつ 3種');
+  ok('P104y ★R7「3種」は読まない（M種類だけ）', noRule(r) && noSets(r), show(r));
+  r = run('スクワット\n×15ずつ 3種類　きつそう');
+  ok('P104z 改訂5：R7 の後ろの空白区切りの文＝最後のセットのメモの提案', rk(r).length === 1 && r.pending[1].propose === 'setnote' && r.pending[1].setSq === rk(r)[0].parsed.sets[2].sq, show(r));
+  r = run('スクワット\n赤チューブ×10 2回目');
+  ok('P104w ★改訂5：後ろの文に数字があれば読まない', noRule(r), show(r));
+  //   R8
+  r = run('スクワット\n50×10、16+16×10');
+  ok('P105e ★改訂5：R8 は区切りの後ろでは読まない（50×10 だけ自動・残りは決定待ち）', noRule(r) && itemsS(r) === 'スクワット:50×10' && kept(r, '16+16'), show(r));
+  r = run('スクワット\n16+16×10');
+  ok('P105 R8 左右が同じ＝片手16kg×10', rk(r).length === 1 && rs(rk(r)[0]) === '16×10[片手16kgずつ]', show(r));
+  r = run('スクワット\n16+12×10');
+  ok('P105b ★R8 左右が違えば一部も読まない', noRule(r) && noSets(r) && kept(r, '16+12'), show(r));
+  r = run('スクワット\n16.0+16×10');
+  ok('P105c R8 数値として等しい', rk(r).length === 1, show(r));
+  r = run('スクワット\n片手16+16×10');
+  ok('P105d ★R8 前に文字があれば読まない', noRule(r), show(r));
+  //   R5・R2
+  r = run('ディップス\n×5+5自重');
+  ok('P106 R5 ×5+5自重＝重さなし×5＋補助5・メモ「自重」', rk(r).length === 1 && rs(rk(r)[0]) === '0×5+5[自重]', show(r));
+  r = run('ディップス\n×5+5自重　フォームうまい');
+  ok('P106b R5 後ろの文はそのセットのメモの提案（setSq）', rk(r).length === 1 && r.pending[1].propose === 'setnote' && r.pending[1].setSq === rk(r)[0].parsed.sets[0].sq, show(r));
+  r = run('赤チューブ×10');
+  ok('P107 ★R2 種目が無ければ読まない', noRule(r), show(r));
+  r = run('スクワット\n2号チューブ×10');
+  ok('P107b ★R2 色に数字を含む形は読まない', noRule(r), show(r));
+  r = run('ディップス\n赤チューブ×10+5');
+  ok('P107c R2 補助付き', rk(r).length === 1 && rs(rk(r)[0]) === '0×10+5[赤チューブ]', show(r));
+  //   R4・R6
+  r = run('スクワット\n50×10(+3更新)');
+  ok('P108 R4 括弧1つ・健康語なし＝「セットにして括弧の中をメモに」を提案', r.pending[0].kind === 'paren' && r.pending[0].propose === 'parenset', show(r));
+  r = run('スクワット\n50×10(膝痛)');
+  ok('P108b ★R4 括弧の中に健康の言葉＝提案しない', r.pending[0].kind === 'paren' && !r.pending[0].propose, show(r));
+  r = run('スクワット\n55×10(+3更新)余裕あり');
+  ok('P108c R4 括弧の後ろの文＝括弧のセットのメモの提案（setSq）', r.pending[1].propose === 'setnote' && r.pending[1].setSq === r.pending[0].parsed.sets[0].sq, show(r));
+  r = run('スクワット\n50×10 60×');
+  ok('P109 R6 回数の無いセットはセットにしない・種目のメモを提案', itemsS(r) === 'スクワット:50×10' && r.pending[0].propose === 'exnote', show(r));
+  r = run('スクワット\n50×10\n60×');
+  ok('P109b R6 行だけでも同じ', itemsS(r) === 'スクワット:50×10' && r.pending[0].propose === 'exnote', show(r));
+  //   F 通し番号
+  r = run('スクワット\n50×10\n55キロで5回\n60×3');
+  const sqs = [r.items[0].sets[0].sq, rk(r)[0].parsed.sets[0].sq, r.items[0].sets[1].sq];
+  ok('P110 通し番号はメモの行の順（自動・規則・自動）', sqs[0] < sqs[1] && sqs[1] < sqs[2], JSON.stringify(sqs));
+  //   R3
+  r = run('ベンチプレス\n50×10\nフォームはスクワットと同じ意識で');
+  ok('P111 R3 行の途中の種目名：候補を付け、提案は外す（一括の計画に入れない）', r.pending[0].r3 === 'スクワット' && !r.pending[0].propose, show(r));
+  r = run('ベンチプレス\n50×10\nスクワットとランジの意識');
+  ok('P111b ★R3 種目名が2つなら候補にしない', !r.pending[0].r3, show(r));
+  r = run('ベンチプレス\n50×10\n腰が痛いのでスクワットは休み');
+  ok('P111c ★R3 健康の言葉の文は候補にしない', !r.pending[0].r3 && !r.pending[0].propose, show(r));
 }
 
 console.log(`\nliff-memo-parse: ${pass} 通過 / ${fail} 失敗`);
