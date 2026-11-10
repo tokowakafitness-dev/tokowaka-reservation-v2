@@ -1,1 +1,1 @@
-{"op": "remaining", "requestId": "job-20261110102839-2518d6ba", "args": {"shadow": "1", "from": "2026-11-06", "day": "2026-11-10", "_rk": "d5dd7115f80232c36489141ff82e1ac2ff6db92654938110ae015aff2e80bc0e"}}
+{"op": "quotaBuild", "requestId": "job-20261110105521-840b6ae0", "args": {"status": true, "_rk": "f6b3f0744b74cf5e5a0c8262036e4c71573e395a06b51112b458537f0a28b6f2"}}
