@@ -98,12 +98,14 @@
 - `wrangler deploy`・`wrangler d1 execute --remote` を自分で走らせない（main へのマージで自動で流れる）
 - `.github/workflows/` を変えない（§4）
 - 自分でマージしない・main へ push しない・`--no-verify` で検査を飛ばさない
+  - push の前に `ops/prepush-scan.mjs` が、push するコミットの足した行と説明文に個人情報・鍵の形が無いかを見る（pre-push）。止められたら、作業ツリーで消すだけでは足りない（履歴に残る）。push 前のコミットを作り直す（MODEL.md I75）
 - 業務の規則を自分で決めない（PR で質問にする）
 
 ## 6. 検査
 
 ```
 bash ops/cloud-setup.sh           最初に1回（jsdom・sqlite3・pre-push）
+node ops/prepush-scan.mjs --range origin/main..HEAD   push 前の個人情報・鍵の検査を手で
 bash worker/test/run-all.sh       全部（約1分・落ちたら終了コード1）
 bash worker/test/run-all.sh quota 名前に quota を含むものだけ
 ```

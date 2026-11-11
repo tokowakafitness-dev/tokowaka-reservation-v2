@@ -1,0 +1,46 @@
+name: 個人情報・鍵の検査
+
+# PR のコミットに、個人情報（〇〇様・電話・個人のメール・LINE のユーザーID）や鍵の形が無いかを見る（2026-11-11・決定0167）。
+#
+# ★なぜ pre-push だけでは足りないのか
+#   pre-push は `git push --no-verify` で飛ばせる。クラウドのセッションが cloud-setup.sh を走らせ忘れれば、そもそも入っていない。
+#   ここはサーバー側で必ず走る後ろの網。main のルールセットで「必須のチェック」にする（cloud-dev.md §4-1）。
+#
+# ★検査の中身は PR 側ではなく main（base）のものを使う
+#   PR のコミットで検出器（pii-detect.mjs）や許可リストを書き換えれば素通りできてしまう。
+#   だから PR の中身は「見る対象」としてだけ扱い、検査のコードは base の版を取り出して走らせる。
+#
+# ★Secrets を使わない・書き込み権限を持たない。pull_request（pull_request_target ではない）。
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    steps:
+      # SHAで固定する（gas-deploy.yml と同じ版）
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 検査のコードを main（base）から取り出す
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/scan/ops" "$RUNNER_TEMP/scan/worker/test"
+          git show "$BASE:ops/prepush-scan.mjs"        > "$RUNNER_TEMP/scan/ops/prepush-scan.mjs"
+          git show "$BASE:worker/test/pii-detect.mjs"  > "$RUNNER_TEMP/scan/worker/test/pii-detect.mjs"
+
+      - name: PR のコミットを見る
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/scan/ops/prepush-scan.mjs" --range "$BASE..$HEAD"

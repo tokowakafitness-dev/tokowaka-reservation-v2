@@ -10,14 +10,29 @@
 # ★入れ方（リポジトリごとに1回）
 #   ln -sf ../../worker/test/pre-push .git/hooks/pre-push
 #
-# ★抜け道を塞がない
-#   急いでいるときは `git push --no-verify` で飛ばせる。
-#   飛ばしたら、その場で `bash worker/test/run-all.sh` を走らせること。
+# ★抜け道
+#   `git push --no-verify` で飛ばせてしまう（git の仕様）。
+#   テストは急ぎなら飛ばしてもよいが、その場で `bash worker/test/run-all.sh` を走らせること。
+#   **個人情報・鍵の検査（1.）は飛ばさない。** 飛ばした push は、PR の検査（ops/workflows/pii-scan.yml・
+#   main の値で走る）が後ろで拾う。
 
 set -uo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 
+# ---- 1. 個人情報・鍵の検査（2026-11-11・決定0167）--------------------------
+#   push で外に出るのは履歴。push するコミット1つずつの「足した行」と説明文を見る。
+#   git が標準入力に渡す「<local ref> <local sha> <remote ref> <remote sha>」をそのまま渡す。
+#   ★テストより先に走らせる（速い・テストが落ちても個人情報の有無は分かる）
+echo "▶ push するコミットに個人情報・鍵の形が無いか見ます（ops/prepush-scan.mjs）"
+if ! node "$ROOT/ops/prepush-scan.mjs"; then
+  echo
+  echo "⛔ 個人情報・鍵の形があるため push を止めました（上の一覧。値は表示していません）。"
+  echo "   ★この検査は --no-verify で飛ばさない。公開リポジトリでは branch の push がそのまま公開になる。"
+  exit 1
+fi
+
+# ---- 2. 全部のテスト --------------------------------------------------------
 echo "▶ push の前にテストを走らせます（worker/test/run-all.sh）"
 if bash "$ROOT/worker/test/run-all.sh"; then
   exit 0

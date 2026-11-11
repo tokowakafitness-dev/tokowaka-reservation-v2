@@ -11,7 +11,7 @@
 #   2. sqlite3 と python3 があるか確かめ、無ければ apt で入れる
 #   3. jsdom を ~/.cache/claude-node に固定版で入れる（worker/test/deps の lockfile）
 #      ★テストは createRequire(~/.cache/claude-node/package.json) で jsdom を探す
-#   4. pre-push フックをつなぐ（push の前に全テストが走る）
+#   4. pre-push フックをつなぐ（push の前に、個人情報・鍵の検査 → 全テストが走る）
 #
 # ★失敗したら終了コード 1。黙って通さない。
 
@@ -80,7 +80,7 @@ if [ -n "$REPO" ] && [ -d "$REPO/.git/hooks" ]; then
   if [ "$(readlink "$REPO/.git/hooks/pre-push" 2>/dev/null)" = "../../worker/test/pre-push" ]; then
     say "pre-push はつながっています"
   elif ln -sf ../../worker/test/pre-push "$REPO/.git/hooks/pre-push" 2>/dev/null; then
-    say "pre-push をつなぎました（push の前に worker/test/run-all.sh が走ります）"
+    say "pre-push をつなぎました（push の前に ops/prepush-scan.mjs と worker/test/run-all.sh が走ります）"
   else
     # Mac の作業環境では .git/hooks が書けない設定がある。テストの準備とは別なので止めない
     say "⚠ pre-push をつなげませんでした（push の前に bash worker/test/run-all.sh を手で走らせる）"

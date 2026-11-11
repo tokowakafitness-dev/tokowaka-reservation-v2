@@ -9,7 +9,7 @@
 //     作業ツリーの追跡ファイル全部について、
 //       ① 「漢字・カナの並び＋様」の名前が、下の許可リストに無いこと
 //       ② 携帯・IP電話の形（070/080/090/050-XXXX-XXXX）が、許可した番号（店の公開番号）か、明らかなダミーであること
-//     実名そのものはこのファイルに書かない。見つかったものは「ファイル:行・ハッシュ・文字の種類」だけを出す。
+//     実名そのものはこのファイルに書かない。見つかったものは「ファイル:行・種類・文字の種類」だけを出す（ハッシュも出さない＝短いハッシュは総当たりで戻せる・決定0167）。
 //
 //   ★ここで落ちたときの直し方
 //     実在の人なら「会員A」「〇〇様」に替える（日付＋時刻＋人で特定できる書き方は時刻を落とす）。
@@ -22,61 +22,14 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { gloss, flaggedNames, flaggedPhones, flaggedEmails, flaggedLineIds, flaggedKeys } from './pii-detect.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${name}${extra ? '\n   ' + extra : ''}`)); }
-const hash = (s) => createHash('sha256').update(s).digest('hex').slice(0, 8);
-const gloss = (s) => [...s].map((c) => (/[一-龥々〆]/.test(c) ? 'K' : /[ァ-ヴー]/.test(c) ? 'k' : /[ 　・]/.test(c) ? '_' : '?')).join('');
-
-// ---- 許可リスト（ダミー・架空の名前・トレーナーの姓・一般語）----
-const ALLOW = new Set((
-  '〇〇 ○○ ●● 様 体験 顧客 会員 名前 顧客名 本文 見本 ' +
-  // 昔からのダミー
-  '山田 山田太郎 山田花子 田中 田中太郎 田中花子 佐藤 佐藤花子 太郎 花子 一郎 二郎 健 ' +
-  // テストで使う架空の名前（2026-11-11 に実名から置き換えたもの）
-  '甲野 乙川 丙田 丁原 戊井 己島 甲野一郎 乙川二郎 戊井三郎 丁原四郎 丙田五郎 甲野花子 コウノ ハナコ コウノハナコ ' +
-  '会員二 会員見本 新規花子 未来太郎 残骸花子 消化漏子 ' +
-  // トレーナーの姓（LP で公開している業務上の名前。フルネームは書かない）
-  '中野 鈴木 沖'
-).split(/\s+/).filter(Boolean));
-// 「仕様」「模様」「お客様」「同様」… の「様」は名前ではない（直前の1文字で判定）
-const GEN_TAIL = new Set([...'仕模客同多異王神皆奥貴外両各左有今斯如']);
-
-const RUN = '[一-龥々〆ァ-ヴー]';
-const NAME_RE = new RegExp(`(?:(${RUN}+)([ 　・]))?(${RUN}+)[ 　]?様(?![式子相態])`, 'g');
-
-function flaggedNames(line) {
-  const out = [];
-  for (const m of line.matchAll(NAME_RE)) {
-    const r0 = m[1], r1 = m[3];
-    const full = r0 ? r0 + m[2] + r1 : r1;
-    if (ALLOW.has(r1) && (!r0 || ALLOW.has(r0))) continue;
-    if (GEN_TAIL.has(r1[r1.length - 1])) continue;
-    out.push(full);
-  }
-  return out;
-}
-
-// ---- 電話番号：店の公開番号（ハッシュで持つ）とダミーだけ許す ----
-const PHONE_ALLOW_HASH = new Set(['f9d1a4ba']);   // 店の公開番号（LP に掲載）
-const PHONE_RE = /(?<![\d.])0[5789]0-?\d{4}-?\d{4}(?!\d)/g;
-function isDummyPhone(p) {
-  const d = p.replace(/\D/g, '');
-  return new Set(d.slice(3)).size <= 2 || /(0000|1111|2222|3333|4444|5555|6666|7777|8888|9999|1234|5678|9876)/.test(d);
-}
-function flaggedPhones(line) {
-  const out = [];
-  for (const m of line.matchAll(PHONE_RE)) {
-    if (isDummyPhone(m[0])) continue;
-    if (PHONE_ALLOW_HASH.has(hash(m[0]))) continue;
-    out.push(m[0]);
-  }
-  return out;
-}
+// 検出器（許可リスト・形）は pii-detect.mjs に1つだけ置く。push 前の検査（ops/prepush-scan.mjs）と共有する。
 
 // ---- 0. 検出器そのものが効くこと（実名は書かず、その場で組み立てる）----
 {
@@ -90,6 +43,15 @@ function flaggedPhones(line) {
     JSON.stringify(flaggedNames('お客様・仕様・模様・同様・〇〇様・山田太郎様・甲野 一郎様・鈴木様・会員A様')));
   ok('0-5 ダミーでない携帯番号を拾う', flaggedPhones('📞 090-' + '3141-5926').length === 1);
   ok('0-6 ダミーの番号は拾わない', flaggedPhones('090-1111-2222 / 09012345678 / 080-0000-0000').length === 0);
+  const C = (...a) => String.fromCharCode(...a);
+  const pmail = 'zq' + 'x7.k' + C(0x40) + 'gmail.com';                      // 架空の個人アドレス（実行時に組み立てる）
+  ok('0-7 個人のメールアドレス（フリーメール）を拾う', flaggedEmails('連絡先 ' + pmail).length === 1);
+  ok('0-8 会社・サービス・カレンダーのドメインは拾わない',
+    flaggedEmails('a' + C(0x40) + 'example.com x' + C(0x40) + 'group.calendar.google.com').length === 0);
+  ok('0-9 LINE のユーザーID（ダミーでない）を拾う', flaggedLineIds('U' + '3f9a1c7e5b2d4f6a8c0e1b3d5f7a9c2e').length === 1);
+  ok('0-10 LINE のダミー ID は拾わない', flaggedLineIds('U' + '0'.repeat(32) + ' U' + '0123456789abcdef'.repeat(2)).length === 0);
+  ok('0-11 鍵の形を拾う（秘密鍵の見出し・GitHub のトークン）',
+    flaggedKeys('-----BEGIN ' + 'PRIVATE KEY-----').length === 1 && flaggedKeys('gh' + 'p_' + 'A1b2'.repeat(9)).length === 1);
 }
 
 // ---- 1. 追跡ファイル全部を見る ----
@@ -113,19 +75,25 @@ function trackedFiles() {
 const files = trackedFiles();
 ok('1-0 ファイルを読めている（0件で素通りしない）', files.length > 100, String(files.length));
 
-const hitsName = [], hitsPhone = [];
+const hitsName = [], hitsPhone = [], hitsMail = [], hitsLine = [], hitsKey = [];
 for (const f of files) {
   let text;
   try { text = readFileSync(join(ROOT, f), 'utf8'); } catch { continue; }
   if (text.includes('\u0000')) continue;   // バイナリ
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    for (const n of flaggedNames(lines[i])) hitsName.push(`${f}:${i + 1} 名前 ${hash(n)} (${gloss(n)})`);
-    for (const p of flaggedPhones(lines[i])) hitsPhone.push(`${f}:${i + 1} 電話 ${hash(p)}`);
+    for (const n of flaggedNames(lines[i])) hitsName.push(`${f}:${i + 1} 名前 (${gloss(n)})`);
+    for (const p of flaggedPhones(lines[i])) hitsPhone.push(`${f}:${i + 1} 電話`);
+    for (const e of flaggedEmails(lines[i])) hitsMail.push(`${f}:${i + 1} メール`);
+    for (const u of flaggedLineIds(lines[i])) hitsLine.push(`${f}:${i + 1} LINEのID`);
+    for (const k of flaggedKeys(lines[i])) hitsKey.push(`${f}:${i + 1} 鍵の形 ${k.kind}`);
   }
 }
 ok('1-1 ★許可リストに無い「〇〇様」が無い（実名を書かない）', hitsName.length === 0, hitsName.slice(0, 30).join('\n   '));
 ok('1-2 ★ダミーでも店の公開番号でもない携帯・IP電話の番号が無い', hitsPhone.length === 0, hitsPhone.slice(0, 30).join('\n   '));
+ok('1-3 ★業務用でない個人のメールアドレスが無い', hitsMail.length === 0, hitsMail.slice(0, 30).join('\n   '));
+ok('1-4 ★ダミーでない LINE のユーザーID が無い', hitsLine.length === 0, hitsLine.slice(0, 30).join('\n   '));
+ok('1-5 ★鍵・トークンの形が無い', hitsKey.length === 0, hitsKey.slice(0, 30).join('\n   '));
 
-console.log(`\n${fail ? '❌' : '✅'} 公開リポジトリに実名・電話を書かない 検証: ${pass} passed / ${fail} failed`);
+console.log(`\n${fail ? '❌' : '✅'} 公開リポジトリに実名・電話・メール・LINEのID・鍵を書かない 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
