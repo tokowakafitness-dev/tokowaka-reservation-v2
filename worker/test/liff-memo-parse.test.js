@@ -352,7 +352,7 @@ const pro = (r) => r.pending.map((p) => p.propose || '-').join(',');
   const r14d = run('赤ちゃんのポーズ\n赤ちゃんのポーズ10×10\n王様のポーズ', HELD);
   ok('P78e ★登録済みの「赤ちゃんのポーズ」は捨てる提案にしない（pii なし・提案なし）・数値は下見に残る', r14d.pending.length >= 2 && r14d.pending.slice(0, 2).every((p) => !p.pii && !p.propose) && r14d.pending.some((p) => p.parsed && p.parsed.sets && p.parsed.sets.length === 1), show(r14d));
   ok('P78f 未登録の「王様のポーズ」は名前の印として捨てる提案（〇〇様のポーズ・原文は計画で判別できる）', r14d.pending[r14d.pending.length - 1].propose === 'drop' && r14d.pending[r14d.pending.length - 1].masked === '〇〇様のポーズ', show(r14d));
-  for (const t of ['ヤマダさん', '佐藤氏', '健太くん', '花子ちゃん', '鈴木君']) {
+  for (const t of ['コウダさん', '佐藤氏', '健太くん', '花子ちゃん', '鈴木君']) {
     const r = run('スクワット\n50×10\n' + t);
     ok(`P79 G9 ${t}：drop`, r.pending[0]?.propose === 'drop' && r.pending[0]?.masked.startsWith('〇〇'), show(r));
   }

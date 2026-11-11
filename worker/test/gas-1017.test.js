@@ -32,15 +32,15 @@ console.log('=== ① 氏名を伏せる ===');
   vm.runInContext(pluckFn(EJ, '_ejScrub'), ctx);
   const S = (t) => ctx._ejScrub(t);
   //   実際の点検の文（10/16・10/17）の形
-  const a = S('⚠️ [カレンダー] 1件 … 台帳に無い予定＝枠が売れない: 10/17 13:00 中垣宏章様（通常_沖／B1）');
-  ok('①-1 ★「氏名＋様」を伏せる', a.indexOf('中垣') < 0 && a.indexOf('〇〇様（通常_沖／B1）') > 0, a);
-  const b = S('担当calの残骸: 10/16 12:00 小倉 滉太様（鈴木 神海感留）');
-  ok('①-2 ★空白をはさむ氏名も伏せる・トレーナー（様なし）は残す', b.indexOf('小倉') < 0 && b.indexOf('滉太') < 0 && b.indexOf('鈴木 神海感留') > 0, b);
-  ok('①-3 カタカナ・英字の氏名も伏せる', S('：ヤマダタロウ様 / Smith様') === '：〇〇様 / 〇〇様', S('：ヤマダタロウ様 / Smith様'));
+  const a = S('⚠️ [カレンダー] 1件 … 台帳に無い予定＝枠が売れない: 10/17 13:00 甲野一郎様（通常_沖／B1）');
+  ok('①-1 ★「氏名＋様」を伏せる', a.indexOf('甲野') < 0 && a.indexOf('〇〇様（通常_沖／B1）') > 0, a);
+  const b = S('担当calの残骸: 10/16 12:00 乙川 二郎様（鈴木 健）');
+  ok('①-2 ★空白をはさむ氏名も伏せる・トレーナー（様なし）は残す', b.indexOf('乙川') < 0 && b.indexOf('二郎') < 0 && b.indexOf('鈴木 健') > 0, b);
+  ok('①-3 カタカナ・英字の氏名も伏せる', S('：コウノハナコ様 / Smith様') === '：〇〇様 / 〇〇様', S('：コウノハナコ様 / Smith様'));
   ok('①-4 2回通しても変わらない', S(a) === a);
   ok('①-5 電話・メールの伏字は前のまま', S('090-1234-5678 a@b.co') === '（電話） （メール）', S('090-1234-5678 a@b.co'));
   ok('①-6 様の無い文は変えない', S('会員#1234 の残数 3') === '会員#1234 の残数 3');
-  ok('①-6b ★「・」をはさむ氏名もまとめて伏せる', S('：カトウ・マリア様') === '：〇〇様', S('：カトウ・マリア様'));
+  ok('①-6b ★「・」をはさむ氏名もまとめて伏せる', S('：コウノ・ハナコ様') === '：〇〇様', S('：コウノ・ハナコ様'));
   //   ★様を付けない窓口（統合の下見・移行前の点検）：名簿・台帳・契約の氏名で伏せる
   const ctx2 = { String, Number, Object, _lbNormName: (x) => x,
     LINE_BOOKING: { MAP_SHEET: 'map', RESV_SHEET: 'resv' }, MAP_COL: { NAME: 3 },
@@ -50,13 +50,13 @@ console.log('=== ① 氏名を伏せる ===');
     _lbContractCols: (h) => ({ name: h.indexOf('氏名') }) };
   vm.createContext(ctx2);
   vm.runInContext(pluckFn(EJ, '_ejScrub') + '\nvar _EJ_NAMES = null;\n' + pluckFn(EJ, '_ejNameList'), ctx2);
-  const t = ctx2._ejScrub('■ 山田 太郎（2件の登録） / 山田太郎 / 佐藤花子 / - 高橋　一郎（1行） / 高橋 一郎 / 鈴木 神海感留');
-  ok('①-9 ★様の無い氏名も伏せる（名簿・台帳・契約、空白の揺れも）', !/山田|太郎|佐藤|花子|高橋|一郎/.test(t) && /鈴木 神海感留/.test(t), t);
+  const t = ctx2._ejScrub('■ 山田 太郎（2件の登録） / 山田太郎 / 佐藤花子 / - 高橋　一郎（1行） / 高橋 一郎 / 鈴木 健');
+  ok('①-9 ★様の無い氏名も伏せる（名簿・台帳・契約、空白の揺れも）', !/山田|太郎|佐藤|花子|高橋|一郎/.test(t) && /鈴木 健/.test(t), t);
   const t2 = ctx2._ejScrub('会員#1234 2026-10-17');
   ok('①-11 数字だけの値は名前とみなさない（会員#・日付を壊さない）', t2 === '会員#1234 2026-10-17', t2);
   const ctx3 = { String, _ejNameList: () => { throw new Error('x'); } };
   vm.createContext(ctx3); vm.runInContext(pluckFn(EJ, '_ejScrub'), ctx3);
-  ok('①-10 一覧が読めなくても落ちない（様の置き換えは効く）', ctx3._ejScrub('中垣宏章様') === '〇〇様');
+  ok('①-10 一覧が読めなくても落ちない（様の置き換えは効く）', ctx3._ejScrub('甲野一郎様') === '〇〇様');
   //   配線：報告する直前に結果も例外文も通す（窓口ごとの付け忘れをここで拾う）
   ok('①-7 ★報告の result は必ず _ejScrub を通す', /result: '\[' \+ claimed\.op \+ '\] ' \+ Math\.round\(\(Date\.now\(\) - t0\) \/ 1000\) \+ '秒\\n' \+ _ejScrub\(text\)/.test(EJ));
   ok('①-8 ★例外文も _ejScrub を通す', /err = _ejScrub\(String\(\(e && e\.message\) \|\| e\)\)\.slice\(0, 300\)/.test(EJ));
@@ -131,7 +131,7 @@ console.log('=== ③ 連続ルールの記録にトレーナーと時刻 ===');
     Utilities: { formatDate: (d) => d.toISOString().slice(0, 16).replace('T', ' ') } };
   vm.createContext(ctx);
   vm.runInContext(pluckFn(LB, '_lbConsecWhere'), ctx);
-  const w = ctx._lbConsecWhere({ name: '鈴木 神海感留' }, new Date('2026-10-17T09:00:00Z'));
+  const w = ctx._lbConsecWhere({ name: '鈴木 健' }, new Date('2026-10-17T09:00:00Z'));
   ok('③-1 トレーナーの姓と開始時刻を足す', w === ' tr=鈴木 at=2026-10-17 09:00', w);
   ok('③-2 壊れた入力でも落ちない', typeof ctx._lbConsecWhere(null, null) === 'string');
   const dry = pluckFn(LB, '_lbConsecDryRecord');
@@ -146,10 +146,10 @@ console.log('=== ④ 進行中のセッションを「台帳に無い」と誤�
   //   台帳は開始が now 以降・カレンダーは進行中も返す。範囲をそろえる。実際に動かして確かめる
   const now = new Date('2026-10-17T04:05:00Z');   // 13:05 JST
   const mkEv = (iso, title, desc) => ({ getStartTime: () => new Date(iso), getTitle: () => title, getDescription: () => desc || 'channel：line' });
-  //   進行中の正しい予約（中垣）・進行中の残骸（変更済みなのに予定が残った：残骸花子）・未来の予約（未来太郎）
-  const calEvs = [mkEv('2026-10-17T04:00:00Z', '中垣宏章様（通常_沖）'), mkEv('2026-10-17T03:30:00Z', '残骸花子様（通常_沖）'),
+  //   進行中の正しい予約（甲野）・進行中の残骸（変更済みなのに予定が残った：残骸花子）・未来の予約（未来太郎）
+  const calEvs = [mkEv('2026-10-17T04:00:00Z', '甲野一郎様（通常_沖）'), mkEv('2026-10-17T03:30:00Z', '残骸花子様（通常_沖）'),
                   mkEv('2026-10-17T06:00:00Z', '未来太郎様（通常_沖）'), mkEv('2026-10-17T03:45:00Z', '消化漏子様（通常_沖）')];
-  const trEvs = [mkEv('2026-10-17T04:00:00Z', '✅ 中垣宏章様｜_line'), mkEv('2026-10-17T03:30:00Z', '✅ 残骸花子様｜_line'),
+  const trEvs = [mkEv('2026-10-17T04:00:00Z', '✅ 甲野一郎様｜_line'), mkEv('2026-10-17T03:30:00Z', '✅ 残骸花子様｜_line'),
                  mkEv('2026-10-17T06:00:00Z', '✅ 未来太郎様｜_line'), mkEv('2026-10-17T03:45:00Z', '✅ 消化漏子様｜_line')];
   const RealDate = Date;
   class FakeDate extends RealDate { constructor(...a) { if (a.length) super(...a); else super(now.getTime()); } static now() { return now.getTime(); } }
@@ -163,15 +163,15 @@ console.log('=== ④ 進行中のセッションを「台帳に無い」と誤�
     String, Number, JSON, Object, Math, Array, Date: FakeDate, Logger: { log: () => {} },
     SETTINGS: { TIMEZONE: 'Asia/Tokyo' }, Utilities: { formatDate: fmt },
     LINE_BOOKING: { RESV_SHEET: 'r' },
-    CALENDAR_IDS: { CAPACITY_B1: 'b1', CAPACITY_1F: 'f1', TRAINERS: [{ id: 't2', name: '沖 孟', email: 'oki' }] },
+    CALENDAR_IDS: { CAPACITY_B1: 'b1', CAPACITY_1F: 'f1', TRAINERS: [{ id: 't2', name: '沖 進', email: 'oki' }] },
     _lbBookingHorizonEnd: () => new RealDate('2026-10-31T00:00:00Z'),
     _lbParseResvDate: (x) => new RealDate(x),
     _lbNormTok: (x) => x,
     _lbSheet: () => ({ getLastRow: () => 5, getRange: () => ({ getValues: () => [
-      ['2026-10-17T03:45:00Z', '消化漏子', '', '', 't2', '沖 孟', 'consumed', '', '', 'line', ''],
-      ['2026-10-17T04:00:00Z', '中垣宏章', '', '', 't2', '沖 孟', 'confirmed', '', '', 'line', ''],
-      ['2026-10-17T03:30:00Z', '残骸花子', '', '', 't2', '沖 孟', 'changed', '', '', 'line', ''],
-      ['2026-10-17T06:00:00Z', '未来太郎', '', '', 't2', '沖 孟', 'confirmed', '', '', 'line', ''],
+      ['2026-10-17T03:45:00Z', '消化漏子', '', '', 't2', '沖 進', 'consumed', '', '', 'line', ''],
+      ['2026-10-17T04:00:00Z', '甲野一郎', '', '', 't2', '沖 進', 'confirmed', '', '', 'line', ''],
+      ['2026-10-17T03:30:00Z', '残骸花子', '', '', 't2', '沖 進', 'changed', '', '', 'line', ''],
+      ['2026-10-17T06:00:00Z', '未来太郎', '', '', 't2', '沖 進', 'confirmed', '', '', 'line', ''],
     ] }) }),
     CalendarApp: { getCalendarById: (id) => ({ getEvents: () => (id === 'oki' ? trEvs : (id === 'b1' ? calEvs : [])) }) },
     _lbClassifyBooking: (t) => { const m = t.match(/^(.+?)様（通常_(.+?)）/); return m ? { parsed: true, mode: 'session', cname: m[1], kind: '通常', sur: m[2] } : { parsed: false }; },
@@ -182,7 +182,7 @@ console.log('=== ④ 進行中のセッションを「台帳に無い」と誤�
   try { r = ctx.debugOrphanEvents(); } catch (e) { err = e.message; }
   ok('④-1 突合が最後まで動く', r && Array.isArray(r.orphanB1), err);
   const all = r ? JSON.stringify([r.orphanB1, r.orphanTrainer, r.missingB1, r.missingTrainer, r.manual]) : '';
-  ok('④-2 ★進行中のセッションを出さない（施設cal・トレーナーcalとも）', r && all.indexOf('中垣') < 0, all);
+  ok('④-2 ★進行中のセッションを出さない（施設cal・トレーナーcalとも）', r && all.indexOf('甲野') < 0, all);
   ok('④-3 未来の予約は台帳と一致する（誤って全部落としていない）', r && all.indexOf('未来太郎') < 0 && r.missingB1.length === 0, all);
   ok('④-4 ★開始済みでも、台帳が changed の残骸は施設cal・トレーナーcalの両方で出す（関門②）',
      r && JSON.stringify(r.orphanB1).indexOf('残骸花子') > 0 && JSON.stringify(r.orphanTrainer).indexOf('残骸花子') > 0, all);

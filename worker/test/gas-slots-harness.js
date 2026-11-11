@@ -285,12 +285,12 @@ function runSelfTest() {
     else fails.push(name);
   }
 
-  const T = [{ id: 'B', name: '鈴木 神海感留', hidden: false }];
+  const T = [{ id: 'B', name: '鈴木 健', hidden: false }];
   const TT = [
-    { id: 'B', name: '鈴木 神海感留', hidden: false },
-    { id: 'C', name: '沖 孟', hidden: false },
+    { id: 'B', name: '鈴木 健', hidden: false },
+    { id: 'C', name: '沖 進', hidden: false },
   ];
-  const OWNER = [{ id: 'A', name: '中野 龍之介', hidden: true }];
+  const OWNER = [{ id: 'A', name: '中野 太郎', hidden: true }];
   // 締め切りが効かない十分前の「いま」（構造の検査で締め切りに邪魔されないため）
   const NOW_FAR = jstMs(2026, 10, 1, 9, 0);
   const HZ = jstMs(2026, 10, 31, 23, 59);

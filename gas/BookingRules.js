@@ -217,7 +217,7 @@ function _lbBookingDeadlineText(startMs, cfg) {
 // 2つの時間帯が実際に重なるか（接するだけは重ならない）。2026-09-26。
 //   CalendarApp.getEvents(start, end) は境界で接するだけの予定（end ちょうどに始まる予定）も返すため、
 //   返り値をそのまま「競合あり」と扱うと、19:30開始の予約があるだけで 18:30〜19:30 が取れなくなる。
-//   実例：[RESERVED] 体験_鈴木_野崎天平様_line（19:30〜20:30）で 18:30 の枠が予約できなかった。
+//   実例：[RESERVED] 体験_鈴木_会員F様_line（19:30〜20:30）で 18:30 の枠が予約できなかった。
 function _lbOverlaps(aStartMs, aEndMs, bStartMs, bEndMs) {
   return aStartMs < bEndMs && aEndMs > bStartMs;
 }

@@ -26,8 +26,8 @@ function eq(n, g, w) {
 // ------------------------------------------------------------
 const D = (day, h, m) => jstMs(2026, 11, day, h, m || 0);     // 2026年11月（締め切りを気にせず先の日付で試す）
 const TRAINERS = [
-  { id: 'B', name: '鈴木 神海感留', hidden: false },
-  { id: 'C', name: '沖 孟', hidden: false }
+  { id: 'B', name: '鈴木 健', hidden: false },
+  { id: 'C', name: '沖 進', hidden: false }
 ];
 const NOW = D(1, 0, 0);     // 11/1 0:00。以降の枠はすべて締め切り前
 
@@ -151,7 +151,7 @@ parity('⑥重なるシフト2件', [shift('B', 5, 7, 12), shift('B', 5, 10, 15)
 // ⑦ 固定枠の持ち主（hidden）
 // ============================================================
 {
-  const hiddenTrainers = [{ id: 'A', name: '中野 龍之介', hidden: true }];
+  const hiddenTrainers = [{ id: 'A', name: '中野 太郎', hidden: true }];
   const ev = [{ role: CAL_ROLE.TRAINER, trainerId: 'A', effect: EV_KIND.SHIFT, reason: 'shift',
                startAt: D(5, 7), endAt: D(5, 23) }];
   const win = { '4': { from: 17, to: 24 } };    // 11/5 は木曜（4）

@@ -716,10 +716,10 @@ function maIsTester_(lineUserId) {
 
 /**
  * 氏名でテスターに追加する。LINE userId を直接扱わずに済む。
- * 例：maAddTesterByName('中野 龍之介')
+ * 例：maAddTesterByName('山田 太郎')
  */
 function maAddTesterByName(name) {
-  if (!name) return '氏名を指定してください。例: maAddTesterByName(\'中野 龍之介\')';
+  if (!name) return '氏名を指定してください。例: maAddTesterByName(\'山田 太郎\')';
   var m = _lbFindMemberByName(name);
   if (!m || !m.lineUserId) return '「' + name + '」が customer_line_map の verified に見つかりません';
   var props = PropertiesService.getScriptProperties();

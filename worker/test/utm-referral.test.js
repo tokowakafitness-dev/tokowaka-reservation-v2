@@ -36,9 +36,9 @@ const BREAK = (() => { const i = argv.indexOf('--break'); return i >= 0 ? Number
 const MEDIUM   = 'referral_trainer';
 const CAMPAIGN = 'trial_referral';
 const TRAINERS = [
-  { id: 'A', slug: 'tr_nakano', name: '中野 龍之介' },
-  { id: 'B', slug: 'tr_suzuki', name: '鈴木 神海感留' },
-  { id: 'C', slug: 'tr_oki',    name: '沖 孟' },
+  { id: 'A', slug: 'tr_nakano', name: '中野 太郎' },
+  { id: 'B', slug: 'tr_suzuki', name: '鈴木 健' },
+  { id: 'C', slug: 'tr_oki',    name: '沖 進' },
 ];
 const refUrl = (slug, content) =>
   `${LIVE_URL}?utm_source=${slug}&utm_medium=${MEDIUM}&utm_campaign=${CAMPAIGN}` +

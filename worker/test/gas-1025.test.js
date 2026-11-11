@@ -70,7 +70,7 @@ console.log('=== ② 本人の予約が既にある日 ===');
   ok('②-3 既にある日には印が付く', r.notice.b.filter((x) => x.already).length === 2);
   const rec = JSON.parse(r.props['LB_AUTOBOOK_RESULT_2026-11']).C1;
   ok('④-1 ★25日のお知らせが読む記録：全部そろっている（b=4・s=0）', rec.b === 4 && rec.s === 0, JSON.stringify(rec));
-  //   手入力で全部入っていた片山様の形（10/25）
+  //   手入力で全部入っていた戊井様の形（10/25）
   const all = [3, 10, 17, 24].map((d) => new Date(2026, 10, d, 9).getTime());
   const r2 = run({ rows, quota: 0, mine: all });
   ok('②-4 ★全部手入力済みなら1件も予約しに行かず、取れず0件', r2.calls.length === 0 && r2.notice.s.length === 0 && r2.notice.b.length === 4);

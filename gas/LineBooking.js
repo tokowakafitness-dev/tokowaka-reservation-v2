@@ -1294,7 +1294,7 @@ function debugOrphanEvents(daysAhead) {
   }
   // 照合キー＝開始時刻＋顧客名。名前の表記は経路によって揺れる：
   //   ・LINE予約  … 台帳「山田 太郎」／カレンダー「山田 太郎様」
-  //   ・同期由来  … 台帳「今別府利江様」（カレンダーのcnameをそのまま記録）／カレンダー「今別府利江様様」
+  //   ・同期由来  … 台帳「会員B様」（カレンダーのcnameをそのまま記録）／カレンダー「会員B様様」（様が二重）
   //   末尾の敬称を**繰り返し**落とし、空白も除いて両側を同じ土俵に乗せる（_lbNormNameは様を1つしか外さない）。
   function nkey(name) { return String(name || '').replace(/\s+/g, '').replace(/様+$/, ''); }
   function key(d, name) { return Utilities.formatDate(d, tz, 'yyyyMMddHHmm') + '|' + nkey(name); }
@@ -1308,7 +1308,7 @@ function debugOrphanEvents(daysAhead) {
   // ---- 台帳（未来の confirmed）----
   //   ★getEvents(now, …) は「いま進行中」の予定も返す。台帳を開始 now 以降だけにすると、
   //     点検を日中に回すたびに進行中の正しいセッションを「台帳に無い」と誤報する
-  //     （10/16 12:09 小倉様 12:00・10/17 13:05 中垣様 13:00）。
+  //     （10/16・10/17 に各1件。開始の数分後に点検が走り、進行中の予約を誤報した）。
   //     だから**開始済みの予約も照合の相手（ledger）には入れる**。②④の「台帳にあるのにカレンダーに無い」の
   //     対象（ledgerList）には入れない（開始済みは [消化] に変わることがある＝無いのが正常）。
   //   ★カレンダー側を「開始済みは飛ばす」で直さない（関門②）。朝の点検の後に変更・取消され、
@@ -1392,7 +1392,7 @@ function debugOrphanEvents(daysAhead) {
       if (!ledger[kt]) {
         //   ★未登録のお客様の仮押さえ（makeAdminBooking・説明欄に channel：admin_hold）は台帳に書かない仕様。
         //     施設cal側（上の②）は除外していたのに、ここでは見ておらず「残骸」と誤報していた
-        //     （2026-10-14：10/22 野崎様・10/29 名取様＝トレーナーが取った新規体験の仮押さえ）
+        //     （2026-10-14：10月下旬の2件・会員F／会員G＝トレーナーが取った新規体験の仮押さえ）
         var _td = ''; try { _td = String(tEvs[x].getDescription() || ''); } catch (eD) {}
         if (_td.indexOf('admin_hold') >= 0) continue;
         orphanTr.push(label(tEvs[x].getStartTime()) + ' ' + disp(nm) + '（' + tr.name + '）');
@@ -3263,7 +3263,7 @@ function testPairFlow() {
 // 指定会員の line_reservations 行を実データで一覧＋重複検出（二重取込の有無を目視確認）。
 //   GASエディタで customerId を書き換えて実行。runRemainingDebug のヘッダに出る customerId を貼る。
 function debugCustomerReservations() {
-  var customerId = 'C20260913112249';   // ← 確認したい会員のcustomerId（今別府利江の例）
+  var customerId = 'C20260913112249';   // ← 確認したい会員のcustomerId（会員Bの例）
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
   if (!sh || sh.getLastRow() < 2) { Logger.log('line_reservations が空です'); return; }
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 15).getValues();
@@ -3288,7 +3288,7 @@ function debugCustomerReservations() {
 // 同一calendar_event_id+customerIdのconfirmed/consumed重複を、1件だけ残して他をchangedに是正（残数の多重消化を戻す）。
 //   GASエディタで customerId を設定して実行（空文字なら全会員が対象＝影響大なので通常は会員指定）。dryRunで先に確認。
 function runDedupeReservations() {
-  var customerId = 'C20260913112249';   // ← 是正したい会員のcustomerId（今別府利江の例／''で全会員）
+  var customerId = 'C20260913112249';   // ← 是正したい会員のcustomerId（会員Bの例／''で全会員）
   var dryRun = true;                     // ← まずtrueで確認→問題なければfalseで実行
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
   if (!sh || sh.getLastRow() < 2) { Logger.log('line_reservations が空です'); return; }
@@ -3314,7 +3314,7 @@ function runDedupeReservations() {
 // 指定会員の予約(line_reservations)とmapの担当を、1人のトレーナーに統一（表示/残数の担当を揃える）。
 //   ※カレンダー(トレーナーcal)側の予定移動やタイトルの担当姓修正は別途Google側で必要な場合がある。dryRun付。
 function runSetCustomerTrainer() {
-  var customerId = 'C20260913112249';   // ← 対象会員のcustomerId（今別府利江）
+  var customerId = 'C20260913112249';   // ← 対象会員のcustomerId（会員B）
   var trainerId = 'B';                   // ← 統一する担当（A=中野／B=鈴木／C=沖）
   var dryRun = true;                     // ← まずtrueで確認→falseで実行
   var tr = _lbTrainerById(trainerId); if (!tr) { Logger.log('❌ 担当ID不正: ' + trainerId); return; }
@@ -3343,7 +3343,7 @@ function runSetCustomerTrainer() {
 }
 
 function runRemainingDebug() {
-  var 氏名 = '森田';   // ← 会員登録名（部分一致で探索。フルネームが確実）
+  var 氏名 = '会員D';   // ← 会員登録名（部分一致で探索。フルネームが確実）
   try { CacheService.getScriptCache().remove('lb_contract_all'); } catch (e) {}
   var map = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!map || map.getLastRow() < 2) { Logger.log('会員なし'); return; }
@@ -6869,7 +6869,7 @@ function deleteFutureRecurringOccurrences(dryRun) {
 function runDeleteFutureRecurringDryRun() { return deleteFutureRecurringOccurrences(true); }
 function runDeleteFutureRecurring() { return deleteFutureRecurringOccurrences(false); }
 
-// 予約タイトルの顧客名が「姓のみ(森田様)」の予約を、登録フルネーム(森田広海)に一括改名（同期でマッチさせる為）。
+// 予約タイトルの顧客名が「姓のみ(会員D様)」の予約を、登録フルネーム(会員D)に一括改名（同期でマッチさせる為）。
 //   安全条件（Codex）：姓が【全verified会員中で一意】＋【担当も一致】の時だけ自動改名。曖昧は改名せずフラグ→手動。dryRunで必ず確認。
 function renameSurnameTitlesToFullName(dryRun) {
   var tz = SETTINGS.TIMEZONE, now = new Date(), endD = new Date(now.getTime() + SETTINGS.SYNC_DAYS * 86400000);
@@ -7281,7 +7281,7 @@ function _lbTrainerMaySeeShared(tr, customerId) {
 //   ★「残りが無い／使えない」理由を、割当器が実際に出す名前で並べる（2026-10-04）。
 //     最初に書いたときは想像で名前を付け（NO_MONTHLY_LEFT など）、
 //     実際には存在しない名前だったため**超過が常に0になった。**
-//     本番で確かめたら、片山様の2件は PACK_EXHAUSTED だった。
+//     本番で確かめたら、会員E様の2件は PACK_EXHAUSTED だった。
 //     ★推測で名前を書かない。割当器の実際の出力を見てから並べる。
 var LB_OVERAGE_REASONS = {
   NO_ENTITLEMENT: 1,          // 使える権利がそもそも無い
@@ -7582,7 +7582,7 @@ function addTicketRefill(lineUserId, customerId, tickets, unitPrice, expireISO, 
   // ★種別＝チケット。既存契約の種別(kind)を流用してはいけない（2026-10-05 オーナー決定・Codex指摘）。
   //   月額会員が追加チケットを買うと「種別=通常・開始=購入日」の行ができ、billing の findMaster が
   //   期間の重なる行から開始日の新しいものを選ぶため、生きている月額契約（単価あり）を押しのけて
-  //   売上¥0・報酬¥0になる（2026-09に片山典之様ほかで実際に発生。単価0が23件）。
+  //   売上¥0・報酬¥0になる（2026-09に会員E様ほかで実際に発生。単価0が23件）。
   //   月額行とチケット行は種別で分けて並列に持たせる＝互いの候補に入らず押しのけ合わない。
   //   レンタルの0円packだけは会計上レンタルとして扱うため維持する（売上はcount×2000で別計上）。
   if (cols.type >= 0)   rowArr[cols.type]   = isPair ? 'ペア' : (kind.indexOf('レンタル') >= 0 ? 'レンタル' : 'チケット');   // ペアは種別=ペア（予約時のペア判定・計上）
@@ -9564,7 +9564,7 @@ function _lbDumpStatusSheet(sheetName, rows, cols) {
 //   生成側は _lbWithSama で再発防止済み。既に作られてしまったタイトルをここで畳む。
 //   対象：地下キャパ・1F・トレーナー全員のカレンダー
 //   影響：タイトルのみ。日時・説明・イベントIDは変更しない。
-//     ・billing → clientName が「今別府利江様様」→「今別府利江様」になり、正規化後に完全一致する（照合が改善する）
+//     ・billing → clientName が「会員B様様」→「会員B様」になり、正規化後に完全一致する（照合が改善する）
 //     ・line_reservations → calendar_event_id で紐付いているためタイトル変更の影響を受けない
 //     ・syncExistingReservations → 取込済み判定も event ID ベースなので影響なし
 //   ※必ず runFixDoubleSamaDryRun() で一覧を確認してから runFixDoubleSama() を実行すること。

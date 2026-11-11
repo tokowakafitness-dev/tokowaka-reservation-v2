@@ -65,7 +65,7 @@ function calendar(events) {
   } };
 }
 const HEAD = ['予約日時', '顧客名', 'customer_id', 'line_user_id', 'trainer_id', 'トレーナー名', 'status', 'payment_flag', '備考', 'channel', '記録日時', '', 'calendar_event_id'];
-const resv = (o) => [o.at || '2026/10/30 16:00', o.name || '山田太郎', o.cid || 'C0001', 'U1', 'T2', '沖 孟', o.status || 'consumed', o.pay || 'P', o.note, 'line', '2026/10/01 10:00', '', o.ev === undefined ? 'EV1' : o.ev];
+const resv = (o) => [o.at || '2026/10/30 16:00', o.name || '山田太郎', o.cid || 'C0001', 'U1', 'T2', '沖 進', o.status || 'consumed', o.pay || 'P', o.note, 'line', '2026/10/01 10:00', '', o.ev === undefined ? 'EV1' : o.ev];
 const credit = (o) => [o.cid || 'C0001', '2026/10/30 12:17', o.exp || '2026/11/05 23:59', o.used || '', o.src];
 const T1600 = new Date(2026, 9, 30, 16, 0).getTime();
 
