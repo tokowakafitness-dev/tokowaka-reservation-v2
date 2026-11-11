@@ -1907,7 +1907,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-10a 契約の終了日を当日の終わりまで有効に（_lbFindContract・_lbContractRows・月額の種別）';
+var LB_HEALTH_BUILD = '2026-11-11a カレンダーが変わったら空き枠をすぐ押し出す（設計42・同期の直後・目標予算30分/日）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2516,6 +2516,16 @@ function dailyHealthCheck(dryRunArg) {
   } catch (e) {
     add('dualwrite_check_fail', '二重書き', 'high', 1,
         '二重書きの点検そのものが失敗しました: ' + (e && e.message));
+  }
+
+  _step('枠のすぐ押し出し');
+  // ---- カレンダーの変更で枠をすぐ押し出す（設計42・2026-11-11）----
+  //   ★止まっても誰も気づかない経路にしない。配線の印・昨日の件数・記録の異常を見る
+  try {
+    var cs = lbCalSlotsDailyCheck(Date.now(), function (k) { return _lbProp(k); });
+    for (var csi = 0; csi < cs.length; csi++) add(cs[csi].key, '枠のすぐ押し出し', cs[csi].severity, cs[csi].count, cs[csi].detail);
+  } catch (e) {
+    add('calslots_check_fail', '枠のすぐ押し出し', 'warn', 1, '点検そのものが失敗しました: ' + (e && e.message));
   }
 
   _step('契約の入力');

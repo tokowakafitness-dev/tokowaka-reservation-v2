@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-10-17a 配線の入口は Worker の一覧・溢れの確かめ済み・連続ルールの記録にトレーナーと時刻';
+var LB_AUDIT_BUILD = '2026-11-11a カレンダーが変わったら枠をすぐ押し出す（設計42）の記録を出勤枠の新しさに出す';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -3226,11 +3226,39 @@ function slotsFreshnessText() {
   if (!skN) out.push('   （0回。ほかの押し出しとぶつかっていない）');
   out.push('');
 
+  //   ★設計42（2026-11-11）：カレンダーが変わったら、5分ごとの同期の直後に枠を押し出す
+  out.push('④ カレンダーの変更ですぐ押し出す（設計42）');
+  var wired = String(_lbProp('LB_CALSLOTS_WIRED') || '').split('|');
+  out.push('   配線の印: ' + (wired[0] ? wired[0] + ' ' + when(Number(wired[1] || 0)) : '★記録なし（まだ新しい版が動いていない）'));
+  out.push('   栓 LB_CALSLOTS_ON: ' + (_lbProp('LB_CALSLOTS_ON') === '0' ? '0（止めている）' : '動く'));
+  var last = String(_lbProp('LB_CALSLOTS_LAST') || '').split('|');
+  out.push('   最後の1回: ' + (last[0] ? when(Number(last[0])) + ' ' + last[1] + ' ' + last[2] + 'ms' : '★記録なし'));
+  var st0 = Number(_lbProp('LB_CALSLOTS_LAST_START') || 0);
+  if (st0 && st0 > Number(last[0] || 0) && now - st0 > 10 * 60000) out.push('   ★始めたまま終わっていない回があります: ' + when(st0));
+  var rec = {};
+  try { rec = JSON.parse(String(_lbProp('LB_CALSLOTS_COUNT') || '{}')) || {}; } catch (eR) { rec = null; }
+  if (rec === null) out.push('   ★件数の記録が壊れています');
+  else {
+    var dk = [Utilities.formatDate(new Date(now), 'Asia/Tokyo', 'yyyy-MM-dd'), Utilities.formatDate(new Date(now - 86400000), 'Asia/Tokyo', 'yyyy-MM-dd')];
+    for (var di = 0; di < dk.length; di++) {
+      var d = rec[dk[di]];
+      out.push('   ' + (di ? '昨日' : '今日') + ' ' + dk[di] + ': ' + (d
+        ? '変更 ' + (d.changed || 0) + ' / 送れた ' + (d.sent || 0) + ' / 新しいのを送り済み ' + (d.stale || 0)
+          + ' / ロック見送り ' + (d.lockSkip || 0) + ' / 失敗 ' + (d.error || 0) + ' / 予算で見送り ' + (d.capped || 0)
+          + ' / 遅い ' + (d.slow || 0) + ' / 使った時間 ' + Math.round(Number(d.usedMs || 0) / 1000) + '秒（目標 1800秒）'
+        : '記録なし'));
+    }
+  }
+  var re0 = String(_lbProp('LB_CALSLOTS_RECORD_ERROR') || ''), lo0 = Number(_lbProp('LB_CALSLOTS_COUNT_LOST') || 0);
+  if (re0) out.push('   記録の異常: ' + when(Number(re0.split('|')[0])) + ' ' + (re0.split('|')[1] || ''));
+  if (lo0) out.push('   件数を書けなかった最後: ' + when(lo0));
+  out.push('');
+
   out.push('■ いまカレンダーを直したら、何分で反映されるか');
-  out.push('  枠の押し出しは10分ごと。押し出す直前にカレンダーを読み直すので、');
-  out.push('  **最大10分**（平均5分）。');
-  out.push('  ★2026-10-11 より前は、作り直しが別トリガー（10分ごと）だったため');
-  out.push('    最大10分＋10分、さらに見送りで+10分＝**最大約30分**だった。');
+  out.push('  5分ごとの同期がカレンダーの変更を見つけたら、そのまま枠を押し出す（設計42）。');
+  out.push('  **最大5分＋約30秒**（押し出しがロックで見送られたら、10分ごとの押し出しが拾う＝最大10分）。');
+  out.push('  予約・変更・取消の直後は、約30秒で反映される。');
+  out.push('  ★2026-11-11 より前は最大10分、2026-10-11 より前は最大約30分だった。');
   out.push('');
   out.push('※ ①が「記録なし」のときは、まだ新しい版が反映されていません。');
 

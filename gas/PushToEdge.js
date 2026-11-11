@@ -1290,7 +1290,7 @@ function pushToEdgeAllText() {
 
 // 枠だけを短い間隔で押し出す（予約の反映を早くするため）
 function pushToEdgeSlots() {
-  if (!_edgeEnabled()) return;
+  if (!_edgeEnabled()) return 'EDGE_OFF';
   var _t0Slots = Date.now();
 
   //   ★順番が大事（2026-10-11・関門②の指摘）。
@@ -1342,7 +1342,8 @@ function pushToEdgeSlots() {
   Logger.log('[edge] 枠の所要時間 ' + _timing);
   try { PropertiesService.getScriptProperties().setProperty('LB_SLOTS_TIMING', _timing + ' @' + Date.now()); }
   catch (e) {}
-  return r;
+  //   ★設計42：結果を状態で返す。_edgeLocked が undefined を返した＝ロックを取れず見送った
+  return (r === undefined) ? 'LOCK_SKIP' : r;
 }
 var LB_SLOTS_PUSHED_AT_PROP = 'LB_SLOTS_PUSHED_AT';   // 最後に枠を押し出せた時刻（★成功だけ）
 
@@ -1421,7 +1422,8 @@ function _pushToEdgeSlotsImpl(builtAt, builtSlots) {
     //     0件のときは受け取る側が EMPTY_SOURCE で削除を止める（全消しを防ぐ）。
     var n = _edgeSendSlots(builtAt, builtSlots, { batchId: Date.now(), deleteStale: true });
     Logger.log('[edge] 枠 ' + n);
-  } catch (e) { Logger.log('[edge] 枠の押し出しに失敗: ' + (e && e.message)); }
+    return n;   // 件数／STALE_SNAPSHOT／UNKNOWN_SNAPSHOT／RECORD_FAILED（設計42）
+  } catch (e) { Logger.log('[edge] 枠の押し出しに失敗: ' + (e && e.message)); return 'ERROR'; }
 }
 
 function pushToEdgeLight() {
@@ -1927,7 +1929,7 @@ function buildCalSyncPayload(nowMs) {
     //   世代の一部として保存し、読み取り側が同じ条件で絞れるようにする。
     //   未設定なら null（制限なし）。
     ownerWindow: _lbOwnerSlotWindow(),
-    // 読み終えた時刻。遅れて届いた押し出しで鮮度を偽らないための印。
+    // ★読み**始めた**時刻（関数の最初の now。2026-11-11 コメントを訂正・設計42）。遅れて届いた押し出しで鮮度を偽らないための印。
     //   3分前に読んだ内容がいま届くと、確認時刻が「いま」になって古い内容が新鮮に見える。
     pushedAt: now.getTime(),
     calendars: cals,
@@ -2075,6 +2077,16 @@ function _calsyncAutoOn() {
 //   記録（成功時刻・連続失敗）と重なり防止を1か所にまとめるため。
 // ------------------------------------------------------------
 function lbCalSyncTick() {
+  //   ★設計42（2026-11-11）：同期 → 配線の印 → 変わっていれば枠をすぐ押し出す（ロックの外）。
+  //     引数は取らない（時間主導トリガーは第1引数にイベントを渡す・trigger-args.test.js）。
+  var r = _lbCalSyncCore();
+  _lbCalSlotsWired();
+  _lbCalSlotsAfter(r, 'TICK');
+  return r;
+}
+
+// 同期の本体（設計42 で lbCalSyncTick から切り出した。中身は以前の lbCalSyncTick のまま）
+function _lbCalSyncCore() {
   if (!_edgeEnabled()) return { ok: false, code: 'EDGE_OFF' };          // 元栓が閉じている（静かに終わる）
   if (_edgeProp(LB_CALSYNC.ON_PROP) === '0') return { ok: false, code: 'CALSYNC_OFF' };
 
@@ -2147,7 +2159,8 @@ function _lbCleanCalSyncAfterTriggers() {
 }
 
 function _lbCalSyncAfterWrite() {
-  try { lbCalSyncTick(); }
+  var r = null;
+  try { r = _lbCalSyncCore(); }
   catch (e) { Logger.log('[calsync] 予約直後の同期に失敗（1分ごとの同期で追いつきます）: ' + (e && e.message)); }
   // ★二重書きの速い道（2026-10-08・段階3-a）。
   //   このトリガーは予約系の書き込みの1秒後に一度だけ動く。そこへ相乗りする。
@@ -2155,6 +2168,234 @@ function _lbCalSyncAfterWrite() {
   try { lbDualWriteDrain(); }
   catch (e) { Logger.log('[dw] 速い道で例外（心拍で追いつきます）: ' + (e && e.message)); }
   _lbCleanCalSyncAfterTriggers();   // 役目を終えたら自分を消す（トリガー上限20件に溜めない）
+  //   ★設計42：枠の押し出し（25〜115秒）は最後。二重書きの速い道とトリガーの枠を先に済ませる。
+  _lbCalSlotsAfter(r, 'AFTER');
+}
+
+// ============================================================
+// 設計42 カレンダーが変わったら、空き枠をすぐ押し出す（2026-11-11）
+//   ops/design/42-slots-on-calendar-change.md
+//   ・新しいトリガーは作らない（上限20本）。同期と同じ実行の後ろで pushToEdgeSlots を呼ぶ
+//   ・呼ぶのは同期が patched / published を返したときだけ（unchanged・知らない mode は呼ばない）
+//   ・送り終えた実測の当日合計（usedMs）が目標予算30分に達したら呼ばない（10分ごとの押し出しが受け皿）
+//   ・記録は固定のコードと時刻・ミリ秒だけ（個人情報・例外の全文・応答本文を残さない）
+// ============================================================
+var LB_CALSLOTS = {
+  ON_PROP: 'LB_CALSLOTS_ON',                 // '0' のときだけ止まる
+  COUNT_PROP: 'LB_CALSLOTS_COUNT',           // { 'yyyy-MM-dd': {changed,sent,lockSkip,stale,error,capped,slow,usedMs} } 直近3日
+  BAD_PROP: 'LB_CALSLOTS_COUNT_BAD',         // 壊れていた記録の退避先
+  LAST_PROP: 'LB_CALSLOTS_LAST',             // 時刻|分類|ms
+  START_PROP: 'LB_CALSLOTS_LAST_START',      // 呼ぶ直前の時刻（終わらなかったことを見分ける）
+  WIRED_PROP: 'LB_CALSLOTS_WIRED',           // 版|時刻（lbCalSyncTick が毎回書く＝配線の印）
+  REC_ERR_PROP: 'LB_CALSLOTS_RECORD_ERROR',  // 時刻|BAD_JSON / TICK_NOT_VISIBLE（別のユーザー・トリガーの付け直し中・消失）/ USER_UNKNOWN
+  LOST_PROP: 'LB_CALSLOTS_COUNT_LOST',       // 件数を書けなかった時刻（成功しても消さない）
+  BUDGET_MS: 30 * 60000,                     // 目標予算（厳密な上限ではない）
+  SLOW_MS: 115000,                           // これを超えた1回は slow
+  KEEP_DAYS: 3
+};
+var LB_CALSLOTS_KINDS = ['changed', 'sent', 'lockSkip', 'stale', 'error', 'capped', 'slow'];
+
+function _lbCalSlotsDayKey(ms) {
+  return Utilities.formatDate(new Date(ms), 'Asia/Tokyo', 'yyyy-MM-dd');
+}
+
+// 同期の結果から「押し出すべきか」（純粋）
+function _lbCalSlotsShouldRun(r) {
+  if (!r || r.ok !== true || !r.result) return false;
+  var m = r.result.mode;
+  return m === 'patched' || m === 'published';
+}
+
+// pushToEdgeSlots の戻り値の分類（純粋・ここに無い値は error）
+function _lbCalSlotsClassify(res) {
+  if (typeof res === 'number' && isFinite(res)) return 'sent';
+  if (res === 'LOCK_SKIP') return 'lockSkip';
+  if (res === 'STALE_SNAPSHOT') return 'stale';
+  return 'error';
+}
+
+// 記録を読む（純粋）。壊れていれば null
+function _lbCalSlotsParse(raw) {
+  if (raw == null || raw === '') return {};
+  var isObj = function (x) { return !!x && typeof x === 'object' && Object.prototype.toString.call(x) !== '[object Array]'; };
+  try {
+    var o = JSON.parse(String(raw));
+    if (!isObj(o)) return null;
+    //   ★数値の破損も壊れた記録として扱う（関門②）。usedMs が "broken" だと NaN になり、予算の判定が黙って偽になる
+    for (var k in o) {
+      if (!isObj(o[k])) return null;
+      for (var f in o[k]) {
+        var v = o[k][f];
+        if (typeof v !== 'number' || !isFinite(v) || v < 0) return null;
+      }
+    }
+    return o;
+  } catch (e) { return null; }
+}
+
+// 1日ぶんの入れ物（純粋）
+function _lbCalSlotsDay(rec, key) {
+  var d = rec[key];
+  if (!d || typeof d !== 'object') d = {};
+  for (var i = 0; i < LB_CALSLOTS_KINDS.length; i++) d[LB_CALSLOTS_KINDS[i]] = Number(d[LB_CALSLOTS_KINDS[i]] || 0);
+  d.usedMs = Number(d.usedMs || 0);
+  rec[key] = d;
+  return d;
+}
+
+// 直近 KEEP_DAYS 日だけ残す（純粋）。キーは yyyy-MM-dd なので文字列の順で新しい順に並ぶ
+function _lbCalSlotsPrune(rec) {
+  var keys = [];
+  for (var k in rec) if (/^\d{4}-\d{2}-\d{2}$/.test(k)) keys.push(k); else delete rec[k];
+  keys.sort(); keys.reverse();
+  for (var i = LB_CALSLOTS.KEEP_DAYS; i < keys.length; i++) delete rec[keys[i]];
+  return rec;
+}
+
+function _lbCalSlotsProp() { return PropertiesService.getScriptProperties(); }
+
+// 配線の印（5分ごとの lbCalSyncTick が毎回書く）
+function _lbCalSlotsWired() {
+  try {
+    _lbCalSlotsProp().setProperty(LB_CALSLOTS.WIRED_PROP, String(LB_HEALTH_BUILD).split(' ')[0] + '|' + Date.now());
+  } catch (e) { Logger.log('[calslots] 配線の印を書けませんでした: ' + (e && e.message)); }
+}
+
+// 予約直後の実行が、5分ごとのトリガーと同じユーザーで動いているか。
+//   ★GAS の getProjectTriggers は「いまのユーザーのトリガー」だけを返す。
+//     予約直後の実行から lbCalSyncTick のトリガーが見えれば、同じユーザー＝ユーザーロックが効く。
+//     メールを読まないので、新しい権限（userinfo.email）は要らない（関門②）。
+//   戻り値：'same' / 'mismatch' / 'unknown'（読めない）
+function _lbCalSlotsSameUser() {
+  try {
+    var ts = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < ts.length; i++) if (ts[i].getHandlerFunction() === LB_CALSYNC.TICK_HANDLER) return 'same';
+    return 'mismatch';
+  } catch (e) { return 'unknown'; }
+}
+
+// 当日の記録をユーザーロックの中で読み書きする。fn(day) が false を返したら書かない
+//   戻り値：'ok' / 'nolock' / 'bad'
+function _lbCalSlotsWithRecord(nowMs, fn) {
+  var lock = null;
+  try { lock = LockService.getUserLock(); } catch (e) { lock = null; }
+  if (!lock) return 'nolock';
+  var got = false;
+  try { got = lock.tryLock(3000); } catch (e1) { got = false; }
+  if (!got) return 'nolock';
+  try {
+    var p = _lbCalSlotsProp();
+    var raw = p.getProperty(LB_CALSLOTS.COUNT_PROP);
+    var rec = _lbCalSlotsParse(raw);
+    if (rec === null) {
+      //   壊れていた：同じロックの中で退避して作り直す。この回は押し出さない
+      try { p.setProperty(LB_CALSLOTS.BAD_PROP, String(raw).slice(0, 2000)); } catch (e2) {}
+      p.setProperty(LB_CALSLOTS.COUNT_PROP, '{}');
+      p.setProperty(LB_CALSLOTS.REC_ERR_PROP, Date.now() + '|BAD_JSON');
+      return 'bad';
+    }
+    var day = _lbCalSlotsDay(rec, _lbCalSlotsDayKey(nowMs));
+    if (fn(day) === false) return 'ok';
+    p.setProperty(LB_CALSLOTS.COUNT_PROP, JSON.stringify(_lbCalSlotsPrune(rec)));
+    return 'ok';
+  } finally { try { lock.releaseLock(); } catch (e3) {} }
+}
+
+function _lbCalSlotsLost() {
+  try { _lbCalSlotsProp().setProperty(LB_CALSLOTS.LOST_PROP, String(Date.now())); } catch (e) {}
+}
+
+// 日次点検（設計42）。get(k) で Script Property を読む（検査で差し替えられるように）。
+//   戻り値：[{ key, severity, count, detail }]（重大度は既存の high / warn だけ）
+function lbCalSlotsDailyCheck(nowMs, get) {
+  var out = [];
+  function add(key, sev, n, detail) { if (n) out.push({ key: key, severity: sev, count: n, detail: detail }); }
+  var calOk = Number(get('LB_CALSYNC_LAST_OK') || 0);
+  var wired = String(get(LB_CALSLOTS.WIRED_PROP) || '').split('|');
+  var ver = String(LB_HEALTH_BUILD).split(' ')[0];
+  if (calOk && nowMs - calOk <= 15 * 60000) {
+    var wAt = Number(wired[1] || 0);
+    if (!wired[0] || !wAt || nowMs - wAt > 30 * 60000 || wired[0] !== ver) {
+      add('calslots_unwired', 'high', 1, 'カレンダー同期は動いているのに、枠のすぐ押し出し（設計42）の配線の印が無い・古い・版が違う（反映漏れの疑い）: '
+          + (wired[0] || '記録なし'));
+    }
+  }
+  var rawErr = String(get(LB_CALSLOTS.REC_ERR_PROP) || '');
+  var errAt = Number(rawErr.split('|')[0] || 0);
+  if (errAt && nowMs - errAt <= 86400000) {
+    add('calslots_record', 'high', 1, '枠のすぐ押し出しが止まる記録の異常: ' + (rawErr.split('|')[1] || '?'));
+  }
+  var lost = Number(get(LB_CALSLOTS.LOST_PROP) || 0);
+  if (lost && nowMs - lost <= 86400000) add('calslots_lost', 'warn', 1, '件数を書けなかった回がある（ロックが取れない）');
+  var last = Number(String(get(LB_CALSLOTS.LAST_PROP) || '').split('|')[0] || 0);
+  var start = Number(get(LB_CALSLOTS.START_PROP) || 0);
+  if (start && start > last && nowMs - start > 10 * 60000) add('calslots_unfinished', 'warn', 1, '始めたまま終わっていない押し出しがある（GAS の強制終了の疑い）');
+
+  var rec = _lbCalSlotsParse(get(LB_CALSLOTS.COUNT_PROP));
+  if (rec === null) { add('calslots_record', 'high', 1, '件数の記録が壊れている'); return out; }
+  var y = rec[_lbCalSlotsDayKey(nowMs - 86400000)];
+  if (!y) return out;
+  var n = function (k) { return Number(y[k] || 0); };
+  if (n('changed') > 0 && n('sent') + n('stale') === 0) {
+    add('calslots_none_sent', 'high', n('changed'), '昨日カレンダーの変更が ' + n('changed') + ' 回あったのに、枠を1回も送れていない（失敗 ' + n('error') + '・ロック見送り ' + n('lockSkip') + '）');
+  }
+  if (n('error') >= 3) add('calslots_error', 'warn', n('error'), '昨日の押し出しの失敗 ' + n('error') + ' 回');
+  if (n('capped') > 0) add('calslots_capped', 'warn', n('capped'), '昨日は目標予算（30分）に達し、' + n('capped') + ' 回見送った（10分ごとの押し出しが拾う）');
+  if (n('lockSkip') >= 5 || (n('changed') > 0 && n('lockSkip') >= n('changed') * 0.2)) {
+    add('calslots_lockskip', 'warn', n('lockSkip'), '昨日のロック見送り ' + n('lockSkip') + ' 回（変更 ' + n('changed') + ' 回）');
+  }
+  if (n('usedMs') > LB_CALSLOTS.BUDGET_MS || n('slow') > 0) {
+    add('calslots_over', 'warn', 1, '昨日の使った時間 ' + Math.round(n('usedMs') / 1000) + '秒（目標 1800秒）・115秒を超えた回 ' + n('slow'));
+  }
+  return out;
+}
+
+// 同期の後に呼ぶ入口。who = 'TICK'（5分ごと）/ 'AFTER'（予約直後）。例外は外へ出さない（同期そのものは済んでいる）
+function _lbCalSlotsAfter(r, who) {
+  try {
+    if (!_lbCalSlotsShouldRun(r)) return 'skip';
+    var p = _lbCalSlotsProp();
+    if (p.getProperty(LB_CALSLOTS.ON_PROP) === '0') return 'off';
+    if (who !== 'TICK') {
+      //   予約直後：5分ごとのトリガーと別のユーザーならユーザーロックが効かない。分からないときも押し出さない（10分ごとが拾う）
+      var same = _lbCalSlotsSameUser();
+      if (same !== 'same') {
+        p.setProperty(LB_CALSLOTS.REC_ERR_PROP, Date.now() + '|' + (same === 'mismatch' ? 'TICK_NOT_VISIBLE' : 'USER_UNKNOWN'));
+        return 'user';
+      }
+    }
+    var go = false, why = '';
+    var st = _lbCalSlotsWithRecord(Date.now(), function (day) {
+      if (day.usedMs >= LB_CALSLOTS.BUDGET_MS) { day.capped++; why = 'capped'; return true; }
+      day.changed++; go = true; return true;
+    });
+    if (st === 'nolock') { _lbCalSlotsLost(); return 'nolock'; }
+    if (st === 'bad') return 'bad';
+    if (!go) {
+      p.setProperty(LB_CALSLOTS.LAST_PROP, Date.now() + '|' + (why || 'none') + '|0');
+      return why || 'none';
+    }
+    var t0 = Date.now();
+    p.setProperty(LB_CALSLOTS.START_PROP, String(t0));
+    var res;
+    try { res = pushToEdgeSlots(); } catch (eP) { res = 'ERROR'; }
+    var ms = Date.now() - t0;
+    var kind = _lbCalSlotsClassify(res);
+    var st2 = _lbCalSlotsWithRecord(Date.now(), function (day) {
+      day[kind]++;
+      day.usedMs += ms;
+      if (ms > LB_CALSLOTS.SLOW_MS) day.slow++;
+      return true;
+    });
+    if (st2 !== 'ok') _lbCalSlotsLost();
+    p.setProperty(LB_CALSLOTS.LAST_PROP, Date.now() + '|' + kind + '|' + ms);
+    Logger.log('[calslots] カレンダーの変更で枠を押し出しました: ' + kind + ' ' + ms + 'ms');
+    return kind;
+  } catch (e) {
+    Logger.log('[calslots] 例外（10分ごとの押し出しが拾います）: ' + String((e && e.message) || e).slice(0, 120));
+    try { _lbCalSlotsProp().setProperty(LB_CALSLOTS.LAST_PROP, Date.now() + '|error|0'); } catch (e2) {}
+    return 'error';
+  }
 }
 
 // ★ここで例外を外へ出してはいけない。予約は既に成立している。
