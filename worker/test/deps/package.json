@@ -1,0 +1,8 @@
+{
+  "name": "tokowaka-test-deps",
+  "private": true,
+  "description": "テストが使う jsdom。ops/cloud-setup.sh が ~/.cache/claude-node へ npm ci で入れる",
+  "dependencies": {
+    "jsdom": "29.1.1"
+  }
+}
