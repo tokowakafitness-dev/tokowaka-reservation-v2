@@ -66,8 +66,27 @@ export function karteSchemaFor(env, who) {
   return trainingExtOn(env, who) ? KARTE_SCHEMA : KARTE_SCHEMA_BASE;
 }
 
+/**
+ * 録音の文字起こしの AI 下書き（設計39・I76）を受け付けるか。判定はこの1か所だけ（trainingExtOn と同じ形）
+ *   KARTE_AI_DRAFT が厳密に 'on'＝全員／厳密に 'allow'＝KARTE_AI_DRAFT_TRAINERS に trainer_id が完全一致の人だけ。それ以外は偽
+ */
+export function aiDraftOn(env, who) {
+  const mode = String((env && env.KARTE_AI_DRAFT) || '');
+  if (mode === 'on') return true;
+  if (mode !== 'allow') return false;
+  const tid = String((who && who.trainerId) || '');
+  if (!tid) return false;
+  const list = String((env && env.KARTE_AI_DRAFT_TRAINERS) || '').split(',').map((x) => x.trim()).filter((x) => x !== '');
+  return list.indexOf(tid) >= 0;
+}
+/** 画面にボタンを出してよいか＝切替が開いていて鍵が登録されている（真偽値だけ返す・鍵の値は出さない） */
+export function aiDraftReady(env, who) {
+  return aiDraftOn(env, who) && !!(env && env.ANTHROPIC_API_KEY);
+}
+
 export function isKarteWrite(action) {
-  return /^k_(save|add|edit|delete|record)/.test(String(action || ''));
+  //   ★k_aiDraft（設計39）は D1 に書かないが、外部へ送り費用がかかる＝Origin の完全一致と iat 1時間の守りを掛ける（runWrite は通らない）
+  return /^k_(save|add|edit|delete|record)/.test(String(action || '')) || String(action || '') === 'k_aiDraft';
 }
 
 // ---------------------------------------------------------------- 小さな道具
@@ -144,7 +163,7 @@ export async function canSeeKarteShared(env, who, customerId) {
 }
 
 // ---------------------------------------------------------------- 記録（best effort）
-async function logAccess(env, who, customerId, section, action, result, reqId) {
+export async function logAccess(env, who, customerId, section, action, result, reqId) {
   try {
     await env.DB.prepare(
       `INSERT INTO karte_access_log (at, trainer_id, role, customer_id, section, action, result, req_id)
@@ -1251,7 +1270,7 @@ async function training(c) {
         ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
     ).bind(...(before ? [cid, before] : [cid])).all();
     const sessions = ss.results || [];
-    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), sessions: [], best: [] };   // ★空でも版を返す
+    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), sessions: [], best: [] };   // ★空でも版を返す
     //   ★3つの表（種目の並び・付加・ドロップ）は生きた session の id を通してだけ読む（設計38 I70）
     const ids = sessions.map((x) => x.session_id);
     const ph = ids.map(() => '?').join(',');
@@ -1297,7 +1316,7 @@ async function training(c) {
       }
       for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
     }
-    return { karteSchema: karteSchemaFor(c.env, c.who),
+    return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who),   // 設計39：AI の振り分けのボタンを出すか（真偽値だけ）
              sessions: sessions.map((x) => (exBy[x.session_id]
                ? { ...x, sets: by[x.session_id] || [], exercises: exBy[x.session_id] }
                : { ...x, sets: by[x.session_id] || [] })), best };

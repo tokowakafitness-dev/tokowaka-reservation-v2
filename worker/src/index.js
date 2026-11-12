@@ -24,6 +24,7 @@ import { verifyQuota } from './routes/quota-verify.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
 import { KARTE_HANDLERS, isKarteWrite, KARTE_LIMITS } from './routes/karte.js';
+import { KARTE_AI_HANDLERS, AI_LIMITS, AI_PATH } from './routes/karte-ai.js';
 import { handleBodyWrite, handleBodyFreeze, handleBodySeries } from './routes/body.js';
 import { compatMyKarte, memberKarteOn } from './routes/member-karte.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
@@ -33,7 +34,7 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
 
 // 版の印（/health に載せる・認証不要・個人情報なし）。★Worker を変えて出すたびに上げる。
 //   無いと「反映したつもりで入っていない」を外から見分けられない（2026-11-07・設計38 の設置で気づいた）
-export const WORKER_BUILD = '2026-11-07b 設計38 受付の切替 allow（オーナーだけ）';
+export const WORKER_BUILD = '2026-11-12a 設計39 文字起こしの AI 下書きの窓口（KARTE_AI_DRAFT 既定 off）';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
@@ -74,6 +75,8 @@ const HANDLERS = {
 
   // 顧客カルテ（設計28）。k_ は入口で鮮度・停止・Origin・トークンの新しさを通ってから届く
   ...KARTE_HANDLERS,
+  // 録音の文字起こしの AI 下書き（設計39）。本文はパス /karte/ai-draft だけ128KB。何も保存しない
+  ...KARTE_AI_HANDLERS,
 };
 
 function corsHeaders(origin) {
@@ -225,12 +228,15 @@ export default {
 
     // ★本文の大きさを JSON を読む前に縛る（設計28 4-5）。action は本文の中なので全 action に掛ける。
     //   画面からの要求は小さい（最大のまとめて予約12件でも数KB）。/ingest など別の道は上で分かれている
+    //   ★設計39：パスが /karte/ai-draft のときだけ128KB（文字起こし）。action との組は読んだ後に両方向で確かめる
+    const aiPath = url.pathname === AI_PATH;
+    const bodyMax = aiPath ? AI_LIMITS.BODY_BYTES : KARTE_LIMITS.BODY_BYTES;
     const declared = Number(request.headers.get('Content-Length') || 0);
-    if (declared > KARTE_LIMITS.BODY_BYTES) return json({ success: false, code: 'TOO_LARGE' }, origin, 413);
+    if (declared > bodyMax) return json({ success: false, code: 'TOO_LARGE' }, origin, 413);
     let body;
     try {
       const buf = await request.arrayBuffer();
-      if (buf.byteLength > KARTE_LIMITS.BODY_BYTES) return json({ success: false, code: 'TOO_LARGE' }, origin, 413);
+      if (buf.byteLength > bodyMax) return json({ success: false, code: 'TOO_LARGE' }, origin, 413);
       body = JSON.parse(new TextDecoder().decode(buf));
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('not object');
     } catch (_) {
@@ -239,6 +245,8 @@ export default {
 
     const action = String(body.action || '');
     if (!action) return json({ success: false, code: 'NO_ACTION' }, origin, 400);
+    //   ★大きい枠を他の窓口へ流用させない／k_aiDraft は専用のパスだけ（設計39 改訂1 高8）
+    if (aiPath !== (action === 'k_aiDraft')) return json({ success: false, code: 'BAD_PATH' }, origin, 400);
 
     //   ★会員のカルテの停止スイッチ（wrangler.toml の MEMBER_KARTE）。**'on' でなければ必ず 503**（設計35 改訂1-4）
     //     古い画面が直接呼んでも止まる。認可や D1 より前に止める（窓口の中でも同じ判定をもう一度する）
@@ -341,7 +349,9 @@ export default {
     try {
       result = await handler({ body, env, ctx, who, lineUserId: auth.lineUserId });
     } catch (e) {
-      console.error(action, e && e.message);
+      //   ★k_aiDraft は message を出さない（文字起こし・AI の文が乗り得る・設計39 改訂1 重大3）
+      if (action === 'k_aiDraft') console.error('k_aiDraft', 'INTERNAL');
+      else console.error(action, e && e.message);
       return json({ success: false, code: 'INTERNAL' }, origin, 500);
     }
 

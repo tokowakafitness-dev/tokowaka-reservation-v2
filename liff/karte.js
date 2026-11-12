@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-10a メモの取り込み：オーナーに聞いた読み方・話した数値は確認してから入れる（設計41）';
+  var KARTE_BUILD = '2026-11-12a 録音の文字起こしを AI で振り分けた下書き（設計39・切替が開いたトレーナーだけ）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -1906,6 +1906,7 @@
       box.innerHTML = '';
       if (!r || !r.success) { cur.wantDayView = null; box.appendChild(msg(errText(r), true)); return; }
       cur.trSchema = r.karteSchema;   // 指導メモのタグを送ってよいか（今日の記録の中の指導メモ）
+      cur.aiDraft = r.aiDraft === true;   // 設計39：AI の振り分けのボタンを出すか（Worker の切替が開き鍵があるときだけ真）
       var sessions = r.sessions || [];
       //   ★今日の記録は専用の画面（2026-11-05 モックどおり）。読み直し後の復元・戻る/進むでも専用画面を開き直す
       if (draft && (draft.kind === 'training' || (draft.kind === 'sub' && draft.sub === 'trform'))) { trainingSub(box, sessions, draft.navMode, draft.kind === 'training' ? draft.ex : null); return; }
@@ -2065,7 +2066,24 @@
   //     ・入れたセットの✓はすべて外す（I57・★B）
   var trImportMsg = null;   // 取り込んだ直後に記録の画面の上に出す1行（件数だけ・メモリだけ）
   var IMP_KIND = { name: '種目名の確かめが必要です', line: '読めなかった行', paren: '括弧書きのあるセット', tail: '行の残り（読めなかった部分）', limit: '上限を超えた分（20種目・1種目10セット・合計60・ドロップ3段）',
-    second_date: '2つ目の日付から後ろ', bad_date: '日付として読めない行', no_exercise: '種目の無い数値', rule: '読めた数値（確かめてから足します）' };
+    second_date: '2つ目の日付から後ろ', bad_date: '日付として読めない行', no_exercise: '種目の無い数値', rule: '読めた数値（確かめてから足します）',
+    aiunv: 'AI：数字を確かめられないセット' };
+  //   設計39：AI の下書きのカードの見出し（cat ごと）
+  var AI_CAT = { coaching: 'AI：指導のメモ', hearing: 'AI：ヒアリング', caution: 'AI：体の状態（注意すること）', member: 'AI：お客様へ', todo: 'AI：次回までに' };
+  //   設計39 改訂2 高4：AI の決定待ちに許す決定（表に無い組み合わせは build が投げる＝取り込み全体を止める）
+  var AI_ACTS = { caution: ['discard'], member: ['member', 'memo', 'discard'], todo: ['todo', 'memo', 'discard'], coaching: ['memo', 'discard'], hearing: ['memo', 'discard'],
+    aiunv: ['memo', 'discard'], rule: ['addset', 'memo', 'discard'], name: ['item', 'memo', 'discard'] };
+  var AI_TEXT_MAX = 30000;
+  var AI_STALE = 'ログインの更新が必要です。貼った文字をコピーしてから LINE で開き直し、もう一度貼ってください。';
+  function aiErr(r) {
+    var c = r && r.code;
+    if (c === 'AI_NOT_CONFIGURED') return 'AIの振り分けはいま使えません。「読み取る」で取り込めます。';
+    if (c === 'AI_DAILY_LIMIT') return '今日のAIの振り分けの回数の上限に達しました。「読み取る」で取り込めます。';
+    if (c === 'AI_TOO_LONG' || c === 'TOO_LARGE') return '長すぎます（3万字まで）。分けて貼ってください。';
+    if (c === 'UNAUTHORIZED') return AI_STALE;
+    if (c === 'AI_REFUSED' || c === 'AI_BAD_OUTPUT' || c === 'AI_TRUNCATED') return 'AIが下書きを作れませんでした。「読み取る」で取り込めます（もう一度押すと1日の回数を1回使います）。';
+    return 'AIの振り分けに失敗しました（' + (c || '通信') + '）。もう一度押すと1日の回数を1回使います。「読み取る」でも取り込めます。';
+  }
   var I55_HINT = '種目名・メモに痛み・診断・服薬を入れない（「注意すること」へ）';
   function impSet(st) {   // 読み取った形 → 下書きのセット（✓は外す・印の無い鍵は持たない）
     var o = { w: st.w, r: st.r, done: false };
@@ -2105,7 +2123,11 @@
     var bar = el('div', { class: 'k-savebar' });
     box.appendChild(wrap); box.appendChild(bar);
     var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [], planOpen = false;
-    ta.oninput = function () { if (res || err || ask) { res = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; draw(); } };
+    var aiBusy = false, aiGen = 0;   // 設計39：送信中・応答の世代（文字を変えたら古い応答を捨てる）
+    ta.oninput = function () {
+      var was = aiBusy; aiGen++; aiBusy = false;
+      if (res || err || ask || was) { res = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; draw(); }
+    };
     function allDecided() { return !!res && dec.every(function (d) { return !!d; }); }
     function read() {
       err = ''; ask = false; planOpen = false;
@@ -2119,7 +2141,95 @@
       var first = out.querySelector('.k-impcard'); if (first) { try { first.scrollIntoView({ block: 'center' }); } catch (e) {} }
     }
     //   決定待ちの名前を、メモの行の順の位置に入れる：その行より前だけを読み取り直して、前にある種目の数を数える（読み取りの関数は変えない）
-    function posOf(p) { return parseMemo(lines0.slice(0, p.lines[0] - 1).join('\n'), today(), autoKnown, sugg).items.length; }
+    function posOf(p) { if (p.pos != null) return p.pos; return parseMemo(lines0.slice(0, p.lines[0] - 1).join('\n'), today(), autoKnown, sugg).items.length; }
+    //   ---- 設計39：AI の下書き → 既存の res（items＋pending）。AI のセットは全部 addset の決定待ち（計画の一覧を通す）・✓なし
+    //     ★名前が autoKnown と完全一致した種目だけ items。一致しない名前は sets を持たない name＋その後ろの rule（pendItem）
+    function aiToRes(dr) {
+      var items = [], pending = [], sq = 0;
+      function P(o) { o.ai = true; o.lines = []; o.label = 'AIの下書き'; o.pos = items.length; pending.push(o); return pending.length - 1; }
+      function str(v) { return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; }
+      function wl(w) { return w == null ? '自重' : String(w) + 'kg'; }
+      (Array.isArray(dr.exercises) ? dr.exercises : []).forEach(function (e) {
+        var name = exName(e.name), heard = str(e.heard), label = name || heard || '種目';
+        var quiet = [], sets = [], evs = [];
+        (Array.isArray(e.sets) ? e.sets : []).forEach(function (st) {
+          var o = { w: st.w == null ? '' : String(st.w), r: String(st.r), assist: null, forced: false, drops: [], sq: ++sq };
+          var nt = str(st.note);
+          if (nt && !memoQuiet(nt)) o.note = nt; else if (nt) quiet.push(label + '：' + nt);
+          sets.push(o); evs.push('「' + str(st.evidence) + '」');
+        });
+        var evText = evs.join('／');
+        if (name && isAuto(name)) {
+          var idx = items.push({ exercise: name, sets: [], doneOnly: true }) - 1;
+          if (sets.length) P({ kind: 'rule', item: idx, text: name + '：' + evText, parsed: { exercise: name, sets: sets }, propose: 'addset' });
+        } else if (name || heard) {
+          var nj = P({ kind: 'name', text: label + (heard && heard !== label ? '（聞こえた言葉：' + heard + '）' : ''), after: null, prevPend: null, candidates: [], parsed: { exercise: label.slice(0, EX_NAME_MAX), sets: [] } });
+          if (sets.length) P({ kind: 'rule', pendItem: nj, text: label + '：' + evText, parsed: { exercise: label, sets: sets }, propose: 'addset' });
+        } else sets.forEach(function (o, i) { P({ kind: 'aiunv', text: '（種目名なし）' + wl(o.w === '' ? null : o.w) + '×' + o.r + ' ' + evs[i] }); });
+        (Array.isArray(e.unverified) ? e.unverified : []).forEach(function (u) {
+          var ev = str(u.evidence);
+          P({ kind: 'aiunv', text: label + ' ' + wl(u.w) + '×' + (u.r == null ? '?' : u.r) + (ev ? '（「' + ev + '」）' : '') + '　文字起こしの中で数字を確かめられません' });
+        });
+        var en = str(e.note);
+        if (en) P({ kind: 'ai', cat: 'coaching', text: label + '：' + en, propose: memoQuiet(en) ? null : 'memo' });
+        quiet.forEach(function (t) { P({ kind: 'ai', cat: 'coaching', text: t, propose: null }); });
+      });
+      function list(k) { return (Array.isArray(dr[k]) ? dr[k] : []).map(str).filter(Boolean); }
+      list('coaching').forEach(function (t) { P({ kind: 'ai', cat: 'coaching', text: t, propose: memoQuiet(t) ? null : 'memo' }); });
+      list('hearing').forEach(function (t) { P({ kind: 'ai', cat: 'hearing', text: 'ヒアリング：' + t, propose: memoQuiet(t) ? null : 'memo' }); });
+      list('caution').forEach(function (t) { P({ kind: 'ai', cat: 'caution', text: t }); });
+      var mm = str(dr.member_message);
+      if (mm) P({ kind: 'ai', cat: 'member', text: mm });
+      list('member_todo').forEach(function (t) { P({ kind: 'ai', cat: 'todo', text: t }); });
+      return { date: null, items: items, pending: pending, ai: true };
+    }
+    //   設計39 改訂3：AI の rule の宛先（item＝一覧の種目／pendItem＝自分より前の AI の name を「種目にした」ときだけ）。表示・提案・カード・組み立て・許可が全部これを使う
+    function ruleTarget(p) {
+      if (p.item != null) return (typeof p.item === 'number' && res.items[p.item]) ? { base: p.item, name: res.items[p.item].exercise } : null;
+      if (p.ai && p.pendItem != null) {
+        var k = p.pendItem, me = res.pending.indexOf(p), q = res.pending[k];
+        if (typeof k === 'number' && k >= 0 && k < me && q && q.ai && q.kind === 'name' && dec[k] && dec[k].act === 'item') return { pend: k, name: dec[k].name };
+      }
+      return null;
+    }
+    function aiActOk(p, d) {
+      var key = p.kind === 'ai' ? p.cat : p.kind, ok = AI_ACTS[key];
+      if (!ok || ok.indexOf(d.act) < 0) return false;
+      if ((p.kind === 'ai' || p.kind === 'aiunv' || p.kind === 'rule') && d.act !== 'discard' && d.act !== 'addset' && MEMO_HEALTH.test(String(p.text || ''))) return false;   // 関門② 高1：健康語の文は捨てるだけ
+      if (p.kind === 'rule' && d.act === 'addset' && !ruleTarget(p)) return false;
+      return true;
+    }
+    //   設計39：文字起こしを Worker へ送り、AI の下書きを受け取る（I76）。★送るのはこの1回だけ・kWrite（読み直して退避）は使わない
+    function aiSend() {
+      if (aiBusy) return;
+      var text = String(ta.value || '').trim();
+      err = ''; ask = false; planOpen = false;
+      if (!text) { err = '文字起こしを貼ってください。'; draw(); return; }
+      if (text.length > AI_TEXT_MAX) { err = aiErr({ code: 'AI_TOO_LONG' }); draw(); return; }
+      adoptFreshToken();
+      if (tokenNeedsRefresh()) { err = AI_STALE; draw(); return; }   // ★送らない・読み直さない（原文を保存領域へ退避できない＝I63）
+      var known = [];
+      autoKnown.forEach(function (n) { var x = exName(n); if (x && x.length <= EX_NAME_MAX && known.indexOf(x) < 0) known.push(x); });
+      var gen = ++aiGen; aiBusy = true; res = null; draw();
+      fetch(String(EDGE_URL).replace(/\/+$/, '') + '/karte/ai-draft', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'k_aiDraft', idToken: idToken, customerId: cid, text: text, known: known.slice(0, 600) }) })
+        .then(function (r) { return r.json().catch(function () { return { success: false, code: 'BAD_RESPONSE' }; }); }, function () { return { success: false, code: 'NETWORK' }; })
+        .then(function (r) {
+          if (gen !== aiGen || !out.isConnected || cur.customerId !== cid) return;   // 文字を変えた・画面を離れた・別の顧客＝捨てる
+          aiBusy = false;
+          if (!r || !r.success || !r.draft || typeof r.draft !== 'object') { err = aiErr(r); draw(); return; }
+          var rr;
+          try { rr = aiToRes(r.draft); } catch (e) { err = aiErr({ code: 'AI_BAD_OUTPUT' }); draw(); return; }
+          lines0 = [];
+          res = rr;
+          dec = res.pending.map(function () { return null; });
+          ui = res.pending.map(function (p) { return { name: (p.parsed && p.parsed.exercise) || '', open: false }; });
+          if (!res.items.length && !res.pending.length) { res = null; err = 'AIの下書きに入れられる内容がありませんでした。'; draw(); return; }
+          if (!res.pending.length) { place(); return; }
+          draw();
+          var first = out.querySelector('.k-impcard'); if (first) { try { first.scrollIntoView({ block: 'center' }); } catch (e) {} }
+        });
+    }
     //   設計41 F・G：いまの決定（dec）を pending の順に再生して、種目とセットを組み立てる。build・makePlan・カードで同じ関数を使う（数え方を1つに）
     //     セットは通し番号 sq の順に並べ直す（自動・括弧・addset・名前の下見・メモが運ぶセットを、メモの行の順にそろえる）。
     //     addset は足すと 1種目10セット・合計60段（ドロップ込み）を超えるなら1つも足さない＝blocked。lite＝並べ替えとメモの付け先だけ（画面の判定用・posOf を呼ばない）
@@ -2130,13 +2240,17 @@
         if (it.doneOnly) o.doneOnly = false;   // 数字の無い種目：「実施した」の✓は外して入れる
         return o;
       });
-      var memos = [], named = [], exnotes = [], snotes = [], namedBy = {}, blocked = {}, nSet = 0;
+      var memos = [], named = [], exnotes = [], snotes = [], namedBy = {}, blocked = {}, nSet = 0, members = [], todos = [];
       function every() { return base.concat(named.map(function (x) { return x.item; })); }
       function tot() { var n = 0; every().forEach(function (o) { o.sets.forEach(function (e) { n += 1 + ((e.s.drops || []).length); }); }); return n; }
       res.pending.forEach(function (p, j) {
         var d = dec[j];
         if (!d) return;
+        //   設計39 改訂2 高4：AI の決定待ちは許す決定だけ（組み立て本番だけで確かめる＝画面の判定 lite では投げない）
+        if (!lite && p.ai && !aiActOk(p, d)) throw new Error('AI_ACT');
         if (d.act === 'memo') memos.push(p.text);
+        else if (d.act === 'member') members.push(String(p.text));
+        else if (d.act === 'todo') todos.push(String(p.text));
         else if (d.act === 'exnote') {
           //   種目の下に書いたメモ：その種目の1セット目のメモへ（お客様には出ない）。名前の決定待ちの下の数値は、その種目のセットにする（メモの行が種目と数値の間にあった）
           //   ★宛先は今の決定から解き直す（画面で選んだ後に前の決定が変わっていたら入れない・黙って別の種目へ入れない）
@@ -2156,6 +2270,7 @@
         else if (d.act === 'addset') {
           //   設計41：規則で読んだ数値（R2・R5・R7・R8・R10）。上限を超えるなら1つも足さない
           var ti = p.item != null ? base[p.item] : null, add = (p.parsed.sets || []).map(wrap);
+          if (!ti && p.ai && p.pendItem != null) { var rt = ruleTarget(p); ti = rt && rt.pend != null ? (namedBy[rt.pend] || null) : null; }   // 設計39：種目にした AI の名前へ
           var nd = add.reduce(function (n, e) { return n + 1 + ((e.s.drops || []).length); }, 0);
           if (!ti || ti.sets.length + add.length > MEMO_LIMITS.setsPerOrd || tot() + nd > MEMO_LIMITS.total) { blocked[j] = true; return; }
           ti.sets = ti.sets.concat(add); delete ti.doneOnly;
@@ -2192,7 +2307,7 @@
         if (s0 && nx.length <= 200) { s0.note = nx; nNote++; }
         else memos.push(it.exercise + '：' + x.text);
       });
-      return { items: items, memos: memos, nNote: nNote, nSet: nSet, blocked: blocked };
+      return { items: items, memos: memos, nNote: nNote, nSet: nSet, blocked: blocked, members: members, todos: todos };
     }
     function build() { return assemble(false); }
     //   設計41 G：その決定を足しても上限に収まるか（いまの決定を全部再生した上で判定）。dec 本体は変えない
@@ -2224,14 +2339,30 @@
       var wasEmpty = !T || !(T.items || []).length;
       if (!T) T = { v: 1, tid: tid, cid: cid, sessionDate: today(), items: [], reqId: newReqId(), pending: null, at: Date.now() };
       if (wasEmpty && res.date) T.sessionDate = res.date;
-      var b = build(), all = (T.items || []).concat(b.items);
+      var b;
+      try { b = build(); } catch (e) { ask = false; err = 'この選び方では入れられません。カードを選び直してください。'; draw(); return; }   // ★下書きは変えない
+      var all = (T.items || []).concat(b.items);
       //   上限（20種目・1種目10セット・合計60＝ドロップも数える）。超えるなら入れない（黙って切らない）
       //   ★設計41 G：決めたセットが上限で入らなかった（blocked）ものが1つでもあれば、取り込み全体を止める（黙って落とさない）
       if (Object.keys(b.blocked).length || all.length > 20 || totalSets(all) > TR_TOTAL || b.items.some(function (it) { return it.sets.length > 10; })) {
         ask = false; err = '上限（20種目・1種目10セット・合計60セット。ドロップも1つと数えます）を超えるため入れられません。どれかを捨てるか、いまの記録を保存してから取り込んでください。'; draw(); return;
       }
+      //   設計39：お客様に見える欄（お客様へ・次回までに）。入らなければ取り込み全体を止める（途中まで入れない）。お客様に出るのは記録の画面で「保存する」を押したときだけ
+      var mNew = null;
+      if (b.members.length || b.todos.length) {
+        var m0 = (T.member && typeof T.member === 'object') ? T.member : {};
+        mNew = { message: String(m0.message || ''), todo: Array.isArray(m0.todo) ? m0.todo.slice() : [], tags: Array.isArray(m0.tags) ? m0.tags.slice() : [] };
+        while (mNew.todo.length < MEMBER_MAX.todo) mNew.todo.push('');
+        if (b.members.length) { var addM = b.members.join('\n'); mNew.message = mNew.message.trim() ? mNew.message.replace(/\s+$/, '') + '\n' + addM : addM; }
+        var free = []; mNew.todo.forEach(function (v, i) { if (i < MEMBER_MAX.todo && !String(v || '').trim()) free.push(i); });
+        if (mNew.message.length > MEMBER_MAX.message || b.todos.length > free.length || b.todos.some(function (t) { return t.length > MEMBER_MAX.todoLen; })) {
+          ask = false; err = 'お客様に見える欄に入りきりません（お客様へ' + MEMBER_MAX.message + '字・次回までに' + MEMBER_MAX.todo + 'つ）。どれかを社内メモか捨てるにしてください。'; draw(); return;
+        }
+        b.todos.forEach(function (t, i) { mNew.todo[free[i]] = t; });
+      }
       var first = (T.items || []).length;
       T.items = all;
+      if (mNew) T.member = mNew;
       if (b.memos.length) T.memo = (String(T.memo || '').trim() ? String(T.memo).replace(/\s+$/, '') + '\n' : '') + b.memos.join('\n');   // 選んだものだけ社内メモの末尾へ
       T.openEi = first;
       T.at = Date.now();
@@ -2240,6 +2371,7 @@
       trImportMsg = { cid: cid, text: 'メモから ' + b.items.length + '種目・' + ns + 'セット' + (nd ? '（ドロップ' + nd + '）' : '') + 'を入れました。✓を付けて保存してください（✓の無いセットは保存されません）。'
         + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
         + (b.nSet ? 'セットのメモ ' + b.nSet + '件は、そのセットのメモに入れました。' : '')
+        + (mNew ? 'お客様に見える欄に ' + (b.members.length + b.todos.length) + '件入れました（保存するとお客様に見えます）。' : '')
         + (res.date ? '' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。') };
       res = null; dec = []; ui = [];
       goBack();
@@ -2251,17 +2383,18 @@
     function setNoteDest(p) { var h = sqInfo(p.setSq); return '「' + (h ? h.exercise : '') + '」の ' + (h ? impLine([h.set]) : '') + ' のセットのメモ'; }
     function exNoteDest(p, j) { var nm = exTargetName(exTarget(j)); return '「' + nm + '」の1セット目のメモ' + (p.parsed && p.parsed.sets && p.parsed.sets.length ? '。下の数値も「' + nm + '」のセットにする' : ''); }
     function ruleNote(p) { var n = (p.parsed.sets || []).map(function (st) { return st.note; }).filter(Boolean); return n.length ? '（セットのメモ「' + n.join('・') + '」）' : ''; }
-    function addSetDest(p) { return '「' + res.items[p.item].exercise + '」に ' + impLine(p.parsed.sets) + ' を足す' + ruleNote(p); }
+    function addSetDest(p) { var t = ruleTarget(p); return '「' + (t ? t.name : '') + '」に ' + impLine(p.parsed.sets) + ' を足す' + ruleNote(p); }
     function parenSetDest(p) { return '「' + res.items[p.item].exercise + '」に ' + impLine(p.parsed.sets) + ' を足し、括弧の中「' + p.parsed.paren + '」をそのセットのメモに'; }
     function proposeDest(p, j) {
       if (p.propose === 'drop') return '捨てる';
       if (p.propose === 'setnote') return setNoteOk(p) ? setNoteDest(p) + '（お客様には見えません）' : null;
       if (p.propose === 'exnote') return exTarget(j) ? exNoteDest(p, j) + '（お客様には見えません）' : null;
-      if (p.propose === 'addset') return p.item != null && res.items[p.item] ? addSetDest(p) : null;
+      if (p.propose === 'addset') return ruleTarget(p) ? addSetDest(p) : null;
+      if (p.propose === 'memo') return '社内メモ（お客様には見えません）';   // 設計39：AI の指導のメモ・ヒアリング
       if (p.propose === 'parenset') return p.item != null && res.items[p.item] ? parenSetDest(p) + '（お客様には見えません）' : null;
       return null;
     }
-    function proposeAct(p) { return p.propose === 'drop' ? { act: 'discard' } : p.propose === 'parenset' ? { act: 'set', note: true } : { act: p.propose }; }
+    function proposeAct(p) { return p.propose === 'drop' ? { act: 'discard' } : p.propose === 'parenset' ? { act: 'set', note: true } : p.propose === 'memo' ? { act: 'memo' } : { act: p.propose }; }
     //   設計40 §4「提案どおりに決める」の計画：dec の写しの上で、添字の小さい順に、未決定で提案があり行き先が解けるものを決めていく
     //   （前の決定で後ろの宛先が解ける）。★dec 本体は変えない（開いただけでは決まらない）
     function makePlan() {
@@ -2309,6 +2442,8 @@
       //   設計41 F：選び直したもの（括弧・規則のセット）を宛先にしていた「セットのメモ」の決定も外す
       var mine = {}; ((res.pending[j] && res.pending[j].parsed && res.pending[j].parsed.sets) || []).forEach(function (st) { if (st.sq != null) mine[st.sq] = 1; });
       res.pending.forEach(function (q, k) { if (k > j && dec[k] && dec[k].act === 'setnote' && q.setSq != null && mine[q.setSq]) dec[k] = null; });
+      //   設計39：AI の名前を選び直したら、そこを宛先にしていた AI の rule の「足す」も外す
+      res.pending.forEach(function (q, k) { if (k > j && q.ai && q.pendItem === j && dec[k] && dec[k].act === 'addset') dec[k] = null; });
       res.pending.forEach(function (q, k) {
         if (k <= j || !dec[k] || dec[k].act !== 'exnote') return;
         for (var x = q, at = k; x && x.kind === 'name' && x.prevPend != null && x.prevPend >= 0 && x.prevPend < at; ) {
@@ -2328,13 +2463,14 @@
     function card(p, j) {
       var d = dec[j], u = ui[j];
       var c = el('div', { class: 'k-card k-impcard', 'data-kind': p.kind }, [
-        el('div', { style: 'font-weight:700;', text: IMP_KIND[p.kind] || '確かめが必要です' }),
-        el('div', { class: 'k-sub', text: p.lines.join('・') + '行目' }),
+        el('div', { style: 'font-weight:700;', text: (p.kind === 'ai' ? AI_CAT[p.cat] : (p.ai && p.kind === 'rule') ? 'AI：読んだ数値（根拠を見て決めます）' : IMP_KIND[p.kind]) || '確かめが必要です' }),
+        el('div', { class: 'k-sub', text: (p.lines && p.lines.length) ? p.lines.join('・') + '行目' : (p.label || '') }),
         el('div', { class: 'k-imptext', text: p.text })]);
       if (p.parsed && p.parsed.sets && p.parsed.sets.length && p.kind !== 'paren') c.appendChild(el('div', { class: 'k-sub', text: '読めた数値：' + impLine(p.parsed.sets) }));
       if (!d && p.propose) { var pd = proposeDest(p, j); if (pd) c.appendChild(el('div', { class: 'k-sub k-imppro', text: '提案：' + pd })); }
       if (d) {
         var t = d.act === 'discard' ? '捨てる' : d.act === 'memo' ? '社内メモに足す'
+          : d.act === 'member' ? 'お客様へに入れる（お客様に見えます）' : d.act === 'todo' ? '次回までにに入れる（お客様に見えます）'
           : d.act === 'exnote' ? (function () { var nm = exTargetName(exTarget(j)); return '「' + nm + '」の1セット目のメモにする（お客様には見えません）' + (p.parsed && p.parsed.sets && p.parsed.sets.length ? '。下の数値も「' + nm + '」のセットにする' : ''); })()
           : d.act === 'setnote' ? (setNoteOk(p) ? setNoteDest(p) + 'にする（お客様には見えません）' : '社内メモに足す')
           : d.act === 'set' ? (d.note ? '括弧の中をセットのメモに入れてセットにする' : '括弧を除いてセットにする')
@@ -2342,6 +2478,26 @@
           : '種目「' + d.name + '」にする' + (d.part ? '（' + label(PART_KEYS, d.part) + '）' : '') + (d.r3 ? '。この文をそのメモにする（お客様には見えません）' : '');
         c.appendChild(el('div', { class: 'k-impdone', style: 'font-weight:700;color:var(--k-acc);', text: '→ ' + t }));
         c.appendChild(btnCol([act('選び直す', function () { dec[j] = null; dropDependents(j); if (u) u.open = false; planOpen = false; draw(); })]));
+        return c;
+      }
+      //   設計39：AI の文（指導のメモ・ヒアリング・体の状態・お客様へ・次回までに）と、数字を確かめられないセット。★一般の分岐に落とさない
+      if (p.kind === 'ai' || p.kind === 'aiunv') {
+        var cat = p.kind === 'aiunv' ? 'aiunv' : p.cat;
+        if (cat === 'caution' || MEMO_HEALTH.test(String(p.text || ''))) {   // 健康語を含む文は体の状態と同じく捨てるだけ（関門② 高1）
+          c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '体の状態は「注意すること」の画面で入れてください（同意が要ります）。ここからはどこにも入れません。' }));
+          c.appendChild(btnCol([act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
+          return c;
+        }
+        var kids = [];
+        if (cat === 'member' || cat === 'todo') {
+          c.appendChild(el('div', { class: 'k-sub', style: 'font-weight:700;color:var(--k-acc);', text: 'お客様にそのまま見えます' }));
+          var lim = cat === 'member' ? MEMBER_MAX.message : MEMBER_MAX.todoLen;
+          if (!memoQuiet(p.text) && String(p.text).length <= lim) kids.push(act(cat === 'member' ? 'お客様へに入れる' : '次回までにに入れる', function () { decide(j, { act: cat }); }, ''));
+        }
+        kids.push(act('社内メモに足す', function () { decide(j, { act: 'memo' }); }));
+        kids.push(act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger'));
+        c.appendChild(btnCol(kids));
+        c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '社内メモはお客様には見えません。' + I55_HINT }));
         return c;
       }
       if (p.kind === 'name') {
@@ -2401,11 +2557,14 @@
       if (p.kind === 'rule') {
         //   設計41：規則で読んだ数値。確かめてから足す（「いきます」は予告＝やり切ったかはトレーナーが見る）
         if (u && u.err) c.appendChild(msg(u.err, true));
+        var rt = ruleTarget(p);
+        //   設計39 改訂3：種目名をまだ決めていない／種目にしなかった AI の名前の下のセットは、足すボタンを出さない
+        if (!rt && p.ai && p.pendItem != null) c.appendChild(el('div', { class: 'k-sub', text: dec[p.pendItem] ? '種目にしなかったため、社内メモに足すか捨ててください。' : '先に「' + (res.pending[p.pendItem] && res.pending[p.pendItem].parsed ? res.pending[p.pendItem].parsed.exercise : '') + '」の種目名を決めてください。' }));
         c.appendChild(btnCol([
-          act('「' + res.items[p.item].exercise + '」に ' + impLine(p.parsed.sets) + ' を足す', function () { decideFit(j, { act: 'addset' }); }, ''),
-          act('社内メモに足す', function () { decide(j, { act: 'memo' }); }),
+          rt ? act('「' + rt.name + '」に ' + impLine(p.parsed.sets) + ' を足す', function () { decideFit(j, { act: 'addset' }); }, '') : null,
+          (p.ai && MEMO_HEALTH.test(String(p.text || ''))) ? null : act('社内メモに足す', function () { decide(j, { act: 'memo' }); }),
           act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
-        c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '話した数値は予告のことがあります。やり切れなかったセットは、記録の画面で直してください。' }));
+        c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: p.ai ? '数字は録音の文字起こしから読みました。根拠の文を見て、予告だけ・やり切れなかったセットは記録の画面で直してください。' : '話した数値は予告のことがあります。やり切れなかったセットは、記録の画面で直してください。' }));
         return c;
       }
       if (p.kind === 'limit' || p.kind === 'second_date') {
@@ -2422,7 +2581,7 @@
       if (err) out.appendChild(msg(err, true));
       if (res) {
         var ns = 0, nd = 0; res.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
-        out.appendChild(el('div', { class: 'k-impsum', style: 'font-weight:700;', text: (res.date ? md(res.date) : '日付の行なし') + '・' + res.items.length + '種目・本セット' + ns + (nd ? '（ドロップ' + nd + '）' : '') + (res.pending.length ? '　確かめが必要 ' + res.pending.length + '件' : '') }));
+        out.appendChild(el('div', { class: 'k-impsum', style: 'font-weight:700;', text: (res.ai ? 'AIの下書き' : res.date ? md(res.date) : '日付の行なし') + '・' + res.items.length + '種目・本セット' + ns + (nd ? '（ドロップ' + nd + '）' : '') + (res.pending.length ? '　確かめが必要 ' + res.pending.length + '件' : '') }));
       }
       if (ask) {
         out.appendChild(el('div', { class: 'k-card k-impcard k-impask' }, [
@@ -2452,7 +2611,12 @@
         return;
       }
       bar.appendChild(el('button', { type: 'button', class: 'k-btn k-impread', text: '読み取る', onclick: read }));
-      bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: 'この画面からは何も送りません（端末の中で読み取ります）' }));
+      if (!cur.aiDraft) { bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: 'この画面からは何も送りません（端末の中で読み取ります）' })); return; }
+      //   設計39：AI で振り分ける（Worker の切替が開き鍵があるときだけ）。送信中は押せない
+      var ab = el('button', { type: 'button', class: 'k-btn out k-impai', style: 'margin-top:8px;', text: aiBusy ? '振り分けています（1分ほど）' : 'AIで振り分ける（録音の文字起こし）', onclick: aiSend });
+      if (aiBusy) { ab.disabled = true; ab.setAttribute('aria-disabled', 'true'); }
+      bar.appendChild(ab);
+      bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。保存はしません。' }));
     }
     draw();
   }

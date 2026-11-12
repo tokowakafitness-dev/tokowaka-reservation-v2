@@ -106,6 +106,8 @@ const TABLE = {
   //   種目の一覧（全トレーナー・全顧客で共有・部位つき・2026-11-06）。k_saveExercise は isKarteWrite に当たる＝Origin・トークン10分の守り
   'k_exercises':        ['trainer'],
   'k_saveExercise':     ['trainer'],
+  //   録音の文字起こしを AI で下書きに（設計39）。isKarteWrite に当たる＝Origin・トークン1時間の守り。何も保存しない
+  'k_aiDraft':          ['trainer'],
 
   // ---- 顧客マスタ ----
   'customerCreate':   ['trainer'],
