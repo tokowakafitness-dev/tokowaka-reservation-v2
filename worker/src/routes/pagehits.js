@@ -60,8 +60,16 @@ export function jstHourKey(ms) {
 const CAMPAIGN_RE =
   /^((meta|google|line|ig|tr|mail|monitor|bulkup)[a-z0-9_]{0,30}|none)$/;
 
-/** 獲得元。紹介は tr_<トレーナー>。運用で増えたらここに足す */
-const SOURCE_RE = /^(tr_[a-z]{2,12}|instagram|facebook|google|line|mail|direct|none)$/;
+/** 獲得元。紹介は tr_<トレーナー>。運用で増えたらここに足す。
+ *
+ * ★`line_ads`（LINE広告：トークリスト・LINE NEWS 等の配信面）と
+ *   `line`（公式LINE：トーク配信・リッチメニュー）は **別の値にしている**。
+ *   この表の主キーに medium 列が無く、`utm_medium` は保存されないため、
+ *   source を分けないと有料の流入と自社の友だちへの配信が
+ *   **永久に区別できない**（0022_page_hits_src.sql）。
+ *   4か所（ここ・LP・応募フォーム・GAS）で同じ文字列であること。
+ *   揃っているかは monitor-apply/tools/test-utm-rules.cjs が見る。 */
+const SOURCE_RE = /^(tr_[a-z]{2,12}|instagram|facebook|google|line_ads|line|mail|direct|none)$/;
 
 /** 広告CR・貼り先。cr1〜cr999 と、こちらで決めた名前だけ通す */
 const CONTENT_RE = /^(cr\d{1,3}|profile|story|post|highlight|bio|ig_bio|ig_story|ig_post|mail|none)$/;
