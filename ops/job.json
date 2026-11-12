@@ -1,1 +1,9 @@
-{"op": "remaining", "requestId": "job-20261111063314-279d93d1", "args": {"slotsFresh": 1, "_rk": "d6ba4bd1e2e89b53e2c0e84096449cb818ab372ef37246eee6a67587f084b57f"}}
+{
+  "op": "remaining",
+  "requestId": "job-20261112144111-286d6fac",
+  "args": {
+    "health": 1,
+    "shadow": 1,
+    "_rk": "f69cb3a210869c079ea53968db8c7e9cc3d6bfc88335c13e327a493d3ccef175"
+  }
+}
