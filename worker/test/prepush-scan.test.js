@@ -28,6 +28,9 @@ const FAKE = {
   key: 'gh' + 'p_' + 'A1b2'.repeat(9),
 };
 
+//   ★push の前のフック（pre-push）から走ると GIT_DIR 等が引き継がれ、別の作業ツリー（git worktree）では
+//     この検査の中の git が本物のリポジトリを指してしまう。一時のリポジトリだけを触るよう GIT_* を外す（2026-11-12）
+for (const k of Object.keys(process.env)) if (/^GIT_/.test(k)) delete process.env[k];
 const base = mkdtempSync(join(tmpdir(), 'prepush-scan-'));
 const remote = join(base, 'remote.git');
 const repo = join(base, 'work');
