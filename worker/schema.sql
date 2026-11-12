@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS trainers (
   trainer_id    TEXT PRIMARY KEY,
   name          TEXT NOT NULL,
   name_en       TEXT,
+  kana          TEXT,                       -- 読み（設計39 の続き・migration 0031）。伏せる処理だけが読む。画面へ返さない
   calendar_id   TEXT,                       -- Googleカレンダー（第2段階で使う）
   line_user_id  TEXT UNIQUE,                -- LIFFのID Tokenで照合する相手
   role          TEXT NOT NULL DEFAULT 'trainer',   -- trainer | owner

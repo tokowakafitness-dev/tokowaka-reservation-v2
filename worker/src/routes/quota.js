@@ -267,6 +267,11 @@ export async function quotaStatus(request, env) {
       only: u.searchParams.get('only') || '', skip: u.searchParams.get('skip') || '',
     }));
   }
+  //   ★カルテの AI 振り分け（設計39）の前日の記録。日次点検（GAS dailyHealthCheck）が1日1回読む。数だけ・名前なし
+  if (u.searchParams.get('karteai') === '1') {
+    const { buildKarteAiHealth } = await import('../lib/karte-ai-health.js');
+    return json(await buildKarteAiHealth(env, Date.now()));
+  }
   const sh = u.searchParams.get('shadow');
   if (sh) {
     const { buildShadowStatus } = await import('../lib/shadow-status.js');

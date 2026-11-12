@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-06a 会員の LINE ID は照合済み（verified）の行だけ送る（設計35 改訂1-6）';
+var LB_EDGE_BUILD = '2026-11-12a トレーナーの読み（名簿の見出し kana の列）を送る・カルテの AI 振り分けの日次点検（設計39 の続き）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -150,12 +150,35 @@ function _edgePushRows(kind, rows, batchId, opts) {
 // それぞれの材料を作る
 // ============================================================
 
+// トレーナーの読み（かな）の列（設計39 の続き・2026-11-12）。カルテの AI 振り分けで、送る前に読みも伏せるため
+//   ★列の位置を決め打ちしない：A〜F は TR_COL で決まっているが、G 以降に何があるかはコードから分からない。
+//     1行目の見出しが「kana」（前後の空白・大文字小文字を無視）の列だけを読む。A〜F は見出しが kana でも使わない。
+//     見つからなければ -1＝全員の kana は空文字（伏せられない＝今と同じ動き）
+function _edgeTrainerKanaCol(header) {
+  var h = header || [];
+  for (var i = TR_COL.NAME_EN; i < h.length; i++) {
+    if (String(h[i] == null ? '' : h[i]).trim().toLowerCase() === 'kana') return i;
+  }
+  return -1;
+}
+//   ★かな（ひらがな・カタカナ・長音・中黒）と空白だけ・1〜40字だけ送る。それ以外は空文字＝伏せない（今と同じ）。
+//     伏せる処理は単語の境目なしに全文を置き換えるので、数字・英字・メモが入ると文字起こしの数字（照合の根拠）まで消える（関門② 高2）
+function _edgeTrainerKana(v) {
+  var s = String(v == null ? '' : v);
+  try { s = s.normalize('NFKC'); } catch (e) {}
+  s = s.trim();
+  if (s.length < 1 || s.length > 40) return '';
+  return /^[ぁ-ゖァ-ヺー・ 　]+$/.test(s) && /[ぁ-ゖァ-ヺ]/.test(s) ? s : '';
+}
+
 function _edgeTrainers() {
   var out = [];
   var sh = _lbSheet(LINE_BOOKING.TRAINER_SHEET);
   var byId = {};
   if (sh && sh.getLastRow() >= 2) {
-    var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(TR_COL.NAME_EN, sh.getLastColumn())).getValues();
+    var width = Math.max(TR_COL.NAME_EN, sh.getLastColumn());
+    var kc = _edgeTrainerKanaCol(sh.getRange(1, 1, 1, width).getValues()[0]);
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
     for (var i = 0; i < v.length; i++) {
       var id = String(v[i][TR_COL.TRAINER_ID - 1] || '');
       if (!id) continue;
@@ -167,7 +190,8 @@ function _edgeTrainers() {
         line_user_id: _edgeIdOrNull(v[i][TR_COL.LINE_USER_ID - 1]),
         role: String(v[i][TR_COL.ROLE - 1] || 'trainer'),
         active: _lbTruthy(v[i][TR_COL.ACTIVE - 1]) ? 1 : 0,
-        hidden: 0
+        hidden: 0,
+        kana: kc >= 0 ? _edgeTrainerKana(v[i][kc]) : ''
       };
     }
   }
@@ -176,7 +200,7 @@ function _edgeTrainers() {
   for (var j = 0; j < list.length; j++) {
     var t = list[j], tid = String(t.id || '');
     if (!tid) continue;
-    if (!byId[tid]) byId[tid] = { trainer_id: tid, name: String(t.name || ''), name_en: '', line_user_id: '', role: 'trainer', active: 1 };
+    if (!byId[tid]) byId[tid] = { trainer_id: tid, name: String(t.name || ''), name_en: '', line_user_id: '', role: 'trainer', active: 1, kana: '' };
     byId[tid].calendar_id = String(t.calendarId || t.email || '');
     byId[tid].hidden = t.hidden ? 1 : 0;
   }
@@ -2972,6 +2996,60 @@ function _edgeQuotaBuild(opts) {
 // いまD1に入っている枠を数える（書き込みの結果を、報告ではなく実物で確かめる）。
 //   ★「何件作れるか」と「何件入っているか」は別のこと。
 //     作る側の報告だけを見ると、書けていなくても気づけない。
+// カルテの AI 振り分け（設計39）の日次点検（2026-11-12）。st＝/quota/status?karteai=1 の応答。
+//   戻り値：[{ key, severity, count, detail }]（名前・trainer_id は入れない）
+//   ★切替が off で0件＝「未使用」の info（注意にしない）。読めないときは0件と言わない
+//   ★失敗が続いた（API まで行った回のうち失敗が3回以上かつ半分以上）＝warn。上限到達・鍵なし・読みの未登録（切替が開いているとき）も warn
+function lbKarteAiDailyCheck(st) {
+  var out = [];
+  function add(key, sev, n, detail) { if (n) out.push({ key: key, severity: sev, count: n, detail: detail }); }
+  var k = st && st.karteAi;
+  if (!k || typeof k !== 'object') {
+    add('karte_ai_unreadable', 'warn', 1, 'カルテの AI 振り分けの記録を読めません（Worker が古いか窓口の故障）');
+    return out;
+  }
+  var open = (k.mode === 'on' || k.mode === 'allow');
+  var kana = k.kana || {};
+  var kanaTxt = kana.table === 'ok'
+    ? '読み（かな）未登録のトレーナー ' + Number(kana.missing || 0) + '/' + Number(kana.active || 0) + '名'
+    : '読みの登録数は読めません';
+  var modeTxt = '切替 ' + (k.mode || '?') + (k.mode === 'allow' ? '（' + Number(k.allowCount || 0) + '名）' : '');
+  if (open && k.keySet === false) add('karte_ai_no_key', 'warn', 1, '切替が開いているのに鍵（ANTHROPIC_API_KEY）が登録されていません（ボタンが出ない）');
+  if (open && (kana.table !== 'ok' || Number(kana.missing || 0) > 0)) {
+    add('karte_ai_kana_missing', 'warn', kana.table === 'ok' ? Number(kana.missing) : 1,
+        '切替が開いているのに、' + kanaTxt + '。そのトレーナーの名前のかな書きは伏せられずに外部へ送られます（trainer_master の見出し kana の列に書く）');
+  }
+  if (k.table !== 'ok') {
+    add('karte_ai_unreadable', open ? 'warn' : 'info', 1, 'カルテの AI 振り分けの記録（karte_ai_log）を読めません（' + modeTxt + '）');
+    return out;
+  }
+  var by = k.byResult || {}, total = Number(k.total || 0);
+  if (!total) {
+    if (open) add('karte_ai_idle', 'info', 1, 'カルテの AI 振り分け：' + modeTxt + '・昨日（' + k.day + '）は0回（誰も押していない）。' + kanaTxt);
+    else add('karte_ai_unused', 'info', 1, 'カルテの AI 振り分け：未使用（' + modeTxt + '・昨日0回）。' + kanaTxt);
+    return out;
+  }
+  var parts = [];
+  for (var r in by) if (by.hasOwnProperty(r)) parts.push(r + ':' + by[r]);
+  parts.sort();
+  var u = k.unverified || {};
+  var den = Number(u.unv || 0) + Number(u.sets || 0);
+  var rate = den ? Math.round(Number(u.unv || 0) * 100 / den) + '%（' + Number(u.unv || 0) + '/' + den + 'セット・' + Number(u.runs || 0) + '回）' : '出せない（確かめたセットの記録が無い）';
+  add('karte_ai_counts', 'info', total, 'カルテの AI 振り分け（昨日 ' + k.day + '・' + modeTxt + '）結果別: ' + parts.join(' / ')
+      + '　確かめられない数字: ' + rate + (Number(u.runsNoSets || 0) ? '（古い版の成功 ' + u.runsNoSets + '回は除く）' : '')
+      + '　API の回数: ' + Number(k.usage || 0) + '/' + Number(k.dailyMax || 0) + (k.limitHit ? '（上限到達）' : '') + '　' + kanaTxt);
+  var FAILS = ['http_error', 'refused', 'timeout', 'truncated', 'bad_output', 'error', 'unavailable'];
+  var f = 0;
+  for (var i = 0; i < FAILS.length; i++) f += Number(by[FAILS[i]] || 0);
+  var attempts = f + Number(by.ok || 0);
+  if (f >= 3 && f * 2 >= attempts) {
+    add('karte_ai_fail', 'warn', f, 'カルテの AI 振り分けが昨日 ' + f + '/' + attempts + '回失敗しました（画面は「読み取る」へ戻るので記録は止まりません）。'
+        + 'http_error＝API の拒否・鍵・版／refused＝断られた／timeout＝60秒超／bad_output・truncated＝出力が壊れた／unavailable＝回数を数えられない');
+  }
+  if (k.limitHit) add('karte_ai_limit', 'warn', Number(by.daily_limit || 0) || 1, 'カルテの AI 振り分けが1日の上限（' + Number(k.dailyMax || 0) + '回）に当たりました（断った ' + Number(by.daily_limit || 0) + '回）');
+  return out;
+}
+
 function _edgeQuotaStatus(query) {
   var url = _edgeProp('EDGE_URL');
   var secret = _edgeProp('EDGE_SECRET');

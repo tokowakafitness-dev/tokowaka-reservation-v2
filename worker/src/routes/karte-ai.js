@@ -18,7 +18,7 @@
 import { aiDraftOn, canSeeKarteShared, logAccess } from './karte.js';
 import { normalizeExerciseName } from '../lib/karte-exercises.js';
 
-export const AI_BUILD = '2026-11-12a 設計39 文字起こしの AI 下書き（関門①通過）';
+export const AI_BUILD = '2026-11-12b 設計39 トレーナーの読み（かな）を伏せる・確かめたセット数を記録';
 
 export const AI_LIMITS = {
   BODY_BYTES: 128 * 1024,   // このパス（/karte/ai-draft）だけ。3万字×3バイト＋余裕
@@ -80,6 +80,11 @@ function nameForms(name) {
   const ones = [];
   for (const o of one) for (const v of [o, kata2hira(o), hira2kata(o)]) if (ones.indexOf(v) < 0) ones.push(v);
   return { long, one: ones };
+}
+//   読み（trainers.kana）として使ってよい値：NFKC の後、かな・長音・中黒・空白だけ（かなを1字以上）・40字まで。GAS の _edgeTrainerKana と同じ
+export function isKanaName(v) {
+  const s = nfkc(v).trim();
+  return s.length >= 1 && s.length <= 40 && /^[ぁ-ゖァ-ヺー・ 　]+$/.test(s) && /[ぁ-ゖァ-ヺ]/.test(s);
 }
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** people: [{ name, tag }]。返り値は文字列を受け取って伏せた文字列を返す関数 */
@@ -250,7 +255,7 @@ export function validateDraft(raw, maskedSquashed, mask) {
   if (caution.length > L.LIST) bad();
 
   //   数字の根拠
-  let nEx = 0, nUnv = 0;
+  let nEx = 0, nUnv = 0, nSets = 0;
   const exercises = exs.map((e) => {
     const sets = [], unverified = [];
     for (const s of e.sets) {
@@ -268,6 +273,7 @@ export function validateDraft(raw, maskedSquashed, mask) {
     }
     if (e.name || e.heard) nEx++;
     nUnv += unverified.length;
+    nSets += sets.length;
     return { name: mask(e.name), heard: mask(e.heard), note: mask(e.note), sets, unverified };
   });
   return {
@@ -276,7 +282,7 @@ export function validateDraft(raw, maskedSquashed, mask) {
       coaching: coaching2.map(mask), hearing: hearing2.map(mask), caution: caution.map(mask),
       member_message: mask(memberMessage), member_todo: todo.map(mask),
     },
-    nEx, nUnv,
+    nEx, nUnv, nSets,
   };
 }
 
@@ -285,11 +291,11 @@ const ACCESS_OF = { ok: 'ok', off: 'denied', no_key: 'denied', daily_limit: 'den
 async function record(env, who, cid, row) {
   try {
     await env.DB.prepare(
-      `INSERT INTO karte_ai_log (at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, build)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO karte_ai_log (at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, n_sets, build)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(Date.now(), String((who && who.trainerId) || ''), row.model || null, row.chars == null ? null : row.chars, row.ms == null ? null : row.ms,
            row.result, row.inTok == null ? null : row.inTok, row.outTok == null ? null : row.outTok,
-           row.nEx == null ? null : row.nEx, row.nUnv == null ? null : row.nUnv, AI_BUILD).run();
+           row.nEx == null ? null : row.nEx, row.nUnv == null ? null : row.nUnv, row.nSets == null ? null : row.nSets, AI_BUILD).run();
   } catch (_) {
     try { console.error('[karte-ai] log write failed', row.result); } catch (_) {}
   }
@@ -334,10 +340,14 @@ async function inner(c, st) {
   const people = [];
   const cu = await env.DB.prepare('SELECT name, kana FROM customers WHERE customer_id = ?').bind(cid).first();
   if (cu) { people.push({ name: cu.name, tag: '〔会員〕' }); if (cu.kana) people.push({ name: cu.kana, tag: '〔会員〕' }); }
-  const tr = await env.DB.prepare('SELECT name, name_en FROM trainers').all();
+  //   ★読み（kana）は GAS の名簿（見出し kana の列）から押し出される（設計39 の続き・migration 0031）。
+  //     NULL・空文字のトレーナーは伏せられない＝今と同じ（画面の案内のとおり残り得る）。登録の数は日次点検に出る
+  //     ★読めなければ例外＝全体が AI_ERROR（送らない側へ倒れる）
+  const tr = await env.DB.prepare('SELECT name, name_en, kana FROM trainers').all();
   for (const t of (tr.results || [])) {
     if (t && t.name) people.push({ name: t.name, tag: '〔トレーナー〕' });
-    if (t && t.name_en) people.push({ name: t.name_en, tag: '〔トレーナー〕' });   // ★トレーナーの読み（かな）は表に無い＝残る危険（設計39 §3-5）
+    if (t && t.name_en) people.push({ name: t.name_en, tag: '〔トレーナー〕' });
+    if (t && isKanaName(t.kana)) people.push({ name: t.kana, tag: '〔トレーナー〕' });   // ★かな以外（数字・英字）は使わない＝根拠の数字を消さない（関門② 高2）
   }
   const mask = makeMasker(people);
   const masked = mask(text);
@@ -384,7 +394,7 @@ async function inner(c, st) {
   let v;
   try { v = validateDraft(parsed, maskedSquashed, mask); }
   catch (e) { if (e instanceof BadOutput) { st.result = 'bad_output'; return fail('AI_BAD_OUTPUT', 502); } throw e; }
-  st.result = 'ok'; st.nEx = v.nEx; st.nUnv = v.nUnv;
+  st.result = 'ok'; st.nEx = v.nEx; st.nUnv = v.nUnv; st.nSets = v.nSets;
   return { draft: v.draft, model: st.model, build: AI_BUILD };
 }
 

@@ -20,7 +20,7 @@ const TABLES = {
   trainers: {
     table: 'trainers',
     key: 'trainer_id',
-    cols: ['trainer_id', 'name', 'name_en', 'calendar_id', 'line_user_id', 'role', 'active', 'hidden'],
+    cols: ['trainer_id', 'name', 'name_en', 'calendar_id', 'line_user_id', 'role', 'active', 'hidden', 'kana'],   // kana＝読み（設計39 の続き）。古い GAS は送らない＝NULL
   },
   customers: {
     table: 'customers',

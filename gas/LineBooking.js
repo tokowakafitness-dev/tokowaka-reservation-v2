@@ -1907,7 +1907,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-11a カレンダーが変わったら空き枠をすぐ押し出す（設計42・同期の直後・目標予算30分/日）';
+var LB_HEALTH_BUILD = '2026-11-12a カルテの AI 振り分けの前日の記録を出す（設計39 の続き）＋設計42';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2526,6 +2526,16 @@ function dailyHealthCheck(dryRunArg) {
     for (var csi = 0; csi < cs.length; csi++) add(cs[csi].key, '枠のすぐ押し出し', cs[csi].severity, cs[csi].count, cs[csi].detail);
   } catch (e) {
     add('calslots_check_fail', '枠のすぐ押し出し', 'warn', 1, '点検そのものが失敗しました: ' + (e && e.message));
+  }
+
+  _step('カルテのAI');
+  // ---- カルテの AI 振り分け（設計39・2026-11-12）----
+  //   ★切替が off で0件は「未使用」（info）。失敗が続いた・上限・鍵なし・読みの未登録（切替が開いているとき）は warn
+  try {
+    var ka = lbKarteAiDailyCheck(_edgeQuotaStatus('?karteai=1'));
+    for (var kai = 0; kai < ka.length; kai++) add(ka[kai].key, 'カルテのAI', ka[kai].severity, ka[kai].count, ka[kai].detail);
+  } catch (e) {
+    add('karte_ai_check_fail', 'カルテのAI', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
   }
 
   _step('契約の入力');

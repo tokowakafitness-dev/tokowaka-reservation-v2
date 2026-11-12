@@ -65,7 +65,9 @@
        ★AI の出力は保存しない・既存の確認フロー（計画・カード）を通す／数字は根拠の抜き出しの中にあるものだけ／体の状態は捨てるだけ／お客様へは1件ずつ
   └ 鍵の登録（ops/workflows/worker-secret-anthropic.yml を取り付けて put）・月の上限額  ⬜ ★オーナー
   └ 使い始め（allow・オーナーだけ）＝同意書と Anthropic の契約条件の確認を decisions に記録した後（I76-7）  ⬜ ★オーナー
-  └ karte_ai_log（倒れた回数と母数）を日次点検に載せる  ⬜ 次の段
+  └ トレーナー名のかな書きを伏せる（名簿 trainer_master の見出し kana の列 → trainers.kana → 伏せる処理）  ✅ 11/12 commit（Worker は push で出る・GAS は設計42 と同じ1回の反映）
+       ★列が無い・空・かな以外は今と同じ（伏せない）。短い読みは同じ並びを全部伏せる（伏せすぎ）。on の前にオーナーが読みを書き込む  ⬜ ★オーナー
+  └ karte_ai_log（倒れた回数と母数）を日次点検に載せる（/quota/status?karteai=1 → 「カルテのAI」の段）  ✅ 11/12 commit（GAS の反映で動く・LB_HEALTH_BUILD 11-12a）
   └ AI の送り先 = Anthropic API（11/10 方向合意・決定0153）  ✅
   └ 検証：オーナーの DJI Mic Mini＋スマホで2〜3回 → CEO が文字起こし＋Claude Code で下書き  🔄 ■ いまここ ■ ★オーナーの録音待ち
   └ 設計41 R1〜R11＋話し言葉の数字（55キロで5回）  ✅ 11/10 関門①（4周）→ 実装 → 関門②（2周）→ 本番（KARTE_BUILD 10a）
