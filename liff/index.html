@@ -470,6 +470,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       cxl_done_thanks:'キャンセルしました。理由をお聞かせいただきありがとうございます。',
       cxl_done_relayed:'キャンセルしました。ひとことは担当トレーナーにお伝えします。',
       cxl_done_unsent:'キャンセルは完了しました。理由・ひとことはお送りできませんでした。',
+      cxl_unknown:'キャンセルできたかを確認できませんでした。もう一度「キャンセルする」を押してください（すでにキャンセルできていれば、その旨をお知らせします）。',
       mk_tab_home:'概要', mk_tab_body:'体組成', mk_tab_training:'トレーニング', mk_tab_notes:'指導の履歴', mk_tab_contract:'契約', mk_tabs_aria:'会員メニュー', mk_back:'概要に戻る',
       mk_next_title:'次回のご予約', mk_next_trainer:'担当 {name}', mk_next_more:'このあと {dates} にもご予約があります',
       mk_unavail:'いまは表示できません。時間をおいて開き直してください。',
@@ -560,6 +561,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       cxl_done_thanks:'Your booking has been cancelled. Thank you for telling us why.',
       cxl_done_relayed:'Your booking has been cancelled. We will pass your message on to your trainer.',
       cxl_done_unsent:'Your booking has been cancelled. However, we could not send your reason or message.',
+      cxl_unknown:'We could not confirm whether your booking was cancelled. Please tap "Cancel booking" again (if it was already cancelled, we will let you know).',
       mk_tab_home:'Overview', mk_tab_body:'Body', mk_tab_training:'Training', mk_tab_notes:'Coaching', mk_tab_contract:'Plan', mk_tabs_aria:'Member menu', mk_back:'Back to overview',
       mk_next_title:'Your next session', mk_next_trainer:'with {name}', mk_next_more:'You also have bookings on {dates}',
       mk_unavail:"This can't be shown right now. Please open it again later.",
@@ -650,6 +652,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       cxl_done_thanks:'已取消预约。感谢您告诉我们原因。',
       cxl_done_relayed:'已取消预约。您的留言将转达给负责教练。',
       cxl_done_unsent:'取消已完成，但未能发送原因和留言。',
+      cxl_unknown:'无法确认是否已取消。请再次点击“确认取消”（如已取消，我们会告知您）。',
       mk_tab_home:'概要', mk_tab_body:'体成分', mk_tab_training:'训练', mk_tab_notes:'指导记录', mk_tab_contract:'合同', mk_tabs_aria:'会员菜单', mk_back:'返回概要',
       mk_next_title:'下次预约', mk_next_trainer:'教练 {name}', mk_next_more:'之后在 {dates} 也有预约',
       mk_unavail:'现在无法显示，请稍后重新打开。',
@@ -740,6 +743,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       cxl_done_thanks:'已取消預約。感謝您告訴我們原因。',
       cxl_done_relayed:'已取消預約。您的留言將轉達給負責教練。',
       cxl_done_unsent:'取消已完成，但未能傳送原因和留言。',
+      cxl_unknown:'無法確認是否已取消。請再次點擊「確認取消」（如已取消，我們會告知您）。',
       mk_tab_home:'概要', mk_tab_body:'體組成', mk_tab_training:'訓練', mk_tab_notes:'指導記錄', mk_tab_contract:'合約', mk_tabs_aria:'會員選單', mk_back:'返回概要',
       mk_next_title:'下次預約', mk_next_trainer:'教練 {name}', mk_next_more:'之後在 {dates} 也有預約',
       mk_unavail:'現在無法顯示，請稍後重新開啟。',
@@ -3398,7 +3402,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     }).catch(function(e){
       state.cxlInflight[id]--;
       if (state.cxlDone[id] || state.cxlInflight[id] > 0) return;
-      _cxlErr(t('comm_fail', { msg: e }));   // ★自動で送り直さない（_NO_RETRY）。下書きは残す＝もう一度押せる
+      //   ★「通信に失敗」と断定しない（決定0139）。応答が20秒を超えても取消は成立していることがある。
+      //     押し直せば成立済みなら ALREADY → _alreadyGone の案内に落ちる＝二重の取消にはならない
+      _cxlErr(t('cxl_unknown'));   // ★自動で送り直さない（_NO_RETRY）。下書きは残す＝もう一度押せる
     });
   }
   //   完了の文（改訂1-4）。何も入れていなければ文を足さない。

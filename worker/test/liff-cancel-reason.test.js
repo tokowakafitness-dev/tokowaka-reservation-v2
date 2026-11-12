@@ -267,7 +267,15 @@ const msg = (w) => ($(w, 'cxlBody').querySelector('.cxl-msg') || {}).textContent
   ok('5-8 BAD_EXPECTATION → 「もう一度お試しください」・下書きは残る・押せる', !$(w6, 'cxlErr').hidden && $(w6, 'cxlErr').textContent === w6.__g.t('cxl_retry') && $(w6, 'cxlNote').value === 'z' && !$(w6, 'cxlSubmit').disabled);
   const w7 = boot({ handlers: { line_cancelReservation: () => Promise.reject('サーバー応答がタイムアウトしました') } }); await settle(); await openCxl(w7, 0);
   typeNote(w7, 'q'); $(w7, 'cxlSubmit').click(); await settle();
-  ok('5-9 ★通信の失敗 → 画面に留まり、下書きを残して押し直せる（自動で送り直さない）', cur(w7) === 's-cxl' && /通信に失敗しました/.test($(w7, 'cxlErr').textContent) && $(w7, 'cxlNote').value === 'q' && !$(w7, 'cxlSubmit').disabled && sentOf(w7, 'line_cancelReservation').length === 1);
+  ok('5-9 ★通信の失敗 → 画面に留まり、下書きを残して押し直せる（自動で送り直さない）', cur(w7) === 's-cxl' && $(w7, 'cxlErr').textContent === w7.__g.t('cxl_unknown') && !/通信に失敗/.test($(w7, 'cxlErr').textContent) && $(w7, 'cxlNote').value === 'q' && !$(w7, 'cxlSubmit').disabled && sentOf(w7, 'line_cancelReservation').length === 1);
+  //   ★決定0139：応答が待ち切りを超えても取消は成立していることがある。押し直しは ALREADY →「すでに取り消されています」に落ちる
+  let c9 = 0;
+  const w9 = boot({ handlers: { line_cancelReservation: () => (++c9 === 1 ? Promise.reject('サーバー応答がタイムアウトしました') : { success: false, code: 'ALREADY' }) } }); await settle(); await openCxl(w9, 0);
+  $(w9, 'cxlSubmit').click(); await settle();
+  ok('5-9b 通信の失敗の文は4言語とも「確認できませんでした」（「失敗」と断定しない）', ['ja', 'en', 'zh', 'zh-Hant'].every((lg) => { const wl = boot({ lang: lg }); const v = wl.__g.t('cxl_unknown'); return v && v !== 'cxl_unknown' && !/失敗|failed|失败/.test(v) && (lg === 'ja' || v !== boot({ lang: 'ja' }).__g.t('cxl_unknown')) && v.indexOf(wl.__g.t('cxl_submit')) >= 0; }));
+  const lists9 = sentOf(w9, 'line_getMyReservations').length;
+  $(w9, 'cxlSubmit').click(); await settle();
+  ok('5-9c ★押し直して ALREADY → 「すでに取り消されています」で一覧を取り直す（二重の取消にならない）', w9.alerts[0] === w9.__g.t('already_gone') && sentOf(w9, 'line_cancelReservation').length === 2 && sentOf(w9, 'line_getMyReservations').length === lists9 + 1, JSON.stringify(w9.alerts));
   const w8 = boot({ handlers: { line_cancelReservation: { success: false, code: 'NO_SHEET', message: '<b>x</b>' } } }); await settle(); await openCxl(w8, 0);
   $(w8, 'cxlSubmit').click(); await settle();
   ok('5-10 その他の失敗はコードを文字で出す', $(w8, 'cxlErr').textContent === w8.__g.t('err_cancel', { code: 'NO_SHEET' }) && !$(w8, 'cxlErr').querySelector('b'));
