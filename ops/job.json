@@ -1,9 +1,13 @@
 {
   "op": "remaining",
-  "requestId": "job-20261112144111-286d6fac",
+  "requestId": "job-20261113080634-614117c1",
   "args": {
-    "health": 1,
-    "shadow": 1,
-    "_rk": "f69cb3a210869c079ea53968db8c7e9cc3d6bfc88335c13e327a493d3ccef175"
+    "health": true,
+    "shadow": true,
+    "slotsFresh": true,
+    "triggers": true,
+    "notifyFails": true,
+    "cancelNotes": true,
+    "_rk": "45dfaf5d29cd606bd0f6b967165702078e4cc8f4dc6663b2eb405b2665a651d0"
   }
 }
