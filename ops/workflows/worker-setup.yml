@@ -1,0 +1,56 @@
+name: Worker セットアップ（初回1回だけ）
+
+# Cloudflare の D1 と KV を用意する。手動でのみ起動する。
+#
+# ★D1は必ず apac（アジア太平洋）に作る。場所を指定しないと実行サーバーの場所（米国）が
+#   選ばれ、お客様のスマホから問い合わせるたびに太平洋を往復することになる。
+# ★D1は後から場所を変えられないため、場所を間違えたものは「消して作り直す」のではなく
+#   別の名前で作り直す。消す手順は、チェックの入れ忘れ・条件式・削除失敗と
+#   事故の余地が多く、壊れやすいため使わない。古いものは空のまま放置してよい（無料）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    # ★鍵は環境 production-edge（main 限定）にだけ置く。main 以外のブランチから動かすと鍵が渡らず失敗する（決定0170）
+    environment: production-edge
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_NAME: tokowaka-apac
+      KV_TITLE: KV
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: wrangler を入れる
+        run: npm install --no-fund --no-audit wrangler@4
+
+      - name: D1 を用意する（アジア太平洋）
+        run: |
+          # 作成時の出力に region が出る。ここでは d1 info を呼ばない：
+          # 設定ファイルにIDがまだ入っていない段階では、wrangler がプレースホルダーを
+          # 探しに行って失敗する（場所の確認はデプロイ側で行う）。
+          npx wrangler d1 create "$D1_NAME" --location=apac || echo "既にあります（作成済み）"
+          echo "----- 一覧 -----"
+          npx wrangler d1 list
+
+      - name: KV を用意する
+        run: |
+          npx wrangler kv namespace create "$KV_TITLE" || echo "既にあります（作成済み）"
+          echo "----- KV 一覧 -----"
+          npx wrangler kv namespace list
+
+      - name: 確認すること
+        run: |
+          echo "作成時の出力に region APAC と出ていれば成功です。"
+          echo "IDを手で貼る必要はありません。デプロイ時に名前から自動で引きます。"
