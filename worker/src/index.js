@@ -34,7 +34,7 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
 
 // 版の印（/health に載せる・認証不要・個人情報なし）。★Worker を変えて出すたびに上げる。
 //   無いと「反映したつもりで入っていない」を外から見分けられない（2026-11-07・設計38 の設置で気づいた）
-export const WORKER_BUILD = '2026-11-12b 設計39 の続き トレーナーの読みを伏せる・AI 振り分けの点検の窓口（KARTE_AI_DRAFT 既定 off）';
+export const WORKER_BUILD = '2026-11-13c 設計43 書き込みの直後の枠を写しの読み始めの時刻で確かめる（slotsAfter・画面は既定 off）';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [

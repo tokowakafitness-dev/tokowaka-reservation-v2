@@ -125,6 +125,7 @@ function world(o = {}) {
     Date: FakeDate, Math, JSON, String, Number, Object, Array, RegExp, Error, isFinite, isNaN,
     Logger: { log: (s) => logs.push(String(s)) },
     SETTINGS: { TIMEZONE: 'Asia/Tokyo', SESSION_MINUTES: 60 },
+    _lbWpMark: () => {},   // 設計43 の計測の印（ここでは何もしない）
     LINE_BOOKING: { RESV_SHEET: 'line_reservations', MAP_SHEET: 'customer_line_map' }, MAP_COL: { AUTH_STATE: 8, CUSTOMER_ID: 1, TRAINER_ID: 2 },
     _lbMapWidth: () => 2,
     Utilities: { formatDate: (d, tz, pat) => fmt(d, pat), sleep: (ms) => { clock.now += ms; }, getUuid: (() => { let n = 0; return () => 'u' + (++n); })() },

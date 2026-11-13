@@ -103,7 +103,7 @@ ok('②記録と実行ローカルは同じ値',
 //     呼び出しから引数を外しても気づけない（最初の版がそうだった）。
 ok('①-c★作った枠そのものを持ち回す',
    /builtSlots = buildAndCacheSlots\(\);/.test(pushSlots)
-   && /return _pushToEdgeSlotsImpl\(builtAt, builtSlots\);/.test(pushSlots),
+   && /return _pushToEdgeSlotsImpl\(builtAt, builtSlots, readStartAt\);/.test(pushSlots),   // 設計43：読み始めの時刻も同じ実行の値を持ち回す
    '読み直すと、キャッシュ保存が失敗していた場合に古い枠へ新しい時刻が付く');
 ok('①-c★渡されたらキャッシュを読み直さない',
    /var fresh = \(builtSlots && builtSlots\.length != null\) \? builtSlots : null;/.test(slotRows)
@@ -167,7 +167,7 @@ ok('①-g★疎通テストは scope:partial（状態を変えない）',
    /kind: 'slots', batchId: Date\.now\(\), rows: \[\], final: true, scope: 'partial'/.test(PUSH),
    "'all' だと同期時刻を押し、本物の枠同期が古いバッチとして断られ得る");
 ok('①-f★専用同期が消えたトレーナーの行も落とす',
-   /_edgeSendSlots\(builtAt, builtSlots, \{ batchId: Date\.now\(\), deleteStale: true \}\)/.test(strip(PUSH)),
+   /_edgeSendSlots\(builtAt, builtSlots, \{ batchId: Date\.now\(\), deleteStale: true, readStartAt: readStartAt \}\)/.test(strip(PUSH)),
    '枠を送るのはここだけになったので、削除もここの役目');
 ok('①-f★新しいものを既に送っていたら送らない',
    /builtAt > 0 && builtAt < last/.test(sender) && /STALE_SNAPSHOT/.test(sender),
@@ -227,7 +227,7 @@ ok('②★押し出せた時刻は成功のときだけ残す',
 
 // ---------- 3. ぶつかっても捨てない（③を消す） ----------
 ok('③★枠の押し出しは長く待つ',
-   /_edgeLocked\(function \(\) \{ return _pushToEdgeSlotsImpl\(builtAt, builtSlots\); \}, 90000, 'slots'\)/.test(strip(PUSH)),
+   /_edgeLocked\(function \(\) \{ return _pushToEdgeSlotsImpl\(builtAt, builtSlots, readStartAt\); \}, 90000, 'slots'\)/.test(strip(PUSH)),
    '5秒で諦めると、その回を捨てて次は10分後になる');
 ok('③待ち時間の既定は変えない（重い押し出しを長く待たせない）',
    /var wait = \(waitMs == null\) \? 5000 : Number\(waitMs\);/.test(PUSH));

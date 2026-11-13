@@ -90,7 +90,9 @@ const BYPASS_NOW_MS = 0;
 //   違えば readCalendar が reason:'rule' を返し、①は使われない（＝②へ落ちる・安全側）。
 const DEFAULT_RULE_VERSION = 1;
 
-export async function routeSlots({ body, env, who }) {
+//   internal（任意）：{ readStartAt: true } のときだけ写しの読み始めの時刻を答えに載せる（設計43 B・compatTrainerSlots だけが渡す）。
+//     公開の窓口（slots / mySlots）は index.js から internal なしで呼ばれる＝答えは今と1文字も同じ
+export async function routeSlots({ body, env, who, internal }) {
   const trainerId = String(body.trainerId || who.trainerId || '');
   if (!trainerId) return { code: 'BAD_REQUEST', slots: [] };
 
@@ -166,6 +168,7 @@ export async function routeSlots({ body, env, who }) {
     consec: cached.consec,
     source: SLOT_SOURCE.CACHE,
     computedAt: cached.computedAt,
+    ...((internal && internal.readStartAt === true) ? { readStartAt: cached.readStartAt } : {}),
     ageMs,
     stale: cacheStale,
     fallbackReason,
@@ -285,7 +288,11 @@ async function readCache(env, trainerId) {
   //   **欠けているものを 0件 に変換しない。** 分からないなら分からないと言う。
   if (!Array.isArray(raw.slots)) return null;
   const computedAt = Number(row.computed_at);
+  //   ★カレンダーを読み始めた時刻（設計43 B）。正の整数のときだけ。無い＝古い GAS・前のキャッシュで送った回＝確かめられない
+  //     ★数値型だけ（文字列を Number() で通さない。GAS は数で書く＝文字なら壊れた写し）
+  const rs = raw.readStartAt;
   return {
+    readStartAt: (typeof rs === 'number' && Number.isInteger(rs) && rs > 0) ? rs : null,
     slots: raw.slots,
     rules: (raw.rules && typeof raw.rules === 'object') ? raw.rules : null,
     computedAt: isFinite(computedAt) && computedAt > 0 ? computedAt : null,

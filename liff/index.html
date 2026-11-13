@@ -1174,6 +1174,18 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     CXL_ON = CXL_DEFAULT_ON || (localStorage.getItem('lb_cxl') === '1');
   } catch (e) { CXL_ON = CXL_DEFAULT_ON || /[?&#]cxl=1/.test(location.href); }
 
+  // 書き込みの後、残数・予約一覧は Worker に戻し、空き枠だけ「書き込みの後の写し」と確かめられるまで GAS に聞く（設計43 B）。
+  //   ★全員に出す前に、オーナーの端末で確かめる。URLに ?wl=1 を付けるか、localStorage に lb_wl=1 を入れると有効。?wl=0 で戻る。
+  //   ★全員に広げるときは WL_DEFAULT_ON を true にする（1行・単独の変更で関門③）。偽の間は今と同じ（書き込みの後35分すべて GAS）
+  //   ★サーバーが印（edgeSyncedExceptSlots・edgeWriteAt）を返さない間（GAS の反映前・送信の失敗）は、有効でも今と同じ
+  var WL_DEFAULT_ON = false;
+  var WL_ON = WL_DEFAULT_ON;
+  try {
+    if (/[?&#]wl=1/.test(location.href)) { localStorage.setItem('lb_wl', '1'); }
+    else if (/[?&#]wl=0/.test(location.href)) { localStorage.removeItem('lb_wl'); }
+    WL_ON = WL_DEFAULT_ON || (localStorage.getItem('lb_wl') === '1');
+  } catch (e) { WL_ON = WL_DEFAULT_ON || /[?&#]wl=1/.test(location.href); }
+
   // GASの操作名 → Workerの窓口。ここに無いものは全てGASへ行く（読み取りだけを載せる）
   var EDGE_MAP = {
     getMemberStatus:              'c_memberStatus',
@@ -1227,6 +1239,41 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     try { localStorage.removeItem('lb_edge_stale'); } catch (e) {}
   }
 
+  // ★枠だけを待つ印（設計43 B）。'<端末の時刻での期限>|<GAS の時計の書き込み時刻>'。
+  //   期限は今の35分と同じ。書き込み時刻は端末の時計と比べない（Worker が写しの読み始めと比べる）
+  var _edgeSlotsMem = '';
+  function _edgeSlotsWait(){
+    var v = '';
+    try { v = String(localStorage.getItem('lb_edge_slots') || ''); } catch (e) { v = _edgeSlotsMem; }
+    var m = /^(\d{12,14})\|(\d{12,14})$/.exec(v);
+    if (!m) return null;
+    var until = Number(m[1]), after = Number(m[2]);
+    if (!(until > Date.now())) return null;
+    return { until: until, after: after };
+  }
+  function _edgeValidWriteAt(x){
+    return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x > 1577836800000 && x < 4102444800000;
+  }
+  function _edgeSlotsMark(writeAt){
+    var cur = _edgeSlotsWait();
+    var after = (cur && cur.after > writeAt) ? cur.after : writeAt;   // 後から来た古い応答で下げない
+    var v = String(Date.now() + 35 * 60 * 1000) + '|' + String(after);
+    _edgeSlotsMem = v;
+    try { localStorage.setItem('lb_edge_slots', v); } catch (e) {}
+    //   ★読み直して確かめる。書けなかった（容量・プライベート）のに読めてしまう端末では、印が無いまま全体の印を外すと
+    //     枠が確かめずに Worker から出る。確かめられなければ偽を返し、呼ぶ側は全体の印を外さない（今と同じ35分）
+    var chk = _edgeSlotsWait();
+    return !!(chk && chk.after === after);
+  }
+  //   確かめた値のときだけ消す（その間に別の書き込みで基準が上がっていたら消さない）
+  function _edgeSlotsClear(after){
+    var cur = _edgeSlotsWait();
+    if (cur && cur.after !== after) return;
+    _edgeSlotsMem = '';
+    try { localStorage.removeItem('lb_edge_slots'); } catch (e) {}
+  }
+  var _edgeWritesInFlight = 0;   // 送っている途中の書き込みの数（設計43 B：他の書き込みが途中なら全体の印を外さない）
+
   // Workerを使わなかった／使えなかった理由を計測に残す（2026-10-03）。
   //   ★なぜ要るのか
   //     それまでは「Workerで成功した」ときだけ edge:〜 を記録していた。
@@ -1254,8 +1301,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     var act = EDGE_MAP[plain];
     if (!act) { _edgeSkip(plain, '窓口なし'); return null; }   // 載っていない＝GASへ
 
+    //   ★書き込みの後で枠だけ待っている間（設計43 B）：空き枠は書き込み時刻を付けて聞き、確かめられた答えだけ使う
+    var sw = (plain === 'getTrainerSlots') ? _edgeSlotsWait() : null;
+
     var body = { action: act, idToken: idToken, lang: LANG };
-    for (var k in params) if (k !== 'action' && k !== 'idToken') body[k] = params[k];
+    for (var k in params) if (k !== 'action' && k !== 'idToken' && k !== 'slotsAfter') body[k] = params[k];
+    if (sw) body.slotsAfter = sw.after;
     // 空き枠を取るときだけ、カレンダーから計算する指定を乗せる（上の USE_CAL）。
     //   他の窓口には関係ないので付けない。
     if (USE_CAL && plain === 'getTrainerSlots') body.useCalendar = true;
@@ -1276,6 +1327,11 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
         //   これが無いと「Workerは速いはずなのに遅い」の原因が追えない。
         _perfAdd('edgeNG:' + plain + '（' + ((j && j.code) || '不明') + '）', _nowMs() - t0);
         return null;
+      }
+      //   ★書き込み時刻を付けて聞いたのに、同じ値の確認が返らない（古い Worker・比べていない）なら使わない
+      if (sw) {
+        if (j.slotsAfterOk !== sw.after) { _perfAdd('edgeNG:' + plain + '（書き込みの後か確かめられない）', _nowMs() - t0); return null; }
+        _edgeSlotsClear(sw.after);
       }
       _perfAdd('edge:' + plain, _nowMs() - t0);
       return j;
@@ -1531,7 +1587,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
 
   function _apiSend(params, plain){
     var isWrite = EDGE_WRITE_ACTIONS.test(plain);
-    if (isWrite) _busyShow(_busyMsg(plain));
+    if (isWrite) { _busyShow(_busyMsg(plain)); _edgeWritesInFlight++; }
 
     // 空き枠をカレンダーから計算する確認（USE_CAL）は、Worker全体の切り替え（EDGE_ON）
     //   とは**独立に**通す（2026-10-03）。
@@ -1559,11 +1615,17 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     // 書き込みが成功し、サーバーが写しを直したと言ってきたら、待つのをやめる。
     p = p.then(function(r){
       if (r && r.success === true && r.edgeSynced === true) _edgeClearStale();
+      //   ★設計43 B：枠のほかは同期済み。枠待ちの印を先に書いてから全体の印を外す（途中で止まっても待つ側に残る）。
+      //     自分のほかに送っている途中の書き込みがあれば外さない（そちらの結果がまだ写しに入っていない）
+      else if (WL_ON && r && r.success === true && r.edgeSyncedExceptSlots === true && _edgeValidWriteAt(r.edgeWriteAt)
+               && _edgeWritesInFlight === 1) {
+        if (_edgeSlotsMark(r.edgeWriteAt)) _edgeClearStale();
+      }
       return r;
     });
     // 成功でも失敗でも必ず消す（消し忘れると画面が操作できなくなる）
-    return p.then(function(r){ _busyHide(); return r; },
-                  function(e){ _busyHide(); throw e; });
+    return p.then(function(r){ _edgeWritesInFlight = Math.max(0, _edgeWritesInFlight - 1); _busyHide(); return r; },
+                  function(e){ _edgeWritesInFlight = Math.max(0, _edgeWritesInFlight - 1); _busyHide(); throw e; });
   }
 
   function _apiGas(params){

@@ -247,16 +247,179 @@ function liffApi(payloadJson) {
 //     「古い残数が見える」につながるため、必ずここを通す。
 function handleLineGet(params) {
   var action = String((params && params.action) || '');
-  var _tv = new Date().getTime();
-  var auth = verifyLineIdToken(params && params.idToken);
-  Logger.log('[perf] verifyLineIdToken: ' + (new Date().getTime() - _tv) + 'ms (' + action + ')');
-  if (!auth.ok) return { success: false, code: 'UNAUTHORIZED' };
+  _lbWpStart(action);   // 書き込みの段ごとの時間（設計43 A）。対象外の操作では何もしない
+  var res, auth;
+  try {
+    var _tv = new Date().getTime();
+    auth = verifyLineIdToken(params && params.idToken);
+    Logger.log('[perf] verifyLineIdToken: ' + (new Date().getTime() - _tv) + 'ms (' + action + ')');
+    _lbWpMark('auth');
+    if (!auth.ok) { res = { success: false, code: 'UNAUTHORIZED' }; _lbWpFinish(res, null); return res; }
 
-  var res = _lbDispatch(params, action, auth.lineUserId, auth);
+    res = _lbDispatch(params, action, auth.lineUserId, auth);
+    _lbWpMark('other');
+  } catch (eD) {
+    //   ★認証と振り分けが外へ投げた例外だけ。記録してから同じ例外を投げ直す（ふるまいは変えない・設計43 関門①）
+    _lbWpFinish(null, eD);
+    throw eD;
+  }
 
   // 写しを直す。ここで何が起きても、返す答えは変えない。
   try { edgeAfterWrite(action, params, res, auth.lineUserId); } catch (e) {}
+  _lbWpFinish(res, null);
   return res;
+}
+
+// ============================================================
+// 書き込みの段ごとの所要時間（設計43 A・2026-11-13）
+//   ★持つのは 操作名（固定の集合）・成否・コード（許可リストに完全一致）・版・最後の印・段の ms だけ。
+//     氏名・電話・LINE ID・予約ID・例外の文は持たない（I77）
+//   ★ロックは取らない（裏の押し出しと同じ ScriptLock を取ると計測が遅さを作る）＝同時に終わった2件の片方が落ち得る＝標本
+//   ★記録の失敗は握りつぶす（予約の結果を変えない）
+//   ★印は「処理を終えた直後に、終えた処理の段の名前で」付ける。前の印からいままでをその段に足す
+// ============================================================
+var LB_WP = {
+  PROP: 'LB_WRITE_PERF', BAD_PROP: 'LB_WRITE_PERF_BAD', MAX: 60, MAX_BYTES: 8000,
+  STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other'],
+  OPS: { line_makeReservationLine: 1, line_makeReservationLineProxy: 1, line_makeBatchReservation: 1, line_makeBatchReservationProxy: 1,
+         line_makeTransferReservation: 1, line_cancelReservation: 1, line_changeReservation: 1, line_ownerFreeCancel: 1, line_ownerFreeChange: 1 }
+};
+//   予約・取消・変更が返すコード（このファイルの return 文から集めた）。ここに無いものは OTHER
+var LB_WP_CODES = { UNAUTHORIZED: 1, UNKNOWN_ACTION: 1, BAD_REQUEST: 1, NOT_VERIFIED: 1, NO_SHEET: 1, NOT_FOUND: 1, BAD_EXPECTATION: 1,
+  AMBIGUOUS_RESERVATION_ID: 1, FORBIDDEN: 1, ALREADY: 1, SERVER_ERROR: 1, PAST: 1, OUTCOME_CHANGED: 1, NO_TRANSFER_CHANGE: 1, SAME_DAY: 1,
+  CONTRACT_INACTIVE: 1, SLOT_TAKEN: 1, SLOT_CHECK_UNAVAILABLE: 1, TOO_SOON: 1, NO_REMAINING: 1, REVIEW_REQUIRED: 1, INVALID_ATTENDEE_COUNT: 1,
+  BALANCE_NOT_APPROVED: 1, BOOKING_FROZEN: 1, NOT_LIVE: 1, RESERVATION_SOURCE_UNAVAILABLE: 1, NOT_OPEN_YET: 1, BUSY: 1,
+  NO_TRANSFER_ENTITLEMENT: 1, OUT_OF_CONTRACT: 1, RECURRING_DISABLED: 1 };
+var _LB_WP = null;   // GAS の実行は要求ごとに独立＝この要求だけの記録器
+
+function _lbWpStart(action) {
+  _LB_WP = null;
+  if (!LB_WP.OPS[String(action || '')]) return;
+  var now = Date.now();
+  _LB_WP = { op: String(action).replace(/^line_/, ''), t0: now, last: now, at: 'start', ms: {} };
+}
+
+function _lbWpMark(stage) {
+  var w = _LB_WP;
+  if (!w) return;
+  var now = Date.now();
+  var st = (LB_WP.STAGES.indexOf(stage) >= 0) ? stage : 'other';
+  w.ms[st] = (w.ms[st] || 0) + Math.max(0, now - w.last);
+  w.last = now;
+  w.at = st;
+}
+
+function _lbWpCode(res, err) {
+  if (err) return 'THROW';
+  if (res && res.success === true) return 'OK';
+  var c = (res && typeof res.code === 'string') ? res.code : '';
+  return Object.prototype.hasOwnProperty.call(LB_WP_CODES, c) ? c : 'OTHER';
+}
+
+//   1件を行にする（純粋）。[時刻, 操作, 成否, コード, 版, 最後の印, 段のms…, 合計]
+function _lbWpRow(w, res, err, now) {
+  var row = [now, w.op, (!err && res && res.success === true) ? 1 : 0, _lbWpCode(res, err),
+             String((typeof LB_HEALTH_BUILD === 'string') ? LB_HEALTH_BUILD : '').slice(0, 11), w.at];
+  for (var i = 0; i < LB_WP.STAGES.length; i++) row.push(Math.round(w.ms[LB_WP.STAGES[i]] || 0));
+  row.push(Math.max(0, now - w.t0));
+  return row;
+}
+
+//   行の形を確かめる（純粋・設計43 関門②）。数と固定の文字だけでできた行だけを真にする。
+//   ★書くときも読むときも通す。手で直された・古い版の・部分的に壊れた記録を「数と固定の文字だけ」と言い切るため
+function _lbWpValidRow(r) {
+  var n = LB_WP.STAGES.length;
+  if (Object.prototype.toString.call(r) !== '[object Array]' || r.length !== 6 + n + 1) return false;
+  function nonNegInt(v) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 0; }
+  if (!nonNegInt(r[0]) || r[0] <= 0) return false;
+  if (typeof r[1] !== 'string' || !LB_WP.OPS['line_' + r[1]]) return false;
+  if (r[2] !== 0 && r[2] !== 1) return false;
+  if (typeof r[3] !== 'string' || !(r[3] === 'OK' || r[3] === 'THROW' || r[3] === 'OTHER' || Object.prototype.hasOwnProperty.call(LB_WP_CODES, r[3]))) return false;
+  if (typeof r[4] !== 'string' || !/^(\d{4}-\d{2}-\d{2}[a-z]?)?$/.test(r[4])) return false;
+  if (typeof r[5] !== 'string' || !(r[5] === 'start' || LB_WP.STAGES.indexOf(r[5]) >= 0)) return false;
+  for (var i = 6; i < r.length; i++) if (!nonNegInt(r[i])) return false;
+  return true;
+}
+
+function _lbWpFinish(res, err) {
+  var w = _LB_WP;
+  _LB_WP = null;
+  if (!w) return false;
+  try {
+    var now = Date.now();
+    if (now > w.last) { w.ms.other = (w.ms.other || 0) + (now - w.last); }   // 印の無い残りは other
+    var row = _lbWpRow(w, res, err, now);
+    var p = PropertiesService.getScriptProperties();
+    var raw = p.getProperty(LB_WP.PROP);
+    var items = [];
+    if (raw) {
+      var o = null;
+      try { o = JSON.parse(raw); } catch (eP) { o = null; }
+      //   ★1行でも形が外れていたら、印（時刻だけ）を残して記録ごと作り直す（外れた行を書き戻さない・関門②）
+      var good = !!(o && typeof o === 'object' && Object.prototype.toString.call(o.items) === '[object Array]');
+      if (good) { for (var gi = 0; gi < o.items.length; gi++) if (!_lbWpValidRow(o.items[gi])) { good = false; break; } }
+      if (good) items = o.items;
+      else { try { p.setProperty(LB_WP.BAD_PROP, String(now)); } catch (eB) {} }
+    }
+    items.unshift(row);
+    if (items.length > LB_WP.MAX) items = items.slice(0, LB_WP.MAX);
+    var s = JSON.stringify({ v: 1, stages: LB_WP.STAGES, items: items });
+    while (s.length > LB_WP.MAX_BYTES && items.length > 1) { items.pop(); s = JSON.stringify({ v: 1, stages: LB_WP.STAGES, items: items }); }
+    p.setProperty(LB_WP.PROP, s);
+    return true;
+  } catch (e) { return false; }
+}
+
+//   作業依頼 remaining {writePerf:true} の結果（設計43 A）。操作ごとの件数・成功数・段の中央値/90%/最大と、直近10件。
+//   ★数と固定の文字だけ（記録にそれ以外が無い）。読めなければ「0件」と言わない
+function writePerfText() {
+  var raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty(LB_WP.PROP); } catch (e) { return '書き込みの計測：読めません（' + String((e && e.name) || 'Error') + '）'; }
+  var bad = '';
+  try { bad = PropertiesService.getScriptProperties().getProperty(LB_WP.BAD_PROP) || ''; } catch (e2) {}
+  var head = '書き込みの計測（設計43・版 ' + String(LB_HEALTH_BUILD).slice(0, 11) + '・直近' + LB_WP.MAX + '件までの標本＝同時に終わった回が落ちることがある）'
+    + (bad ? '\n★記録が壊れていて作り直した: ' + bad : '');
+  if (!raw) return head + '\nまだ記録がありません（反映後、予約・取消・変更が1回あると入ります）';
+  var o = null;
+  try { o = JSON.parse(raw); } catch (eP) { return head + '\n記録が読めません（壊れています）'; }
+  var items = (o && Object.prototype.toString.call(o.items) === '[object Array]') ? o.items : null;
+  if (!items) return head + '\n記録の形が違います';
+  //   ★段の名前は記録の中の stages を信用せず、いつもコードの LB_WP.STAGES を使う。形の外れた行は出さずに数だけ言う（関門②）
+  var names = LB_WP.STAGES.concat(['total']);
+  var all = items, bad = 0;
+  items = [];
+  for (var vi = 0; vi < all.length; vi++) { if (_lbWpValidRow(all[vi])) items.push(all[vi]); else bad++; }
+  if (bad) head += '\n★形の外れた行 ' + bad + ' 件は出していません（次の書き込みで作り直されます）';
+  function q(arr, f) { if (!arr.length) return '-'; var a = arr.slice().sort(function (x, y) { return x - y; }); return a[Math.min(a.length - 1, Math.floor(f * (a.length - 1) + 0.5))]; }
+  var byOp = {};
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var op = String(it[1]);
+    if (!byOp[op]) byOp[op] = { n: 0, ok: 0, codes: {}, ms: {} };
+    var b = byOp[op];
+    b.n++; if (it[2] === 1) b.ok++;
+    b.codes[String(it[3])] = (b.codes[String(it[3])] || 0) + 1;
+    for (var k = 0; k < names.length; k++) { var v = Number(it[6 + k]); if (isFinite(v)) (b.ms[names[k]] = b.ms[names[k]] || []).push(v); }
+  }
+  var lines = [head, '件数 ' + items.length];
+  for (var op2 in byOp) if (byOp.hasOwnProperty(op2)) {
+    var bb = byOp[op2], cs = [];
+    for (var c in bb.codes) if (bb.codes.hasOwnProperty(c)) cs.push(c + '=' + bb.codes[c]);
+    lines.push('■ ' + op2 + '：' + bb.n + '件（成功 ' + bb.ok + '）コード ' + cs.join(' '));
+    for (var m = 0; m < names.length; m++) {
+      var arr = bb.ms[names[m]] || [];
+      if (!arr.length || (names[m] !== 'total' && q(arr, 1) === 0)) continue;   // 一度も時間を使わなかった段は省く
+      lines.push('   ' + names[m] + '：中央 ' + q(arr, 0.5) + 'ms／90% ' + q(arr, 0.9) + 'ms／最大 ' + q(arr, 1) + 'ms');
+    }
+  }
+  lines.push('直近10件（時刻・操作・成否・コード・版・最後の印・' + names.join('/') + '）');
+  for (var j = 0; j < Math.min(10, items.length); j++) {
+    var r = items[j];
+    var t = '';
+    try { t = Utilities.formatDate(new Date(Number(r[0])), 'Asia/Tokyo', 'MM/dd HH:mm:ss'); } catch (eT) { t = String(r[0]); }
+    lines.push('  ' + t + ' ' + r.slice(1, 6).join(' ') + ' | ' + r.slice(6).join('/'));
+  }
+  return lines.join('\n');
 }
 
 function _lbDispatch(params, action, lineUserId, auth) {
@@ -1907,7 +2070,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-12a カルテの AI 振り分けの前日の記録を出す（設計39 の続き）＋設計42';
+var LB_HEALTH_BUILD = '2026-11-13c 書き込みの段ごとの時間を残す・書き込み直後の枠の答え方を点検に出す（設計43）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2345,6 +2508,7 @@ function dailyHealthCheck(dryRunArg) {
           var _yd = ((_rr.sources && _rr.sources.yesterday && _rr.sources.yesterday.rows) || []);
           var _d1n = 0, _cp = [];
           for (var _yi = 0; _yi < _yd.length; _yi++) {
+            if (_yd[_yi].entry === 'slots_after') continue;   // 設計43：枠の数え方（残数の出どころではない）。下で別に出す
             if (_yd[_yi].source === 'd1') _d1n += Number(_yd[_yi].n || 0);
             else _cp.push(_yd[_yi].entry + ':' + _yd[_yi].source + '=' + _yd[_yi].n);
           }
@@ -2356,6 +2520,17 @@ function dailyHealthCheck(dryRunArg) {
         }
       }
     } catch (eRr) {}
+    //   ★書き込みの直後に枠を Worker で答えた／GAS へ落とした回数（設計43 B・entry slots_after）。母数と倒れた回数を並べる
+    try {
+      var _sa = (_svSt && _svSt.remainRead && _svSt.remainRead.sources && _svSt.remainRead.sources.yesterday && _svSt.remainRead.sources.yesterday.rows) || [];
+      var _saOk = 0, _saNg = [];
+      for (var _si = 0; _si < _sa.length; _si++) {
+        if (_sa[_si].entry !== 'slots_after') continue;
+        if (_sa[_si].source === 'ok') _saOk += Number(_sa[_si].n || 0);
+        else _saNg.push(_sa[_si].source + '=' + _sa[_si].n);
+      }
+      if (_saOk || _saNg.length) add('slots_after', 'D1', 'info', _saOk, '昨日 書き込みの直後に枠を Worker で答えた回数（設計43）' + (_saNg.length ? '／GAS へ落とした: ' + _saNg.join(' / ') : ''));
+    } catch (eSa) {}
     //   ★写しも予約一覧も送れなかった会員（設計21 §2-5）
     try {
       var _bfRaw = _lbProp('LB_EDGE_AFTER_WRITE_BOTH_FAIL');
@@ -5371,11 +5546,16 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     ? (SETTINGS.TRIAL_SESSION_MINUTES || SETTINGS.SESSION_MINUTES) : SETTINGS.SESSION_MINUTES;
   var end = new Date(start.getTime() + _sessMins * 60000);
 
+  _lbWpMark('pre');
   var lock = LockService.getScriptLock();
   var _lbOwnedLock = false;
-  if (!lock.hasLock()) { lock.waitLock(10000); _lbOwnedLock = true; }   // 呼び出し側(change)が既にLock保持なら再取得せず＝変更を単一クリティカルセクションで原子化(C3)
+  if (!lock.hasLock()) { lock.waitLock(10000); _lbOwnedLock = true; }
+  _lbWpMark('lock');   // 呼び出し側(change)が既にLock保持なら再取得せず＝変更を単一クリティカルセクションで原子化(C3)
   var _t0 = new Date().getTime();
-  function _lap(n){ Logger.log('[perf] ' + n + ': ' + (new Date().getTime() - _t0) + 'ms'); }
+  //   既存の _lap に段の印を相乗りする（設計43 A）。名前 → 段の表に無いものは other
+  var _LAP_STAGE = { '残数チェック': 'remain', 'B1競合チェック': 'calread', 'トレーナー空き照合': 'calread', '連続ルール': 'calread',
+                     'B1カレンダー登録': 'cal', 'トレーナーカレンダー登録': 'cal', 'SS記録': 'sheet', '通知push': 'notify' };
+  function _lap(n){ Logger.log('[perf] ' + n + ': ' + (new Date().getTime() - _t0) + 'ms'); _lbWpMark(_LAP_STAGE[n] || 'other'); }
   var rem;
   try {
     // 残数チェックをLock内で実施（TOCTOU解消・F2）。対象＝予約日時で判定（翌月先取り・チケット期限も正しく・C1）。
@@ -7897,10 +8077,13 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
   //   ロックの中で決まった値。ロックの外へ渡すのは**台帳の行から既に読めた値**と判定の結果だけ（改訂2-3）
   var done = null;
 
+  _lbWpMark('pre');
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
+  _lbWpMark('lock');
   try {
     var values = sh.getRange(2, 1, last - 1, 11).getValues();
+    _lbWpMark('sheet');
     // H-2：旧形式resIdの重複で別行を掴むのを防ぐ。完全一致が2件以上なら fail-closed。
     var _mc = 0; for (var _m = 0; _m < values.length; _m++) if (String(values[_m][8]) === reservationId) _mc++;
     if (_mc > 1) return { success: false, code: 'AMBIGUOUS_RESERVATION_ID', message: '予約の特定ができません。恐れ入りますが担当トレーナーへご連絡ください。' };
@@ -7931,6 +8114,7 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
       // 無料＝両方削除（枠開放・計上なし）／当日消化＝B1を[消化]化（billing計上・空き枠系から除外）・トレーナー✅削除
       if (free) _lbDeleteReservationEvents(customerName, trainer, start);
       else _lbConsumeReservationEvents(customerName, trainer, start);
+      _lbWpMark('cal');
 
       var row = i + 2;
       sh.getRange(row, 7).setValue(free ? 'cancelled' : 'consumed');   // 無料=cancelled(残数が戻る)／当日=consumed(消化計上=戻さない)
@@ -7969,11 +8153,13 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
     if (!done) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
   } finally {
     lock.releaseLock();
+    _lbWpMark('sheet');
   }
 
   //   ---- ここからロックの外：成立後の付け足し（通知・担当の検索・言語・掃除・記録）。何が落ちても応答は成功のまま（I-C11）----
   var _af = null;
   try { _af = _lbCxlAfter(done, _cxT0); } catch (eAf) { _lbCxlLogErr('after', eAf); }
+  _lbWpMark('notify');
 
   //   ★会員IDを返す（2026-10-08・二重書きの穴を塞ぐ）。
   //     返さないと、edgeAfterWrite は lineUserId から会員を引く。
@@ -8569,8 +8755,10 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
 
   var _chType = _lbContractTypeOf(customerName);   // 予約の作成と通知の終了時刻で同じ値を使う（ロックの外で読む）
   // 変更全体を単一Lockで原子化（並行二重変更を防ぐ・C3）。_lbReserveCore は hasLock を見て再取得しない。
+  _lbWpMark('pre');
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
+  _lbWpMark('lock');
   var made;
   try {
     // Lock内で旧行の現在statusを再検証（TOCTOU：別の変更/キャンセルが先行していれば中止）
@@ -8578,6 +8766,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
     // 旧行を先に changed（＝残数判定から除外＋二重confirmed防止）。以降 core コミット前の失敗は confirmed へ補償。
     sh.getRange(row, 7).setValue('changed');
     try { SpreadsheetApp.flush(); } catch (eF) { sh.getRange(row, 7).setValue('confirmed'); return { success: false, code: 'SERVER_ERROR', message: eF.message }; }
+    _lbWpMark('sheet');
     try {
       made = _lbReserveCore(
         //   ★suppressNotify（2026-10-13・設計17）：それまで変更のたびに「ご予約を承りました」【新規予約】も送られ、
@@ -8602,9 +8791,11 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
       _lbDeleteReservationEvents(customerName, trainer, oldStart,
         { eventIds: [made.calendarEventId, made.trainerEventId], startMs: new Date(newStartISO).getTime() });
     } catch (eD) { Logger.log('旧予定削除失敗（予約変更は確定済み）: ' + eD.message); }
+    _lbWpMark('cal');
     try { sh.getRange(row, 9).setValue(reservationId + '|→' + made.reservationId + (_ownerAppliedC ? '|無料変更（オーナー権限 ' + Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '）' : (free ? '|無料変更' : '|当日消化変更'))); } catch (eN) {}
   } finally {
     lock.releaseLock();
+    _lbWpMark('sheet');
   }
 
   var _cl = _lbMemberLang(String(r[3]));
@@ -8618,11 +8809,18 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
   _lbPush(String(r[3]), _lbSt(_cl, 'push_changed', { old: _lbFmtResvLabel(r[0], _cl), new: _lbFmtResvLabel(_newStart, _cl) + '〜' + _newEndHm, trainer: (trainer ? _lbTrainerNameLang(trainer.id, trainer.name, _cl) : '') }) +
     '\n' + _lbSt(_cl, 'rem_place') + _lbSt(_cl, 'gym_name') + '\n' + _lbSt(_cl, 'rem_free_cancel') +
     (_ownerAppliedC ? _lbSt(_cl, 'push_change_owner_free') : (free ? '' : _lbSt(_cl, 'push_change_penalty'))), 'change_customer', _chCtx);
+  _lbWpMark('notify');
   if (trainer) {
     var trId = getTrainerLineId(trainer.id);
-    if (trId) _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(_newStart) + '〜' + _newEndHm
-      + (_ownerAppliedC ? '\n（当日の無料変更・オーナー権限）' : '')
-      + _lbTrainerRemainText(String(r[2]), customerName, _newStart), 'change_trainer', _chCtx);
+    if (trId) {
+      //   ★残数の文を先に作る（設計43 A：計算の時間を remain に数える）。以前も _lbPush の引数として呼ぶ前に評価していた＝順序は同じ
+      var _chRemainText = _lbTrainerRemainText(String(r[2]), customerName, _newStart);
+      _lbWpMark('remain');
+      _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(_newStart) + '〜' + _newEndHm
+        + (_ownerAppliedC ? '\n（当日の無料変更・オーナー権限）' : '')
+        + _chRemainText, 'change_trainer', _chCtx);
+    }
+    _lbWpMark('notify');
   }
 
   //   ★取消と同じ理由で会員IDを返す（2026-10-08）。
@@ -9199,8 +9397,10 @@ function _lbParseItems(s) { try { var a = JSON.parse(s || '[]'); return Array.is
 function _lbBatchReserve(custInfo, items, channel) {
   if (!items || !items.length) return { success: false, code: 'BAD_REQUEST', message: '予約する日時が選択されていません。' };
   if (items.length > LB_BATCH_MAX) return { success: false, code: 'TOO_MANY', message: '一度に予約できるのは' + LB_BATCH_MAX + '件までです。分けてお試しください。' };
+  _lbWpMark('pre');   // 設計43 A：まとめて予約はここでロックを待つ（芯の中ではもう持っている）
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(20000)) return { success: false, code: 'BUSY', message: '混み合っています。少し時間をおいて再度お試しください。' };
+  if (!lock.tryLock(20000)) { _lbWpMark('lock'); return { success: false, code: 'BUSY', message: '混み合っています。少し時間をおいて再度お試しください。' }; }
+  _lbWpMark('lock');
   var _ci = {}; for (var kk in custInfo) _ci[kk] = custInfo[kk];
   _ci.suppressNotify = true;   // 個別通知を抑制→まとめて1通知
   var created = [], skipped = [];

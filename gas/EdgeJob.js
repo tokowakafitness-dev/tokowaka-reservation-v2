@@ -122,7 +122,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-11-06b キャンセル理由の件数だけを数える窓口（remaining の cancelNotes・設計36）';
+var LB_JOB_BUILD = '2026-11-13c 書き込みの段ごとの時間を読む窓口（remaining の writePerf・設計43）';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);
@@ -182,6 +182,8 @@ function _ejRunInner(op, args) {
       if (args && args.authAudit) return _ejScrub(_edgeAuthAuditText());
       // キャンセル理由（cancel_notes）の鍵ごと・状態ごとの件数だけ（設計36 改訂1-7・I-C6）。★ひとこと・ID の列は読まない
       if (args && args.cancelNotes) return _ejScrub(cancelNotesCountText());
+      // 書き込み（予約・取消・変更）の段ごとの所要時間（設計43 A）。数と固定の文字だけ
+      if (args && args.writePerf) return _ejScrub(writePerfText());
       if (args && args.date) return _ejScrub(dayReservationsText(args.date));
       return _ejScrub(remainingDebugText((args && args.name) || ''));
     // 過去のある時点の残数を再現する（2026-10-04）。args = { name, at: '2026-09-25 12:56' }。

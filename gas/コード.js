@@ -188,9 +188,14 @@ var LB_SLOTS_BUILT_AT_PROP = 'LB_SLOTS_BUILT_AT';
 //     **別の実行（warmupCache 等）が作った時刻**を自分のものと取り違える。
 //     GASの実行は独立しているので、この変数は「自分の実行だけ」の値になる。
 var LB_SLOTS_BUILT_AT_LOCAL = 0;
+//   ★この実行でカレンダーを読み始めた時刻（設計43 B）。書き込みの後の写しかどうかは「読み始め」で比べる
+//     （読み終えの時刻では、書き込みより前に読み始めて後に読み終えた枠を新しいと取り違える）
+var LB_SLOTS_READ_START_LOCAL = 0;
 
 function buildAndCacheSlots() {
+  var _readStart = Date.now();
   var slots = buildAvailableSlots();
+  LB_SLOTS_READ_START_LOCAL = _readStart;   // 読み終えてから入れる（途中で落ちたら前の値が残るが、呼ぶ側は builtSlots が無ければ使わない）
   //   ★カレンダーを読み終えた**直後**の時刻を残す（キャッシュ・公開シートを書く前）。
   //     あとで残すと「カレンダーを読んだ時刻」ではなくなる。
   LB_SLOTS_BUILT_AT_LOCAL = Date.now();

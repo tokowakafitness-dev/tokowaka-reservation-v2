@@ -49,6 +49,7 @@ function world({ actor, start, channel = 'line', maySee = true }) {
       : { getValues: () => [row.slice(0, Math.max(nc, 11))] }),
   };
   const ctx = {
+    _lbWpMark: () => {},   // 設計43 の計測の印（ここでは何もしない）
     Date: FakeDate, Math, String, Number, isNaN, JSON, Logger: { log: () => {} },
     SETTINGS: { TIMEZONE: 'Asia/Tokyo', SESSION_MINUTES: 60 }, LINE_BOOKING: { RESV_SHEET: 'r' }, MAP_COL: { AUTH_STATE: 8 },
     Utilities: { formatDate: (d) => new Date(d).toISOString().slice(0, 16) },

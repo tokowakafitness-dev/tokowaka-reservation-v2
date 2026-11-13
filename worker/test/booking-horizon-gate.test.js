@@ -43,6 +43,7 @@ let ctxGate = () => null;
 function core(custInfo, startISO, channel) {
   const ctx = {
     Date: FakeDate, Math, String, Number, isNaN, SETTINGS: { SESSION_MINUTES: 60 },
+    _lbWpMark: () => {},   // 設計43 の計測の印（本番では同じプロジェクトにある・ここでは何もしない）
     _lbBookingGate: () => ({ ok: true }), _lbTrainerById: () => ({ id: 't1' }),
     _lbBookingOpen: () => true, _lbBookingCfg: () => ({}), _lbBookingDeadlineText: () => '',
     LockService: { getScriptLock: () => { throw new Error(PASSED); } },   // 関門を越えたらここで止める
@@ -68,6 +69,7 @@ function entry(fnNames, call, { coreImpl, extra = {} } = {}) {
   const ctx = {
     Date: FakeDate, Math, String, Number, isNaN, JSON, Logger: { log: () => {} },
     LB_BATCH_MAX: 10,
+    _lbWpMark: () => {},   // 設計43 の計測の印（まとめて予約のロック待ち・ここでは何もしない）
     getCustomerByLine: () => ({ data: mapRow }), _lbContractTypeOf: () => '通常',
     _lbContractRowsAll: () => [{ start: new Date(2026, 0, 1), end: null }], _lbPhoneByCustomerId: () => '', _lbInSomeContractPeriod: () => true,
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {}, hasLock: () => true }) },

@@ -13,6 +13,7 @@ import { canSeeCustomer, customerScopeSql } from '../perms.js';
 //     readHome の中で起動すると、handler の Promise.all がまだ終わっていないため
 //     比較のD1読み書きが本体と競合し、本体が落ちれば handler ごと 500 になる。
 import { runDeferred } from './boot.js';
+import { dayKeyJst, DAILY_CAP } from '../lib/remain-read-on.js';
 
 const JST = 9 * 3600 * 1000;
 const DOW = { ja: ['日', '月', '火', '水', '木', '金', '土'],
@@ -391,7 +392,74 @@ export async function compatMyReservations({ env, who, body }) {
 //     画面がGASへ落ちる。source や stale のような新しい項目はここでは出さない。
 //     どの経路で返したかを見たいときは、同じ routeSlots を直接叩く窓口（action:'slots'）を使う。
 // ---------------------------------------------------------------
-export async function compatTrainerSlots({ env, body, who }) {
+// ============================================================
+// 書き込みの直後の枠（設計43 B・I78）
+//   画面は書き込みの後、GAS の時計の書き込み時刻を slotsAfter で送ってくる。
+//   ★写しがその時刻より後（＋時計の差の余裕）にカレンダーを読み始めたと比べられたときだけ答え、
+//     slotsAfterOk に同じ値を載せる（画面は一致を確かめてから使う）。比べられなければ答えない＝GAS（遅いが新しい）
+// ============================================================
+export const SLOTS_AFTER_MARGIN_MS = 2000;
+export const SLOTS_AFTER_ENTRY = 'slots_after';
+//   数える理由の集合（★この外の値を書かない）
+export const SLOTS_AFTER_WHY = ['ok', 'bad_param', 'no_answer', 'calendar_path', 'no_read_start', 'behind'];
+//   GAS の時計の妥当な範囲（2020年〜2100年）。外れたら壊れた値として答えない
+const SA_MIN = 1577836800000, SA_MAX = 4102444800000;
+export function parseSlotsAfter(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < SA_MIN || n > SA_MAX) return 'bad';
+  return n;
+}
+//   比べる（純粋）。r は routeSlots の答え
+export function judgeSlotsAfter(r, slotsAfter, cacheSource) {
+  if (!r || r.source !== cacheSource) return 'calendar_path';
+  const rs = r.readStartAt;
+  if (typeof rs !== 'number' || !Number.isInteger(rs) || rs <= 0) return 'no_read_start';
+  if (rs < slotsAfter + SLOTS_AFTER_MARGIN_MS) return 'behind';
+  return 'ok';
+}
+//   ★countSource（remain-read-on.js）は entry を READ_ENTRIES に限る（外は 'unknown'）ので使わず、同じ表へ同じ上限で数える。
+//     GAS の日次点検は entry slots_after を残数の「写しに落ちた」に混ぜず、別の行（slots_after）に出す
+async function countSlotsAfter(env, ctx, why) {
+  const w = SLOTS_AFTER_WHY.includes(why) ? why : 'no_answer';
+  try {
+    const p = countSlotsAfterRow(env, w);
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p); else await p;
+  } catch (_) { /* 数えられなくても答えは変えない */ }
+}
+async function countSlotsAfterRow(env, why) {
+  try {
+    const day = dayKeyJst(Date.now());
+    const r = await env.DB.prepare(
+      `INSERT INTO remain_source_daily (day, entry, source, n)
+         SELECT ?, ?, ?, 1
+          WHERE (SELECT COALESCE(SUM(n), 0) FROM remain_source_daily
+                  WHERE day = ? AND entry = ? AND source NOT LIKE '\\_%' ESCAPE '\\') < ?
+       ON CONFLICT(day, entry, source) DO UPDATE SET n = n + 1`
+    ).bind(day, SLOTS_AFTER_ENTRY, why, day, SLOTS_AFTER_ENTRY, DAILY_CAP).run();
+    if (!Number((r && r.meta && r.meta.changes) || 0)) {
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO remain_source_daily (day, entry, source, n) VALUES (?, ?, '_dropped', 1)"
+      ).bind(day, SLOTS_AFTER_ENTRY).run();
+    }
+  } catch (_) { /* 例外を外に出さない */ }
+}
+
+export async function compatTrainerSlots({ env, body, who, ctx }) {
+  //   ★slotsAfter が無いときは今と1文字も同じ（下の内側をそのまま返す）
+  const sa = parseSlotsAfter(body && body.slotsAfter);
+  if (sa === null) return compatTrainerSlotsInner({ env, body, who });
+  if (sa === 'bad') { await countSlotsAfter(env, ctx, 'bad_param'); return { _fallback: true }; }
+  let judged = null;
+  const out = await compatTrainerSlotsInner({ env, body, who }, (r, cacheSource) => { judged = judgeSlotsAfter(r, sa, cacheSource); return judged === 'ok'; });
+  if (!out || out._fallback) { await countSlotsAfter(env, ctx, judged && judged !== 'ok' ? judged : 'no_answer'); return { _fallback: true }; }
+  if (judged !== 'ok') { await countSlotsAfter(env, ctx, 'no_answer'); return { _fallback: true }; }   // 比べずに答えた経路は無いはず（念のため答えない）
+  await countSlotsAfter(env, ctx, 'ok');
+  return { ...out, slotsAfterOk: sa };
+}
+
+//   gate（任意）：routeSlots の答えを見て false なら答えない（設計43 B）。渡されなければ今と同じ
+async function compatTrainerSlotsInner({ env, body, who }, gate) {
   const trainerId = String(body.trainerId || who.trainerId || '');
   if (!trainerId) return { _fallback: true };
 
@@ -407,7 +475,7 @@ export async function compatTrainerSlots({ env, body, who }) {
   //   画面が直接 excludeStartMs を送っても効かせない（以前は見ていなかった項目なので、
   //   ここで通すと「この入口で除外できる枠」が増える＝挙動が変わる）。
   const { routeSlots, SLOT_SOURCE } = await import('./slots.js');
-  const r = await routeSlots({ env, who, body: { ...body, trainerId, excludeStartMs } });
+  const r = await routeSlots({ env, who, body: { ...body, trainerId, excludeStartMs }, internal: gate ? { readStartAt: true } : undefined });
 
   // ---- 「答えない」の決め方（以前の条件をそのまま移す）----
   //   以前：写しが無い／payload が読めない／computed_at が無い／20分より古い → _fallback
@@ -422,6 +490,8 @@ export async function compatTrainerSlots({ env, body, who }) {
   if (!r || r.code) return { _fallback: true };
   if (r.source === SLOT_SOURCE.NONE) return { _fallback: true };
   if (r.source === SLOT_SOURCE.CACHE && r.stale) return { _fallback: true };
+  //   ★書き込みの直後（設計43 B）：写しが書き込みの後に読み始めたものでなければ答えない
+  if (gate && !gate(r, SLOT_SOURCE.CACHE)) return { _fallback: true };
 
   // 画面に渡す computedAt は必ず数値。無ければ答えない（以前と同じ）。
   const computedAt = Number(r.computedAt || 0);

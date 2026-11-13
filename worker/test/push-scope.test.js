@@ -67,7 +67,7 @@ ok("③15分ごとの全件同期は all", /_edgePushRowsF\('reservations', _edg
 //   ★2026-10-11：枠を送る経路を _edgeSendSlots の1本にまとめた（設計：巻き戻し防止）。
 //     scope は送信関数の中で 'all' に固定してある。
 ok("③枠の同期（全トレーナー）も all",
-  /_edgePushRowsF\('slots', _edgeSlotRows\(builtAt, builtSlots\), batchId,\s*\n?\s*\{ scope: 'all'/.test(SRC));
+  /_edgePushRowsF\('slots', _edgeSlotRows\(builtAt, builtSlots, opts\.readStartAt\), batchId,\s*\n?\s*\{ scope: 'all'/.test(SRC));
 ok("③★枠を送る経路は1本だけ",
   (SRC.match(/_edgePushRowsF\('slots'/g) || []).length === 1,
   '別の経路から送ると、世代のガードを迂回して新しい枠を巻き戻せる');
