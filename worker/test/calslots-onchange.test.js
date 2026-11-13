@@ -31,7 +31,7 @@ function pluckVar(src, name) {
 
 const H = 3600000, DAY = 86400000;
 const jst = (y, m, d, h = 0, mi = 0) => Date.UTC(y, m - 1, d, h, mi) - 9 * H;
-const FNS = ['_lbCalSlotsDayKey', '_lbCalSlotsShouldRun', '_lbCalSlotsClassify', '_lbCalSlotsParse', '_lbCalSlotsDay',
+const FNS = ['_lbCalSlotsDayKey', '_lbCalSlotsShouldRun', '_lbCalSlotsWhy', '_lbCalSlotsClassify', '_lbCalSlotsParse', '_lbCalSlotsDay',
   '_lbCalSlotsPrune', '_lbCalSlotsProp', '_lbCalSlotsWired', '_lbCalSlotsSameUser',
   '_lbCalSlotsWithRecord', '_lbCalSlotsLost', '_lbCalSlotsAfter', 'lbCalSlotsDailyCheck', 'lbCalSyncTick', '_lbCalSyncAfterWrite'];
 
@@ -75,6 +75,23 @@ function make(opt = {}) {
   return { ctx, props, log, setNow: (v) => { nowMs = v; }, setLock: (v) => { lockOk = v; } };
 }
 const rec = (props) => JSON.parse(props.LB_CALSLOTS_COUNT || '{}');
+
+console.log('=== ⓪ 失敗の理由を残す（2026-11-13）===');
+{
+  const t = make({ slotsRes: 'UNKNOWN_SNAPSHOT' });
+  t.ctx.lbCalSyncTick();
+  ok('⓪-1 ★入口から：失敗したら理由を LB_CALSLOTS_LAST_ERR に残す', /^\d+\|UNKNOWN_SNAPSHOT\|25000$/.test(t.props.LB_CALSLOTS_LAST_ERR || ''), t.props.LB_CALSLOTS_LAST_ERR);
+  const e = make({ slotsThrow: true });
+  e.ctx.lbCalSyncTick();
+  ok('⓪-2 例外は THROW と文で残す', /^\d+\|THROW x\|25000$/.test(e.props.LB_CALSLOTS_LAST_ERR || ''), e.props.LB_CALSLOTS_LAST_ERR);
+  const g = make();
+  g.ctx.lbCalSyncTick();
+  ok('⓪-3 成功では書かない', !g.props.LB_CALSLOTS_LAST_ERR, g.props.LB_CALSLOTS_LAST_ERR);
+  const w = g.ctx._lbCalSlotsWhy('ERROR', 'Request failed for https://example.invalid/slots?k=abc returned code 500|x');
+  ok('⓪-4 URL を伏せ、区切り文字を消す', w.indexOf('example.invalid') < 0 && w.indexOf('<url>') >= 0 && w.indexOf('|') < 0, w);
+  ok('⓪-5 長さを切る', g.ctx._lbCalSlotsWhy('ERROR', 'a'.repeat(500)).length <= 86);
+  ok('⓪-6 undefined / null を区別する', g.ctx._lbCalSlotsWhy(undefined, '') === 'UNDEFINED' && g.ctx._lbCalSlotsWhy(null, '') === 'NULL');
+}
 
 console.log('=== ① 押し出す条件 ===');
 {

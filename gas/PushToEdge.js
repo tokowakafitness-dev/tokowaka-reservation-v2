@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-12a トレーナーの読み（名簿の見出し kana の列）を送る・カルテの AI 振り分けの日次点検（設計39 の続き）';
+var LB_EDGE_BUILD = '2026-11-13a 枠のすぐ押し出し（設計42）が失敗した理由を残す・トレーナーの読み・カルテの AI 振り分けの日次点検（設計39 の続き）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -2213,6 +2213,7 @@ var LB_CALSLOTS = {
   WIRED_PROP: 'LB_CALSLOTS_WIRED',           // 版|時刻（lbCalSyncTick が毎回書く＝配線の印）
   REC_ERR_PROP: 'LB_CALSLOTS_RECORD_ERROR',  // 時刻|BAD_JSON / TICK_NOT_VISIBLE（別のユーザー・トリガーの付け直し中・消失）/ USER_UNKNOWN
   LOST_PROP: 'LB_CALSLOTS_COUNT_LOST',       // 件数を書けなかった時刻（成功しても消さない）
+  LAST_ERR_PROP: 'LB_CALSLOTS_LAST_ERR',     // 時刻|理由|ms（最後の失敗。成功しても消さない＝原因を後から読める）
   BUDGET_MS: 30 * 60000,                     // 目標予算（厳密な上限ではない）
   SLOW_MS: 115000,                           // これを超えた1回は slow
   KEEP_DAYS: 3
@@ -2231,6 +2232,14 @@ function _lbCalSlotsShouldRun(r) {
 }
 
 // pushToEdgeSlots の戻り値の分類（純粋・ここに無い値は error）
+// 失敗の理由を短い文字にする（純粋）。例外の文は URL を伏せて切る（応答の本文や宛先を記録に残さない）
+function _lbCalSlotsWhy(res, thrown) {
+  if (thrown) return 'THROW ' + String(thrown).replace(/https?:\/\/[^\s"']+/g, '<url>').replace(/[|\r\n]+/g, ' ').slice(0, 80);
+  if (res === undefined) return 'UNDEFINED';
+  if (res === null) return 'NULL';
+  return String(res).replace(/[|\r\n]+/g, ' ').slice(0, 40);
+}
+
 function _lbCalSlotsClassify(res) {
   if (typeof res === 'number' && isFinite(res)) return 'sent';
   if (res === 'LOCK_SKIP') return 'lockSkip';
@@ -2401,10 +2410,16 @@ function _lbCalSlotsAfter(r, who) {
     }
     var t0 = Date.now();
     p.setProperty(LB_CALSLOTS.START_PROP, String(t0));
-    var res;
-    try { res = pushToEdgeSlots(); } catch (eP) { res = 'ERROR'; }
+    var res, thrown = '';
+    try { res = pushToEdgeSlots(); } catch (eP) { res = 'ERROR'; thrown = String((eP && eP.message) || eP); }
     var ms = Date.now() - t0;
     var kind = _lbCalSlotsClassify(res);
+    //   ★失敗の理由を残す（2026-11-13）。「error」だけでは、ロック待ちの後に送信で落ちたのか、
+    //     枠の作り直しが読めなかったのか（UNKNOWN_SNAPSHOT 等）を見分けられなかった。
+    //     成功で上書きされないよう別の Property に置く。URL は伏せ、長さを切る。
+    if (kind === 'error') {
+      try { p.setProperty(LB_CALSLOTS.LAST_ERR_PROP, Date.now() + '|' + _lbCalSlotsWhy(res, thrown) + '|' + ms); } catch (eW) {}
+    }
     var st2 = _lbCalSlotsWithRecord(Date.now(), function (day) {
       day[kind]++;
       day.usedMs += ms;

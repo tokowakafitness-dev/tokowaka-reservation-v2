@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-11-11a カレンダーが変わったら枠をすぐ押し出す（設計42）の記録を出勤枠の新しさに出す';
+var LB_AUDIT_BUILD = '2026-11-13a 出勤枠の新しさに、すぐ押し出しの最後の失敗の理由を出す（設計42）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -3252,6 +3252,8 @@ function slotsFreshnessText() {
   var re0 = String(_lbProp('LB_CALSLOTS_RECORD_ERROR') || ''), lo0 = Number(_lbProp('LB_CALSLOTS_COUNT_LOST') || 0);
   if (re0) out.push('   記録の異常: ' + when(Number(re0.split('|')[0])) + ' ' + (re0.split('|')[1] || ''));
   if (lo0) out.push('   件数を書けなかった最後: ' + when(lo0));
+  var le0 = String(_lbProp('LB_CALSLOTS_LAST_ERR') || '').split('|');
+  out.push('   最後の失敗の理由: ' + (le0[0] ? when(Number(le0[0])) + ' ' + (le0[1] || '?') + ' ' + (le0[2] || '?') + 'ms' : '記録なし（2026-11-13 より前の失敗は理由を残していません）'));
   out.push('');
 
   out.push('■ いまカレンダーを直したら、何分で反映されるか');

@@ -312,7 +312,7 @@ function addLog(at, result, o = {}) {
   ok('GW1 ★dailyHealthCheck が窓口（?karteai=1）を読み lbKarteAiDailyCheck の結果を add する', /lbKarteAiDailyCheck\(_edgeQuotaStatus\('\?karteai=1'\)\)/.test(fn) && /_step\('カルテのAI'\)/.test(fn));
   ok('GW2 窓口が読めないときも点検は続ける（catch で warn）', /karte_ai_check_fail/.test(fn));
   const builds = JSON.parse(readFileSync(join(HERE, 'expected-builds.json'), 'utf8'));
-  ok('GW3 版の印：LB_HEALTH_BUILD・LB_EDGE_BUILD が expected-builds.json と一致し、2026-11-12 の版', LB.includes(`var LB_HEALTH_BUILD = '${builds.LB_HEALTH_BUILD}'`) && PE.includes(`var LB_EDGE_BUILD = '${builds.LB_EDGE_BUILD}'`) && /^2026-11-12/.test(builds.LB_HEALTH_BUILD) && /^2026-11-12/.test(builds.LB_EDGE_BUILD));
+  ok('GW3 版の印：LB_HEALTH_BUILD・LB_EDGE_BUILD が expected-builds.json と一致し、2026-11-12 以降の版（後の変更で版を上げても落ちない）', LB.includes(`var LB_HEALTH_BUILD = '${builds.LB_HEALTH_BUILD}'`) && PE.includes(`var LB_EDGE_BUILD = '${builds.LB_EDGE_BUILD}'`) && builds.LB_HEALTH_BUILD.slice(0, 10) >= '2026-11-12' && builds.LB_EDGE_BUILD.slice(0, 10) >= '2026-11-12');
 }
 
 console.log(`karte-ai-kana-health: ${pass} 合格 / ${fail} 不合格`);
