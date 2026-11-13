@@ -132,6 +132,8 @@ async function ingest(rows) {
 
 // ================= K3 k_aiDraft：読みを伏せて送る（入口から）=================
 db.exec(`INSERT INTO customers (customer_id, name, kana, line_user_id, default_trainer_id, created_at, updated_at) VALUES ('C1', '甲野 一郎', 'コウノ イチロウ', 'U_C1', 'T1', 1, 1)`);
+//   設計44：AI へ送るのは録音・AI の同意が有効な会員だけ。C1 は同意済み（同意の関門そのものの検査は member-consent.test.js の G 節）
+db.exec(`INSERT INTO karte_consent_rec (customer_id, state, changed_at, method, recorded_by, doc_ver) VALUES ('C1', 'agreed', 1, 'line', '@member', 'rec_ai-2026-11-12')`);
 const nowMs = Date.now();
 db.exec(`INSERT OR REPLACE INTO sync_state (key, synced_at, rows, ok) VALUES ('customers', ${nowMs}, 1, 1), ('trainers', ${nowMs}, 3, 1), ('reservations', ${nowMs}, 0, 1)`);
 const calls = [];

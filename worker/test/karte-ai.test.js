@@ -62,6 +62,8 @@ async function token(sub, iatAge = 0) {
 // ---------------- 見本（架空）----------------
 db.exec(`INSERT INTO trainers (trainer_id, name, line_user_id, role, active) VALUES ('T1', '乙川 二郎', 'U_T1', 'trainer', 1), ('T2', '丁村 三郎', 'U_T2', 'trainer', 1), ('OWN', '店主', 'U_OWN', 'owner', 1)`);
 db.exec(`INSERT INTO customers (customer_id, name, kana, line_user_id, default_trainer_id, created_at, updated_at) VALUES ('C1', '甲野 一郎', 'コウノ イチロウ', 'U_C1', 'T1', 1, 1)`);
+//   設計44：AI へ送るのは録音・AI の同意が有効な会員だけ。C1 は同意済み（同意の関門そのものの検査は member-consent.test.js の G 節）
+db.exec(`INSERT INTO karte_consent_rec (customer_id, state, changed_at, method, recorded_by, doc_ver) VALUES ('C1', 'agreed', 1, 'line', '@member', 'rec_ai-2026-11-12')`);
 const now = Date.now();
 db.exec(`INSERT INTO sync_state (key, synced_at, rows, ok) VALUES ('customers', ${now}, 1, 1), ('trainers', ${now}, 3, 1), ('reservations', ${now}, 0, 1)`);
 

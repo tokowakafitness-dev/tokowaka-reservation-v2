@@ -5,7 +5,9 @@
 //
 //   ここで守ること（I76）
 //     ① 切替（KARTE_AI_DRAFT・厳密一致・既定 off）と鍵（ANTHROPIC_API_KEY）が無ければ外へ送らない・数えない
-//     ② 共有の範囲（canSeeKarteShared）③ 1日の回数を API の前に数える（changes===1 だけ成功）
+//     ② 共有の範囲（canSeeKarteShared）②-2 ★その会員の録音・AI の同意（karte_consent_rec が agreed かつ有効な版・設計44）。
+//        無い・撤回・古い版は 403 NO_CONSENT、読めなければ 503（どちらも送らない・数えない）
+//     ③ 1日の回数を API の前に数える（changes===1 だけ成功）
 //     ④ 送る前に氏名・連絡先を伏せる（known も）⑤ 出力を検証（数字は根拠の抜き出しの中に在るものだけ・健康語は caution へ）
 //     ⑥ ★文字起こし・伏せた文・Anthropic の生の応答を D1・KV・console・エラー文・応答に残さない。
 //        返すのは検証・再マスクした draft だけ（当該の HTTP 応答は no-store）。記録は回数・時間・文字数・結果・版の印だけ
@@ -17,8 +19,9 @@
 
 import { aiDraftOn, canSeeKarteShared, logAccess } from './karte.js';
 import { normalizeExerciseName } from '../lib/karte-exercises.js';
+import { readRecRow, recConsentValid } from './member-consent.js';
 
-export const AI_BUILD = '2026-11-12b 設計39 トレーナーの読み（かな）を伏せる・確かめたセット数を記録';
+export const AI_BUILD = '2026-11-13a 設計39＋設計44 録音・AI の同意がある会員だけ送る';
 
 export const AI_LIMITS = {
   BODY_BYTES: 128 * 1024,   // このパス（/karte/ai-draft）だけ。3万字×3バイト＋余裕
@@ -287,9 +290,12 @@ export function validateDraft(raw, maskedSquashed, mask) {
 }
 
 // ---------------------------------------------------------------- 記録（中身なし・best effort）
-const ACCESS_OF = { ok: 'ok', off: 'denied', no_key: 'denied', daily_limit: 'denied', too_long: 'denied', bad_request: 'denied', not_found: 'not_found' };
+const ACCESS_OF = { ok: 'ok', off: 'denied', no_key: 'denied', daily_limit: 'denied', too_long: 'denied', bad_request: 'denied', not_found: 'not_found',
+                    no_consent: 'no_consent', consent_error: 'error' };
+//   ★karte_ai_log の result は CHECK（0030）で新しい値を入れられない（0018 の教訓で作り直さない）＝同意の2つは access_log にだけ残す（設計44 4-5）
+const NOT_IN_AI_LOG = ['no_consent', 'consent_error'];
 async function record(env, who, cid, row) {
-  try {
+  if (NOT_IN_AI_LOG.indexOf(row.result) < 0) try {
     await env.DB.prepare(
       `INSERT INTO karte_ai_log (at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, n_sets, build)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -326,6 +332,10 @@ async function inner(c, st) {
   catch (_) { st.result = 'bad_request'; return fail('BAD_REQUEST', 400, 'known'); }
   //   ② 共有の範囲
   if (!cid || !(await canSeeKarteShared(env, who, cid))) { st.result = 'not_found'; return fail('NOT_FOUND', 404); }
+  //   ②-2 ★お客様の録音・AI の同意（設計44・I76-8）。回数を数える前＝同意が無ければ費用も回数も使わない。判定できなければ送らない
+  let rec;
+  try { rec = await readRecRow(env, cid); } catch (_) { st.result = 'consent_error'; return fail('AI_UNAVAILABLE', 503, 'CONSENT'); }
+  if (!recConsentValid(rec)) { st.result = 'no_consent'; return fail('NO_CONSENT', 403); }
   //   ③ 1日の回数（API の前・失敗しても戻さない）。changes===1 だけが成功
   let changes = null;
   try {

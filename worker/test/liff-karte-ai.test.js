@@ -54,13 +54,15 @@ function boot(o = {}, srcOverride) {
   w.logs = [];
   ['log', 'info', 'warn', 'error', 'debug'].forEach((k) => { w.console[k] = (...a) => w.logs.push(a.map(String).join(' ')); });
   w.liff = { getIDToken: () => w.idToken, logout: () => {} };
-  w.cfg = Object.assign({ ai: true, aiReply: null, hold: null }, o.cfg || {});
+  w.cfg = Object.assign({ ai: true, aiConsent: 'agreed', aiReply: null, hold: null }, o.cfg || {});
   w.fetch = async (url, opt) => {
     const body = JSON.parse(opt.body);
     sent.push({ url: String(url), body });
     const c = w.cfg;
     let r;
-    if (body.action === 'k_training') r = { success: true, karteSchema: 33, aiDraft: c.ai, sessions: [], best: [] };
+    if (body.action === 'k_training') r = Object.assign({ success: true, karteSchema: 33, aiDraft: c.ai, sessions: [], best: [] }, c.aiConsent === undefined ? {} : { aiConsent: c.aiConsent });
+    else if (body.action === 'k_summary' && c.summary) r = c.summary;
+    else if (body.action === 'k_contract' && c.summary) r = { success: true, contracts: [] };
     else if (body.action === 'k_exercises') r = { success: true, karteSchema: 33, exercises: [{ name: 'ベンチプレス', part: 'chest' }], truncated: false };
     else if (body.action === 'k_aiDraft') {
       if (c.hold) await c.hold;
@@ -100,6 +102,12 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   await openImport(b.w);
   const ab = btn(R(b.w), 'AIで振り分ける');
   ok('L1-2 aiDraft が真なら「読み取る」の下にボタン・外部へ送る案内', !!ab && !!btn(R(b.w), '読み取る') && R(b.w).textContent.includes('外部（Anthropic）へ送ります') && R(b.w).textContent.includes('聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります'));
+  //   設計44：お客様の録音・AI の同意が無い・確認できない・古い Worker（aiConsent が無い）はボタンを出さない
+  for (const [label, v, want] of [['none', 'none', '同意していません'], ['unknown', 'unknown', '確認できませんでした'], ['無い（古い Worker）', undefined, '確認できませんでした']]) {
+    const x = boot({ cfg: { aiConsent: v } });
+    await openImport(x.w);
+    ok('L1-4 ★aiConsent が' + label + 'なら AI のボタンを出さず、理由の文と「読み取る」', !btn(R(x.w), 'AIで振り分ける') && !!btn(R(x.w), '読み取る') && R(x.w).textContent.includes(want));
+  }
   ab.click(); await settle();
   ok('L1-3 空なら送らない', aiSends(b.sent).length === 0 && R(b.w).textContent.includes('文字起こしを貼ってください'));
 }
@@ -261,6 +269,26 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   ok('L4-1 ★許可外の決定（宛先の無い「足す」）が残ると取り込み全体を止め、下書きを変えない', w.localStorage.getItem(DKEY) === before && R(w).textContent.includes('この選び方では入れられません'), R(w).textContent.slice(0, 300));
   ok('L4-2 console に本文を出さない', !w.logs.join('\n').includes(SECRET) && !w.logs.join('\n').includes('スカル'));
   void prev;
+}
+
+// ================= L9 契約・会員タブの「録音と AI の記録作成の同意」（設計44）=================
+{
+  const SUM = (rc, hc) => ({ success: true, karteSchema: 33, customer: { customerId: 'C1', name: '会員', trainerId: 'T1' }, assigned: false, profile: null,
+    consent: hc || { state: 'agreed', changedAt: Date.UTC(2026, 10, 13), method: 'line', byMember: true }, recConsent: rc, safetyBrief: null, lastNote: null, nextReservation: null });
+  const a = boot({ cfg: { summary: SUM({ state: 'agreed', changedAt: Date.UTC(2026, 10, 13), byMember: true }) } });
+  a.w.KarteUI.open('C1', '会員', 'contract'); await settle();
+  const row = R(a.w).querySelector('.k-reccons');
+  ok('L9-1 録音と AI の同意の行：同意済み（会員画面）・健康情報も（会員画面）', !!row && row.textContent.includes('同意済み') && row.textContent.includes('（会員画面）') && R(a.w).textContent.includes('健康情報の取り扱いの同意'), row && row.textContent);
+  const rb = [...row.querySelectorAll('button')].find((b) => b.textContent.indexOf('撤回を記録') === 0);
+  rb.click(); await settle();
+  const sv = a.sent.filter((x) => x.body.action === 'k_saveConsent');
+  ok('L9-2 ★撤回を記録：確かめてから k_saveConsent に kind:rec_ai・state:revoked だけ（同意は送らない）', a.w.confirms >= 1 && sv.length === 1 && sv[0].body.kind === 'rec_ai' && sv[0].body.state === 'revoked' && !('method' in sv[0].body), JSON.stringify(sv.map((x) => x.body)));
+  for (const [label, rc, want] of [['未回答', { state: 'none' }, '未回答'], ['撤回済み', { state: 'revoked', changedAt: 1 }, '撤回済み'], ['読めない', { state: 'unknown' }, '確認できませんでした']]) {
+    const b = boot({ cfg: { summary: SUM(rc) } });
+    b.w.KarteUI.open('C1', '会員', 'contract'); await settle();
+    const r2 = R(b.w).querySelector('.k-reccons');
+    ok('L9-3 ' + label + 'なら「' + want + '」・撤回のボタンも同意のボタンも出さない', !!r2 && r2.textContent.includes(want) && r2.querySelectorAll('button').length === 0);
+  }
 }
 
 console.log(`liff-karte-ai: ${pass} passed, ${fail} failed`);

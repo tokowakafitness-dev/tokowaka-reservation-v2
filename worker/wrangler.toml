@@ -70,6 +70,16 @@ LB_D1_REMAIN_ALL = "1"
 #   トレーナーの「お客様の見え方」（k_memberPreview）と「お客様へ」の保存はこれに止められない（KARTE の守りだけ）。
 MEMBER_KARTE = "off"
 
+# ---- 会員画面の同意（カルテの健康情報・写真／録音と AI・設計44・2026-11-13）-----------------
+#   "off"（既定）… 会員に同意を勧めない・新しい同意を受けない。録音・AI に同意済みの本人だけ「同意の内容」から撤回できる
+#   "allow"     … MEMBER_CONSENT_TRAINERS に会員の担当（default_trainer_id）が載っている会員にだけ勧める
+#   "on"        … 全会員に勧める（★全トレーナーへ広げる前に弁護士の確認・関門③・オーナー承認）
+#   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる
+#   ★AI 振り分け（k_aiDraft）は、この切替に関係なく「その会員の録音・AI の同意」が有効なときだけ通る
+MEMBER_CONSENT = "off"
+#   allow のときの担当の trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
+MEMBER_CONSENT_TRAINERS = ""
+
 # ---- トレーニングの記録の新しい項目（補助・無理やり・ドロップ・数字の無い種目）の受付（設計38）----
 #   "off"（既定）… 新しい鍵を含む k_addTraining は 409 TRAINING_EXT_OFF。旧形は今どおり保存。karteSchema は 32
 #   "allow"     … KARTE_TRAINING_EXT_TRAINERS に載ったトレーナーだけ "on" と同じ。ほかは "off" と同じ
@@ -86,7 +96,8 @@ KARTE_TRAINING_EXT_TRAINERS = "A"
 #   "on"        … 全トレーナー
 #   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる
 #   ★鍵は Worker の Secret ANTHROPIC_API_KEY（オーナーが登録・ここに書かない）。鍵が無ければ off と同じ
-#   ★お客様の同意（録音・AI・国外の事業者・全文を残さない）と Anthropic の契約条件の確認が済むまで allow/on にしない（I76-6）
+#   ★お客様の同意（録音・AI・国外の事業者・全文を残さない）と Anthropic の契約条件の確認が済むまで allow/on にしない（I76-7）
+#   ★会員ごとの同意（設計44・karte_consent_rec）が無い会員は allow/on でも送らない（403 NO_CONSENT・I76-8）
 KARTE_AI_DRAFT = "off"
 #   allow のときのトレーナーの trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
 KARTE_AI_DRAFT_TRAINERS = ""

@@ -8,6 +8,7 @@
 // 日時はすべて日本時間で扱う。ここを取り違えると、前日17時の締め切りや
 // 「M月d日(曜)」の表示が1日ずれる。
 
+import { startRecRead, memberConsentFlag } from './member-consent.js';
 import { canSeeCustomer, customerScopeSql } from '../perms.js';
 //   ★比較（shadow）は本体のD1処理が全部終わってから起動する（関門③の指摘）。
 //     readHome の中で起動すると、handler の Promise.all がまだ終わっていないため
@@ -71,6 +72,8 @@ export async function compatMemberStatus({ env, who, ctx }) {
   }
   if (who.role !== 'customer') return { verified: false };
 
+  //   会員画面の同意の起動の印のため、録音・AI の同意の行を並べて読み始める（設計44・切替 on のときは読まない・失敗しても投げない）
+  const recP = startRecRead(env, who.customerId);
   const [cust, home] = await Promise.all([
     env.DB.prepare(
       `SELECT customer_id, name, contract_status, contract_type, default_trainer_id
@@ -101,6 +104,8 @@ export async function compatMemberStatus({ env, who, ctx }) {
     home,
     //   ★会員画面 C2 のタブを出すか（設計35）。真偽値だけ・D1 を読まない。c_boot の memberStatus にもそのまま乗る
     memberKarte: String((env && env.MEMBER_KARTE) || '') === 'on',
+    //   ★会員画面の同意（設計44）：true／false／'unknown'。画面は true か 'unknown' のときだけ m_myConsent に聞く
+    memberConsent: await memberConsentFlag(env, cust.default_trainer_id, recP),
   };
 }
 

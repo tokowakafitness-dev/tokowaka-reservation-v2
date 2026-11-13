@@ -27,6 +27,7 @@ import { KARTE_HANDLERS, isKarteWrite, KARTE_LIMITS } from './routes/karte.js';
 import { KARTE_AI_HANDLERS, AI_LIMITS, AI_PATH } from './routes/karte-ai.js';
 import { handleBodyWrite, handleBodyFreeze, handleBodySeries } from './routes/body.js';
 import { compatMyKarte, memberKarteOn } from './routes/member-karte.js';
+import { MEMBER_CONSENT_HANDLERS, isMemberAction, isMemberWrite } from './routes/member-consent.js';
 import { compatMemberStatus, compatTrainers, compatTrainerReservations,
          compatCustomerHome, compatRecurringList, compatBookingOptions,
          compatBoot, compatCustomerCard, rolesTooOld,
@@ -34,7 +35,7 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
 
 // 版の印（/health に載せる・認証不要・個人情報なし）。★Worker を変えて出すたびに上げる。
 //   無いと「反映したつもりで入っていない」を外から見分けられない（2026-11-07・設計38 の設置で気づいた）
-export const WORKER_BUILD = '2026-11-13c 設計43 書き込みの直後の枠を写しの読み始めの時刻で確かめる（slotsAfter・画面は既定 off）';
+export const WORKER_BUILD = '2026-11-13d 設計44 会員画面の同意（MEMBER_CONSENT 既定 off）・AI 振り分けは録音・AI の同意がある会員だけ／設計43 書き込みの直後の枠（slotsAfter・画面は既定 off）';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
@@ -77,6 +78,8 @@ const HANDLERS = {
   ...KARTE_HANDLERS,
   // 録音の文字起こしの AI 下書き（設計39）。本文はパス /karte/ai-draft だけ128KB。何も保存しない
   ...KARTE_AI_HANDLERS,
+  // 会員画面の同意（設計44）。m_＝Worker だけの会員の窓口（GAS に対応が無い・FALLBACK を返さない）
+  ...MEMBER_CONSENT_HANDLERS,
 };
 
 function corsHeaders(origin) {
@@ -263,6 +266,11 @@ export default {
     if (isKarte && isKarteWrite(action) && !ALLOWED_ORIGINS.includes(origin)) {
       return json({ success: false, code: 'FORBIDDEN', detail: 'ORIGIN' }, origin, 403);
     }
+    //   ★会員の同意の書き込み（設計44）も Origin の完全一致と iat の新しさを掛ける（他サイト・盗まれた古いトークンから同意を書かせない）
+    const memberWrite = isMemberWrite(action);
+    if (memberWrite && !ALLOWED_ORIGINS.includes(origin)) {
+      return json({ success: false, code: 'FORBIDDEN', detail: 'ORIGIN' }, origin, 403);
+    }
 
     // ① 署名検証
     const auth = await verifyIdToken(body.idToken, env);
@@ -273,7 +281,7 @@ export default {
     }
     //   ★カルテの書き込みは ID トークンの発行時刻が新しいものだけ（盗まれたトークンの使い回しを狭める・設計28 4-5）
     //     iat がある・未来60秒以内・発行から10分以内。画面は保存の直前に取り直す
-    if (isKarte && isKarteWrite(action)) {
+    if ((isKarte && isKarteWrite(action)) || memberWrite) {
       const iat = auth.claims && auth.claims.iat;
       const nowS = Math.floor(Date.now() / 1000);
       if (typeof iat !== 'number' || iat > nowS + 60 || nowS - iat > KARTE_LIMITS.TOKEN_MAX_AGE_S) {
@@ -301,8 +309,10 @@ export default {
     //
     //   ★guest も落とす。「まだ登録していない」も役割の判定だから。
     //   ★カルテ（k_）にも掛ける（設計28 4-1）。k_ には GAS へ落とす道が無いので、古ければ何も返さず403
-    if (/^(c_|k_)/.test(action) && await rolesTooOld(env)) {
+    //   ★m_（会員の同意・設計44）にも掛ける。GAS に対応が無いので FALLBACK にせず 503（関門① 1周目 重大2）
+    if (/^(c_|k_|m_)/.test(action) && await rolesTooOld(env)) {
       if (isKarte) return json({ success: false, code: 'FORBIDDEN', detail: 'ROLES_STALE' }, origin, 403);
+      if (isMemberAction(action)) return json({ success: false, code: 'ROLES_STALE' }, origin, 503);
       return json({ success: false, code: 'FALLBACK', detail: 'ROLES_STALE' }, origin, 200,
                   { 'X-Worker-Ms': String(Date.now() - t0) });
     }
@@ -350,7 +360,7 @@ export default {
       result = await handler({ body, env, ctx, who, lineUserId: auth.lineUserId });
     } catch (e) {
       //   ★k_aiDraft は message を出さない（文字起こし・AI の文が乗り得る・設計39 改訂1 重大3）
-      if (action === 'k_aiDraft') console.error('k_aiDraft', 'INTERNAL');
+      if (action === 'k_aiDraft' || isMemberAction(action)) console.error(action, 'INTERNAL');
       else console.error(action, e && e.message);
       return json({ success: false, code: 'INTERNAL' }, origin, 500);
     }

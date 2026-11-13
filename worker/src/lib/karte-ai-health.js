@@ -6,6 +6,7 @@
 //   ★返さないもの：trainer_id・氏名・読み・鍵の値・中身（karte_ai_log はもともと中身を持たない・I76）
 //   ★読めないときは table:'error'・数を出さない（0件と答えない＝MODEL §0）
 import { aiDailyMax, AI_BUILD, isKanaName } from '../routes/karte-ai.js';
+import { CONSENT_VALID_REC } from './consent-docs.js';
 
 const H = 3600000;
 function jstDayStart(ms) {
@@ -55,6 +56,18 @@ export async function buildKarteAiHealth(env, nowMs) {
       limitHit: (byResult.daily_limit || 0) > 0 || usage >= out.dailyMax });
   } catch (_) {
     out.table = 'error';
+  }
+  //   ★設計44：同意が無くて止めた回数（倒れた回数）と、有効な同意のある会員の数（母数）。数だけ・読めなければ error（0 と言わない）
+  try {
+    const nc = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM karte_access_log WHERE action = 'k_aiDraft' AND result = 'no_consent' AND at >= ? AND at < ?`
+    ).bind(start, end).first();
+    const ra = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM karte_consent_rec WHERE state = 'agreed' AND doc_ver IN (${CONSENT_VALID_REC.map(() => '?').join(',')})`
+    ).bind(...CONSENT_VALID_REC).first();
+    out.consent = { table: 'ok', noConsent: Number((nc && nc.n) || 0), recAgreed: Number((ra && ra.n) || 0) };
+  } catch (_) {
+    out.consent = { table: 'error' };
   }
   try {
     //   ★「未登録」は伏せる処理と同じ判定（isKanaName）で数える＝伏せる処理が使わない値（数字・英字・長すぎ）も未登録（関門② 2周目）。

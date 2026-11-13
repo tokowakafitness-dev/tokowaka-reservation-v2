@@ -781,7 +781,8 @@
     var row = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;' });
     var state0 = consent ? consent.state : 'none';
     function rec(stateTo, method) {
-      var lbl = stateTo === 'agreed' ? '同意を記録しますか？（' + (method === 'paper' ? '紙の同意書' : 'LINE') + '）' : '同意の撤回を記録しますか？\n★記録済みの健康情報は削除され、元に戻せません。';
+      var lbl = stateTo === 'agreed' ? '同意を記録しますか？（' + (method === 'paper' ? '紙の同意書' : 'LINE') + '）'
+        : '同意の撤回を記録しますか？\n★記録済みの健康情報は削除され、元に戻せません。' + (consent && consent.byMember ? '\n（会員画面でご本人が同意した記録です。ご本人の申し出を確かめてから記録してください）' : '');
       if (!window.confirm(lbl)) return;
       kWrite('k_saveConsent', { customerId: cur.customerId, state: stateTo, method: method }, newReqId()).then(function (r) {
         if (!r || !r.success) { window.alert(errText(r)); return; }
@@ -795,6 +796,28 @@
       row.appendChild(el('button', { class: 'k-btn out small k-danger', text: '撤回を記録', onclick: function () { rec('revoked', null); } }));
     }
     return row;
+  }
+
+  //   録音と AI の記録作成の同意（設計44）。表示と「撤回を記録」だけ（同意は会員本人が会員画面で。トレーナーは記録できない）
+  function recConsentRow(rc) {
+    var s = rc && rc.state ? rc.state : 'unknown';
+    var at = rc && typeof rc.changedAt === 'number' ? (function (t) { return (t.getUTCMonth() + 1) + '/' + t.getUTCDate(); })(new Date(rc.changedAt + 9 * 3600000)) : '';
+    var txt = s === 'agreed' ? '同意済み ' + at + (rc.byMember ? '（会員画面）' : '') : (s === 'revoked' ? '撤回済み ' + at : (s === 'none' ? '未回答（会員画面で同意できます）' : '確認できませんでした'));
+    var box = el('div', { class: 'k-reccons', style: 'margin-top:12px;' }, [
+      el('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;gap:8px;' }, [
+        el('div', { style: 'font-size:14px;font-weight:700;', text: '録音と AI の記録作成の同意' }),
+        el('div', { style: 'font-size:12px;color:' + (s === 'agreed' ? 'var(--k-acc)' : 'var(--k-warn)') + ';', text: txt })])]);
+    if (s === 'agreed') {
+      box.appendChild(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;' }, [
+        el('button', { class: 'k-btn out small k-danger', text: '撤回を記録（店頭・セッション中の申し出）', onclick: function () {
+          if (!window.confirm('録音と AI の記録作成への同意の撤回を記録しますか？\nこのお客様には、次から AI の振り分けを使えなくなります（もう一度同意できるのは、ご本人が会員画面からだけです）。')) return;
+          kWrite('k_saveConsent', { customerId: cur.customerId, kind: 'rec_ai', state: 'revoked' }, newReqId()).then(function (r) {
+            if (!r || !r.success) { window.alert(errText(r)); return; }
+            open(cur.customerId, cur.name, cur.tab, null, 'replace');
+          });
+        } })]));
+    }
+    return box;
   }
 
   function field(lbl, val, type, attrs) {
@@ -1907,6 +1930,7 @@
       if (!r || !r.success) { cur.wantDayView = null; box.appendChild(msg(errText(r), true)); return; }
       cur.trSchema = r.karteSchema;   // 指導メモのタグを送ってよいか（今日の記録の中の指導メモ）
       cur.aiDraft = r.aiDraft === true;   // 設計39：AI の振り分けのボタンを出すか（Worker の切替が開き鍵があるときだけ真）
+      cur.aiConsent = typeof r.aiConsent === 'string' ? r.aiConsent : 'unknown';   // 設計44：その会員の録音・AI の同意（画面の補助。関門は Worker）
       var sessions = r.sessions || [];
       //   ★今日の記録は専用の画面（2026-11-05 モックどおり）。読み直し後の復元・戻る/進むでも専用画面を開き直す
       if (draft && (draft.kind === 'training' || (draft.kind === 'sub' && draft.sub === 'trform'))) { trainingSub(box, sessions, draft.navMode, draft.kind === 'training' ? draft.ex : null); return; }
@@ -2612,6 +2636,13 @@
       }
       bar.appendChild(el('button', { type: 'button', class: 'k-btn k-impread', text: '読み取る', onclick: read }));
       if (!cur.aiDraft) { bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: 'この画面からは何も送りません（端末の中で読み取ります）' })); return; }
+      //   設計44：お客様の録音・AI の同意が無ければボタンを出さない（Worker でも 403 で止まる）
+      if (cur.aiConsent !== 'agreed') {
+        bar.appendChild(el('div', { class: 'k-sub k-noaiconsent', style: 'text-align:center;margin-top:8px;', text: cur.aiConsent === 'none'
+          ? 'このお客様は録音と AI の利用に同意していません（会員画面の「同意の内容」から同意できます）。「読み取る」は使えます。'
+          : '録音と AI の利用の同意を確認できませんでした。「読み取る」は使えます。' }));
+        return;
+      }
       //   設計39：AI で振り分ける（Worker の切替が開き鍵があるときだけ）。送信中は押せない
       var ab = el('button', { type: 'button', class: 'k-btn out k-impai', style: 'margin-top:8px;', text: aiBusy ? '振り分けています（1分ほど）' : 'AIで振り分ける（録音の文字起こし）', onclick: aiSend });
       if (aiBusy) { ab.disabled = true; ab.setAttribute('aria-disabled', 'true'); }
@@ -3559,12 +3590,13 @@
       var adm = el('div', { class: 'k-admin' }, [el('div', { class: 'k-h', style: 'margin:0;color:var(--k-sub);', text: '管理（ときどき使う記録）' })]);
       var cs = sm.consent ? sm.consent.state : 'none';
       var cAt = sm.consent && typeof sm.consent.changedAt === 'number' ? (function (t) { return (t.getUTCMonth() + 1) + '/' + t.getUTCDate(); })(new Date(sm.consent.changedAt + 9 * 3600000)) : '';
-      var cHow = sm.consent && sm.consent.method === 'paper' ? '（紙）' : (sm.consent && sm.consent.method === 'line' ? '（LINE）' : '');
+      var cHow = sm.consent && sm.consent.byMember ? '（会員画面）' : (sm.consent && sm.consent.method === 'paper' ? '（紙）' : (sm.consent && sm.consent.method === 'line' ? '（LINE）' : ''));
       adm.appendChild(el('div', {}, [
         el('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;gap:8px;' }, [
           el('div', { style: 'font-size:14px;font-weight:700;', text: '健康情報の取り扱いの同意' }),
           el('div', { style: 'font-size:12px;color:' + (cs === 'agreed' ? 'var(--k-acc)' : 'var(--k-warn)') + ';', text: cs === 'agreed' ? '同意済み ' + cAt + cHow : (cs === 'revoked' ? '撤回済み ' + cAt : '同意待ち') })]),
         consentRow(sm.consent)]));
+      adm.appendChild(recConsentRow(sm.recConsent));
       if (sm.assigned) adm.appendChild(membershipCard(draftFor(draft, 'membership') ? draft.data : null));
       box.appendChild(adm);
     });

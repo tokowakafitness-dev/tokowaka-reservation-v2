@@ -43,6 +43,10 @@ const TABLE = {
   'c_customerCard':        ['trainer'],
   //   会員が自分のカルテを読む（設計35）。customer だけ。本人は who.customerId だけで決め、body を読まない
   'c_myKarte':             ['customer'],
+  //   会員画面の同意（設計44）。customer だけ。本人は who.customerId だけで決め、body から顧客を指す値を読まない。
+  //   m_＝Worker だけの窓口（GAS へ落とさない・EDGE_READS に掛からない・役割が古ければ 503）。m_saveConsent は Origin・iat の守り
+  'm_myConsent':           ['customer'],
+  'm_saveConsent':         ['customer'],
   'myReservations':    ['customer'],
   'book':              ['customer', 'trainer', 'owner'],
   'cancelReservation': ['customer', 'trainer', 'owner'],

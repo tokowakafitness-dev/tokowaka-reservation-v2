@@ -130,6 +130,21 @@
   .mk-tab.on { color:var(--pri); font-weight:700; border-top-color:var(--pri); }
   body.mk-on #app { padding-bottom:calc(64px + env(safe-area-inset-bottom)); }
   .mk-card { display:flex; flex-direction:column; gap:8px; }
+  /* 会員画面の同意（設計44）。下から出る1枚。本文は読みやすさ優先（14px・行間1.8）。チェックは行全体を押せる（48px） */
+  .mc-sheet { position:fixed; inset:0; z-index:50; background:rgba(28,35,33,.45); display:flex; align-items:flex-end; justify-content:center; }
+  .mc-sheet[hidden] { display:none; }
+  .mc-panel { width:100%; max-width:480px; max-height:88vh; overflow-y:auto; background:#fff; border-radius:16px 16px 0 0; padding:18px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .mc-h { font-size:17px; font-weight:700; margin-bottom:6px; }
+  .mc-lead { color:var(--sub); font-size:13px; line-height:1.7; margin:4px 0 8px; }
+  .mc-doc { border:1px solid var(--card-line); border-radius:12px; padding:12px; margin-top:12px; }
+  .mc-dt { font-weight:700; font-size:15px; margin-bottom:4px; }
+  .mc-p { font-size:14px; line-height:1.8; margin:6px 0; }
+  .mc-check { display:flex; align-items:center; gap:10px; min-height:48px; margin-top:8px; padding:8px 10px; border-radius:10px; background:var(--pri-l); font-weight:700; cursor:pointer; }
+  .mc-check input { width:22px; height:22px; flex:none; margin:0; }
+  .mc-state { font-size:13px; font-weight:700; color:var(--warn); margin-top:6px; }
+  .mc-state.ok { color:var(--ok); }
+  .mc-msg { color:var(--warn); font-size:13px; margin:10px 0 0; }
+  body.mc-open { overflow:hidden; }
   .mk-hrow { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .mk-h { font-size:15px; font-weight:700; color:var(--ink); min-width:0; }
   .mk-link { flex:none; min-height:44px; padding:0 0 0 8px; border:0; background:transparent; color:var(--pri); font-size:13px; font-family:inherit; white-space:nowrap; cursor:pointer; }
@@ -274,10 +289,15 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     <button id="homeReserve" class="btn btn-main" data-i18n="home_reserve">予約する</button>
     <div class="card mk-card" id="homeNext" hidden></div>
     <button id="homeMyRes" class="mrow" type="button"><span data-i18n="home_myres">予約の確認・変更</span><span class="go">›</span></button>
+    <!-- 会員画面の同意の入口（設計44・memberConsent が true／'unknown' で、同意の状態が読めたときだけ） -->
+    <button id="homeConsent" class="mrow" type="button" hidden><span data-i18n="mc_entry">同意の内容（カルテ・録音）</span><span class="go">›</span></button>
     <div id="homeKarte" hidden></div>
     <div class="sect-h" data-i18n="home_balance">ご利用状況</div>
     <div class="card" id="homeInfo"></div>
   </div>
+
+  <!-- 会員画面の同意（設計44）。画面ではなく上に重ねる1枚（戻るの履歴に積まない）。中身は _mcOpen が文字として入れる -->
+  <div id="mcSheet" class="mc-sheet" hidden></div>
 
   <div id="s-trainer" class="screen" hidden>
     <div class="mhead"><button id="toHome" data-back class="mback" type="button" data-i18n-aria="back_home" aria-label="← ホームに戻る">←</button><div class="mtt" data-i18n="home_reserve">予約する</div></div>
@@ -474,6 +494,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_tab_home:'概要', mk_tab_body:'体組成', mk_tab_training:'トレーニング', mk_tab_notes:'指導の履歴', mk_tab_contract:'契約', mk_tabs_aria:'会員メニュー', mk_back:'概要に戻る',
       mk_next_title:'次回のご予約', mk_next_trainer:'担当 {name}', mk_next_more:'このあと {dates} にもご予約があります',
       mk_unavail:'いまは表示できません。時間をおいて開き直してください。',
+      mc_entry:'同意の内容（カルテ・録音）', mc_ask_title:'カルテと録音についてのお願い', mc_ask_lead:'内容をお読みいただき、同意いただけるものにチェックを入れて「送る」を押してください。どちらも任意です。片方だけでもかまいません。',
+      mc_all_title:'同意の内容', mc_ja_only:'', mc_send:'送る', mc_later:'あとで', mc_close:'閉じる',
+      mc_state_agreed:'同意済み（{d}）', mc_state_revoked:'撤回済み（{d}）', mc_state_none:'まだ同意していません',
+      mc_state_old:'以前の内容に同意済み（{d}）。いまの内容への同意がまだです', mc_reagree:'いまの内容に同意し直す場合は、下にチェックを入れて「送る」を押してください。',
+      mc_revoke:'録音と AI の利用への同意を撤回する', mc_revoke_confirm:'録音と AI を使った記録の作成への同意を撤回しますか？\n撤回すると、次のセッションから録音しません。',
+      mc_health_store:'カルテの健康情報・写真の同意の撤回は、店舗までお申し出ください。', mc_err_send:'送れませんでした。もう一度押してください。', mc_err_reopen:'ログインの有効期限が切れました。画面を開き直してから、もう一度お試しください。',
       mk_goal_title:'目標と進み具合', mk_to_body:'体組成へ ›', mk_now:'いま', mk_target:'目標', mk_deadline:'期日', mk_days_left:'あと{n}日', mk_days_over:'期日を過ぎました', mk_goal_unset:'目標はまだ決まっていません。担当トレーナーと決めましょう。', mk_ring_aria:'目標まで{p}',
       mk_last_note:'直近の指導（{date}）', mk_to_notes:'指導の履歴へ ›', mk_todo_n:'次回までに {n}つ',
       mk_progress_title:'目標までの進み具合', mk_weight_goal:'体重 {w}kg（{d}まで）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'いま {now}kg ／ あと {rest}kg', mk_since_join:'入会から {v}kg',
@@ -565,6 +591,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_tab_home:'Overview', mk_tab_body:'Body', mk_tab_training:'Training', mk_tab_notes:'Coaching', mk_tab_contract:'Plan', mk_tabs_aria:'Member menu', mk_back:'Back to overview',
       mk_next_title:'Your next session', mk_next_trainer:'with {name}', mk_next_more:'You also have bookings on {dates}',
       mk_unavail:"This can't be shown right now. Please open it again later.",
+      mc_entry:'Your consent (records & recording)', mc_ask_title:'About your records and session recording', mc_ask_lead:'Please read each item, tick the ones you agree to, and tap "Send". Both are optional, and you may agree to just one.',
+      mc_all_title:'Your consent', mc_ja_only:'The consent text is provided in Japanese.', mc_send:'Send', mc_later:'Later', mc_close:'Close',
+      mc_state_agreed:'Agreed ({d})', mc_state_revoked:'Withdrawn ({d})', mc_state_none:'Not agreed yet',
+      mc_state_old:'You agreed to an earlier version ({d}). The current version is not agreed yet', mc_reagree:'To agree to the current version, tick the box below and tap "Send".',
+      mc_revoke:'Withdraw consent to recording and AI', mc_revoke_confirm:'Withdraw your consent to recording and AI-assisted notes?\nWe will stop recording from your next session.',
+      mc_health_store:'To withdraw consent for health information and photos, please tell the studio staff.', mc_err_send:'Could not send. Please tap again.', mc_err_reopen:'Your login has expired. Please reopen this page and try again.',
       mk_goal_title:'Goal & progress', mk_to_body:'Body ›', mk_now:'Now', mk_target:'Goal', mk_deadline:'By', mk_days_left:'{n} days left', mk_days_over:'Past the date', mk_goal_unset:'No goal set yet. Decide one with your trainer.', mk_ring_aria:'{p} of the way to your goal',
       mk_last_note:'Latest coaching ({date})', mk_to_notes:'Coaching ›', mk_todo_n:'{n} to do before next time',
       mk_progress_title:'Progress to your goal', mk_weight_goal:'Weight {w}kg (by {d})', mk_weight_goal_nodl:'Weight {w}kg', mk_now_rest:'Now {now}kg / {rest}kg to go', mk_since_join:'{v}kg since joining',
@@ -656,6 +688,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_tab_home:'概要', mk_tab_body:'体成分', mk_tab_training:'训练', mk_tab_notes:'指导记录', mk_tab_contract:'合同', mk_tabs_aria:'会员菜单', mk_back:'返回概要',
       mk_next_title:'下次预约', mk_next_trainer:'教练 {name}', mk_next_more:'之后在 {dates} 也有预约',
       mk_unavail:'现在无法显示，请稍后重新打开。',
+      mc_entry:'同意内容（档案・录音）', mc_ask_title:'关于档案与录音的请求', mc_ask_lead:'请阅读内容，勾选您同意的项目后点击“发送”。两项均为自愿，只同意其中一项也可以。',
+      mc_all_title:'同意内容', mc_ja_only:'同意书正文为日语。', mc_send:'发送', mc_later:'以后再说', mc_close:'关闭',
+      mc_state_agreed:'已同意（{d}）', mc_state_revoked:'已撤回（{d}）', mc_state_none:'尚未同意',
+      mc_state_old:'已同意旧版内容（{d}），尚未同意当前内容', mc_reagree:'如需同意当前内容，请勾选下方并点击“发送”。',
+      mc_revoke:'撤回对录音和 AI 使用的同意', mc_revoke_confirm:'要撤回对录音及使用 AI 制作记录的同意吗？\n撤回后，从下次课程起不再录音。',
+      mc_health_store:'如需撤回健康信息和照片的同意，请向店铺提出。', mc_err_send:'发送失败，请再点一次。', mc_err_reopen:'登录已过期，请重新打开页面后再试。',
       mk_goal_title:'目标与进度', mk_to_body:'体成分 ›', mk_now:'现在', mk_target:'目标', mk_deadline:'期限', mk_days_left:'还有{n}天', mk_days_over:'已过期限', mk_goal_unset:'尚未设定目标，请与教练商量。', mk_ring_aria:'已完成目标的{p}',
       mk_last_note:'最近的指导（{date}）', mk_to_notes:'指导记录 ›', mk_todo_n:'下次之前 {n} 项',
       mk_progress_title:'目标进度', mk_weight_goal:'体重 {w}kg（{d}前）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'现在 {now}kg ／ 还差 {rest}kg', mk_since_join:'入会以来 {v}kg',
@@ -747,6 +785,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mk_tab_home:'概要', mk_tab_body:'體組成', mk_tab_training:'訓練', mk_tab_notes:'指導記錄', mk_tab_contract:'合約', mk_tabs_aria:'會員選單', mk_back:'返回概要',
       mk_next_title:'下次預約', mk_next_trainer:'教練 {name}', mk_next_more:'之後在 {dates} 也有預約',
       mk_unavail:'現在無法顯示，請稍後重新開啟。',
+      mc_entry:'同意內容（檔案・錄音）', mc_ask_title:'關於檔案與錄音的請求', mc_ask_lead:'請閱讀內容，勾選您同意的項目後點選「傳送」。兩項皆為自願，只同意其中一項也可以。',
+      mc_all_title:'同意內容', mc_ja_only:'同意書內文為日文。', mc_send:'傳送', mc_later:'稍後再說', mc_close:'關閉',
+      mc_state_agreed:'已同意（{d}）', mc_state_revoked:'已撤回（{d}）', mc_state_none:'尚未同意',
+      mc_state_old:'已同意舊版內容（{d}），尚未同意目前內容', mc_reagree:'如需同意目前內容，請勾選下方並點選「傳送」。',
+      mc_revoke:'撤回對錄音與 AI 使用的同意', mc_revoke_confirm:'要撤回對錄音及使用 AI 製作紀錄的同意嗎？\n撤回後，自下次課程起不再錄音。',
+      mc_health_store:'如需撤回健康資訊與照片的同意，請向店鋪提出。', mc_err_send:'傳送失敗，請再點一次。', mc_err_reopen:'登入已過期，請重新開啟頁面後再試。',
       mk_goal_title:'目標與進度', mk_to_body:'體組成 ›', mk_now:'現在', mk_target:'目標', mk_deadline:'期限', mk_days_left:'還有{n}天', mk_days_over:'已過期限', mk_goal_unset:'尚未設定目標，請與教練討論。', mk_ring_aria:'已完成目標的{p}',
       mk_last_note:'最近的指導（{date}）', mk_to_notes:'指導記錄 ›', mk_todo_n:'下次之前 {n} 項',
       mk_progress_title:'目標進度', mk_weight_goal:'體重 {w}kg（{d}前）', mk_weight_goal_nodl:'體重 {w}kg', mk_now_rest:'現在 {now}kg ／ 還差 {rest}kg', mk_since_join:'入會以來 {v}kg',
@@ -923,6 +967,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     if (id !== 's-loading') document.body.classList.remove('booting');   // 最初の画面が出たら読み込みの見た目を外す
     if (typeof _staffBanner === 'function') _staffBanner(id);
     if (typeof _mkTabsSync === 'function') _mkTabsSync(id);   // 会員のカルテの下のタブ（設計35 C2）。★履歴は触らない
+    if (id !== 's-home' && typeof _mcClose === 'function') _mcClose();   // 同意の1枚（設計44）は画面が変わったら閉じる（何も送らない）
   }
   //   代行・変更の帯（モック P4・2026-11-06）：トレーナーが会員の予約画面を使い回すとき、誰の予約を扱っているかを常に出す
   //   ★トレーナーで開いたときだけ（body.staff）。会員の画面には出ない。名前は文字として入れる
@@ -1779,6 +1824,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   on('toHome', function(){ if (state._fromTrainerAdmin || state.proxyMode) { goHome(); return; } show('s-home'); });   // トレーナーの代行中は顧客一覧へ（会員ホームに落ちない）
   on('homeReserve', function(){ loadTrainers(); });
   on('homeMyRes', function(){ loadMyReservations(); });
+  on('homeConsent', function(){ _mcOpen('all'); });   // 同意の内容（設計44）
   on('myResBack', function(){ show('s-home'); });
 
   // ===== トレーナー管理ページ（Google直接編集の代替・状態乖離の防止） =====
@@ -2689,6 +2735,10 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     _mkHomeNext();    // 次回のご予約（起動のまとめの予約一覧から・memberKarte に関係なく出す）
     _mkHomeKarte();   // 目標と進み具合・直近の指導（memberKarte のときだけ）
     show('s-home');
+    //   会員画面の同意（設計44）：true か 'unknown' のときだけ聞く（起動ごとに1回）。無い（GAS の応答）・false・文字の 'true' は聞かない
+    state.mcFlagOn = _mcFlagOn(res && res.memberConsent);
+    if (state.mcFlagOn) _mcFetch();
+    _mcHomeEntry();
   }
   //   振替の行（ホーム・契約のタブで共用）
   function _homeTcHtml(res){
@@ -2708,6 +2758,162 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     api({ action:'line_getMemberStatus' }).then(function(res){
       if (res && res.success && res.verified) renderHome(res); else show('s-home');
     }).catch(function(){ show('s-home'); });
+  }
+
+  // ---------------------------------------------------------------- 会員画面の同意（設計44・2026-11-13）
+  //   ★聞くのは起動・会員の状態の応答の memberConsent が true か 'unknown' のときだけ（無い・false・文字の 'true'・GAS の応答＝何もしない）
+  //   ★m_myConsent・m_saveConsent は Worker にだけ送る。**GAS へ送らない**（対応する GAS の操作が無い）。失敗・503・時間切れは何も出さない
+  //   ★起動（ページの読み込み）ごとに最大1回だけ聞く。言語の切り替え・予約の後のホームの描き直しでは聞き直さない（関門① 4周目 中2）
+  //   ★文面は Worker が返したものをそのまま textContent で描く（** は太字の印として b 要素に分けるだけ・HTML を解釈しない）
+  //   ★勧める1枚（ask）は起動ごとに1回まで。「あとで」は何も送らない＝次に開いたときまた出る。チェックの初期値は外れたまま
+  //   ★revoke_only（切替が閉じている・録音・AI に同意済みの本人）は録音・AI の状態と撤回だけを作る（勧誘・同意のチェックを作らない）
+  var MC_TIMEOUT_MS = 8000;
+  function _mcFlagOn(v){ return v === true || v === 'unknown'; }
+  function _mcEl(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = String(text); return e; }
+  //   「**太字**」を b 要素に分ける。それ以外は文字のまま
+  function _mcPara(text){
+    var p = _mcEl('p', 'mc-p');
+    String(text == null ? '' : text).split('**').forEach(function(part, i){ if (!part) return; p.appendChild(i % 2 ? _mcEl('b', null, part) : document.createTextNode(part)); });
+    return p;
+  }
+  function _mcPost(action, extra){
+    function once(tok){
+      var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, MC_TIMEOUT_MS);
+      var body = { action: action, idToken: tok, lang: LANG };
+      for (var k in (extra || {})) body[k] = extra[k];
+      return fetch(EDGE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined })
+        .then(function(r){ return r.json(); })
+        .then(function(j){ clearTimeout(timer); return j; }, function(e){ clearTimeout(timer); throw e; });
+    }
+    //   書き込みは iat の新しいトークンが要る（Worker が1時間で判定）。LIFF が新しいものを持っていれば使う
+    try { var f0 = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : ''; if (f0) idToken = f0; } catch (e) {}
+    var p;
+    try { p = once(idToken); } catch (e) { p = Promise.reject(e); }
+    return p.then(function(j){
+      if (j && j.code === 'UNAUTHORIZED' && j.detail !== 'STALE_TOKEN') {   // 取り直して1回だけ（Worker の中で。GAS へは行かない）
+        var fresh = (typeof liff !== 'undefined' && liff.getIDToken) ? (liff.getIDToken() || '') : '';
+        if (fresh && fresh !== idToken) { idToken = fresh; return once(fresh); }
+      }
+      return j;
+    });
+  }
+  function _mcFetch(){
+    if (!state.mc) state.mc = { st: 'idle', data: null, prompted: false };
+    if (state.mc.st !== 'idle') return;
+    state.mc.st = 'loading';
+    var t0 = _nowMs();
+    _mcPost('m_myConsent', {}).then(function(j){
+      var good = !!(j && j.success === true && (j.mode === 'full' || j.mode === 'revoke_only'));
+      state.mc.st = good ? 'ok' : 'fail';
+      state.mc.data = good ? j : null;
+      _perfAdd((good ? 'edge:myConsent' : 'edgeNG:myConsent（' + ((j && j.code) || '不明') + '）'), _nowMs() - t0);
+      _mcHomeEntry();
+      var again = state.mc.reopen === true; state.mc.reopen = false;   // 文面が変わって読み直したとき（1回だけ）
+      if (good && j.mode === 'full' && Array.isArray(j.ask) && j.ask.length && (!state.mc.prompted || again) && _mkVisible('s-home')) {
+        state.mc.prompted = true;
+        _mcOpen('ask');
+      }
+    }).catch(function(e){
+      state.mc.st = 'fail'; state.mc.data = null;
+      _perfAdd('edgeNG:myConsent（' + ((e && e.name === 'AbortError') ? '時間切れ' : '通信できず') + '）', _nowMs() - t0);
+      _mcHomeEntry();
+    });
+  }
+  //   ホームの入口「同意の内容」：読めたときだけ出す
+  function _mcHomeEntry(){
+    var b = document.getElementById('homeConsent'); if (!b) return;
+    b.hidden = !(state.mcFlagOn && state.mc && state.mc.st === 'ok' && state.mc.data);
+  }
+  function _mcDocs(data, kinds){ return (Array.isArray(data.docs) ? data.docs : []).filter(function(d){ return d && kinds.indexOf(d.kind) >= 0; }); }
+  function _mcDate(ms){ if (typeof ms !== 'number') return ''; var d = new Date(ms + 9 * 3600000); return t('date_md', { m: d.getUTCMonth() + 1, d: d.getUTCDate() }); }
+  function _mcClose(){ var s = document.getElementById('mcSheet'); if (s) { s.hidden = true; s.innerHTML = ''; } document.body.classList.remove('mc-open'); }
+  //   how：'ask'（勧める1枚）／'all'（ホームの入口から）
+  function _mcOpen(how){
+    var data = state.mc && state.mc.data; if (!data) return;
+    var sheet = document.getElementById('mcSheet'); if (!sheet) return;
+    var revokeOnly = data.mode === 'revoke_only';
+    var kinds = how === 'ask' ? data.ask.slice() : (revokeOnly ? ['rec_ai'] : ['health', 'rec_ai']);
+    var st = data.state || {};
+    sheet.innerHTML = '';
+    var panel = _mcEl('div', 'mc-panel');
+    panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true');
+    panel.appendChild(_mcEl('div', 'mc-h', t(how === 'ask' ? 'mc_ask_title' : 'mc_all_title')));
+    if (how === 'ask') panel.appendChild(_mcEl('p', 'mc-lead', t('mc_ask_lead')));
+    if (LANG !== 'ja') panel.appendChild(_mcEl('p', 'mc-lead', t('mc_ja_only')));
+    var checks = {};
+    _mcDocs(data, kinds).forEach(function(d){
+      var box = _mcEl('div', 'mc-doc');
+      box.setAttribute('data-kind', d.kind);
+      box.appendChild(_mcEl('div', 'mc-dt', d.title));
+      (Array.isArray(d.paragraphs) ? d.paragraphs : []).forEach(function(p){ box.appendChild(_mcPara(p)); });
+      var s = st[d.kind] || { state: 'none' };
+      var agreed = s.state === 'agreed';
+      var agreedNow = agreed && s.current === true;   // 現行の版に同意済み（同意のチェックを出さない）
+      if (how === 'all') box.appendChild(_mcEl('div', 'mc-state' + (agreedNow ? ' ok' : ''),
+        agreedNow ? t('mc_state_agreed', { d: _mcDate(s.at) }) : agreed ? t('mc_state_old', { d: _mcDate(s.at) }) : (s.state === 'revoked' ? t('mc_state_revoked', { d: _mcDate(s.at) }) : t('mc_state_none'))));
+      //   ★撤回は「同意している」なら版に関係なく出す（current は最新の版か・AI に使えるかの表示にだけ使う・関門② 高）
+      if (how === 'all' && agreed && d.kind === 'rec_ai') {
+        var rb = _mcEl('button', 'btn btn-danger mc-revoke', t('mc_revoke'));
+        rb.type = 'button';
+        rb.onclick = function(){ if (!window.confirm(t('mc_revoke_confirm'))) return; _mcSend({ rec_ai: 'revoked' }, sheet, panel); };
+        box.appendChild(rb);
+      }
+      if (how === 'all' && agreed && d.kind === 'health') box.appendChild(_mcEl('p', 'mc-lead', t('mc_health_store')));
+      if (!agreedNow && !revokeOnly) {
+        if (agreed && how === 'all') box.appendChild(_mcEl('p', 'mc-lead', t('mc_reagree')));   // 以前の内容に同意している人：新しい内容に同意し直すためのチェック（関門② 2周目 中）
+        var lab = _mcEl('label', 'mc-check');
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = false; cb.setAttribute('data-kind', d.kind);
+        lab.appendChild(cb); lab.appendChild(_mcEl('span', null, d.check));
+        box.appendChild(lab);
+        checks[d.kind] = cb;
+      }
+      panel.appendChild(box);
+    });
+    var msg = _mcEl('p', 'mc-msg'); msg.hidden = true; panel.appendChild(msg);
+    if (Object.keys(checks).length) {
+      var go = _mcEl('button', 'btn btn-main mc-send', t('mc_send')); go.type = 'button';
+      go.onclick = function(){
+        var answers = {};
+        Object.keys(checks).forEach(function(k){
+          if (checks[k].checked) answers[k] = 'agreed';
+          else if (how === 'ask') answers[k] = 'declined';   // 勧める1枚で外したまま送る＝この版ではもう勧めない（いまの状態は変えない）
+        });
+        if (!Object.keys(answers).length) { _mcClose(); return; }
+        _mcSend(answers, sheet, panel);
+      };
+      panel.appendChild(go);
+    }
+    var later = _mcEl('button', 'btn btn-outline mc-later', t(how === 'ask' ? 'mc_later' : 'mc_close')); later.type = 'button';
+    later.onclick = _mcClose;   // ★何も送らない
+    panel.appendChild(later);
+    sheet.appendChild(panel);
+    sheet.hidden = false;
+    document.body.classList.add('mc-open');
+    try { panel.scrollTop = 0; } catch (e) {}
+  }
+  function _mcSend(answers, sheet, panel){
+    var data = state.mc.data, vers = {};
+    (data.docs || []).forEach(function(d){ if (answers[d.kind]) vers[d.kind] = d.ver; });
+    var btns = panel.querySelectorAll('button');
+    Array.prototype.forEach.call(btns, function(b){ b.disabled = true; });
+    var msg = panel.querySelector('.mc-msg');
+    _mcPost('m_saveConsent', { answers: answers, vers: vers }).then(function(j){
+      if (j && j.success === true) {
+        data.state = Object.assign({}, data.state, j.state || {});
+        data.ask = Array.isArray(j.ask) ? j.ask : [];
+        _mcClose(); _mcHomeEntry();
+        return;
+      }
+      Array.prototype.forEach.call(btns, function(b){ b.disabled = false; });
+      var code = j && j.code;
+      if (code === 'DOC_CHANGED') { state.mc.st = 'idle'; state.mc.reopen = true; _mcClose(); _mcFetch(); return; }   // 最新の文面で開き直す（関門② 低）
+      msg.textContent = t(code === 'UNAUTHORIZED' ? 'mc_err_reopen' : 'mc_err_send');
+      msg.hidden = false;
+    }).catch(function(){
+      Array.prototype.forEach.call(btns, function(b){ b.disabled = false; });
+      msg.textContent = t('mc_err_send'); msg.hidden = false;
+    });
   }
 
   // ---------------------------------------------------------------- 会員のカルテ（設計35 C2・2026-11-06）
@@ -4051,6 +4257,6 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   boot();
 </script>
 <!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
-<script src="karte.js?v=2026-11-10a"></script>
+<script src="karte.js?v=2026-11-13a"></script>
 </body>
 </html>

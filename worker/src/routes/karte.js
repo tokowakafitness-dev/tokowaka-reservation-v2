@@ -18,6 +18,8 @@ import { synthesizeBody, pickGoalLine } from '../lib/body-series.js';
 import { normalizeHearing, normalizePainMap, normalizeReasons, normalizeTag, parseJsonCol, has, HEARING_REVISION_SQL } from '../lib/karte-hearing.js';
 import { buildMemberKarte } from '../lib/member-karte.js';
 import { EXERCISE_LIMITS, normalizeExerciseName, normalizePart } from '../lib/karte-exercises.js';
+import { readRecRow, recConsentValid } from './member-consent.js';
+import { MEMBER_ACTOR } from '../lib/consent-docs.js';
 
 export const KARTE_LIMITS = {
   BODY_BYTES: 16 * 1024,
@@ -83,6 +85,11 @@ export function aiDraftOn(env, who) {
 export function aiDraftReady(env, who) {
   return aiDraftOn(env, who) && !!(env && env.ANTHROPIC_API_KEY);
 }
+/** 画面の補助（設計44）：その会員の録音・AI の同意。'agreed'|'none'|'unknown'。AI が使えないときは読まない（undefined）。★関門は k_aiDraft の中だけ */
+async function aiConsentFor(env, who, cid) {
+  if (!aiDraftReady(env, who)) return undefined;
+  try { return recConsentValid(await readRecRow(env, cid)) ? 'agreed' : 'none'; } catch (_) { return 'unknown'; }
+}
 
 export function isKarteWrite(action) {
   //   ★k_aiDraft（設計39）は D1 に書かないが、外部へ送り費用がかかる＝Origin の完全一致と iat 1時間の守りを掛ける（runWrite は通らない）
@@ -99,6 +106,8 @@ const GUARD_CODES = [
   ['KARTE_GUARD_REV', 'CONFLICT', 409, 'conflict'],
   ['KARTE_GUARD_STATE', 'BAD_STATE', 409, 'conflict'],
   ['KARTE_GUARD_READY', 'BODY_NOT_READY', 409, 'denied'],
+  //   同意の状態の見張り（設計44・karte_consent_guard）。画面には「ほかの人が先に更新しました」と同じ扱い
+  ['KARTE_GUARD_CSTATE', 'CONFLICT', 409, 'conflict'],
 ];
 /** エラー文に既知の制約の名前が**含まれるか**だけを見る。無ければ null（推測しない＝500） */
 export function guardOf(e) {
@@ -442,23 +451,45 @@ async function saveProfile(c) {
 async function saveConsent(c) {
   const cid = cidOf(c.body);
   if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  //   kind 省略＝health（今までの画面）。rec_ai（録音・AI・設計44）は撤回だけ記録できる（同意は会員本人が会員画面で）
+  const kind = c.body.kind == null ? 'health' : String(c.body.kind);
   const state = String(c.body.state || '');
   const method = c.body.method == null ? null : String(c.body.method);
+  if (kind !== 'health' && kind !== 'rec_ai') return err('BAD_REQUEST', 400, 'kind');
   if (state !== 'agreed' && state !== 'revoked') return err('BAD_REQUEST', 400, 'state');
   if (method !== null && method !== 'paper' && method !== 'line') return err('BAD_REQUEST', 400, 'method');
+  if (kind === 'rec_ai' && (state !== 'revoked' || method !== null)) return err('BAD_REQUEST', 400, 'rec_ai');
   const tid = String(c.who.trainerId || '');
+  if (kind === 'rec_ai') {
+    return runWrite(c, {
+      action: 'k_saveConsent', section: 'consent', customerId: cid, payload: { cid, kind, state, method },
+      plan: (now) => ({
+        stmts: [
+          G.target(cid),
+          //   ★同意の行が agreed でなければ CONFLICT（同意したことのない人・撤回済みの人の「撤回」を作らない）
+          S(`INSERT INTO karte_consent_guard (cstate) SELECT 1 WHERE NOT EXISTS (
+               SELECT 1 FROM karte_consent_rec WHERE customer_id = ? AND state = 'agreed')`, cid),
+          S(`UPDATE karte_consent_rec SET state = 'revoked', changed_at = ?, method = NULL, recorded_by = ? WHERE customer_id = ?`, now, tid, cid),
+          S(`INSERT INTO karte_consent_log (customer_id, kind, state, at, method, recorded_by) VALUES (?, 'rec_ai', 'revoked', ?, NULL, ?)`, cid, now, tid),
+        ],
+        result: { state },
+      }),
+    });
+  }
   return runWrite(c, {
     action: 'k_saveConsent', section: 'consent', customerId: cid, payload: { cid, state, method },
     plan: (now) => {
-      const stmts = [
-        G.target(cid),
+      const stmts = [G.target(cid)];
+      //   ★同意済みに同意を重ねない（会員画面の版つきの同意を紙の記録で置き換えない・設計44 改訂1 高3）。batch の中＝同じ clientReqId の再送は runWrite の replay が先に返す
+      if (state === 'agreed') stmts.push(S(`INSERT INTO karte_consent_guard (cstate) SELECT 1 WHERE EXISTS (
+                                              SELECT 1 FROM karte_consent WHERE customer_id = ? AND kind = 'health' AND state = 'agreed')`, cid));
+      stmts.push(
         S(`INSERT INTO karte_consent (customer_id, kind, state, changed_at, method, recorded_by)
            VALUES (?, 'health', ?, ?, ?, ?)
            ON CONFLICT(customer_id, kind) DO UPDATE SET state = excluded.state, changed_at = excluded.changed_at,
              method = excluded.method, recorded_by = excluded.recorded_by`, cid, state, now, method, tid),
         S(`INSERT INTO karte_consent_log (customer_id, kind, state, at, method, recorded_by)
-           VALUES (?, 'health', ?, ?, ?, ?)`, cid, state, now, method, tid),
-      ];
+           VALUES (?, 'health', ?, ?, ?, ?)`, cid, state, now, method, tid));
       //   ★撤回は同じ batch で安全面の中身を消す（再同意しても戻らない＝聞き取り直す）
       if (state === 'revoked') stmts.push(S(`DELETE FROM karte_safety WHERE customer_id = ?`, cid));
       return { stmts, result: { state } };
@@ -1221,7 +1252,7 @@ async function summary(c) {
     const [cust, profile, consent, safety, lastNote, nextResv] = await Promise.all([
       env.DB.prepare(`SELECT customer_id, name, birthday, default_trainer_id, contract_status FROM customers WHERE customer_id = ?`).bind(cid).first(),
       env.DB.prepare(`SELECT goal_text, goal_value, goal_unit, goal_deadline, motive, history, hearing_json, rev, updated_at FROM karte_profile WHERE customer_id = ?`).bind(cid).first(),
-      env.DB.prepare(`SELECT state, changed_at, method FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first(),
+      env.DB.prepare(`SELECT state, changed_at, method, recorded_by FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first(),
       //   ★安全面は同意があるときだけ（JOIN を SQL に置く）。概要には要点（制限と痛む部位）だけ
       env.DB.prepare(`SELECT s.restrictions, s.pain_sites, s.pain_json, s.diagnosis, s.medication FROM karte_safety s JOIN karte_consent k
                         ON k.customer_id = s.customer_id AND k.kind = 'health' AND k.state = 'agreed'
@@ -1232,6 +1263,9 @@ async function summary(c) {
                        ORDER BY start_at LIMIT 1`).bind(cid, now).first(),
     ]);
     if (!cust) return err('NOT_FOUND', 404);
+    //   録音・AI の同意（設計44）。読めなければ 'unknown'（同意なしと言わない）。版は返さない（改訂1 中9）
+    let rec;
+    try { rec = await readRecRow(env, cid); } catch (_) { rec = undefined; }
     return {
       karteSchema: karteSchemaFor(c.env, c.who),
       customer: { customerId: cust.customer_id, name: cust.name, age: ageOf(cust.birthday, now),
@@ -1240,7 +1274,9 @@ async function summary(c) {
                   ...(assigned ? { contractStatus: cust.contract_status || null } : {}) },
       assigned,
       profile: profile ? Object.assign({}, profile, { hearing: parseJsonCol(profile.hearing_json), hearing_json: undefined }) : null,
-      consent: consent ? { state: consent.state, changedAt: consent.changed_at, method: consent.method } : { state: 'none' },
+      consent: consent ? { state: consent.state, changedAt: consent.changed_at, method: consent.method, byMember: consent.recorded_by === MEMBER_ACTOR } : { state: 'none' },
+      recConsent: rec === undefined ? { state: 'unknown' }
+        : (rec ? { state: rec.state, changedAt: rec.changed_at, byMember: rec.recorded_by === MEMBER_ACTOR, current: recConsentValid(rec) } : { state: 'none' }),
       safetyBrief: safety ? { restrictions: safety.restrictions, painSites: safety.pain_sites, pain: parseJsonCol(safety.pain_json) || [],
                               diagnosis: safety.diagnosis, medication: safety.medication } : null,
       lastNote: lastNote ? noteOut(lastNote) : null,
@@ -1270,7 +1306,8 @@ async function training(c) {
         ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
     ).bind(...(before ? [cid, before] : [cid])).all();
     const sessions = ss.results || [];
-    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), sessions: [], best: [] };   // ★空でも版を返す
+    const aiConsent = await aiConsentFor(c.env, c.who, cid);   // 設計44：画面の補助（関門は k_aiDraft の中）
+    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, sessions: [], best: [] };   // ★空でも版を返す
     //   ★3つの表（種目の並び・付加・ドロップ）は生きた session の id を通してだけ読む（設計38 I70）
     const ids = sessions.map((x) => x.session_id);
     const ph = ids.map(() => '?').join(',');
@@ -1316,7 +1353,7 @@ async function training(c) {
       }
       for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
     }
-    return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who),   // 設計39：AI の振り分けのボタンを出すか（真偽値だけ）
+    return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent,   // 設計39：AI の振り分けのボタンを出すか（真偽値だけ）
              sessions: sessions.map((x) => (exBy[x.session_id]
                ? { ...x, sets: by[x.session_id] || [], exercises: exBy[x.session_id] }
                : { ...x, sets: by[x.session_id] || [] })), best };
