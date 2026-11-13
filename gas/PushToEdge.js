@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-13a 枠のすぐ押し出し（設計42）が失敗した理由を残す・トレーナーの読み・カルテの AI 振り分けの日次点検（設計39 の続き）';
+var LB_EDGE_BUILD = '2026-11-13b 枠のすぐ押し出し（設計42）の成功を失敗と数えていたのを直す・失敗の理由を残す';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -2242,6 +2242,9 @@ function _lbCalSlotsWhy(res, thrown) {
 
 function _lbCalSlotsClassify(res) {
   if (typeof res === 'number' && isFinite(res)) return 'sent';
+  //   ★送れたときの本物の戻り値は文字（_edgePushRows の「3件中3件を書込」「0件」）。
+  //     設計42 の検査は身代わりが数値 12 を返していたため、本番の成功が全部 error に数えられていた（2026-11-13 実測）
+  if (typeof res === 'string' && /^\d+件(中\d+件を書込|$)/.test(res)) return 'sent';
   if (res === 'LOCK_SKIP') return 'lockSkip';
   if (res === 'STALE_SNAPSHOT') return 'stale';
   return 'error';

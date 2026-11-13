@@ -93,6 +93,21 @@ console.log('=== ⓪ 失敗の理由を残す（2026-11-13）===');
   ok('⓪-6 undefined / null を区別する', g.ctx._lbCalSlotsWhy(undefined, '') === 'UNDEFINED' && g.ctx._lbCalSlotsWhy(null, '') === 'NULL');
 }
 
+console.log('=== ⓪-b 本物の戻り値の形で成功を数える（2026-11-13）===');
+{
+  //   本物の _edgePushRows の return 文から形を取る（書き写さない）。形が変わればここで落ちる
+  const m = PE.match(/return sent \+ '件中' \+ wrote \+ '件を書込' \+ \(skip \? '（' \+ skip \+ '件は変更なし）' : ''\);/);
+  ok('⓪b-1 _edgePushRows の成功の戻り値の形が想定どおり（変えたら分類も直す）', !!m);
+  ok('⓪b-2 「0件」の戻り値もある', /return '0件';/.test(PE));
+  const real = ['3件中3件を書込', '3件中0件を書込（3件は変更なし）', '0件', '120件中7件を書込（113件は変更なし）'];
+  const t = make({ slotsRes: real[0] });
+  t.ctx.lbCalSyncTick();
+  const r = rec(t.props)['2026-11-11'];
+  ok('⓪b-3 ★入口から：本物の成功の文字で sent に数え、失敗に数えない', r && r.sent === 1 && !r.error && !t.props.LB_CALSLOTS_LAST_ERR, JSON.stringify(r));
+  ok('⓪b-4 成功の文字はどれも sent', real.every((x) => t.ctx._lbCalSlotsClassify(x) === 'sent'));
+  ok('⓪b-5 失敗の文字は sent にしない', ['ERROR', 'RECORD_FAILED', 'UNKNOWN_SNAPSHOT', '件', '3件中', 'x3件中3件を書込'].every((x) => t.ctx._lbCalSlotsClassify(x) === 'error'));
+}
+
 console.log('=== ① 押し出す条件 ===');
 {
   const { ctx } = make();
