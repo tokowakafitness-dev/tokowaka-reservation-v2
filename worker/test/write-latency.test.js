@@ -212,7 +212,7 @@ console.log('=== ③ Worker ===');
   ok('③-18 ★公開の routeSlots は readStartAt を出さず、鍵の並びは写しに読み始めが無いときと同じ', !('readStartAt' in pub) && JSON.stringify(Object.keys(pub)) === JSON.stringify(Object.keys(pub0)), JSON.stringify(Object.keys(pub)));
   const IDX = readFileSync(join(ROOT, 'worker/src/index.js'), 'utf8');
   ok('③-19 index.js は routeSlots に internal を渡さない（内部の時刻を外へ出す入口を作らない）', !/internal/.test(IDX));
-  ok('③-20 Worker の版を上げた', /export const WORKER_BUILD = '2026-11-13c/.test(IDX));
+  ok('③-20 Worker の版を上げた（13c 以降）', /export const WORKER_BUILD = '2026-11-(13[c-z]|1[4-9]|[23][0-9])/.test(IDX));
 }
 
 // ================= ④ 日次点検 =================
