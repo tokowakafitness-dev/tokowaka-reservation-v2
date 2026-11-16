@@ -109,8 +109,8 @@ function safeFor(arg) {
     new RegExp(`=\\s*\\(\\s*${a}\\s*===\\s*true\\s*\\)`),
     //   数値だけを受け付ける
     new RegExp(`typeof\\s+${a}\\s*===\\s*'number'\\s*&&\\s*isFinite\\(\\s*${a}\\s*\\)`),
-    //   イベントそのものを使う：オブジェクトで、使う欄が文字列のときだけ（設計45 _lbCalSyncAfterWrite の triggerUid）
-    new RegExp(`typeof\\s+${a}\\s*===\\s*'object'\\s*&&\\s*${a}\\s*!==\\s*null\\s*&&\\s*typeof\\s+${a}\\.[A-Za-z]+\\s*===\\s*'string'`),
+    //   イベントそのものを使う：オブジェクトで、triggerUid が文字列のときだけ（設計45 _lbCalSyncAfterWrite・関門② 低：欄の名前を固定）
+    new RegExp(`typeof\\s+${a}\\s*===\\s*'object'\\s*&&\\s*${a}\\s*!==\\s*null\\s*&&\\s*typeof\\s+${a}\\.triggerUid\\s*===\\s*'string'`),
   ];
 }
 
