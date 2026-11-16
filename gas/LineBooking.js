@@ -5312,7 +5312,8 @@ var LB_NOTIFY_DEFER = {
   MAX_ITEMS: 16, MAX_BYTES: 8000,              // 1つの Property の上限 9KB（UTF-8）
   REQ_LOCK_MS: 3000,                           // 要求の中で待つ上限（取れなければ今の経路）
   BG_LOCK_MS: 10000,                           // 送る側の取り分け
-  WRITEBACK_LOCK_MS: 5000,                     // 送った後に消す・取り分けを戻す（取れなければ期限後に alert＝送り直さない）
+  WRITEBACK_LOCK_MS: 5000,                     // 送った後に消す・取り分けを戻す（取れなければ期限後に：送る試みの印があれば alert・無ければ普通に送る）
+  MARK_LOCK_MS: 4000,                          // 送る直前に「送る試みの印 a=1」を立てる（取れなければその回は送らない）
   LEASE_MS: 5 * 60000,
   CLAIM_MAX: 10, HANDOVER_MAX: 5,
   BUDGET_MS: 30000,
@@ -5384,6 +5385,7 @@ function _lbNdParse(raw) {
       if (!it.c || typeof it.c !== 'object') return null;
       if (typeof it.li !== 'string' || !(typeof it.lu === 'number' && it.lu >= 0)) return null;
       if (it.nr !== 0 && it.nr !== 1) return null;
+      if (it.a !== undefined && it.a !== 0 && it.a !== 1) return null;   // 送る試みの印（関門② 中）
     }
     return a;
   } catch (e) { return null; }
@@ -5491,6 +5493,19 @@ function _lbNdRemove(idList, leaseId) {
   }, LB_NOTIFY_DEFER.WRITEBACK_LOCK_MS) === true;
 }
 
+// 送る直前の印（a=1＝送ったか分からない側）。取り分けが自分のものだけ。立てられたら true
+function _lbNdMarkAttempt(id, leaseId) {
+  return _lbDwLocked(function () {
+    var p = PropertiesService.getScriptProperties();
+    var q = _lbNdParse(p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP));
+    if (q === null) return false;
+    for (var i = 0; i < q.length; i++) {
+      if (q[i].id === id && q[i].li === leaseId) { q[i].a = 1; p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(q)); return true; }
+    }
+    return false;
+  }, LB_NOTIFY_DEFER.MARK_LOCK_MS) === true;
+}
+
 // 取り分けを戻す（送らなかった項目）
 function _lbNdRelease(idList, leaseId) {
   if (!idList.length) return;
@@ -5541,7 +5556,10 @@ function _lbNotifyDeferRun(who, pick, budgetMs) {
         var it = q[i];
         if (it.li && it.lu > now) continue;                       // 別の実行が取り分け中
         var take = function (list) { it.li = leaseId; it.lu = now + LB_NOTIFY_DEFER.LEASE_MS; list.push(it); changed = true; };
-        if (it.li) { if (bg && lost.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(lost); continue; }   // 期限切れ＝送ったか分からない
+        //   期限切れの取り分け：送る試みの印（a=1）があれば送ったか分からない＝送らず alert。
+        //   印が無ければ送っていないと確定している（予算切れ・印を立てる前に止まった・戻せなかった）＝普通の項目に戻す（関門② 中）
+        if (it.li && it.a === 1) { if (bg && lost.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(lost); continue; }
+        if (it.li) { it.li = ''; it.lu = 0; changed = true; }
         if (bg && now - it.at > LB_NOTIFY_DEFER.HANDOVER_AGE_MS) { if (hand.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(hand); continue; }
         if (!pick(it, now)) continue;
         if (claimed.length < LB_NOTIFY_DEFER.CLAIM_MAX) take(claimed);
@@ -5555,27 +5573,30 @@ function _lbNotifyDeferRun(who, pick, budgetMs) {
   var inc = {}, mx = { lockMsMax: lockMs }, sentKind = { AFTER: 'sentAfter', TICK: 'sentTick', WARM: 'sentWarm', RECLAIM: 'inline_noTrigger' }[who] || 'sentTick';
   function add(k, n) { inc[k] = (inc[k] || 0) + n; }
   //   引き渡し（送らない）
-  var handedIds = [], backIds = [];
+  var handedIds = [], backIds = [], handedKind = {};
   for (var j = 0; j < lost.length + hand.length; j++) {
     var hi = (j < lost.length) ? lost[j] : hand[j - lost.length], isLost = j < lost.length;
     var okH = false;
     try { okH = _lbNdHandover(hi, isLost); } catch (eH) { okH = false; }
-    if (okH) { handedIds.push(hi.id); add(isLost ? 'leaseLost' : 'handover', 1); }
+    if (okH) { handedIds.push(hi.id); handedKind[hi.id] = isLost ? 'leaseLost' : 'handover'; }
     else backIds.push(hi.id);   // ★引き渡せなければ待ちに残す（黙って消さない）
   }
-  if (handedIds.length) _lbNdRemove(handedIds, leaseId);
+  //   ★数えるのは待ちから消せたときだけ（消せなければ次の回にもう一度引き渡す＝id で重複を作らない・二重に数えない・関門② 低）
+  if (handedIds.length && _lbNdRemove(handedIds, leaseId)) for (var hk = 0; hk < handedIds.length; hk++) add(handedKind[handedIds[hk]], 1);
   //   送る（今の _lbPush と同じ引数。失敗は _lbPush が notify_retry に積む）
   var unsent = [];
   for (var k = 0; k < claimed.length; k++) {
     var it2 = claimed[k];
     if (Date.now() - t0 > budgetMs) { unsent.push(it2.id); continue; }
+    //   ★送る直前に「送る試みの印」を立てる。立てられなければこの回は送らない（印の無い項目は期限後に普通に送られる）
+    if (!_lbNdMarkAttempt(it2.id, leaseId)) { unsent.push(it2.id); continue; }
     var ts = Date.now(), okS = false;
     mx.maxAgeMs = Math.max(mx.maxAgeMs || 0, ts - it2.at);
     try { okS = _lbPush(it2.to, it2.text, it2.p, it2.c, it2.nr ? { noInlineRetry: true } : undefined) === true; } catch (eS) { okS = false; }
     var ms = Date.now() - ts;
     add('sendMsSum', ms); add('sendN', 1); mx.sendMsMax = Math.max(mx.sendMsMax || 0, ms);
     add(sentKind, 1); if (!okS) add('sendFail', 1);
-    _lbNdRemove([it2.id], leaseId);   // ★試みたら消す。消せなければ取り分けのまま＝期限後に alert（送り直さない）
+    _lbNdRemove([it2.id], leaseId);   // ★試みたら消す。消せなければ取り分けのまま（印 a=1）＝期限後に alert（送り直さない）
     out.sent++;
   }
   _lbNdRelease(unsent.concat(backIds), leaseId);

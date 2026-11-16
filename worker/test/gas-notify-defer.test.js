@@ -33,7 +33,7 @@ function pluckVar(src, name) {
 }
 const H = 3600000;
 const LB_FNS = ['handleLineGet', '_lbNotifyDeferOn', '_lbNotifyHoldStart', '_lbNotifyHolding', '_lbPushOrHold', '_lbNotifyHoldPersist',
-  '_lbNotifyHoldSettle', '_lbNdParse', '_lbNdMarkBad', '_lbUtf8Len', '_lbNdCount', '_lbNdHandover', '_lbNdRemove', '_lbNdRelease',
+  '_lbNotifyHoldSettle', '_lbNdParse', '_lbNdMarkBad', '_lbUtf8Len', '_lbNdCount', '_lbNdHandover', '_lbNdRemove', '_lbNdRelease', '_lbNdMarkAttempt',
   '_lbNotifyDeferRun', '_lbNotifyDeferDrain', '_lbNotifyDeferFlushRes', 'lbNotifyDeferDailyMaint', 'lbNotifyDeferDailyCheck',
   '_lbNotifyDeferSummaryText', '_lbPush', '_lbNqOnFail', '_lbNqDefer', '_lbNqAppendRow', '_lbNqPolicy', '_lbNqCol', '_lbNqRetryable',
   '_lbNotifyReservation', '_lbCxlAfter', '_lbCxlLogErr'];
@@ -238,10 +238,10 @@ console.log('=== ④ 送る側 ===');
   // 期限切れの取り分け → 送らずに alert（重複は追記しない）
   const nowMs = Date.UTC(2026, 10, 16, 3, 0);
   const item = (id, o = {}) => Object.assign({ id, at: nowMs - 60000, to: U_CUS, text: 'ご予約を承りました。', p: 'booking_customer', c: { resId: 'R1', customerId: 'C1', startMs: start.getTime() }, nr: 0, li: '', lu: 0 }, o);
-  const ll = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('q1', { li: 'dead', lu: nowMs - 1 })]) } });
+  const ll = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('q1', { li: 'dead', lu: nowMs - 1, a: 1 })]) } });
   ll.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
   ok('④-11 ★期限切れの取り分けは送らず alert（id D+待ちのid・delivery_unknown）', ll.pushes.length === 0 && ll.nqRows.length === 1 && ll.nqRows[0][0] === 'Dq1' && ll.nqRows[0][7] === 'alert' && /delivery_unknown/.test(ll.nqRows[0][11]) && pend(ll.props).length === 0 && cnt(ll.props).leaseLost === 1, JSON.stringify(ll.nqRows));
-  const ll2 = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('q1', { li: 'dead', lu: nowMs - 1 })]) } });
+  const ll2 = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('q1', { li: 'dead', lu: nowMs - 1, a: 1 })]) } });
   ll2.nqRows.push(Array.from({ length: 17 }, (_, i) => (i === 0 ? 'Dq1' : '')));
   ll2.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
   ok('④-12 ★同じ id の行が既にあれば追記しない（引き渡しは冪等）・待ちからは消す', ll2.nqRows.length === 1 && pend(ll2.props).length === 0);
@@ -263,6 +263,23 @@ console.log('=== ④ 送る側 ===');
   rm.adv(6 * 60000);
   rm.ctx._lbNotifyDeferDrain('AFTER', 30000, 0);
   ok('④-17 ★期限の後もう一度送らない（alert へ）', rm.pushes.length === 1 && rm.nqRows.length === 1 && rm.nqRows[0][7] === 'alert');
+  // ★関門② 中：予算切れで取り分けを戻せなかった（送る試みの印なし）→ 期限後は alert にせず普通に送る
+  const rl = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('a'), item('b')]) }, lockFail: (w) => w === 5000 && rl.__noRelease });
+  rl.__noRelease = true;
+  rl.ctx._lbNotifyDeferDrain('AFTER', 100, 0);
+  ok('④-19 予算切れ＋戻すロック失敗：1通目だけ送り、2通目は印なしの取り分けのまま', rl.pushes.length === 1 && pend(rl.props).some((x) => x.id === 'b' && x.li && x.a === undefined), JSON.stringify(pend(rl.props)));
+  rl.__noRelease = false;
+  rl.adv(6 * 60000);
+  rl.ctx._lbNotifyDeferDrain('AFTER', 30000, 0);
+  ok('④-20 ★期限後、印の無い b は alert にせず普通に送る（送っていないと確定）・送った後に消せなかった a（印あり）だけ alert', rl.pushes.length === 2 && rl.nqRows.length === 1 && rl.nqRows[0][0] === 'Da' && pend(rl.props).length === 0, JSON.stringify([rl.pushes.length, rl.nqRows.length]));
+  // 印を立てられない → その回は送らない（期限後に送られる・二重にならない）
+  const mk = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('a')]) }, lockFail: (w) => w === 4000 });
+  mk.ctx._lbNotifyDeferDrain('AFTER', 30000, 0);
+  ok('④-21 送る試みの印を立てられなければ送らず取り分けを戻す', mk.pushes.length === 0 && pend(mk.props).length === 1 && !pend(mk.props)[0].li);
+  // 引き渡しを待ちから消せない → 数えない（次の回に id で重複を作らず引き渡して数える）
+  const hc = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('q3', { at: nowMs - 31 * 60000 })]) }, lockFail: (w) => w === 5000 });
+  hc.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
+  ok('④-22 ★引き渡しを待ちから消せなければ handover に数えない', hc.nqRows.length === 1 && !cnt(hc.props).handover && pend(hc.props).length === 1, JSON.stringify(cnt(hc.props)));
   // 空なら何も読まない（ロックを取らない）
   const empty = make({});
   empty.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
