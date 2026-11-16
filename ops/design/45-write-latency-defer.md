@@ -227,3 +227,12 @@ LIFF の書き込みの待ち切りは 20秒（`liff/index.html` `_rawApi` の `
 - 段の記録：`member`・`edgeMark` を後ろに足し、古い長さ（段11個）の行も読む（読み出しは行ごとの並びで名前を付け、古い行に「（旧い並び）」）。
 - 版の印：GAS `LB_EDGE_BUILD`・`LB_HEALTH_BUILD` = `2026-11-16a`（`worker/test/expected-builds.json` も）、Worker `WORKER_BUILD` = `2026-11-16a`、LIFF `LIFF_BUILD`・`KARTE_BUILD`・`karte.js?v=` = `2026-11-16a`。
 - 検査：`worker/test/write-covers.test.js`（Worker・本物の SQLite）・`worker/test/gas-edge-defer.test.js`（GAS）・`karte.test.js` 11・`liff-karte.test.js` 11-9〜11-10・`read-on.test.js` ①-3b〜c。既存の検査の身代わり（門の表を読めるように `all()` を足す・新しい関数の身代わり）を直した。
+
+## 関門② 1周目（Codex スレッド 01a1e37f-1bc3-7eb1-9439-464f55d81871・コミット 8e7912d）
+判定：**通過**（高0・中0・低1）。顧客に古い値が出る経路なし（全経路で後の門が値の読み取りの後・組み立ての前）、ingest の検証・同じ batch・MAX にしない・blocked_since の CASE、GAS のスイッチオフで今と同じ・番号を台帳の前に読む・新しいトリガーなし・個人情報の新しい出口なし、と確認された。
+| # | 指摘 | 対処 |
+|---|---|---|
+| 低 | `trigger-args.test.js` に足した許可の正規表現がプロパティ名を `[A-Za-z]+` にしていて、任意の文字列の欄を型検査すれば通ってしまう | 直した（aa79f85）。`triggerUid` に固定。別の欄で確かめる形に壊すと落ちることを確かめた |
+
+## 関門② 2周目（Codex スレッド 01a1e387-ac21-7890-9f93-0d5903db7bf4・コミット aa79f85）
+判定：**通過**（指摘なし）。修正で指摘が解消し、ほかの引数つきトリガー（dailyHealthCheck・weeklyPaceReport・lbNudgeDaily）の判定は変わらないと確認された。
