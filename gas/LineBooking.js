@@ -5476,21 +5476,22 @@ function _lbNotifyHoldSettle(normal) {
   if (typeof _lbWpMark === 'function') _lbWpMark('notify');
 }
 
-// 取り分けた項目を消す（id と取り分けの印が自分のものだけ）
+// 取り分けた項目を消す（id と取り分けの印が自分のものだけ）。実際に消した id の配列（ロックが取れない・壊れている＝null）
 function _lbNdRemove(idList, leaseId) {
-  return _lbDwLocked(function () {
+  var r = _lbDwLocked(function () {
     var p = PropertiesService.getScriptProperties();
     var raw = p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
     var q = _lbNdParse(raw);
-    if (q === null) { _lbNdMarkBad(p, raw); return false; }
-    var keep = [], n = 0;
+    if (q === null) { _lbNdMarkBad(p, raw); return null; }
+    var keep = [], gone = [];
     for (var i = 0; i < q.length; i++) {
-      if (idList.indexOf(q[i].id) >= 0 && q[i].li === leaseId) { n++; continue; }
+      if (idList.indexOf(q[i].id) >= 0 && q[i].li === leaseId) { gone.push(q[i].id); continue; }
       keep.push(q[i]);
     }
-    if (n) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(keep));
-    return true;
-  }, LB_NOTIFY_DEFER.WRITEBACK_LOCK_MS) === true;
+    if (gone.length) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(keep));
+    return gone;
+  }, LB_NOTIFY_DEFER.WRITEBACK_LOCK_MS);
+  return (Object.prototype.toString.call(r) === '[object Array]') ? r : null;
 }
 
 // 送る直前の印（a=1＝送ったか分からない側）。取り分けが自分のものだけ。立てられたら true
@@ -5555,14 +5556,16 @@ function _lbNotifyDeferRun(who, pick, budgetMs) {
       for (var i = 0; i < q.length; i++) {
         var it = q[i];
         if (it.li && it.lu > now) continue;                       // 別の実行が取り分け中
-        var take = function (list) { it.li = leaseId; it.lu = now + LB_NOTIFY_DEFER.LEASE_MS; list.push(it); changed = true; };
+        var take = function (list, mark) { it.li = leaseId; it.lu = now + LB_NOTIFY_DEFER.LEASE_MS; if (mark) it.a = 1; list.push(it); changed = true; };
         //   期限切れの取り分け：送る試みの印（a=1）があれば送ったか分からない＝送らず alert。
         //   印が無ければ送っていないと確定している（予算切れ・印を立てる前に止まった・戻せなかった）＝普通の項目に戻す（関門② 中）
         if (it.li && it.a === 1) { if (bg && lost.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(lost); continue; }
         if (it.li) { it.li = ''; it.lu = 0; changed = true; }
         if (bg && now - it.at > LB_NOTIFY_DEFER.HANDOVER_AGE_MS) { if (hand.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(hand); continue; }
         if (!pick(it, now)) continue;
-        if (claimed.length < LB_NOTIFY_DEFER.CLAIM_MAX) take(claimed);
+        //   ★要求の中の取り戻し（RECLAIM）は取り分けと同時に送る試みの印を立てる＝送る直前のロックを取らない（応答を待たせない・関門② 2周目 中）。
+        //     取り戻すのは自分が今入れた数通だけで、予算で打ち切らずに全部送る
+        if (claimed.length < LB_NOTIFY_DEFER.CLAIM_MAX) take(claimed, !bg);
       }
       if (changed) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(q));
       return 'OK';
@@ -5582,14 +5585,19 @@ function _lbNotifyDeferRun(who, pick, budgetMs) {
     else backIds.push(hi.id);   // ★引き渡せなければ待ちに残す（黙って消さない）
   }
   //   ★数えるのは待ちから消せたときだけ（消せなければ次の回にもう一度引き渡す＝id で重複を作らない・二重に数えない・関門② 低）
-  if (handedIds.length && _lbNdRemove(handedIds, leaseId)) for (var hk = 0; hk < handedIds.length; hk++) add(handedKind[handedIds[hk]], 1);
+  var goneH = handedIds.length ? _lbNdRemove(handedIds, leaseId) : null;
+  if (goneH) for (var hk = 0; hk < goneH.length; hk++) add(handedKind[goneH[hk]], 1);   // ★実際に消せた分だけ（関門② 2周目 低）
   //   送る（今の _lbPush と同じ引数。失敗は _lbPush が notify_retry に積む）
   var unsent = [];
   for (var k = 0; k < claimed.length; k++) {
     var it2 = claimed[k];
-    if (Date.now() - t0 > budgetMs) { unsent.push(it2.id); continue; }
-    //   ★送る直前に「送る試みの印」を立てる。立てられなければこの回は送らない（印の無い項目は期限後に普通に送られる）
-    if (!_lbNdMarkAttempt(it2.id, leaseId)) { unsent.push(it2.id); continue; }
+    if (bg && Date.now() - t0 > budgetMs) { unsent.push(it2.id); continue; }
+    //   ★送る直前に「送る試みの印」を立てる（裏の実行だけ）。立てられなければこの回は送らない（印の無い項目は期限後に普通に送られる）
+    if (bg) {
+      var tm = Date.now(), marked = _lbNdMarkAttempt(it2.id, leaseId);
+      mx.lockMsMax = Math.max(mx.lockMsMax || 0, Date.now() - tm);
+      if (!marked) { unsent.push(it2.id); continue; }
+    }
     var ts = Date.now(), okS = false;
     mx.maxAgeMs = Math.max(mx.maxAgeMs || 0, ts - it2.at);
     try { okS = _lbPush(it2.to, it2.text, it2.p, it2.c, it2.nr ? { noInlineRetry: true } : undefined) === true; } catch (eS) { okS = false; }

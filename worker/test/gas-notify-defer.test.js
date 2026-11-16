@@ -51,7 +51,7 @@ function make(opt = {}) {
   const pushResult = opt.pushResult || (() => ({ ok: true, code: 200, body: '', uncertain: false }));
   class FD extends Date { constructor(...a) { if (a.length === 0) super(nowMs); else super(...a); } static now() { return nowMs; } }
   const nqSheet = {
-    appendRow: (r) => { if (opt.nqAppendThrow) throw new Error('x'); nqRows.push(r.slice()); log.push('nq:' + r[7]); },
+    appendRow: (r) => { if (opt.nqAppendThrow) throw new Error('x'); nqRows.push(r.slice()); log.push('nq:' + r[7]); if (opt.onNqAppend) opt.onNqAppend(props); },
     getLastRow: () => nqRows.length + 1,
     getRange: (r, c, n, m) => ({ getValues: () => nqRows.slice(r - 2, r - 2 + n).map((x) => x.slice(c - 1, c - 1 + m)) }),
   };
@@ -280,6 +280,20 @@ console.log('=== ④ 送る側 ===');
   const hc = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('q3', { at: nowMs - 31 * 60000 })]) }, lockFail: (w) => w === 5000 });
   hc.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
   ok('④-22 ★引き渡しを待ちから消せなければ handover に数えない', hc.nqRows.length === 1 && !cnt(hc.props).handover && pend(hc.props).length === 1, JSON.stringify(cnt(hc.props)));
+  // ★関門② 2周目 低：引き渡しの間に取り分けが他へ移っていた（消したのは0件）→ 数えない
+  const mv = make({ props: { LB_NOTIFY_PENDING: JSON.stringify([item('q4', { at: nowMs - 31 * 60000 })]) },
+    onNqAppend: (props) => { const q = JSON.parse(props.LB_NOTIFY_PENDING); q[0].li = 'other'; props.LB_NOTIFY_PENDING = JSON.stringify(q); } });
+  mv.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
+  ok('④-23 ★実際に消せなかった引き渡しは数えない（取り分けが他へ移っていた）', mv.nqRows.length === 1 && !cnt(mv.props).handover && pend(mv.props).length === 1);
+  // ★関門② 2周目 中：要求の中の取り戻しは送る直前のロックを取らない（印は取り分けと同時）
+  const rc = make({ on: true, dispatch: book(), calOk: false, lockFail: (w) => w === 4000 });
+  rc.ctx.handleLineGet({ action: 'line_makeReservationLine' });
+  ok('④-24 ★取り戻し（要求の中）は印のロックを取らずに送る（4秒の待ちを足さない）', rc.pushes.length === 2 && !rc.log.includes('lockfail:4000') && pend(rc.props).length === 0, rc.log.join(','));
+  const rc2 = make({ on: true, dispatch: book(), calOk: false, lockFail: (w) => w === 5000 });
+  rc2.ctx.handleLineGet({ action: 'line_makeReservationLine' });
+  rc2.adv(6 * 60000);
+  rc2.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
+  ok('④-25 取り戻しで送った後に消せなかった項目は、期限後に送り直さず alert（印は取り分けと同時）', rc2.pushes.length === 2 && rc2.nqRows.length === 2 && rc2.nqRows.every((r) => r[7] === 'alert'), JSON.stringify([rc2.pushes.length, rc2.nqRows.map((r) => r[7])]));
   // 空なら何も読まない（ロックを取らない）
   const empty = make({});
   empty.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
