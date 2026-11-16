@@ -5328,7 +5328,7 @@ var LB_NOTIFY_DEFER = {
 var LB_NOTIFY_DEFER_OPS = { line_makeReservationLine: 1, line_makeReservationLineProxy: 1, line_makeTransferReservation: 1,
                             line_cancelReservation: 1, line_ownerFreeCancel: 1 };
 var LB_NOTIFY_DEFER_KINDS = ['held', 'inline_noTrigger', 'inline_pendFail', 'inline_throw', 'sentAfter', 'sentTick', 'sentWarm',
-                             'sendFail', 'leaseLost', 'handover', 'staleDropped', 'flushTimeout', 'badCleared', 'sendMsSum', 'sendN'];
+                             'sendFail', 'leaseLost', 'handover', 'staleDropped', 'flushTimeout', 'badCleared', 'reclaimLeft', 'sendMsSum', 'sendN'];
 var LB_NOTIFY_DEFER_MAXES = ['maxAgeMs', 'sendMsMax', 'lockMsMax'];
 
 function _lbNotifyDeferOn() {
@@ -5459,8 +5459,17 @@ function _lbNotifyHoldSettle(normal) {
         if (typeof _lbWpMark === 'function') _lbWpMark('notifyQ');
         return;
       }
-      //   ★トリガーを作れなかった：自分が入れた項目だけ取り戻して今の経路で送る（別の実行が取っていた分はその実行が送る）
-      _lbNotifyDeferRun('RECLAIM', function (it) { return ids.indexOf(it.id) >= 0; }, LB_NOTIFY_DEFER.BUDGET_MS);
+      //   ★トリガーを作れなかった：自分が入れた項目だけ待ちから取り出して、今の経路（_lbPush）で送る（関門② 3周目 中）。
+      //     取り出した後は今と同じ意味（印もリースも使わない）。別の実行が取り分け中の分はその実行が送る。
+      //     取り出せなかった（ロック）分は待ちに残り、5分ごとの受け皿が送る（遅れるが落ちない）
+      var got = _lbNdReclaim(ids), sentN = 0;
+      if (got) {
+        for (var g = 0; g < got.length; g++) {
+          try { _lbPush(got[g].to, got[g].text, got[g].p, got[g].c, got[g].nr ? { noInlineRetry: true } : undefined); } catch (eG) {}
+          sentN++;
+        }
+      }
+      _lbNdCount(got ? { inline_noTrigger: sentN } : { reclaimLeft: ids.length }, {});
       if (typeof _lbWpMark === 'function') _lbWpMark('notify');
       return;
     }
@@ -5491,6 +5500,25 @@ function _lbNdRemove(idList, leaseId) {
     if (gone.length) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(keep));
     return gone;
   }, LB_NOTIFY_DEFER.WRITEBACK_LOCK_MS);
+  return (Object.prototype.toString.call(r) === '[object Array]') ? r : null;
+}
+
+// 取り戻し（要求の中・トリガーを作れなかったとき）：自分が入れた id のうち、取り分けられていないものを待ちから取り出して返す。
+//   ロックが取れない・壊れている＝null（待ちに残す）
+function _lbNdReclaim(ids) {
+  var r = _lbDwLocked(function () {
+    var p = PropertiesService.getScriptProperties();
+    var raw = p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+    var q = _lbNdParse(raw);
+    if (q === null) { _lbNdMarkBad(p, raw); return null; }
+    var keep = [], got = [];
+    for (var i = 0; i < q.length; i++) {
+      if (ids.indexOf(q[i].id) >= 0 && !q[i].li) got.push(q[i]);   // 取り分けられていたら触らない（その実行が送る）
+      else keep.push(q[i]);
+    }
+    if (got.length) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(keep));
+    return got;
+  }, LB_NOTIFY_DEFER.REQ_LOCK_MS);
   return (Object.prototype.toString.call(r) === '[object Array]') ? r : null;
 }
 
@@ -5538,11 +5566,10 @@ function _lbNdHandover(it, alert) {
     : { id: rid, code: 'DEFER_LATE', detail: 'not_sent: DEFER_LATE' }) === true;
 }
 
-// 待ちを送る本体（AFTER・TICK・WARM・DAILY・RECLAIM が通る）。pick(it, now) が真の項目を送る
+// 待ちを送る本体（裏の実行：AFTER・TICK・WARM・DAILY が通る）。pick(it, now) が真の項目を送る
 //   ★取り分けだけが排他（ロックの中は Property の読み書きだけ）。LINE の通信・引き渡しはロックの外。1通ごとに消す
 function _lbNotifyDeferRun(who, pick, budgetMs) {
   var t0 = Date.now(), out = { sent: 0, failed: 0, lost: 0, handed: 0 };
-  var bg = (who !== 'RECLAIM');
   var leaseId = Utilities.getUuid(), claimed = [], lost = [], hand = [], lockMs = 0;
   var r = _lbDwLocked(function () {
     var tl = Date.now();
@@ -5556,24 +5583,22 @@ function _lbNotifyDeferRun(who, pick, budgetMs) {
       for (var i = 0; i < q.length; i++) {
         var it = q[i];
         if (it.li && it.lu > now) continue;                       // 別の実行が取り分け中
-        var take = function (list, mark) { it.li = leaseId; it.lu = now + LB_NOTIFY_DEFER.LEASE_MS; if (mark) it.a = 1; list.push(it); changed = true; };
+        var take = function (list) { it.li = leaseId; it.lu = now + LB_NOTIFY_DEFER.LEASE_MS; list.push(it); changed = true; };
         //   期限切れの取り分け：送る試みの印（a=1）があれば送ったか分からない＝送らず alert。
         //   印が無ければ送っていないと確定している（予算切れ・印を立てる前に止まった・戻せなかった）＝普通の項目に戻す（関門② 中）
-        if (it.li && it.a === 1) { if (bg && lost.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(lost); continue; }
+        if (it.li && it.a === 1) { if (lost.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(lost); continue; }
         if (it.li) { it.li = ''; it.lu = 0; changed = true; }
-        if (bg && now - it.at > LB_NOTIFY_DEFER.HANDOVER_AGE_MS) { if (hand.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(hand); continue; }
+        if (now - it.at > LB_NOTIFY_DEFER.HANDOVER_AGE_MS) { if (hand.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(hand); continue; }
         if (!pick(it, now)) continue;
-        //   ★要求の中の取り戻し（RECLAIM）は取り分けと同時に送る試みの印を立てる＝送る直前のロックを取らない（応答を待たせない・関門② 2周目 中）。
-        //     取り戻すのは自分が今入れた数通だけで、予算で打ち切らずに全部送る
-        if (claimed.length < LB_NOTIFY_DEFER.CLAIM_MAX) take(claimed, !bg);
+        if (claimed.length < LB_NOTIFY_DEFER.CLAIM_MAX) take(claimed);
       }
       if (changed) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(q));
       return 'OK';
     } finally { lockMs = Date.now() - tl; }
-  }, bg ? LB_NOTIFY_DEFER.BG_LOCK_MS : LB_NOTIFY_DEFER.REQ_LOCK_MS);
+  }, LB_NOTIFY_DEFER.BG_LOCK_MS);
   if (r !== 'OK') return { skipped: r || 'LOCK' };
 
-  var inc = {}, mx = { lockMsMax: lockMs }, sentKind = { AFTER: 'sentAfter', TICK: 'sentTick', WARM: 'sentWarm', RECLAIM: 'inline_noTrigger' }[who] || 'sentTick';
+  var inc = {}, mx = { lockMsMax: lockMs }, sentKind = { AFTER: 'sentAfter', TICK: 'sentTick', WARM: 'sentWarm' }[who] || 'sentTick';
   function add(k, n) { inc[k] = (inc[k] || 0) + n; }
   //   引き渡し（送らない）
   var handedIds = [], backIds = [], handedKind = {};
@@ -5591,13 +5616,11 @@ function _lbNotifyDeferRun(who, pick, budgetMs) {
   var unsent = [];
   for (var k = 0; k < claimed.length; k++) {
     var it2 = claimed[k];
-    if (bg && Date.now() - t0 > budgetMs) { unsent.push(it2.id); continue; }
-    //   ★送る直前に「送る試みの印」を立てる（裏の実行だけ）。立てられなければこの回は送らない（印の無い項目は期限後に普通に送られる）
-    if (bg) {
-      var tm = Date.now(), marked = _lbNdMarkAttempt(it2.id, leaseId);
-      mx.lockMsMax = Math.max(mx.lockMsMax || 0, Date.now() - tm);
-      if (!marked) { unsent.push(it2.id); continue; }
-    }
+    if (Date.now() - t0 > budgetMs) { unsent.push(it2.id); continue; }
+    //   ★送る直前に「送る試みの印」を立てる。立てられなければこの回は送らない（印の無い項目は期限後に普通に送られる）
+    var tm = Date.now(), marked = _lbNdMarkAttempt(it2.id, leaseId);
+    mx.lockMsMax = Math.max(mx.lockMsMax || 0, Date.now() - tm);
+    if (!marked) { unsent.push(it2.id); continue; }
     var ts = Date.now(), okS = false;
     mx.maxAgeMs = Math.max(mx.maxAgeMs || 0, ts - it2.at);
     try { okS = _lbPush(it2.to, it2.text, it2.p, it2.c, it2.nr ? { noInlineRetry: true } : undefined) === true; } catch (eS) { okS = false; }

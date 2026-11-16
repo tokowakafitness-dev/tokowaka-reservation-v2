@@ -33,7 +33,7 @@ function pluckVar(src, name) {
 }
 const H = 3600000;
 const LB_FNS = ['handleLineGet', '_lbNotifyDeferOn', '_lbNotifyHoldStart', '_lbNotifyHolding', '_lbPushOrHold', '_lbNotifyHoldPersist',
-  '_lbNotifyHoldSettle', '_lbNdParse', '_lbNdMarkBad', '_lbUtf8Len', '_lbNdCount', '_lbNdHandover', '_lbNdRemove', '_lbNdRelease', '_lbNdMarkAttempt',
+  '_lbNotifyHoldSettle', '_lbNdParse', '_lbNdMarkBad', '_lbUtf8Len', '_lbNdCount', '_lbNdHandover', '_lbNdRemove', '_lbNdRelease', '_lbNdMarkAttempt', '_lbNdReclaim',
   '_lbNotifyDeferRun', '_lbNotifyDeferDrain', '_lbNotifyDeferFlushRes', 'lbNotifyDeferDailyMaint', 'lbNotifyDeferDailyCheck',
   '_lbNotifyDeferSummaryText', '_lbPush', '_lbNqOnFail', '_lbNqDefer', '_lbNqAppendRow', '_lbNqPolicy', '_lbNqCol', '_lbNqRetryable',
   '_lbNotifyReservation', '_lbCxlAfter', '_lbCxlLogErr'];
@@ -293,7 +293,16 @@ console.log('=== ④ 送る側 ===');
   rc2.ctx.handleLineGet({ action: 'line_makeReservationLine' });
   rc2.adv(6 * 60000);
   rc2.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
-  ok('④-25 取り戻しで送った後に消せなかった項目は、期限後に送り直さず alert（印は取り分けと同時）', rc2.pushes.length === 2 && rc2.nqRows.length === 2 && rc2.nqRows.every((r) => r[7] === 'alert'), JSON.stringify([rc2.pushes.length, rc2.nqRows.map((r) => r[7])]));
+  ok('④-25 ★取り戻しは待ちから取り出して今の経路で送る（期限後に alert も二重送信も無い）', rc2.pushes.length === 2 && rc2.nqRows.length === 0 && pend(rc2.props).length === 0, JSON.stringify([rc2.pushes.length, rc2.nqRows.map((r) => r[7])]));
+  // 取り出しのロックが取れない → 待ちに残り（取り分けなし）、5分ごとの受け皿が1回だけ送る
+  let n3000 = 0;
+  const rc3 = make({ on: true, dispatch: book(), calOk: false, lockFail: (w) => w === 3000 && (++n3000) > 1 });
+  rc3.ctx.handleLineGet({ action: 'line_makeReservationLine' });
+  ok('④-26 取り出せなければ応答の前には送らず待ちに残す（取り分けなし）・reclaimLeft に数える', rc3.pushes.length === 0 && pend(rc3.props).length === 2 && pend(rc3.props).every((x) => !x.li) && cnt(rc3.props).reclaimLeft === 2, JSON.stringify(cnt(rc3.props)));
+  rc3.adv(100000);
+  rc3.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
+  rc3.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
+  ok('④-27 ★残った分は受け皿が1回だけ送る', rc3.pushes.length === 2 && pend(rc3.props).length === 0);
   // 空なら何も読まない（ロックを取らない）
   const empty = make({});
   empty.ctx._lbNotifyDeferDrain('TICK', 30000, 90000);
