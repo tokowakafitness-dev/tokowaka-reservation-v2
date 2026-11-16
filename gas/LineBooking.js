@@ -289,7 +289,8 @@ var LB_WP = {
   PROP: 'LB_WRITE_PERF', BAD_PROP: 'LB_WRITE_PERF_BAD', MAX: 60, MAX_BYTES: 8000,
   STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark', 'notifyCalc', 'notifyQ'],
   //   ★設計45b：notifyCalc（予約のトレーナー宛の残数の文＝応答の前に残る計算）・notifyQ（通知の待ちへの追加と片付け）を後ろに足した。
-  //     M2 の member・edgeMark は未反映なので、並びは 15 にまとめる（反映済みの旧い並びは段11個だけ）
+  //     M2（段13個）が先に反映された場合の行も読めるように STAGES_V2 を残す
+  STAGES_V2: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark'],
   //   ★設計45：member（会員名簿の読み）・edgeMark（写しを後ろへ回すときの待ちへの追加と印の送信）を**後ろに**足した。
   //     反映の前の記録（段11個の行）も読めるように、古い並びを残す（行の長さで見分ける）
   STAGES_V1: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other'],
@@ -351,6 +352,7 @@ function _lbWpStagesOf(r) {
   //   行の長さで段の並びを決める（設計45 で段を後ろに足した。古い行は段11個）
   if (Object.prototype.toString.call(r) !== '[object Array]') return null;
   if (r.length === 6 + LB_WP.STAGES.length + 1) return LB_WP.STAGES;
+  if (r.length === 6 + LB_WP.STAGES_V2.length + 1) return LB_WP.STAGES_V2;
   if (r.length === 6 + LB_WP.STAGES_V1.length + 1) return LB_WP.STAGES_V1;
   return null;
 }
