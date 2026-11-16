@@ -53,7 +53,7 @@ ok('①送信に scope を載せている', (SRC.match(/scope:\s*scope/g) || [])
 //   ここを取り違えると「全件のつもりで一部しか送っていない」まま同期時刻が押され、
 //   古い行が新しいものとして残る。1人ぶんの押し出しで起きていた事故と同じ形。
 ok("③予約直後の1人ぶんは partial",
-  /_edgePushRows\('reservations', mine, Date\.now\(\), \{ scope: 'partial', dirtySeq: ds, customerId: String\(customerId\) \}\)/.test(SRC));   // 2026-10-22 設計21
+  /_edgePushRows\('reservations', mine, Date\.now\(\), \{ scope: 'partial', dirtySeq: ds, customerId: String\(customerId\), coversSeq: _cv \}\)/.test(SRC));   // 2026-10-22 設計21
 //   ★2026-10-11：書き込み直後の枠の押し出しは**やめた**（関門②の指摘）。
 //     確定フローは空き枠を作り直さない（warmupCacheに委ねている）ので、
 //     古いキャッシュを新しい batchId で押し出し直すだけだった。
@@ -62,8 +62,8 @@ ok("③★書き込み直後は枠を送らない",
   !/_edgePushRows\('slots'/.test(SRC) && !/_edgePushSlotsFor/.test(SRC),
   '代わりに _syncedSlots=false と名乗り、画面は枠だけGASへ落ちる（遅いが新しい）');
 ok("③1人ぶんの残数も partial",
-  /_edgePushRows\('home', rows, Date\.now\(\), \{ scope: 'partial', dirtySeq: _ds \}\)/.test(SRC));   // 2026-10-20 設計20：通し番号を載せる
-ok("③15分ごとの全件同期は all", /_edgePushRowsF\('reservations', _edgeReservations\(\), batchId, \{ scope: 'all'/.test(SRC));
+  /_edgePushRows\('home', rows, Date\.now\(\), \{ scope: 'partial', dirtySeq: _ds, coversSeq: _cv \}\)/.test(SRC));   // 2026-10-20 設計20：通し番号を載せる
+ok("③15分ごとの全件同期は all", /_edgePushRowsF\('reservations', _rv, batchId, \{ scope: 'all'/.test(SRC));
 //   ★2026-10-11：枠を送る経路を _edgeSendSlots の1本にまとめた（設計：巻き戻し防止）。
 //     scope は送信関数の中で 'all' に固定してある。
 ok("③枠の同期（全トレーナー）も all",
@@ -155,10 +155,10 @@ ok('⑦★消す指定なしでは名乗れない',
 //   画面はこの結果で「待つかどうか」を決める。
 //   失敗を黙って握りつぶすと、画面は「写しが新しい」と信じて古い残数を出す。
 ok('⑧残数の押し直しが成否を返す',
-  /function pushToEdgeHomeFor[\s\S]{0,500}return true;[\s\S]{0,200}return false;/.test(SRC));
+  /function pushToEdgeHomeFor[\s\S]{0,700}return true;[\s\S]{0,200}return false;/.test(SRC));
 ok('⑧★作れなかったときは false', /if \(!rows\.length\) return false;/.test(SRC));
 ok('⑧予約の押し直しも読めなければ false',
-  /function _edgePushReservationsFor[\s\S]{0,200}all == null\) return false;/.test(SRC));
+  /function _edgePushReservationsFor[\s\S]{0,300}all == null\) return false;/.test(SRC));
 ok('⑧★枠を変える操作なら「同期できていない」と名乗る',
   /var _slotsChanged = !!EDGE_CALSYNC_AFTER\[String\(action \|\| ''\)\];/.test(SRC)
   && /var _syncedSlots = !_slotsChanged;/.test(SRC),

@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-13c 書き込みの後、枠以外は同期済みと名乗る・枠の写しに読み始めた時刻（設計43）';
+var LB_EDGE_BUILD = '2026-11-16a 写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・写しに番号（coversSeq）（設計45）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -127,6 +127,14 @@ function _edgePushRows(kind, rows, batchId, opts) {
   //   予約一覧は会員を本文で示す（Worker が全行の会員一致と、0件でも印を立てる相手を確かめる）
   var dirtyCustomer = (dirtySeq != null && kind === 'reservations') ? String(_o.customerId || '') : '';
   if (dirtySeq != null && kind === 'reservations' && !dirtyCustomer) dirtySeq = null;
+  //   ★写しが含む番号（設計45・I79）。台帳を読む前に読んだ通し番号。home は毎回の batch に、
+  //     reservations は最後の batch にだけ載せる（途中の batch で載せると、まだ送っていない行の会員を開いてしまう）。
+  //     全体の予約一覧は coveredCustomers（その回に走査した会員）も最後の batch に載せる。一部の送信は customerId の会員
+  var coversSeq = ((kind === 'home' || kind === 'reservations') && typeof _o.coversSeq === 'number' && _o.coversSeq > 0
+                   && Math.floor(_o.coversSeq) === _o.coversSeq) ? _o.coversSeq : null;
+  var coversCustomer = (coversSeq != null && kind === 'reservations' && scope === 'partial') ? String(_o.customerId || '') : '';
+  var covered = (coversSeq != null && kind === 'reservations' && scope === 'all'
+                 && Object.prototype.toString.call(_o.coveredCustomers) === '[object Array]') ? _o.coveredCustomers : null;
   if (!rows.length) {
     _edgePost({ kind: kind, batchId: batchId, rows: [], final: true, deleteStale: full, scope: scope, allowEmpty: allowEmpty });
     return '0件';
@@ -136,6 +144,11 @@ function _edgePushRows(kind, rows, batchId, opts) {
     var last = (i + EDGE.CHUNK) >= rows.length;
     var _body = { kind: kind, batchId: batchId, rows: chunk, final: last, deleteStale: full, scope: scope };
     if (dirtySeq != null) { _body.dirtySeq = dirtySeq; if (dirtyCustomer) _body.customerId = dirtyCustomer; }
+    if (coversSeq != null && (kind === 'home' || last)) {
+      if (kind === 'home') _body.coversSeq = coversSeq;
+      else if (scope === 'partial' && coversCustomer) { _body.coversSeq = coversSeq; _body.customerId = coversCustomer; }
+      else if (scope === 'all' && covered) { _body.coversSeq = coversSeq; _body.coveredCustomers = covered; }
+    }
     var res = _edgePost(_body);
     sent += chunk.length;
     wrote += Number((res && res.written) || 0);
@@ -914,6 +927,7 @@ function _edgePushHome(customers, batchId, t0, log, full) {
 
   var ids = all.slice(startAt).concat(all.slice(0, startAt));   // 続きから一周する
   var deadline = t0 + EDGE.BUDGET_MS;
+  var _cv = _edgeCoversSeqNow();   // ★設計45：台帳を読む前に読む
   var rows = _edgeWithSheetCache(function () {
     return _edgeWithResvCache(function () { return _edgeHomeRows(ids, deadline); });
   });
@@ -927,7 +941,7 @@ function _edgePushHome(customers, batchId, t0, log, full) {
   //   「_pushToEdgeAllImpl から呼ばれた」ことは全件を見終えたことを意味しない。
   var _done = (rows.length >= all.length);
   return _edgePushRows('home', rows, batchId,
-    { scope: _done ? 'all' : 'partial', deleteStale: !!full && _done });
+    { scope: _done ? 'all' : 'partial', deleteStale: !!full && _done, coversSeq: _cv });
 }
 
 // 契約や予約が変わった会員1人分だけを、その場で押し出す。
@@ -942,10 +956,11 @@ function _edgePushHome(customers, batchId, t0, log, full) {
 function pushToEdgeHomeFor(customerId, customerName, dirtySeq) {
   if (!_edgeEnabled()) return false;
   try {
+    var _cv = _edgeCoversSeqNow();   // ★設計45：台帳を読む前に読む
     var rows = _edgeHomeRows([{ id: String(customerId), name: String(customerName || '') }], 0);
     if (!rows.length) return false;                 // 作れなかった＝写しは直っていない
     var _ds = (typeof dirtySeq === 'number' && dirtySeq > 0 && Math.floor(dirtySeq) === dirtySeq) ? dirtySeq : null;
-    _edgePushRows('home', rows, Date.now(), { scope: 'partial', dirtySeq: _ds });
+    _edgePushRows('home', rows, Date.now(), { scope: 'partial', dirtySeq: _ds, coversSeq: _cv });
     return true;
   } catch (e) { Logger.log('[edge] 残数の即時更新に失敗: ' + (e && e.message)); return false; }
 }
@@ -997,6 +1012,7 @@ function _edgeNameByCustomerId(customerId) {
 //       以前は0件なら送らずに「成功」と答えていた＝チケット追加・自己登録の直後に番号が届かなかった（関門①）
 //   戻り値：送れた＝true／送れなかった＝false（番号が無く0件で送る必要が無いときは true）
 function _edgePushReservationsFor(customerId, dirtySeq) {
+  var _cv = _edgeCoversSeqNow();   // ★設計45：台帳を読む前に読む
   var all = _edgeReservations();
   if (all == null) return false;                  // 読めなかった＝送らない（写しは直っていない）
   var mine = [];
@@ -1007,13 +1023,15 @@ function _edgePushReservationsFor(customerId, dirtySeq) {
   if (!mine.length) {
     if (ds == null) return true;
     try {
-      var r0 = _edgePost({ kind: 'reservations', batchId: Date.now(), rows: [], final: true, scope: 'partial',
-                           customerId: String(customerId), dirtySeq: ds });
+      var b0 = { kind: 'reservations', batchId: Date.now(), rows: [], final: true, scope: 'partial',
+                 customerId: String(customerId), dirtySeq: ds };
+      if (_cv != null) b0.coversSeq = _cv;
+      var r0 = _edgePost(b0);
       return !!(r0 && r0.success);
     } catch (e) { return false; }
   }
   try {
-    _edgePushRows('reservations', mine, Date.now(), { scope: 'partial', dirtySeq: ds, customerId: String(customerId) });
+    _edgePushRows('reservations', mine, Date.now(), { scope: 'partial', dirtySeq: ds, customerId: String(customerId), coversSeq: _cv });
     return true;
   } catch (e) { return false; }
 }
@@ -1112,6 +1130,238 @@ function _lbDwMarkDirty(customerId, seq) {
   } catch (e) { Logger.log('[dw] 書き込みの印を送れませんでした: ' + (e && e.message)); return false; }
 }
 
+// ============================================================
+// 設計45 写しの送信を応答の後ろへ回す（2026-11-16・ops/design/45-write-latency-defer.md）
+//   スイッチ LB_EDGE_DEFER（'1' のときだけ）。オフなら書き込み直後の送信は今と同じ（番号の欄が1つ増えるだけ）
+//   ・応答の前：通し番号を積む → 待ち LB_EDGE_PENDING に足す → 書き込みの印だけを Worker へ（D1 は dirty_seq を知り I79 の門が閉じる）
+//   ・応答の後：既にある一回限りトリガー _lbCalSyncAfterWrite の先頭で写しと予約一覧を送る（新しいトリガーは作らない）
+//   ・受け皿：5分ごとの lbCalSyncTick が90秒より古い待ちを送る
+//   ★どれか1つでもできなければ今の経路（応答の前に写しと予約一覧を送る）
+//   ★待ちは会員IDと番号・時刻だけ（運用の状態）。ログ・点検・応答に会員IDを出さない
+// ============================================================
+var LB_EDGE_DEFER = {
+  ON_PROP: 'LB_EDGE_DEFER',
+  PENDING_PROP: 'LB_EDGE_PENDING',
+  PENDING_BAD_PROP: 'LB_EDGE_PENDING_BAD',     // 壊れていた時刻だけ（中身は写さない）
+  COUNT_PROP: 'LB_EDGE_DEFER_COUNT',           // { 'yyyy-MM-dd': {deferred,…,maxAgeMs} } 直近3日
+  COUNT_BAD_PROP: 'LB_EDGE_DEFER_COUNT_BAD',
+  MAX_PENDING: 30, MAX_BYTES: 6000,
+  AFTER_BUDGET_MS: 60000,                      // 一回限りトリガーの先頭で使う時間の上限（同期と枠の前なので短く）
+  TICK_MIN_AGE_MS: 90000,                      // 5分ごとの受け皿が拾う待ちの古さ
+  DROP_AGE_MS: 86400000,                       // これより古い待ちは捨てて数える（定期の押し出しが回復させている）
+  KEEP_DAYS: 3
+};
+var LB_EDGE_DEFER_KINDS = ['deferred', 'inline_noTrigger', 'inline_noSeq', 'inline_pendFail', 'inline_markFail',
+                           'sentAfter', 'sentTick', 'sendFail', 'dropped'];
+
+function _lbEdgeDeferOn() {
+  try { return _edgeProp(LB_EDGE_DEFER.ON_PROP) === '1'; } catch (e) { return false; }
+}
+
+// 写しを作るために台帳を読む**前**に読む、いまの通し番号（I79 の covers）。0・読めない＝null（載せない＝covers を進めない）
+function _edgeCoversSeqNow() {
+  try {
+    var c = _lbDwCurrentSeqInLock();
+    return (typeof c === 'number' && c > 0 && Math.floor(c) === c) ? c : null;
+  } catch (e) { return null; }
+}
+
+// 全体の予約一覧の送信で covers を立てる会員（走査した会員の全部・予約0件の会員を含む）。
+//   ★Worker の形（英数字・_・-・40字まで）に合わないIDは入れない（1つでも合わないと送信ごと断られる）。2,000人を超えたら載せない
+var EDGE_COVERED_MAX = 2000;
+function _edgeCoveredCustomers(customers, rows) {
+  if (customers == null || rows == null) return null;
+  var seen = {}, out = [];
+  function add(id) {
+    var s = String(id == null ? '' : id).replace(/^\s+|\s+$/g, '');
+    if (!s || seen[s] || !/^[A-Za-z0-9_-]{1,40}$/.test(s)) return;
+    seen[s] = 1; out.push(s);
+  }
+  for (var i = 0; i < customers.length; i++) add(customers[i] && customers[i].customer_id);
+  for (var j = 0; j < rows.length; j++) add(rows[j] && rows[j].customer_id);
+  if (out.length > EDGE_COVERED_MAX) { Logger.log('[edge] 走査した会員が多すぎて covers を載せません: ' + out.length); return null; }
+  return out;
+}
+
+// 待ちを読む（純粋）。{} ／ null（壊れている）
+function _lbEdgePendingParse(raw) {
+  if (raw == null || raw === '') return {};
+  try {
+    var o = JSON.parse(String(raw));
+    if (!o || typeof o !== 'object' || Object.prototype.toString.call(o) === '[object Array]') return null;
+    for (var k in o) {
+      if (!o.hasOwnProperty(k)) continue;
+      var e = o[k];
+      if (!e || typeof e !== 'object') return null;
+      if (!(typeof e.seq === 'number' && e.seq > 0 && Math.floor(e.seq) === e.seq)) return null;
+      if (!(typeof e.at === 'number' && e.at > 0)) return null;
+    }
+    return o;
+  } catch (e2) { return null; }
+}
+
+// 待ちに足す（待ち行列と同じロックの中）。足せたら true
+function _lbEdgePendingAdd(cid, seq) {
+  var r = _lbDwLocked(function () {
+    var p = PropertiesService.getScriptProperties();
+    var q = _lbEdgePendingParse(p.getProperty(LB_EDGE_DEFER.PENDING_PROP));
+    if (q === null) {
+      //   ★壊れていたら中身を別の場所へ写さず、時刻だけ印を立てて作り直す（待っていた会員は I79 の門で GAS に倒れ、定期の押し出しで戻る）
+      try { p.setProperty(LB_EDGE_DEFER.PENDING_BAD_PROP, String(Date.now())); } catch (eB) {}
+      q = {};
+    }
+    var cur = q[cid];
+    if (!cur && Object.keys(q).length >= LB_EDGE_DEFER.MAX_PENDING) return false;
+    q[cid] = { seq: Math.max(seq, cur ? cur.seq : 0), at: cur ? cur.at : Date.now() };
+    var sj = JSON.stringify(q);
+    if (sj.length > LB_EDGE_DEFER.MAX_BYTES) return false;
+    p.setProperty(LB_EDGE_DEFER.PENDING_PROP, sj);
+    return true;
+  });
+  return r === true;
+}
+
+// 送れた会員を外す。その間に番号が上がっていたら外さない（_lbDwDone と同じ考え方）
+function _lbEdgePendingDone(cid, seq) {
+  return _lbDwLocked(function () {
+    var p = PropertiesService.getScriptProperties();
+    var q = _lbEdgePendingParse(p.getProperty(LB_EDGE_DEFER.PENDING_PROP));
+    if (q === null || !q[cid]) return 'GONE';
+    if (q[cid].seq !== seq) return 'NEWER';
+    delete q[cid];
+    p.setProperty(LB_EDGE_DEFER.PENDING_PROP, JSON.stringify(q));
+    return 'DONE';
+  });
+}
+
+// 書き込みの印だけを送る（予約0件の会員で使っている形・covers は載せない）。送れたら true
+function _edgeSendMark(cid, seq) {
+  try {
+    var r = _edgePost({ kind: 'reservations', batchId: Date.now(), rows: [], final: true, scope: 'partial',
+                        customerId: String(cid), dirtySeq: seq });
+    return !!(r && r.success);
+  } catch (e) { return false; }
+}
+
+// 記録（数と時刻だけ）。★ロックを取らない＝同時に書いた回の片方が落ち得る（標本・LB_WRITE_PERF と同じ考え方）。
+//   全数の見張りは Worker 側の「閉じている会員」（/quota/status の writeCovers）
+function _lbEdgeDeferParse(raw) {
+  if (raw == null || raw === '') return {};
+  try {
+    var o = JSON.parse(String(raw));
+    if (!o || typeof o !== 'object' || Object.prototype.toString.call(o) === '[object Array]') return null;
+    for (var d in o) {
+      if (!o.hasOwnProperty(d)) continue;
+      if (!o[d] || typeof o[d] !== 'object') return null;
+      for (var f in o[d]) if (o[d].hasOwnProperty(f) && !(typeof o[d][f] === 'number' && isFinite(o[d][f]) && o[d][f] >= 0)) return null;
+    }
+    return o;
+  } catch (e) { return null; }
+}
+function _lbEdgeDeferCount(kind, ageMs) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var raw = p.getProperty(LB_EDGE_DEFER.COUNT_PROP);
+    var rec = _lbEdgeDeferParse(raw);
+    if (rec === null) { try { p.setProperty(LB_EDGE_DEFER.COUNT_BAD_PROP, String(Date.now())); } catch (eB) {} rec = {}; }
+    var key = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    var day = rec[key] || {};
+    if (LB_EDGE_DEFER_KINDS.indexOf(kind) >= 0) day[kind] = Number(day[kind] || 0) + 1;
+    if (typeof ageMs === 'number' && isFinite(ageMs) && ageMs >= 0) day.maxAgeMs = Math.max(Number(day.maxAgeMs || 0), Math.round(ageMs));
+    rec[key] = day;
+    var keys = []; for (var k in rec) if (/^\d{4}-\d{2}-\d{2}$/.test(k)) keys.push(k); else delete rec[k];
+    keys.sort(); keys.reverse();
+    for (var i = LB_EDGE_DEFER.KEEP_DAYS; i < keys.length; i++) delete rec[keys[i]];
+    p.setProperty(LB_EDGE_DEFER.COUNT_PROP, JSON.stringify(rec));
+  } catch (e) { /* 記録の失敗で写しの送信を止めない */ }
+}
+
+// 待ちの写しを送る。who = 'AFTER'（一回限りトリガーの先頭）／'TICK'（5分ごとの受け皿）
+//   ★例外を外へ出さない（呼ぶ側の同期・二重書き・枠を止めない）
+function _lbEdgePendingDrain(who, budgetMs, minAgeMs) {
+  var t0 = Date.now(), sent = 0, failed = 0;
+  try {
+    if (!_edgeEnabled()) return { skipped: 'EDGE_OFF' };
+    var q = _lbEdgePendingParse(PropertiesService.getScriptProperties().getProperty(LB_EDGE_DEFER.PENDING_PROP));
+    if (q === null) {
+      try { PropertiesService.getScriptProperties().setProperty(LB_EDGE_DEFER.PENDING_BAD_PROP, String(Date.now())); } catch (eB) {}
+      return { skipped: 'BROKEN' };
+    }
+    var ids = Object.keys(q);
+    if (!ids.length) return { sent: 0 };
+    ids.sort(function (a, b) { return q[a].at - q[b].at; });   // 古い順
+    for (var i = 0; i < ids.length; i++) {
+      if (Date.now() - t0 > budgetMs) break;
+      var cid = ids[i], e = q[cid], age = Date.now() - e.at;
+      if (age < minAgeMs) continue;
+      if (age > LB_EDGE_DEFER.DROP_AGE_MS) { _lbEdgePendingDone(cid, e.seq); _lbEdgeDeferCount('dropped'); continue; }
+      var nm = _edgeNameByCustomerId(cid);
+      var r = _edgeSendAfterWrite(cid, nm, e.seq);   // 写しと予約一覧（どちらも dirtySeq と、読む前に読んだ coversSeq）
+      if (r && r.home && r.reservations) {
+        _lbEdgePendingDone(cid, e.seq);
+        _lbEdgeDeferCount(who === 'TICK' ? 'sentTick' : 'sentAfter', Date.now() - e.at);
+        sent++;
+      } else {
+        _lbEdgeDeferCount('sendFail');
+        failed++;
+      }
+    }
+  } catch (e3) {
+    Logger.log('[edge] 待ちの写しの送信で例外（5分ごとの受け皿が拾います）: ' + String((e3 && e3.name) || 'Error'));
+  }
+  return { sent: sent, failed: failed, ms: Date.now() - t0 };
+}
+
+// 日次点検（純粋）。get(k) で Script Property を読む。スイッチがオフなら何も言わない（数えるだけ）
+function lbEdgeDeferDailyCheck(nowMs, get) {
+  var out = [];
+  function add(key, sev, n, detail) { if (n) out.push({ key: key, severity: sev, count: n, detail: detail }); }
+  if (String(get(LB_EDGE_DEFER.ON_PROP) || '') !== '1') return out;
+  var q = _lbEdgePendingParse(get(LB_EDGE_DEFER.PENDING_PROP));
+  if (q === null) add('edge_defer_pending_broken', 'high', 1, '写しを後ろへ回す待ち（LB_EDGE_PENDING）が壊れています');
+  else {
+    var old = 0;
+    for (var k in q) if (q.hasOwnProperty(k) && nowMs - q[k].at > 10 * 60000) old++;
+    add('edge_defer_pending_old', 'warn', old, '写しを後ろへ回した会員のうち、10分より長く送れていない会員 ' + old + '名（その間は Worker が答えず GAS）');
+  }
+  var bad = Number(get(LB_EDGE_DEFER.PENDING_BAD_PROP) || 0);
+  if (bad && nowMs - bad <= 86400000) add('edge_defer_pending_rebuilt', 'warn', 1, '待ちが壊れていて作り直した（24時間以内）');
+  var rec = _lbEdgeDeferParse(get(LB_EDGE_DEFER.COUNT_PROP));
+  if (rec === null) { add('edge_defer_count_broken', 'warn', 1, '写しを後ろへ回した回数の記録が壊れています'); return out; }
+  var y = rec[Utilities.formatDate(new Date(nowMs - 86400000), 'Asia/Tokyo', 'yyyy-MM-dd')];
+  if (!y) return out;
+  var n = function (f) { return Number(y[f] || 0); };
+  add('edge_defer_send_fail', 'warn', n('sendFail'), '昨日、後ろへ回した写しを送れなかった回 ' + n('sendFail'));
+  if (n('maxAgeMs') > 10 * 60000) add('edge_defer_slow', 'warn', 1, '昨日、書き込みから写しを送り終えるまでの最大 ' + Math.round(n('maxAgeMs') / 1000) + '秒（10分超）');
+  var inl = n('inline_noTrigger') + n('inline_noSeq') + n('inline_pendFail') + n('inline_markFail');
+  if (n('deferred') + inl > 0 && inl > (n('deferred') + inl) * 0.2) {
+    add('edge_defer_inline', 'warn', inl, '昨日、後ろへ回せず応答の前に送った回 ' + inl + '（後ろへ回した ' + n('deferred') + '）');
+  }
+  return out;
+}
+
+// I79 の見張り（純粋）。sv＝/quota/status の syncVersion。閉じている会員（退会を除く）の最長が10分で warn・60分で high
+function lbWriteCoversDailyCheck(sv, nowMs) {
+  var out = [];
+  function add(key, sev, n, detail) { if (n) out.push({ key: key, severity: sev, count: n, detail: detail }); }
+  if (!sv || sv.table !== 'ok' || sv.writeCovers === undefined) return out;   // 反映前の Worker
+  var w = sv.writeCovers;
+  if (!w || w.table !== 'ok') { add('covers_unreadable', 'warn', 1, '写しが書き込みの印を含むか（I79）の数を読めません（migration 0034 の前か読み取りの失敗）'); return out; }
+  var kinds = [['home', '残数'], ['resv', '予約一覧']];
+  for (var i = 0; i < kinds.length; i++) {
+    var k = kinds[i][0], label = kinds[i][1];
+    var closed = Number(w[k + 'Closed'] || 0), since = w[k + 'OldestSince'];
+    if (closed && since != null) {
+      var min = Math.floor((nowMs - Number(since)) / 60000);
+      if (min >= 60) add('covers_' + k + '_stuck', 'high', closed, label + 'の写しが書き込みに追いついていない会員 ' + closed + '名・最長 ' + min + '分（その間は Worker が答えず GAS）');
+      else if (min >= 10) add('covers_' + k + '_slow', 'warn', closed, label + 'の写しが書き込みに追いついていない会員 ' + closed + '名・最長 ' + min + '分');
+    }
+    var rem = Number(w[k + 'Remnant'] || 0);
+    add('covers_' + k + '_remnant', 'warn', rem, label + 'の写しが番号つきの押し出しをまだ受けていない会員 ' + rem + '名（migration 0034 の後の移行の残り・その間は GAS）');
+  }
+  return out;
+}
+
 // 振り分けの出口から呼ぶ。書き込みが成功したときだけ働く。
 function edgeAfterWrite(action, params, res, lineUserId) {
   //   ★書き込みの処理が返った後の時刻（設計43 B）。カレンダーへの書き込みは全部これより前に同期で終わっている
@@ -1126,11 +1376,18 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     //   1秒後の一回限りトリガーに逃がす。詳しくは下の「①-b 自動で回す」の節。
     //   ★会員が特定できなくても実行する。席の埋まりは「誰の操作か」とは無関係に変わるため、
     //     下の cid 判定より前に置く。
-    if (EDGE_CALSYNC_AFTER[String(action || '')]) _lbScheduleCalSync();
+    var _calOk = false;
+    if (EDGE_CALSYNC_AFTER[String(action || '')]) _calOk = (_lbScheduleCalSync() === true);
 
     params = params || {};
     var cid = String(res.customerId || params.customerId || '');
     var nm  = String(res.customerName || '');
+    //   ★設計45：後ろへ回せる操作では、書き込みの関数が知っている会員IDを使う（名簿を読み直さない・氏名は後で）
+    var _deferable = _lbEdgeDeferOn() && !!EDGE_SLOTS_ONLY_LAG[String(action || '')];
+    var _fromWrite = false;
+    if (!cid && _deferable && typeof _LB_WRITE_CUST !== 'undefined' && _LB_WRITE_CUST && _LB_WRITE_CUST.id) {
+      cid = String(_LB_WRITE_CUST.id); _fromWrite = true;
+    }
     if (!cid && lineUserId) {
       var m = getCustomerByLine(lineUserId);
       if (m) {
@@ -1139,7 +1396,16 @@ function edgeAfterWrite(action, params, res, lineUserId) {
       }
     }
     if (!cid) { Logger.log('[edge] 書き込み後：会員が特定できず写しを直せません（' + action + '）'); return; }
-    if (!nm) nm = _edgeNameByCustomerId(cid);
+    //   氏名は今の経路で写しを作るときだけ引く（後ろへ回すときは要らない）。★スイッチがオフの順序・中身は今と同じ
+    var _resolveName = function () {
+      if (nm) return;
+      if (_fromWrite && lineUserId) {
+        var m2 = getCustomerByLine(lineUserId);
+        if (m2 && String(m2.data[MAP_COL.CUSTOMER_ID - 1] || '') === cid) nm = String(m2.data[MAP_COL.NAME - 1] || '');
+      }
+      if (!nm) nm = _edgeNameByCustomerId(cid);
+    };
+    if (!_deferable) _resolveName();
 
     // ★押し直しが済んだかを応答に載せる（2026-10-03・オーナーの指摘から）。
     //
@@ -1160,6 +1426,23 @@ function edgeAfterWrite(action, params, res, lineUserId) {
     var _seq = false;
     try { _seq = lbDwEnqueue(cid); } catch (e) { Logger.log('[dw] 積めませんでした: ' + (e && e.message)); }
     if (typeof _lbWpMark === 'function') _lbWpMark('edgeQ');
+
+    //   ★設計45：写しの送信を応答の後ろへ回す（スイッチ・対象の操作・一回限りトリガーを作れた・番号・待ち・印が全部そろったときだけ）
+    if (_deferable) {
+      var _why = '';
+      if (!_calOk) _why = 'inline_noTrigger';
+      else if (typeof _seq !== 'number') _why = 'inline_noSeq';
+      else if (!_lbEdgePendingAdd(cid, _seq)) _why = 'inline_pendFail';
+      else if (!_edgeSendMark(cid, _seq)) _why = 'inline_markFail';   // 待ちは残る＝後でもう一度送る（害は無い）
+      if (typeof _lbWpMark === 'function') _lbWpMark('edgeMark');
+      _lbEdgeDeferCount(_why || 'deferred');
+      if (!_why) {
+        //   写しは送っていない＝同期済みと名乗らない（画面は今と同じ35分 GAS・edgeSyncedExceptSlots も付けない）
+        if (res && typeof res === 'object') res.edgeSynced = false;
+        return;
+      }
+      _resolveName();
+    }
 
     //   ★写し（残数）と予約一覧は共通の関数で送る（設計21 §2-5）。どちらにも番号を載せる
     var _sent = _edgeSendAfterWrite(cid, nm, (typeof _seq === 'number') ? _seq : null);
@@ -1277,7 +1560,13 @@ function _pushToEdgeAllImpl(withHome, full) {
 
   step('trainers',     function () { return _edgePushRowsF('trainers', _edgeTrainers(), batchId, { scope: 'all', deleteStale: full }); });
   step('customers',    function () { return _edgePushRowsF('customers', _edgeCustomersForPush(customers), batchId, { scope: 'all', deleteStale: full }); });
-  step('reservations', function () { return _edgePushRowsF('reservations', _edgeReservations(), batchId, { scope: 'all', deleteStale: full }); });
+  step('reservations', function () {
+    //   ★設計45：番号は台帳を読む前に読む。走査した会員（予約0件の会員を含む）を coveredCustomers で示す
+    var _cv = _edgeCoversSeqNow();
+    var _rv = _edgeReservations();
+    var _cov = (_cv != null) ? _edgeCoveredCustomers(customers, _rv) : null;
+    return _edgePushRowsF('reservations', _rv, batchId, { scope: 'all', deleteStale: full, coversSeq: _cov ? _cv : null, coveredCustomers: _cov });
+  });
   // ★固定枠だけは、ふだんの同期でも消す（2026-10-03・Codexの最終判定）。
   //   固定枠の削除はシートから行ごと消えるため、押し出す側に「消えた」という情報が残らない。
   //   日次4時の完全同期まで待つと、**削除したのに丸一日「まだ固定枠がある」と見える。**
@@ -2132,6 +2421,8 @@ function _calsyncAutoOn() {
 function lbCalSyncTick() {
   //   ★設計42（2026-11-11）：同期 → 配線の印 → 変わっていれば枠をすぐ押し出す（ロックの外）。
   //     引数は取らない（時間主導トリガーは第1引数にイベントを渡す・trigger-args.test.js）。
+  //   ★設計45：一回限りトリガーが消えた・遅れた・時間切れの待ちを拾う（90秒より古いものだけ）
+  try { _lbEdgePendingDrain('TICK', LB_EDGE_DEFER.AFTER_BUDGET_MS, LB_EDGE_DEFER.TICK_MIN_AGE_MS); } catch (eP) {}
   var r = _lbCalSyncCore();
   _lbCalSlotsWired();
   _lbCalSlotsAfter(r, 'TICK');
@@ -2202,16 +2493,27 @@ function _calsyncNote(r) {
 // 予約の確定・変更・取消の直後（edgeAfterWrite から呼ばれる）
 //   1秒後の一回限りトリガーに逃がす。お客様の応答を遅くしないため。
 // ------------------------------------------------------------
-function _lbCleanCalSyncAfterTriggers() {
+//   onlyUid（任意）：その一意IDのトリガーだけを消す（設計45・関門① 中4：実行中に別の書き込みが作った次のトリガーを消さない）。
+//     渡さない・文字列でないときは今のまま同名を全部消す
+function _lbCleanCalSyncAfterTriggers(onlyUid) {
   try {
+    var only = (typeof onlyUid === 'string' && onlyUid) ? onlyUid : '';
     var ts = ScriptApp.getProjectTriggers();
     for (var i = 0; i < ts.length; i++) {
-      if (ts[i].getHandlerFunction() === LB_CALSYNC.AFTER_HANDLER) ScriptApp.deleteTrigger(ts[i]);
+      if (ts[i].getHandlerFunction() !== LB_CALSYNC.AFTER_HANDLER) continue;
+      if (only && String(ts[i].getUniqueId()) !== only) continue;
+      ScriptApp.deleteTrigger(ts[i]);
     }
   } catch (e) { Logger.log('[calsync] 予約直後トリガーの掃除に失敗: ' + (e && e.message)); }
 }
 
-function _lbCalSyncAfterWrite() {
+function _lbCalSyncAfterWrite(e) {
+  //   ★時間主導トリガーは第1引数にイベントを渡す。真偽で判定せず、オブジェクトで triggerUid が文字列のときだけ使う
+  //     （手で実行したとき・形が違うときは ''＝今のまま同名を全部消す・記憶 env_gas_trigger_passes_event_arg）
+  var _uid = (typeof e === 'object' && e !== null && typeof e.triggerUid === 'string') ? e.triggerUid : '';
+  //   ★設計45：後ろへ回した写しを最初に送る（同期・二重書き・枠より前＝写しをいちばん早く届ける）。スイッチに関係なく待ちがあれば送る
+  try { _lbEdgePendingDrain('AFTER', LB_EDGE_DEFER.AFTER_BUDGET_MS, 0); }
+  catch (eP) { Logger.log('[edge] 待ちの写しの送信で例外（5分ごとの受け皿が拾います）'); }
   var r = null;
   try { r = _lbCalSyncCore(); }
   catch (e) { Logger.log('[calsync] 予約直後の同期に失敗（1分ごとの同期で追いつきます）: ' + (e && e.message)); }
@@ -2220,7 +2522,7 @@ function _lbCalSyncAfterWrite() {
   //   失敗しても待ち行列に残るので、心拍（15分ごと）が拾う。
   try { lbDualWriteDrain(); }
   catch (e) { Logger.log('[dw] 速い道で例外（心拍で追いつきます）: ' + (e && e.message)); }
-  _lbCleanCalSyncAfterTriggers();   // 役目を終えたら自分を消す（トリガー上限20件に溜めない）
+  _lbCleanCalSyncAfterTriggers(_uid);   // 役目を終えたら自分を消す（トリガー上限20件に溜めない）。自分のものだけ（設計45）
   //   ★設計42：枠の押し出し（25〜115秒）は最後。二重書きの速い道とトリガーの枠を先に済ませる。
   _lbCalSlotsAfter(r, 'AFTER');
 }

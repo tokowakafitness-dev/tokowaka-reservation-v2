@@ -430,6 +430,31 @@ let noteId;
 }
 
 // ================= 9. 日付の道具 =================
+// ================= 11. 設計45・I79：予約の写しが書き込みの印を含まないとき =================
+{
+  fresh();
+  d.exec(`INSERT OR REPLACE INTO reservations (reservation_id, customer_id, customer_name, trainer_id, start_at, end_at, kind, status, created_at, synced_at)
+          VALUES ('R45-1', 'C1', '会員一', 'T1', ${Date.now() + 3 * 86400000}, ${Date.now() + 3 * 86400000 + 3600000}, 'normal', 'booked', 1, 1)`);
+  d.exec(`INSERT OR REPLACE INTO customer_sync_version (customer_id, source_version, built_version, updated_at, dirty_seq, built_covers_seq, resv_covers_seq)
+          VALUES ('C1', 0, 0, 1, 5, 0, 4)`);
+  const s1 = await call('U_T1', 'k_summary', { customerId: 'C1', nextUnknownOk: true });
+  ok('11-1 ★閉じている会員：新しい画面には「確認中」の印・次回予約は出さない', s1.status === 200 && s1.nextReservation === null && s1.nextReservationUnknown === true, JSON.stringify({ st: s1.status, n: s1.nextReservation, u: s1.nextReservationUnknown }));
+  const s2 = await call('U_T1', 'k_summary', { customerId: 'C1' });
+  ok('11-2 ★印の無い古い画面には概要ごと失敗（null を「次回の予約なし」と出させない）', s2.status === 503 && s2.code === 'RESV_SYNCING', JSON.stringify({ st: s2.status, c: s2.code }));
+  const b1 = await call('U_OWN', 'k_board', {});
+  const f1 = (b1.customers || []).find((x) => x.customerId === 'C1').flags;
+  ok('11-3 ★一覧：閉じている会員の「次回予約なし」は unknown', f1.noNextBooking === 'unknown', JSON.stringify(f1));
+  d.exec(`UPDATE customer_sync_version SET resv_covers_seq = 5 WHERE customer_id = 'C1'`);
+  const s3 = await call('U_T1', 'k_summary', { customerId: 'C1', nextUnknownOk: true });
+  ok('11-4 開けば次回予約を出し、確認中の印は付けない', s3.status === 200 && s3.nextReservation && s3.nextReservation.startAt > Date.now() && !('nextReservationUnknown' in s3), JSON.stringify({ n: s3.nextReservation, u: s3.nextReservationUnknown }));
+  const b2 = await call('U_OWN', 'k_board', {});
+  ok('11-5 開けば一覧も判定する', (b2.customers || []).find((x) => x.customerId === 'C1').flags.noNextBooking === false);
+  d.exec(`UPDATE customer_sync_version SET resv_covers_seq = NULL WHERE customer_id = 'C1'`);
+  ok('11-6 ★covers が NULL は閉じる', (await call('U_T1', 'k_summary', { customerId: 'C1', nextUnknownOk: true })).nextReservationUnknown === true);
+  d.exec(`DELETE FROM customer_sync_version WHERE customer_id = 'C1'`);
+  d.exec(`DELETE FROM reservations WHERE reservation_id = 'R45-1'`);
+}
+
 ok('9-1 実在しない日付を繰り上げで受けない', !isRealDate('2026-13-01') && !isRealDate('2026-02-30') && isRealDate('2028-02-29') && !isRealDate('2027-02-29'));
 ok('9-2 今日以前（JST）', isPastOrToday(today) && !isPastOrToday(dayOffset(1)));
 

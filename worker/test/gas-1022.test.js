@@ -31,6 +31,7 @@ console.log('=== ① 予約一覧の送信 ===');
   const mk = (resv, postOk = true) => {
     const posts = [], rowsCalls = [];
     const ctx = { String, Number, Math, Date,
+      _edgeCoversSeqNow: () => 5,   // 設計45：台帳を読む前に読む番号
       _edgeReservations: () => resv,
       _edgePost: (b) => { posts.push(b); return { success: postOk }; },
       _edgePushRows: (k, rows, b, o) => { rowsCalls.push({ k, n: rows.length, o }); if (!postOk) throw new Error('x'); return '1件'; } };

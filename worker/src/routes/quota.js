@@ -20,6 +20,7 @@ import { buildAllocationsForCustomer, allocationInsertStatements } from '../lib/
 import { readSyncVersion, markBuiltStatement, overageJson } from '../lib/sync-version.js';
 import { FRESH_SQL, NOT_FRESH_SQL, freshSqlFor } from '../lib/fresh.js';   // ★新しさの定義は1か所（設計20）
 import { _lbPackPrefix } from '../allocate.js';
+import { closedSqlFor } from '../lib/write-covers.js';   // 設計45・I79（見張り）
 
 /** 'YYYY-MM' を1つ進める */
 function nextMonthKey(monthKey) {
@@ -378,6 +379,34 @@ export async function quotaStatus(request, env) {
     ).first();
     syncVersion.behindOldestSourceAt = st?.oldest == null ? null : Number(st.oldest);
     syncVersion.behindSourceAtMissing = Number(st?.noAt || 0);
+
+    //   ★設計45・I79：写しが書き込みの印を含んでいない（閉じている）会員の数と、閉じてからの最長（数だけ・IDを出さない）。
+    //     退会の会員は数えない（定期の写しは退会の会員を作らないので home が閉じたままになるが、門は効いたまま＝GAS）。顧客表に無い会員も数えない（門と同じ範囲）。
+    //     since が NULL の閉じた会員は「移行の残り」（migration 0034 の直後）として別に数える。
+    //     列が無い（migration 前）なら table:'missing'（他の数は落とさない）
+    try {
+      const wc = await env.DB.prepare(
+        `SELECT
+            SUM(CASE WHEN ${closedSqlFor('home', 'v')} THEN 1 ELSE 0 END) AS homeClosed,
+            SUM(CASE WHEN ${closedSqlFor('resv', 'v')} THEN 1 ELSE 0 END) AS resvClosed,
+            SUM(CASE WHEN ${closedSqlFor('home', 'v')} AND v.home_blocked_since IS NULL THEN 1 ELSE 0 END) AS homeRemnant,
+            SUM(CASE WHEN ${closedSqlFor('resv', 'v')} AND v.resv_blocked_since IS NULL THEN 1 ELSE 0 END) AS resvRemnant,
+            MIN(CASE WHEN ${closedSqlFor('home', 'v')} THEN v.home_blocked_since END) AS homeOldest,
+            MIN(CASE WHEN ${closedSqlFor('resv', 'v')} THEN v.resv_blocked_since END) AS resvOldest
+           FROM customer_sync_version v
+           JOIN customers c ON c.customer_id = v.customer_id
+          WHERE c.contract_status IS NULL OR c.contract_status <> '退会'`
+      ).first();
+      syncVersion.writeCovers = {
+        table: 'ok',
+        homeClosed: Number(wc?.homeClosed || 0), resvClosed: Number(wc?.resvClosed || 0),
+        homeRemnant: Number(wc?.homeRemnant || 0), resvRemnant: Number(wc?.resvRemnant || 0),
+        homeOldestSince: wc?.homeOldest == null ? null : Number(wc.homeOldest),
+        resvOldestSince: wc?.resvOldest == null ? null : Number(wc.resvOldest),
+      };
+    } catch (eC) {
+      syncVersion.writeCovers = { table: 'missing' };
+    }
   } catch (e) {
     syncVersion = { table: 'missing', detail: String((e && e.message) || e).slice(0, 120) };
   }

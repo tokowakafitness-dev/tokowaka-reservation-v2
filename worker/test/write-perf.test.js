@@ -64,12 +64,13 @@ function make(opt = {}) {
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(pluckVar(LB, 'LB_WP') + pluckVar(LB, 'LB_WP_CODES') + 'var _LB_WP = null;\n'
-    + ['handleLineGet', '_lbWpStart', '_lbWpMark', '_lbWpCode', '_lbWpRow', '_lbWpValidRow', '_lbWpFinish', 'writePerfText'].map((n) => pluckFn(LB, n)).join('\n'), ctx);
+  vm.runInContext(pluckVar(LB, 'LB_WP') + pluckVar(LB, 'LB_WP_CODES') + 'var _LB_WP = null;\nvar _LB_WRITE_CUST = null;\n'
+    + ['handleLineGet', '_lbWpStart', '_lbWpMark', '_lbWpCode', '_lbWpRow', '_lbWpStagesOf', '_lbWpValidRow', '_lbWpFinish', 'writePerfText'].map((n) => pluckFn(LB, n)).join('\n'), ctx);
   return { ctx, props, calls, adv: (ms) => { nowMs += ms; } };
 }
 const ring = (props) => JSON.parse(props.LB_WRITE_PERF || '{"items":[]}');
-const STAGES = ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other'];
+//   ★設計45：member・edgeMark を後ろに足した（並びの途中に入れない＝古い行の位置が変わらない）
+const STAGES = ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark'];
 const idx = (s) => 6 + STAGES.indexOf(s);
 
 console.log('=== ① 入口から ===');
@@ -163,7 +164,14 @@ console.log('=== ④ リングの上限・壊れた記録・記録の失敗 ==='
     x.ctx.handleLineGet({ action: 'line_cancelReservation', idToken: 'x' });
     ok('④-8 ' + label + '：書くときは印を立てて作り直す（外れた行を書き戻さない）', /^\d+$/.test(x.props.LB_WRITE_PERF_BAD || '') && ring(x.props).items.length === 1 && JSON.stringify(ring(x.props).stages) === JSON.stringify(STAGES));
   }
-  ok('④-9 正しい行は形の検査を通る', make().ctx._lbWpValidRow(goodRow) === true);
+  ok('④-9 正しい行は形の検査を通る（反映前の段11個の行）', make().ctx._lbWpValidRow(goodRow) === true);
+  //   ★設計45：新しい長さ（段13個）の行も通り、長さが違えば外す。読み出しは古い行の段の名前を取り違えない
+  const newRow = goodRow.slice(0, 17).concat([5, 7, 10]);
+  ok('④-10 段13個の行も通る', make().ctx._lbWpValidRow(newRow) === true, JSON.stringify(newRow));
+  ok('④-11 段12個（どちらでもない）は外す', make().ctx._lbWpValidRow(goodRow.slice(0, 17).concat([5, 10])) === false);
+  const mix = make({ props: { LB_WRITE_PERF: JSON.stringify({ v: 1, stages: [], items: [newRow, goodRow] }) } });
+  const txt = mix.ctx.writePerfText();
+  ok('④-12 古い行の合計を member と読まない（行ごとの並び）・旧い並びの印', /total：中央 10ms/.test(txt) && /member：中央 5ms／90% 5ms／最大 5ms/.test(txt) && /（旧い並び）/.test(txt), txt);
   const n = make();
   n.ctx._lbWpMark('lock');
   ok('④-6 記録器が無いときの印は何もしない（裏の処理から呼ばれても無害）', !n.props.LB_WRITE_PERF && n.ctx._LB_WP === null);

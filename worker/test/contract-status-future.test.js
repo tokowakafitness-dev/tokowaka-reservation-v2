@@ -103,6 +103,7 @@ console.log('=== ④ 予約の入口 ===');
       getCustomerByLine: () => ({ data: mapRow('C1', '新規', stat) }),
       _lbContractTypeOf: () => '通常',
       _lbReserveCore: () => { called = true; return { success: true }; },
+      _lbWpMark: () => {},   // 設計45：段の印（ここでは何もしない）
     };
     vm.createContext(ctx);
     vm.runInContext(MAP_COL_SRC + '\n' + pluckFn(LB, 'makeReservationLine'), ctx);

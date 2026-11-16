@@ -20,6 +20,7 @@ import { buildMemberKarte } from '../lib/member-karte.js';
 import { EXERCISE_LIMITS, normalizeExerciseName, normalizePart } from '../lib/karte-exercises.js';
 import { readRecRow, recConsentValid } from './member-consent.js';
 import { MEMBER_ACTOR } from '../lib/consent-docs.js';
+import { oneClosed, coversGate, countCovers } from '../lib/write-covers.js';   // 設計45・I79
 
 export const KARTE_LIMITS = {
   BODY_BYTES: 16 * 1024,
@@ -1263,6 +1264,14 @@ async function summary(c) {
                        ORDER BY start_at LIMIT 1`).bind(cid, now).first(),
     ]);
     if (!cust) return err('NOT_FOUND', 404);
+    //   ★設計45・I79：次回予約は予約の写しから作る。写しが印を含まなければ使わない（値を全部読んだ後に門）。
+    //     カルテは GAS に逃げない（liff/karte.js の kRead は失敗を概要ごとエラーにする）ので FALLBACK にしない。
+    //     新しい画面（nextUnknownOk）には「確認中」の印、古い画面（null を「次回の予約なし」と出す）には概要ごと失敗
+    const resvClosed = await oneClosed(env, cid, 'resv');
+    if (resvClosed) {
+      await countCovers(env, null, 'resv');
+      if (!(c.body && c.body.nextUnknownOk === true)) return err('RESV_SYNCING', 503);
+    }
     //   録音・AI の同意（設計44）。読めなければ 'unknown'（同意なしと言わない）。版は返さない（改訂1 中9）
     let rec;
     try { rec = await readRecRow(env, cid); } catch (_) { rec = undefined; }
@@ -1280,7 +1289,8 @@ async function summary(c) {
       safetyBrief: safety ? { restrictions: safety.restrictions, painSites: safety.pain_sites, pain: parseJsonCol(safety.pain_json) || [],
                               diagnosis: safety.diagnosis, medication: safety.medication } : null,
       lastNote: lastNote ? noteOut(lastNote) : null,
-      nextReservation: nextResv ? { startAt: nextResv.start_at, trainerId: nextResv.trainer_id } : null,
+      nextReservation: (!resvClosed && nextResv) ? { startAt: nextResv.start_at, trainerId: nextResv.trainer_id } : null,
+      ...(resvClosed ? { nextReservationUnknown: true } : {}),
     };
   });
 }
@@ -1449,6 +1459,9 @@ async function board(c) {
                          AND (s.pain_json IS NOT NULL OR (s.restrictions IS NOT NULL AND s.restrictions <> ''))) AS caution
          FROM customers c WHERE c.customer_id IN (${ph})`).bind(...ids).all(),
   ]);
+  //   ★設計45・I79：予約の写しが印を含まない会員は「次回予約なし」を判定しない（値を全部読んだ後に門・読めなければ全員）
+  const cg = await coversGate(env, ids);
+  const resvClosedBy = (id) => cg.failed || cg.resv.has(String(id));
   const kBy = {}; for (const r of (kp.results || [])) kBy[r.customer_id] = r;
   const syncAt = {}; for (const s of (sync.results || [])) syncAt[s.key] = Number(s.synced_at || 0);
   const resvFresh = now - (syncAt.reservations || 0) <= 30 * 60 * 1000;
@@ -1463,7 +1476,7 @@ async function board(c) {
     const id = cu.customer_id;
     const flags = {};
     //   次の予約が無い（予約の写しが30分以内に同期されているときだけ判定）
-    flags.noNextBooking = resvFresh ? !nextBy[id] : 'unknown';
+    flags.noNextBooking = (resvFresh && !resvClosedBy(id)) ? !nextBy[id] : 'unknown';
     //   記録が止まっている（体の記録の切り替えが verified のときだけ。30日以上 or 記録なし）
     if (!fz) flags.recordStale = 'preparing';
     else if (!lastBy[id]) flags.recordStale = 'none';

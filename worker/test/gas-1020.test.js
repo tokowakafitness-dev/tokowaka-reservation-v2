@@ -212,7 +212,8 @@ console.log('=== ⑤ 書き込み直後の写しに番号を載せる ===');
     _edgeNameByCustomerId: () => 'x',
     lbDwEnqueue: (cid) => { calls.push('enqueue'); return 42; },
     pushToEdgeHomeFor: (cid, nm, seq) => { calls.push('home:' + seq); return true; },
-    _edgePushReservationsFor: () => true };
+    _edgePushReservationsFor: () => true,
+    _lbEdgeDeferOn: () => false, EDGE_SLOTS_ONLY_LAG: {} };   // 設計45：スイッチがオフ＝今と同じ
   //   2026-10-22 設計21：写しと予約一覧は _edgeSendAfterWrite が送る（番号はそこへ渡す）
   ctx2._edgeSendAfterWrite = (cid, nm, seq) => { ctx2.pushToEdgeHomeFor(cid, nm, seq); return { home: true, reservations: true, bothFailed: false }; };
   vm.createContext(ctx2);

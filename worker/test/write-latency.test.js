@@ -45,6 +45,7 @@ function gasEdge(opt = {}) {
     _edgeNameByCustomerId: () => 'テスト 太郎',
     lbDwEnqueue: () => { if (opt.enqThrow) throw new Error('q'); return opt.seq === undefined ? 7 : opt.seq; },
     _edgeSendAfterWrite: () => ({ home: opt.home !== false, reservations: opt.resv !== false, bothFailed: false }),
+    _lbEdgeDeferOn: () => false,   // 設計45：スイッチがオフ＝今と同じ（オンのときは gas-edge-defer.test.js）
   };
   vm.createContext(ctx);
   vm.runInContext(pluckVar(PE, 'EDGE_AFTER_WRITE') + pluckVar(PE, 'EDGE_CALSYNC_AFTER') + pluckVar(PE, 'EDGE_SLOTS_ONLY_LAG') + pluckFn(PE, 'edgeAfterWrite'), ctx);

@@ -217,3 +217,13 @@ LIFF の書き込みの待ち切りは 20秒（`liff/index.html` `_rawApi` の `
 ## 関門① 4周目（Codex スレッド 01a1e35f-71fb-75e1-afcc-0bce8d46e5d4）
 判定：**通過**（高・中・低とも指摘なし）。後の門の読み取り失敗＝全員閉じる、readHome（写し → decideHome）の後に後の門、boot・compat の並列取得は完了後に門で全体 FALLBACK／null、karte 概要は確認中・board は `'unknown'` に置き換え、で誤った値・静かな破損・個人情報の新しい出口は無いと確認された。
 **実装の通過条件**：後の門は「値の読み取りが全部終わった後・応答を組み立てる前」に置く。
+
+## 実装で確かめた事実・決めたこと（2026-11-16）
+- **migration はコードより先に入る**：本番の反映（`.github/workflows/worker-deploy.yml`）は「schema.sql → migrations/*.sql を未適用のものだけ → schema.sql → `wrangler deploy`」の順（78〜111行）。列が無いまま門のコードが動く窓は無い。
+- **`LB_EDGE_DEFER` は作業依頼では立てられない**：`gas/EdgeJob.js` の op（audit・verify・remaining・quotaBuild・pushAll 等）に Script Property を書く窓口は無い。op を足すと許可一覧の変更になるので足さない＝**オーナーが GAS エディタのスクリプト プロパティで `LB_EDGE_DEFER` = `1` を立てる（1回）**。戻すときは消す。
+  移行の窓を縮める押し出しは既存の作業依頼 `pushAll`（`pushToEdgeAll`＝予約一覧と残数を番号つきで送る）で走らせられる。
+- トレーナー・オーナーの一覧（`compatTrainerReservations`・`routeBoot` の今後の件数）は、閲覧範囲ではなく**誰か1人でも**閉じていれば FALLBACK にした（範囲の外の会員がそのトレーナーで取った予約も一覧に出るため。閉じる向きに広い）。
+- 移行の残り（covers も since も NULL）は日次点検で warn（Worker の反映の時刻を GAS は知らないので「2時間後から」は数えない。点検は朝7時に1回）。
+- 段の記録：`member`・`edgeMark` を後ろに足し、古い長さ（段11個）の行も読む（読み出しは行ごとの並びで名前を付け、古い行に「（旧い並び）」）。
+- 版の印：GAS `LB_EDGE_BUILD`・`LB_HEALTH_BUILD` = `2026-11-16a`（`worker/test/expected-builds.json` も）、Worker `WORKER_BUILD` = `2026-11-16a`、LIFF `LIFF_BUILD`・`KARTE_BUILD`・`karte.js?v=` = `2026-11-16a`。
+- 検査：`worker/test/write-covers.test.js`（Worker・本物の SQLite）・`worker/test/gas-edge-defer.test.js`（GAS）・`karte.test.js` 11・`liff-karte.test.js` 11-9〜11-10・`read-on.test.js` ①-3b〜c。既存の検査の身代わり（門の表を読めるように `all()` を足す・新しい関数の身代わり）を直した。

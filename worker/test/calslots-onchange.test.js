@@ -68,6 +68,9 @@ function make(opt = {}) {
     ...(opt.realCore ? {} : { _lbCalSyncCore: () => { log.push('core'); return opt.sync || { ok: true, result: { mode: 'published' } }; } }),
     lbDualWriteDrain: () => { log.push('drain'); },
     _lbCleanCalSyncAfterTriggers: () => { log.push('clean'); },
+    //   設計45：待ちの写しの送信（ここでは何もしない。順序は gas-edge-defer.test.js が見る）
+    LB_EDGE_DEFER: { AFTER_BUDGET_MS: 60000, TICK_MIN_AGE_MS: 90000 },
+    _lbEdgePendingDrain: () => {},
   };
   vm.createContext(ctx);
   const fns = opt.realCore ? FNS.concat(['_lbCalSyncCore']) : FNS;

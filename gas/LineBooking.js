@@ -247,6 +247,7 @@ function liffApi(payloadJson) {
 //     「古い残数が見える」につながるため、必ずここを通す。
 function handleLineGet(params) {
   var action = String((params && params.action) || '');
+  _LB_WRITE_CUST = null;   // 設計45：前の要求の値を持ち越さない
   _lbWpStart(action);   // 書き込みの段ごとの時間（設計43 A）。対象外の操作では何もしない
   var res, auth;
   try {
@@ -280,7 +281,10 @@ function handleLineGet(params) {
 // ============================================================
 var LB_WP = {
   PROP: 'LB_WRITE_PERF', BAD_PROP: 'LB_WRITE_PERF_BAD', MAX: 60, MAX_BYTES: 8000,
-  STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other'],
+  STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark'],
+  //   ★設計45：member（会員名簿の読み）・edgeMark（写しを後ろへ回すときの待ちへの追加と印の送信）を**後ろに**足した。
+  //     反映の前の記録（段11個の行）も読めるように、古い並びを残す（行の長さで見分ける）
+  STAGES_V1: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other'],
   OPS: { line_makeReservationLine: 1, line_makeReservationLineProxy: 1, line_makeBatchReservation: 1, line_makeBatchReservationProxy: 1,
          line_makeTransferReservation: 1, line_cancelReservation: 1, line_changeReservation: 1, line_ownerFreeCancel: 1, line_ownerFreeChange: 1 }
 };
@@ -291,6 +295,9 @@ var LB_WP_CODES = { UNAUTHORIZED: 1, UNKNOWN_ACTION: 1, BAD_REQUEST: 1, NOT_VERI
   BALANCE_NOT_APPROVED: 1, BOOKING_FROZEN: 1, NOT_LIVE: 1, RESERVATION_SOURCE_UNAVAILABLE: 1, NOT_OPEN_YET: 1, BUSY: 1,
   NO_TRANSFER_ENTITLEMENT: 1, OUT_OF_CONTRACT: 1, RECURRING_DISABLED: 1 };
 var _LB_WP = null;   // GAS の実行は要求ごとに独立＝この要求だけの記録器
+//   ★設計45：書き込みの関数が既に知っている会員ID（氏名は持たない）。edgeAfterWrite が名簿を読み直さずに使う。
+//     handleLineGet の入口で null に戻す。応答には載せない
+var _LB_WRITE_CUST = null;
 
 function _lbWpStart(action) {
   _LB_WP = null;
@@ -327,9 +334,15 @@ function _lbWpRow(w, res, err, now) {
 
 //   行の形を確かめる（純粋・設計43 関門②）。数と固定の文字だけでできた行だけを真にする。
 //   ★書くときも読むときも通す。手で直された・古い版の・部分的に壊れた記録を「数と固定の文字だけ」と言い切るため
+function _lbWpStagesOf(r) {
+  //   行の長さで段の並びを決める（設計45 で段を後ろに足した。古い行は段11個）
+  if (Object.prototype.toString.call(r) !== '[object Array]') return null;
+  if (r.length === 6 + LB_WP.STAGES.length + 1) return LB_WP.STAGES;
+  if (r.length === 6 + LB_WP.STAGES_V1.length + 1) return LB_WP.STAGES_V1;
+  return null;
+}
 function _lbWpValidRow(r) {
-  var n = LB_WP.STAGES.length;
-  if (Object.prototype.toString.call(r) !== '[object Array]' || r.length !== 6 + n + 1) return false;
+  if (!_lbWpStagesOf(r)) return false;
   function nonNegInt(v) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 0; }
   if (!nonNegInt(r[0]) || r[0] <= 0) return false;
   if (typeof r[1] !== 'string' || !LB_WP.OPS['line_' + r[1]]) return false;
@@ -387,6 +400,8 @@ function writePerfText() {
   //   ★段の名前は記録の中の stages を信用せず、いつもコードの LB_WP.STAGES を使う。形の外れた行は出さずに数だけ言う（関門②）
   var names = LB_WP.STAGES.concat(['total']);
   var all = items, bad = 0;
+  //   行ごとの段の並び（古い行は段11個・設計45）
+  function namesOf(row) { return (_lbWpStagesOf(row) || LB_WP.STAGES).concat(['total']); }
   items = [];
   for (var vi = 0; vi < all.length; vi++) { if (_lbWpValidRow(all[vi])) items.push(all[vi]); else bad++; }
   if (bad) head += '\n★形の外れた行 ' + bad + ' 件は出していません（次の書き込みで作り直されます）';
@@ -399,7 +414,8 @@ function writePerfText() {
     var b = byOp[op];
     b.n++; if (it[2] === 1) b.ok++;
     b.codes[String(it[3])] = (b.codes[String(it[3])] || 0) + 1;
-    for (var k = 0; k < names.length; k++) { var v = Number(it[6 + k]); if (isFinite(v)) (b.ms[names[k]] = b.ms[names[k]] || []).push(v); }
+    var nm = namesOf(it);
+    for (var k = 0; k < nm.length; k++) { var v = Number(it[6 + k]); if (isFinite(v)) (b.ms[nm[k]] = b.ms[nm[k]] || []).push(v); }
   }
   var lines = [head, '件数 ' + items.length];
   for (var op2 in byOp) if (byOp.hasOwnProperty(op2)) {
@@ -417,7 +433,7 @@ function writePerfText() {
     var r = items[j];
     var t = '';
     try { t = Utilities.formatDate(new Date(Number(r[0])), 'Asia/Tokyo', 'MM/dd HH:mm:ss'); } catch (eT) { t = String(r[0]); }
-    lines.push('  ' + t + ' ' + r.slice(1, 6).join(' ') + ' | ' + r.slice(6).join('/'));
+    lines.push('  ' + t + ' ' + r.slice(1, 6).join(' ') + ' | ' + r.slice(6).join('/') + (r.length !== 6 + LB_WP.STAGES.length + 1 ? '（旧い並び）' : ''));
   }
   return lines.join('\n');
 }
@@ -2070,7 +2086,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-13c 書き込みの段ごとの時間を残す・書き込み直後の枠の答え方を点検に出す（設計43）';
+var LB_HEALTH_BUILD = '2026-11-16a 写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・段 member／edgeMark・I79 の見張り（設計45）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2475,6 +2491,9 @@ function dailyHealthCheck(dryRunArg) {
               + '後追い処理が止まっているか、同じ会員が何度やっても作り直せていない可能性があります。');
         }
       }
+      //   ★設計45・I79：写しが書き込みの印を含んでいない（Worker が答えない）会員の滞留（Worker 側の事実で見る）
+      var _wc = lbWriteCoversDailyCheck(_sv, Date.now());
+      for (var _wci = 0; _wci < _wc.length; _wci++) add(_wc[_wci].key, 'D1', _wc[_wci].severity, _wc[_wci].count, _wc[_wci].detail);
       if (Number(_sv.writeBehindSinceMissing || 0)) {
         add('gen_write_behind_no_time', 'D1', 'warn', Number(_sv.writeBehindSinceMissing),
             '書き込みに追いついていない会員のうち、いつから遅れたかの記録が無い会員がいます（滞留を判定できません）。');
@@ -2701,6 +2720,13 @@ function dailyHealthCheck(dryRunArg) {
     for (var csi = 0; csi < cs.length; csi++) add(cs[csi].key, '枠のすぐ押し出し', cs[csi].severity, cs[csi].count, cs[csi].detail);
   } catch (e) {
     add('calslots_check_fail', '枠のすぐ押し出し', 'warn', 1, '点検そのものが失敗しました: ' + (e && e.message));
+  }
+  // ---- 写しの送信を応答の後ろへ（設計45）：待ちの古さ・送れなかった回・後ろへ回せなかった回 ----
+  try {
+    var ed = lbEdgeDeferDailyCheck(Date.now(), function (k) { return _lbProp(k); });
+    for (var edi = 0; edi < ed.length; edi++) add(ed[edi].key, '写しの後ろ回し', ed[edi].severity, ed[edi].count, ed[edi].detail);
+  } catch (e) {
+    add('edge_defer_check_fail', '写しの後ろ回し', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
   }
 
   _step('カルテのAI');
@@ -5688,6 +5714,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     }
     _lap('通知push');
 
+    _LB_WRITE_CUST = { id: String(custInfo.customerId || '') };   // 設計45：会員IDだけ（応答には載せない）
     return { success: true, reservationId: resId, trainerName: trainer.name, calendarEventId: capEvId, trainerEventId: tEvId };
   } catch (e) {
     Logger.log('_lbReserveCore エラー: ' + e.message);
@@ -5704,6 +5731,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
 // 予約確定（会員本人・LIFF）
 function makeReservationLine(lineUserId, body) {
   var rec = getCustomerByLine(lineUserId);
+  _lbWpMark('member');   // 設計45：会員名簿の読み
   if (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified') return { success: false, code: 'NOT_VERIFIED', message: '会員登録が必要です。' };
   var cstat = String(rec.data[MAP_COL.CONTRACT_STAT - 1] || '');
   if (cstat && cstat !== 'active') return { success: false, code: 'CONTRACT_INACTIVE', message: '現在ご予約いただけない契約状態です。' };
@@ -8050,6 +8078,7 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
   reservationId = String(reservationId || '').trim();
   if (!reservationId) return { success: false, code: 'BAD_REQUEST', message: '予約IDがありません。' };
   var rec = getCustomerByLine(lineUserId);
+  _lbWpMark('member');   // 設計45：会員名簿の読み
   var _actorTrainer = getTrainerByLine(lineUserId);   // トレーナーも操作可（管理ページ）＝会員verified必須の対象外。行単位で担当を再検証する。
   var _ownerFreeReq = !!(opts && opts.ownerFree === true);
   if (_ownerFreeReq && !_lbIsOwnerRole(_actorTrainer)) return { success: false, code: 'FORBIDDEN', message: 'オーナーのみ操作できます。' };
@@ -8713,6 +8742,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
   reservationId = String(reservationId || '').trim();
   if (!reservationId || !newStartISO) return { success: false, code: 'BAD_REQUEST', message: '変更に必要な情報が不足しています。' };
   var rec = getCustomerByLine(lineUserId);
+  _lbWpMark('member');   // 設計45：会員名簿の読み
   var _actorTrainerC = getTrainerByLine(lineUserId);   // トレーナーも操作可（管理ページ）＝会員verified必須の対象外。行単位で担当を再検証する。
   var _ownerFreeReqC = !!(opts && opts.ownerFree === true);
   if (_ownerFreeReqC && !_lbIsOwnerRole(_actorTrainerC)) return { success: false, code: 'FORBIDDEN', message: 'オーナーのみ操作できます。' };

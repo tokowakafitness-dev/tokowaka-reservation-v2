@@ -26,6 +26,8 @@ function envWith(p, computedAt = Date.now(), syncedAt) {
         const isSync = /sync_state/.test(q);
         return {
           bind() { return this; },
+          //   設計45・I79 の門（customer_sync_version）は行なし＝書き込みの印が無い会員（開いている）
+          async all() { return { results: [] }; },
           async first() {
             if (isSync) return { synced_at: syncedAt === undefined ? computedAt : syncedAt };
             return p ? { payload: p, computed_at: computedAt } : null;

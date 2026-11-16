@@ -571,6 +571,20 @@ async function fromPrev(root) {
   ok('11-8 ★前の顧客の概要が遅れて届いても、いまの顧客の見出しに入れない（名前・次回の予約）', head === '会員二 様' && chips.includes('次回の予約なし') && !chips.includes('11/9'), head + ' / ' + chips);
 }
 
+{
+  //   ★設計45・I79：予約の写しが書き込みに追いついていない間は「確認中」。要求には印 nextUnknownOk を載せる
+  const sent = [];
+  const { w } = trBoot(async (b) => {
+    if (b.action === 'k_summary') { sent.push(b); return { success: true, karteSchema: 32, customer: { customerId: 'C1', name: '会員' }, consent: { state: 'agreed' },
+      profile: null, safetyBrief: null, lastNote: null, nextReservation: null, nextReservationUnknown: true }; }
+    return { success: true, sessions: [], karteSchema: 32 };
+  });
+  w.KarteUI.open('C1', '会員', 'summary'); await settle();
+  const chips = w.document.querySelector('#karteRoot .k-chips').textContent;
+  ok('11-9 ★閉じている会員は「次回の予約：確認中」（「次回の予約なし」と言わない）', chips.includes('次回の予約：確認中') && !chips.includes('次回の予約なし'), chips);
+  ok('11-10 ★概要の要求に nextUnknownOk を載せる（載せない古い画面には Worker が概要ごと失敗を返す）', sent.length >= 1 && sent.every((b) => b.nextUnknownOk === true), JSON.stringify(sent.map((b) => b.nextUnknownOk)));
+}
+
 // ================= 12. キーパッド・休憩の知らせ（2026-11-04 オーナー指示） =================
 {
   const { w } = trBoot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: TR_HIST, best: [] } : { success: true }));

@@ -135,9 +135,16 @@ const counts = (env) => env._db.prepare('SELECT entry, source, n FROM remain_sou
   ok('④-1 選ばれた会員は入口と出どころで数える', JSON.stringify(counts(env)) === JSON.stringify([{ entry: 'compat_member', source: 'd1', n: 1 }]), JSON.stringify(counts(env)));
 
   //   書き込みの直後（dirty > covers）→ 写し
-  env._db.prepare('UPDATE customer_sync_version SET dirty_seq = 9 WHERE customer_id = ?').run(CID);
+  //   ★設計45・I79：写しは印と同じ batch で届いた（home_covers_seq = 9）＝写しは書き込みを含む
+  env._db.prepare('UPDATE customer_sync_version SET dirty_seq = 9, home_covers_seq = 9 WHERE customer_id = ?').run(CID);
   const h2 = await readHome(env, CID, undefined, { readEntry: 'compat_member' });
-  ok('①-3 ★書き込みに追いついていなければ写し（copy:behind_write）', h2.remaining === 3 && h2.remainSource === 'copy');
+  ok('①-3 ★書き込みに追いついていなければ写し（copy:behind_write）', h2 && h2.remaining === 3 && h2.remainSource === 'copy');
+  //   ★設計45・I79：写しが印を含まない（covers 8 < dirty 9・NULL）なら写しにも落とさず答えない
+  env._db.prepare('UPDATE customer_sync_version SET home_covers_seq = 8 WHERE customer_id = ?').run(CID);
+  ok('①-3b ★I79 写しが書き込みの印を含まなければ答えない（null）', (await readHome(env, CID)) === null);
+  env._db.prepare('UPDATE customer_sync_version SET home_covers_seq = NULL WHERE customer_id = ?').run(CID);
+  ok('①-3c ★I79 covers が NULL なら答えない', (await readHome(env, CID)) === null);
+  env._db.prepare('UPDATE customer_sync_version SET home_covers_seq = 9 WHERE customer_id = ?').run(CID);
   env._db.prepare('UPDATE customer_sync_version SET dirty_seq = 0, source_version = source_version + 1 WHERE customer_id = ?').run(CID);
   ok('①-4 世代が遅れていれば写し（behind）', (await readHome(env, CID)).remainSource === 'copy');
   env._db.prepare('UPDATE customer_sync_version SET source_version = built_version WHERE customer_id = ?').run(CID);

@@ -3,6 +3,7 @@
 
 import { readHome } from './boot.js';
 import { canSeeCustomer, redactContractForViewer } from '../perms.js';
+import { oneClosed, countCovers } from '../lib/write-covers.js';   // 設計45・I79
 
 export async function routeCustomerDetail({ body, env, who, ctx }) {
   const customerId = String(body.customerId || (who.role === 'customer' ? who.customerId : ''));
@@ -36,6 +37,8 @@ export async function routeCustomerDetail({ body, env, who, ctx }) {
   ]);
 
   if (!cust) return { code: 'NOT_FOUND', customer: null };
+  //   ★設計45・I79：予約一覧の写しが印を含まなければ答えない（値を全部読んだ後・組み立てる前）。残数は readHome の門が null にする
+  if (await oneClosed(env, customerId, 'resv')) { await countCovers(env, ctx, 'resv'); return { _fallback: true }; }
 
   return {
     customer: cust,

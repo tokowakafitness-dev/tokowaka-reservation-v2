@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-12a 録音の文字起こしを AI で振り分けた下書き（設計39・切替が開いたトレーナーだけ）';
+  var KARTE_BUILD = '2026-11-16a 次回の予約：予約の写しが書き込みに追いついていない間は「確認中」（設計45・I79）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -639,13 +639,15 @@
     if (!cur.name && c.name) { cur.name = String(c.name); if (cur.headName) cur.headName.textContent = cur.name + ' 様'; }
     cur.headMeta.textContent = (c.age != null ? c.age + '歳 ／ ' : '') + (c.trainerId ? '担当 ' + trainerName(c.trainerId) : '担当なし');
     cur.headChips.innerHTML = '';
-    cur.headChips.appendChild(el('span', { class: 'k-chip-h', text: s.nextReservation ? '次回 ' + fmtDate(s.nextReservation.startAt) : '次回の予約なし' }));
+    //   ★設計45：予約の写しが書き込みに追いついていない間は「確認中」（null を「予約なし」と言わない）
+    cur.headChips.appendChild(el('span', { class: 'k-chip-h', text: s.nextReservationUnknown === true ? '次回の予約：確認中'
+      : (s.nextReservation ? '次回 ' + fmtDate(s.nextReservation.startAt) : '次回の予約なし') }));
     if (s.consent && s.consent.state !== 'agreed') cur.headChips.appendChild(el('span', { class: 'k-chip-h', text: '同意待ち' }));
   }
   function loadSummary() {
     if (cur.summary) return Promise.resolve(cur.summary);
     var askedFor = cur.customerId;   // ★応答が来たときに別の顧客を開いていたら、見出しにも控えにも入れない
-    return kRead('k_summary', { customerId: askedFor }).then(function (r) { if (cur.customerId !== askedFor) return r; if (r && r.success) { cur.summary = r; fillHead(); } return r; });
+    return kRead('k_summary', { customerId: askedFor, nextUnknownOk: true }).then(function (r) { if (cur.customerId !== askedFor) return r; if (r && r.success) { cur.summary = r; fillHead(); } return r; });
   }
 
   // ---------------------------------------------------------------- 身体図（数値と固定の文字だけ）

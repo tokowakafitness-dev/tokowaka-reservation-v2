@@ -230,11 +230,25 @@ export function isFresh(v) {
  *     0/0 の行は not_built＝答えない。修復の巡回（/quota/behind）は source_version > 0 の会員だけを拾う
  *     （一度も計算入力が来ていない会員＝契約の無い会員を15分ごとに積み続けないため）。
  */
+//   ★設計45（I79）：写しの covers を印が追い越したら、閉じた時刻（*_blocked_since）を立てる（見張り用）。
+//     covers が NULL の既存の行（migration 0034 の直後）は立てない＝「移行の残り」として別に数える。
+//     新しく作る行は covers が NULL で dirty > 0 ＝閉じているので、いまの時刻を立てる。
+//     ★covers の文（write-covers.js coversStatement）はこの文の後ろに積む（行を作ってから covers を入れる）
+function blockedSinceSet(kind) {
+  const c = `customer_sync_version.${kind}_covers_seq`, s = `customer_sync_version.${kind}_blocked_since`;
+  return `${kind}_blocked_since = CASE
+              WHEN ${s} IS NOT NULL THEN ${s}
+              WHEN ${c} IS NOT NULL AND MAX(customer_sync_version.dirty_seq, excluded.dirty_seq) > ${c}
+                THEN excluded.updated_at
+              ELSE ${s}
+            END`;
+}
 export function dirtyStatement(customerId, seq, nowMs) {
   return {
     sql: `INSERT INTO customer_sync_version
-            (customer_id, source_version, built_version, updated_at, dirty_seq, built_covers_seq, dirty_since)
-          VALUES (?, 0, 0, ?, ?, 0, ?)
+            (customer_id, source_version, built_version, updated_at, dirty_seq, built_covers_seq, dirty_since,
+             home_blocked_since, resv_blocked_since)
+          VALUES (?, 0, 0, ?, ?, 0, ?, ?, ?)
           ON CONFLICT(customer_id) DO UPDATE SET
             dirty_since = CASE
               WHEN customer_sync_version.dirty_since IS NOT NULL THEN customer_sync_version.dirty_since
@@ -242,9 +256,11 @@ export function dirtyStatement(customerId, seq, nowMs) {
                 THEN excluded.updated_at
               ELSE NULL
             END,
+            ${blockedSinceSet('home')},
+            ${blockedSinceSet('resv')},
             dirty_seq = MAX(customer_sync_version.dirty_seq, excluded.dirty_seq),
             updated_at = excluded.updated_at`,
-    args: [String(customerId), Number(nowMs), Number(seq), Number(nowMs)],
+    args: [String(customerId), Number(nowMs), Number(seq), Number(nowMs), Number(nowMs), Number(nowMs)],
   };
 }
 

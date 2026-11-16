@@ -73,7 +73,7 @@ D1                      その写し ＋ D1で作った枠・引当
 | `monthly_quota` | (customer_id, month_key) | `quotaBuild`（UPSERT・lent／as_of_month も＝設計22）／**`used` はトリガーだけ** | 残数・照合 | 引当の親 |
 | `ticket_packs` | pack_id | 同 | 同 | 引当の親 |
 | `reservation_allocations` | reservation_id | `quotaBuild`（**消してから入れる**） | 超過の件数 | ↑2つを外部キーで参照 |
-| `customer_sync_version` | customer_id | ingest（source）／quotaBuild（built） | 鮮度の判定 | — |
+| `customer_sync_version` | customer_id | ingest（source・dirty・★`home_covers_seq`／`resv_covers_seq`＝写しが含む通し番号と `*_blocked_since`・設計45 migration 0034）／quotaBuild（built） | 鮮度の判定・★I79 の門 | — |
 | `remain_shadow_slot` / `remain_shadow` / `remain_shadow_sample` | 設計12 | shadow | 心拍 | — |
 
 ### 2-3b. 顧客カルテ（設計28・★Worker だけが書く・D1 が唯一の正本）
@@ -203,6 +203,7 @@ trg_alloc_return_pack       同
 | I76 | **録音の文字起こしの AI 下書き（設計39・k_aiDraft）**：①明示の操作でだけ送り、送り先は Worker と Anthropic だけ。Origin・ID トークン・iat・役割の鮮度・許可表・共有の範囲・切替 `KARTE_AI_DRAFT`（厳密に on／allow＋`KARTE_AI_DRAFT_TRAINERS`・既定 off）・鍵 `ANTHROPIC_API_KEY`・1日の回数（`karte_ai_usage` を API の前に1文で数え changes===1 だけ成功）が全部通ったときだけ外へ送る。切替・鍵が無ければ 503 AI_NOT_CONFIGURED で送らず数えない。本文は `/karte/ai-draft` だけ128KB・パスと action の組は両方向 ②送る前に会員の氏名（漢字・かな・カナ）・トレーナーの氏名（漢字・英字）・敬称つきの名前（漢字・カナ・ひらがな）・電話・メールを伏せる（known も）。★トレーナーの読み（かな）は `trainers.kana`（GAS の名簿 trainer_master の1行目の見出しが kana の列・G 以降だけ・かな/長音/中黒/空白で1〜40字だけ＝GAS `_edgeTrainerKana` と Worker `isKanaName` が同じ判定）があるときだけ伏せる。列が無い・空・かな以外のトレーナー（日次点検に未登録の数が出る・切替が開いていれば warn）・敬称なしの第三者名・聞き違えた名前・漢数字の電話は残り得る＝画面の案内に明記し、同意の文面に含める。短い読みは同じ並びを全部伏せる（伏せすぎる向き・数字は消えない）（設計39 関門② 2周目・続き 2026-11-12） ③**文字起こし・伏せた文・Anthropic の生の応答を D1・KV・console・エラー文・応答に残さない**。返すのは検証・再マスクした draft だけ（no-store）。ハンドラは全例外を固定コードに変え、index.js も k_aiDraft の message を出さない。記録（`karte_ai_log`）は回数・時間・文字数・トークン・モデル・結果・版の印だけ（失敗も）。runWrite を通らない＝karte_requests に入らない ④セットは根拠の抜き出しが伏せた文字起こしに在り、重さ（0.1刻み・丸めない）と回数がその中の数値のトークンと完全一致するものだけ（自重は明示語のときだけ）。それ以外は unverified ⑤健康語（画面の MEMO_HEALTH と同じ式）の文は元の場所から消して caution へ（根拠の抜き出しに健康語があるセットは確かめたセットにしない）・移した後20件を超えたら AI_BAD_OUTPUT。画面も ai・aiunv・rule の健康語の文は捨てるだけ ⑥**AI の出力は保存しない**＝取り込みの確認フローでトレーナーが決めたものだけが下書きに入る（I71） ⑦**お客様の同意（録音・AI・国外の事業者・全文を残さない）と Anthropic の契約条件の確認が decisions に記録されるまで allow/on にしない** ⑧**会員ごとの同意（設計44）**：共有の範囲の後・1日の回数の前に `karte_consent_rec` を読み、agreed かつ doc_ver が `CONSENT_VALID_REC` にあるときだけ送る。無い・撤回・古い版は 403 NO_CONSENT、読めなければ 503 AI_UNAVAILABLE（CONSENT）＝どちらも送らない・数えない。この2つは karte_ai_log の CHECK に無い＝access_log（no_consent／error）にだけ残し、日次点検は access_log から noConsent を数える。画面の aiConsent は補助で、関門はサーバーだけ | `karte-ai.test.js` A〜G・E3-1〜E3-9・E4-1〜E4-3・E5・C1〜C3・F1〜F6、`liff-karte-ai.test.js` L1〜L3、`karte-ai-kana-health.test.js` K1〜K3（読み）・H（点検の窓口・名前を出さない・読めなければ0件と言わない）・G（日次点検の判定）・M1（反映の順序）、`member-consent.test.js` G1〜G9（⑧）、`liff-karte-ai.test.js` L1-4（画面の補助） |
 | I77 | **書き込み（予約・取消・変更）の段ごとの所要時間（設計43 A）は、数と固定の文字だけを Script Properties `LB_WRITE_PERF` の直近60件・8,000バイトのリングに残す**：操作名（固定の9つ）・成否・コード（許可リスト `LB_WP_CODES` に完全一致・外は OTHER・例外は THROW）・版・最後の印・段の ms。氏名・電話・LINE ID・予約ID・例外の文・応答の message を持たない。記録の失敗で予約の結果を変えない。認証と振り分けの例外は記録してから同じ例外を投げ直す（edgeAfterWrite の中の例外は今までどおり握りつぶす）。ロックを取らない＝標本（全数は booking_metrics）。読むのは作業依頼 `remaining {writePerf:true}`（op を足さない） | `write-perf.test.js` ①〜⑥ |
 | I78 | **書き込みの後、Worker が空き枠を答えてよいのは、`slots_cache` の payload の `readStartAt`（その写しがカレンダーを読み始めた時刻・GAS の時計・数値型の整数だけ）≧ 画面が送った `slotsAfter`（GAS の `edgeAfterWrite` 入口の時刻）＋2秒 のときだけ（設計43 B）**。答えたら `slotsAfterOk` に同じ値を返し、画面は一致を確かめてから使う。`readStartAt` は作りたての枠を送る回（`pushToEdgeSlots` が自分で作り直せた回）だけ載る。①（カレンダーから計算）・写しが古い・連続ルールで答えない回も答えない。答えた／答えない理由は `remain_source_daily` の entry `slots_after` に数え、日次点検は残数の出どころと混ぜない。画面が残数・予約一覧を Worker に戻すのは、`edgeSyncedExceptSlots`（`EDGE_SLOTS_ONLY_LAG` の操作で、写しと予約一覧を送れて通し番号を積めた）と正しい `edgeWriteAt` が来て、ほかの書き込みが途中でないときだけ。スイッチ `WL_DEFAULT_ON`（既定 false・`?wl=1`） | `write-latency.test.js` ①〜④・`liff-write-latency.test.js` 1〜3 |
+| I79 | **写しが書き込みの印を含んでいなければ Worker は答えない（設計45）**：会員が「閉じている」＝ `dirty_seq > 0` かつ（covers が NULL か `dirty_seq > covers`）。★NULL は閉じる（migration 0034 は初期化しない＝番号つきの押し出しが成功した会員から開く）。home の covers で閉じた会員の残数（D1 から作った値も写しも・振替権も）を `readHome` が null にする（写しを読む前と、値を全部読んだ後の2回。読めなければ閉じる）。resv の covers で閉じた会員の予約から作った値（会員の予約一覧・会員の boot・顧客詳細）は FALLBACK、トレーナー／オーナーの一覧と boot の今後の件数は**誰か1人でも**閉じていれば FALLBACK、カルテの概要は `nextUnknownOk` の要求にだけ `nextReservationUnknown`（印の無い古い画面は概要ごと 503 RESV_SYNCING）、一覧の `noNextBooking` は `'unknown'`。covers は写しの行と**同じ batch** で**置き換える（MAX にしない）**・dirty の文の後ろに積む。番号は写しを作るために台帳を読む**前**に読んだ全体の通し番号（GAS `_edgeCoversSeqNow`）。予約一覧は一部の送信が customerId、全体の送信が coveredCustomers（final の batch・行1件以上・2,000件まで）。印だけの送信（`rows:[]`＋`dirtySeq`）は covers を触らない。`remain-from-d1.js` の件数は I31 が先に守るので門を足さない。答えなかった回は `remain_source_daily` の entry `covers`、閉じている数と最長は `/quota/status` の `writeCovers`（会員IDなし・退会を除く）→ 日次点検（10分 warn・60分 high・移行の残り warn）。★GAS は写しの送信を応答の後ろへ回せる（スイッチ `LB_EDGE_DEFER`・既定オフ・既にある一回限りトリガー `_lbCalSyncAfterWrite` の先頭と5分ごとの `lbCalSyncTick`・新しいトリガー0本・どれか1つでもできなければ今の経路） | `write-covers.test.js` ①〜⑥、`gas-edge-defer.test.js` ①〜⑧、`karte.test.js` 11-1〜11-6、`liff-karte.test.js` 11-9・11-10、`read-on.test.js` ①-3〜①-3c |
 | I-M1 | **会員のカルテ（c_myKarte）の本人は who.customerId だけで決める。body を一切読まない**（customerId・noteId・sessionId 等で他人を指させない）。customer 以外・who.customerId が無ければ 403（設計35） | `member-karte.test.js` 1-7〜1-15・2-17・5-7 |
 | I-M2 | **応答は専用の allowlist で組み立てる**（k_ の応答を流用して落とす形にしない）。SQL の段階で列を選ぶ（全部の列を取らない）。値が無いものは null／空配列（推測で埋めない）。体の記録は I51 のまま（verified の凍結＋d1） | `member-karte.test.js` 2-3〜2-16・5-3 |
 | I-M3 | **社内メモ（karte_notes の本文・次回の計画・確かめること・理由）・健康情報（karte_safety・同意）・セットのメモ・ヒアリングの自由文・契約の金額と報酬を読まない・返さない**。契約は I53 を満たすときだけ・期間の列が無ければ null・担当は名簿の表示名（当たらなければ null）。includeContract=false なら契約の SQL を1本も出さない | `member-karte.test.js` 2-2・3-1〜3-4・4-1〜4-3・5-1〜5-5・6-6 |
@@ -387,6 +388,7 @@ used               トリガーが新しい行に積み直す
 
 ### `readHome`（写しを読む・`worker/src/routes/boot.js`）
 `null` を返す6つ：`no_customer` / `no_row` / `bad_json` / `month_missing` / `bad_shape` / `no_computed_at`
+★設計45（I79）：その前後に門。写しが書き込みの印を含まない会員（`dirty_seq > home_covers_seq`・NULL）・門が読めないときも `null`（`readHomeDiag` を呼ぶ前と、値を全部読んだ後）
 ★返り値には**写しに無いものが後から足される**：`month` / `computedAt` / `stale` / `ageMs`
 　→ shadow で比べるときは**この4つを除く**（でないと毎回必ず食い違う）
 
@@ -442,6 +444,9 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 　★設計43（2026-11-13・スイッチ WL_DEFAULT_ON=false・`?wl=1` の端末だけ）：予約・取消・変更の後は、残数・予約一覧は Worker へ戻し、
 　　空き枠だけ「書き込みの後に読み始めた写し」と Worker が比べられるまで GAS（I78）。枠の写しが追いつくのは
 　　設計42 のすぐ押し出し（約30秒）か10分ごとの押し出し。それまで枠は GAS（上限は今と同じ35分）。
+　★設計45（スイッチ LB_EDGE_DEFER・既定オフ）：オンのとき予約・取消・変更の写しは応答の後ろ（一回限りトリガー）で送る。
+　　その間、**別の端末・トレーナーの画面**も、その会員の残数・予約一覧は Worker が答えず GAS（I79）。
+　　オーナー・トレーナーの一覧は誰か1人の書き込みで GAS に落ちる（写しが届くまで）。書き込みをした端末は今と同じ35分 GAS
 
 ---
 
@@ -449,7 +454,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 
 | | 上限 | いまの状況 | 当たったら |
 |---|---|---|---|
-| GASのトリガー | 20本 | コード上21ハンドラ分。既存に相乗りで回避 | 新しい定期処理を作れない |
+| GASのトリガー | 20本 | コード上21ハンドラ分。既存に相乗りで回避（設計45 の写しの後ろ回しも既存の一回限りトリガーと5分ごとの同期に相乗り・`gas-edge-defer.test.js` ⑦ が集合を固定） | 新しい定期処理を作れない |
 | LINE通知の送り直し | 1回8件・90秒 | `warmupCache`（10分ごと）の末尾に相乗り。開始3分超なら見送り | 次の10分へ回る |
 | GASのバージョン | 200・削除不可（上限は「本数」＝`clasp versions` の件数。GASエディタの「番号」ではない） | 2026-10-06 の確認で 109本（以前ここにあった「188」は番号を本数と読み違えた値）。いまの本数は**未確認**（唯一の出所は GitHub Actions「GASを反映する」のログ）。床だけは分かる：反映ワークフローは残り5本以下で止まる＝直前の反映が成功していれば残り6本以上 | プロジェクト作り直し＝**LIFFのURLが変わる** |
 | GASの実行時間 | 6分 | 押し出しは打ち切り方式 | 途中から再開する作りが必須 |

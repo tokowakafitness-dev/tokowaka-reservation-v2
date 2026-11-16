@@ -131,7 +131,7 @@ console.log('=== 5. 待ち行列の作り（設計の不変条件） ===');
     !/ScriptApp\.newTrigger/.test(DW),
     'コード上のトリガーは21ハンドラ分ある。相乗りで済ませる');
   ok('⑤速い道に相乗りしている（書き込みの1秒後）',
-    /function _lbCalSyncAfterWrite\(\)[\s\S]{0,600}?lbDualWriteDrain\(\)/.test(PE));
+    /function _lbCalSyncAfterWrite\((e)?\)[\s\S]{0,1200}?lbDualWriteDrain\(\)/.test(PE));
   ok('⑤心拍に相乗りしている（15分ごと）',
     /function pushToEdgeLight\(\)[\s\S]{0,900}?lbDualWriteDrain\(\)/.test(PE));
 }

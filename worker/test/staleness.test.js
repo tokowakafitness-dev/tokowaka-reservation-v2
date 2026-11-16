@@ -28,6 +28,8 @@ function envWith({ computedAt, syncedAt }) {
         const isSync = /sync_state/.test(q);
         return {
           bind() { return this; },
+          //   設計45・I79 の門（customer_sync_version）は行なし＝書き込みの印が無い会員（開いている）
+          async all() { return { results: [] }; },
           async first() {
             if (isSync) return syncedAt == null ? null : { synced_at: syncedAt };
             return { payload, computed_at: computedAt };

@@ -15,6 +15,7 @@ import { canSeeCustomer, customerScopeSql } from '../perms.js';
 //     比較のD1読み書きが本体と競合し、本体が落ちれば handler ごと 500 になる。
 import { runDeferred } from './boot.js';
 import { dayKeyJst, DAILY_CAP } from '../lib/remain-read-on.js';
+import { oneClosed, anyResvClosed, countCovers } from '../lib/write-covers.js';   // 設計45・I79
 
 const JST = 9 * 3600 * 1000;
 const DOW = { ja: ['日', '月', '火', '水', '木', '金', '土'],
@@ -164,7 +165,7 @@ async function listTooOld(env, key) {
 // ---------------------------------------------------------------
 // getTrainerReservations と同じ形（担当予約の管理）
 // ---------------------------------------------------------------
-export async function compatTrainerReservations({ env, who, body }) {
+export async function compatTrainerReservations({ env, who, body, ctx }) {
   if (await listTooOld(env, 'reservations')) return { _fallback: true };
   const owner = who.role === 'owner';
   const lang = String(body.lang || 'ja');
@@ -195,11 +196,15 @@ export async function compatTrainerReservations({ env, who, body }) {
                OR customer_id IN (SELECT customer_id FROM customers WHERE ${scope.where}))
         ORDER BY start_at`;
 
+  //   ★設計45・I79：誰か1人でも予約一覧の写しが印を含まなければ答えない（前の門は無駄な読みを省くだけ）
+  if (await anyResvClosed(env)) { await countCovers(env, ctx, 'resv'); return { _fallback: true }; }
   const [custs, resv] = await Promise.all([
     owner ? env.DB.prepare(custSql).all() : env.DB.prepare(custSql).bind(...scope.args).all(),
     owner ? env.DB.prepare(resvSql).bind(now).all()
           : env.DB.prepare(resvSql).bind(now, who.trainerId, ...scope.args).all(),
   ]);
+  //   後の門（値を全部読んだ後・組み立てる前）。閲覧範囲の外の会員がこのトレーナーで取った予約もあるので全体で見る
+  if (await anyResvClosed(env)) { await countCovers(env, ctx, 'resv'); return { _fallback: true }; }
 
   const reservations = (resv.results || []).map((r) => ({
     // ★この値は、画面がそのままGASへ渡してキャンセル・変更に使う。
@@ -322,9 +327,11 @@ function st(key, lang) {
   return e[lang] || e.ja || '';
 }
 
-export async function compatMyReservations({ env, who, body }) {
+export async function compatMyReservations({ env, who, body, ctx }) {
   if (!who.customerId) return { _fallback: true };
   if (await listTooOld(env, 'reservations')) return { _fallback: true };
+  //   ★設計45・I79：その会員の予約一覧の写しが印を含まなければ答えない（前と後の2回）
+  if (await oneClosed(env, who.customerId, 'resv')) { await countCovers(env, ctx, 'resv'); return { _fallback: true }; }
   const lang = String(body.lang || 'ja');
   const now = Date.now();
 
@@ -335,6 +342,7 @@ export async function compatMyReservations({ env, who, body }) {
     ).bind(who.customerId).all(),
     env.DB.prepare('SELECT trainer_id, name, name_en FROM trainers').all(),
   ]);
+  if (await oneClosed(env, who.customerId, 'resv')) { await countCovers(env, ctx, 'resv'); return { _fallback: true }; }
 
   const nameOf = {};
   for (const t of (trainers.results || [])) {

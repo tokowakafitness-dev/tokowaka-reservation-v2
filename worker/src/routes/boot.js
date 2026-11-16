@@ -12,6 +12,7 @@ import { modeOn, decideHome, countSource } from '../lib/remain-read-on.js';   //
 import { customerScopeSql } from '../perms.js';
 //   ★静的 import（動的だと waitUntil に登録される前に isolate が終わりうる）
 import { scheduleShadow } from '../lib/remain-shadow.js';
+import { oneClosed, anyResvClosed, countCovers } from '../lib/write-covers.js';   // 設計45・I79
 
 const HOME_TTL_WARN_MS = 10 * 60 * 1000;   // 10分より古ければ鮮度を疑う
 // ★これより古い写しは答えない（GASに聞き直す）。
@@ -71,6 +72,18 @@ function _homeShapeOk(h) {
  *   顧客に返すのは**いつでも写し**。
  */
 export async function readHome(env, customerId, targetMs, opts) {
+  //   ★設計45・I79：写しが書き込みの印を含んでいなければ答えない（写しも D1 も・振替権も）。
+  //     前の門は写しを読む前（readHomeDiag より前・関門① 中2）、後の門は値を全部読んだ後・返す前（3周目・4周目の条件）。
+  //     閉じている・読めない → null（画面は GAS に聞く）
+  const ctxC = opts && opts.ctx;
+  if (await oneClosed(env, customerId, 'home')) { await countCovers(env, ctxC, 'home'); return null; }
+  const v = await readHomeInner(env, customerId, targetMs, opts);
+  if (v == null) return v;
+  if (await oneClosed(env, customerId, 'home')) { await countCovers(env, ctxC, 'home'); return null; }
+  return v;
+}
+
+async function readHomeInner(env, customerId, targetMs, opts) {
   const d = await readHomeDiag(env, customerId, targetMs);
   //   ★比較は**ここで起動しない**（2026-10-09・関門③の指摘）。
   //
@@ -224,6 +237,9 @@ export async function routeBoot({ env, who, ctx }) {
           ORDER BY start_at LIMIT 50`
       ).bind(who.customerId, now).all(),
     ]);
+    //   ★設計45・I79：予約一覧の写しが印を含まなければ全体を答えない（home は readHome の門で null になるが一覧が残るため）。
+    //     値を全部読んだ後に門を見る（前に見てから読むと、その間の印を見逃す・関門① 3周目）
+    if (await oneClosed(env, who.customerId, 'resv')) { await countCovers(env, ctx, 'resv'); runDeferred(defer); return { _fallback: true }; }
     const out = {
       role: 'customer',
       name: who.name,
@@ -270,6 +286,9 @@ export async function routeBoot({ env, who, ctx }) {
     ).first();
     pending = (p && p.n) || 0;
   }
+  //   ★設計45・I79：今後の予約件数（upcoming）は予約の写しから作る。誰か1人でも予約一覧の写しが印を含まなければ
+  //     全体を答えない（閲覧範囲の外の会員がこのトレーナーで取った予約もあり得るので、範囲で絞らず全体で見る＝広く閉じる向き）
+  if (await anyResvClosed(env)) { await countCovers(env, ctx, 'resv'); return { _fallback: true }; }
 
   return {
     role: who.role,

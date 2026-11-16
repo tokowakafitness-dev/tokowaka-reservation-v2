@@ -15,6 +15,7 @@ import {
   affectsQuotaInput, affectsQuotaInputGlobally,
   bumpSourceStatement, bumpAllSourceStatement, dirtyStatement,
 } from '../lib/sync-version.js';
+import { coversStatement, parseCoversSeq, COVERED_MAX, CUSTOMER_ID_RE } from '../lib/write-covers.js';
 
 const TABLES = {
   trainers: {
@@ -284,6 +285,45 @@ async function ingest(request, env) {
     }
   }
 
+  // ★写しが含む番号（設計45・I79）。home と reservations の送信だけが載せる。
+  //   台帳を読む前に読んだ通し番号。写しの行と同じ batch で、その会員の covers を置き換える（MAX にしない）
+  //   ★covers を立てる会員は送り手が明示する：
+  //     home              … 書いた行の会員
+  //     reservations 一部 … customerId（あれば・全行の会員一致を確かめる）／無ければ行の会員
+  //     reservations 全体 … coveredCustomers（その回に走査した全会員・予約0件の会員を含む）。final の batch で、行が1件以上のときだけ
+  //                          （0件の全体送信は取り込み側が事故を疑って削除を止める＝含むと言えない）
+  //   coversSeq の無い送信は covers を触らない（古い GAS・印だけの送信）
+  const coversSeq = parseCoversSeq(body.coversSeq);
+  if (coversSeq === 'bad') return jsonRes({ success: false, code: 'BAD_COVERS_SEQ' }, 400);
+  let coversIds = [];
+  if (coversSeq != null) {
+    if (kind !== 'home' && kind !== 'reservations') return jsonRes({ success: false, code: 'COVERS_NOT_SUPPORTED' }, 400);
+    if (kind === 'reservations' && scope === 'all') {
+      if (body.coveredCustomers !== undefined) {
+        if (!Array.isArray(body.coveredCustomers)) return jsonRes({ success: false, code: 'BAD_COVERED' }, 400);
+        if (body.coveredCustomers.length > COVERED_MAX) return jsonRes({ success: false, code: 'COVERED_TOO_MANY' }, 400);
+        for (const c of body.coveredCustomers) {
+          if (typeof c !== 'string' || !CUSTOMER_ID_RE.test(c)) return jsonRes({ success: false, code: 'BAD_COVERED' }, 400);
+        }
+        if (body.final === true && rows.length > 0) coversIds = body.coveredCustomers.slice();
+      }
+    } else if (kind === 'reservations') {
+      const cidC = String(body.customerId || '').trim();
+      if (cidC) {
+        if (!CUSTOMER_ID_RE.test(cidC)) return jsonRes({ success: false, code: 'CUSTOMER_REQUIRED' }, 400);
+        for (const r of rows) {
+          if (String(r && r.customer_id) !== cidC) return jsonRes({ success: false, code: 'CUSTOMER_MISMATCH' }, 400);
+        }
+        coversIds = [cidC];
+      } else {
+        for (const r of rows) { const c = String((r && r.customer_id) || '').trim(); if (c) coversIds.push(c); }
+      }
+    } else {
+      for (const r of rows) { const c = String((r && r.customer_id) || '').trim(); if (c) coversIds.push(c); }
+    }
+    coversIds = Array.from(new Set(coversIds));
+  }
+
   const sql = upsertSqlFor(conf);
 
   // 古いバッチが遅れて届いても、新しい内容を巻き戻さない。
@@ -420,6 +460,17 @@ async function ingest(request, env) {
     }
   }
 
+  // ★写しが含む番号（設計45）。dirty の文の**後ろ**に積む（行の無い会員は dirty の INSERT が行を作ってから入る）
+  let covered = 0;
+  if (coversSeq != null && coversIds.length) {
+    const ck = kind === 'home' ? 'home' : 'resv';
+    for (const cid of coversIds) {
+      const st = coversStatement(ck, cid, coversSeq, nowMs);
+      stmts.push(env.DB.prepare(st.sql).bind(...st.args));
+      covered++;
+    }
+  }
+
   let removed = 0;
 
   // ★scope:'customer'：その会員ぶんを世代で入れ替える（2026-10-08・段階3-a）
@@ -553,7 +604,7 @@ async function ingest(request, env) {
     await stampSync(env, kind, batchId, null);
   }
 
-  return jsonRes({ success: true, written, skipped, removed, bumped, bumpedStale, mode: full ? 'full' : 'diff', dirtied });
+  return jsonRes({ success: true, written, skipped, removed, bumped, bumpedStale, mode: full ? 'full' : 'diff', dirtied, covered });
 }
 
 async function stampSync(env, key, batchId, rows) {

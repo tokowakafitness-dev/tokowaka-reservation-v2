@@ -35,6 +35,7 @@ function ok(name, cond, extra) { cond ? pass++ : (fail++, console.log(`❌ ${nam
 const now = Date.now();
 function envWithHome(payload, computedAt) {
   return { DB: { prepare: () => ({ bind: () => ({
+    all: async () => ({ results: [] }),   // 設計45・I79 の門：行なし＝開いている
     first: async () => ({ payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
                           computed_at: computedAt == null ? now - 60000 : computedAt }) }) }) } };
 }
