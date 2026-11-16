@@ -406,7 +406,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-16a カルテ：次回の予約は写しが追いつくまで「確認中」（karte.js 2026-11-16a・設計45）';
+  var LIFF_BUILD = '2026-11-19a 設計44 同意の規則（健康情報の撤回・紙の同意の人にも聞く）＋カルテの次回の予約は写しが追いつくまで「確認中」（karte.js 2026-11-19a・設計45）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -499,7 +499,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mc_state_agreed:'同意済み（{d}）', mc_state_revoked:'撤回済み（{d}）', mc_state_none:'まだ同意していません',
       mc_state_old:'以前の内容に同意済み（{d}）。いまの内容への同意がまだです', mc_reagree:'いまの内容に同意し直す場合は、下にチェックを入れて「送る」を押してください。',
       mc_revoke:'録音と AI の利用への同意を撤回する', mc_revoke_confirm:'録音と AI を使った記録の作成への同意を撤回しますか？\n撤回すると、次のセッションから録音しません。',
-      mc_health_store:'カルテの健康情報・写真の同意の撤回は、店舗までお申し出ください。', mc_err_send:'送れませんでした。もう一度押してください。', mc_err_reopen:'ログインの有効期限が切れました。画面を開き直してから、もう一度お試しください。',
+      mc_state_store:'店頭（紙）で同意済み（{d}）', mc_store_keep:'店頭でいただいた同意は、ここでチェックを外したまま送っても取り消されません。取り消す場合は「同意を撤回する」を押してください。',
+      mc_health_revoke:'カルテの健康情報・写真の同意を撤回する', mc_health_revoke_c1:'健康情報・写真の同意を撤回すると、カルテに記録した健康に関する情報（既往歴・ケガ・痛み・服薬・運動上の制限など）と写真は、その場で削除され、元に戻せません。\n続けますか？',
+      mc_health_revoke_c2:'本当に撤回しますか？\n削除した情報は、もう一度同意しても戻りません（改めてお聞きします）。', mc_err_send:'送れませんでした。もう一度押してください。', mc_err_reopen:'ログインの有効期限が切れました。画面を開き直してから、もう一度お試しください。',
       mk_goal_title:'目標と進み具合', mk_to_body:'体組成へ ›', mk_now:'いま', mk_target:'目標', mk_deadline:'期日', mk_days_left:'あと{n}日', mk_days_over:'期日を過ぎました', mk_goal_unset:'目標はまだ決まっていません。担当トレーナーと決めましょう。', mk_ring_aria:'目標まで{p}',
       mk_last_note:'直近の指導（{date}）', mk_to_notes:'指導の履歴へ ›', mk_todo_n:'次回までに {n}つ',
       mk_progress_title:'目標までの進み具合', mk_weight_goal:'体重 {w}kg（{d}まで）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'いま {now}kg ／ あと {rest}kg', mk_since_join:'入会から {v}kg',
@@ -596,7 +598,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mc_state_agreed:'Agreed ({d})', mc_state_revoked:'Withdrawn ({d})', mc_state_none:'Not agreed yet',
       mc_state_old:'You agreed to an earlier version ({d}). The current version is not agreed yet', mc_reagree:'To agree to the current version, tick the box below and tap "Send".',
       mc_revoke:'Withdraw consent to recording and AI', mc_revoke_confirm:'Withdraw your consent to recording and AI-assisted notes?\nWe will stop recording from your next session.',
-      mc_health_store:'To withdraw consent for health information and photos, please tell the studio staff.', mc_err_send:'Could not send. Please tap again.', mc_err_reopen:'Your login has expired. Please reopen this page and try again.',
+      mc_state_store:'Agreed at the studio (on paper) ({d})', mc_store_keep:'Your consent given at the studio is not cancelled if you send without ticking here. To cancel it, tap "Withdraw consent".',
+      mc_health_revoke:'Withdraw consent for health information and photos', mc_health_revoke_c1:'If you withdraw, the health information in your records (medical history, injuries, pain, medication, exercise limits, etc.) and photos will be deleted immediately and cannot be restored.\nContinue?',
+      mc_health_revoke_c2:'Are you sure you want to withdraw?\nDeleted information will not come back even if you agree again (we will ask you again).', mc_err_send:'Could not send. Please tap again.', mc_err_reopen:'Your login has expired. Please reopen this page and try again.',
       mk_goal_title:'Goal & progress', mk_to_body:'Body ›', mk_now:'Now', mk_target:'Goal', mk_deadline:'By', mk_days_left:'{n} days left', mk_days_over:'Past the date', mk_goal_unset:'No goal set yet. Decide one with your trainer.', mk_ring_aria:'{p} of the way to your goal',
       mk_last_note:'Latest coaching ({date})', mk_to_notes:'Coaching ›', mk_todo_n:'{n} to do before next time',
       mk_progress_title:'Progress to your goal', mk_weight_goal:'Weight {w}kg (by {d})', mk_weight_goal_nodl:'Weight {w}kg', mk_now_rest:'Now {now}kg / {rest}kg to go', mk_since_join:'{v}kg since joining',
@@ -693,7 +697,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mc_state_agreed:'已同意（{d}）', mc_state_revoked:'已撤回（{d}）', mc_state_none:'尚未同意',
       mc_state_old:'已同意旧版内容（{d}），尚未同意当前内容', mc_reagree:'如需同意当前内容，请勾选下方并点击“发送”。',
       mc_revoke:'撤回对录音和 AI 使用的同意', mc_revoke_confirm:'要撤回对录音及使用 AI 制作记录的同意吗？\n撤回后，从下次课程起不再录音。',
-      mc_health_store:'如需撤回健康信息和照片的同意，请向店铺提出。', mc_err_send:'发送失败，请再点一次。', mc_err_reopen:'登录已过期，请重新打开页面后再试。',
+      mc_state_store:'已在店内（纸质）同意（{d}）', mc_store_keep:'在店内给予的同意，不会因为此处未勾选就发送而被取消。如需取消，请点击“撤回同意”。',
+      mc_health_revoke:'撤回对健康信息和照片的同意', mc_health_revoke_c1:'撤回后，档案中记录的健康信息（既往病史、伤病、疼痛、服药、运动限制等）和照片将立即删除，且无法恢复。\n要继续吗？',
+      mc_health_revoke_c2:'确定要撤回吗？\n即使再次同意，已删除的信息也不会恢复（我们会重新询问）。', mc_err_send:'发送失败，请再点一次。', mc_err_reopen:'登录已过期，请重新打开页面后再试。',
       mk_goal_title:'目标与进度', mk_to_body:'体成分 ›', mk_now:'现在', mk_target:'目标', mk_deadline:'期限', mk_days_left:'还有{n}天', mk_days_over:'已过期限', mk_goal_unset:'尚未设定目标，请与教练商量。', mk_ring_aria:'已完成目标的{p}',
       mk_last_note:'最近的指导（{date}）', mk_to_notes:'指导记录 ›', mk_todo_n:'下次之前 {n} 项',
       mk_progress_title:'目标进度', mk_weight_goal:'体重 {w}kg（{d}前）', mk_weight_goal_nodl:'体重 {w}kg', mk_now_rest:'现在 {now}kg ／ 还差 {rest}kg', mk_since_join:'入会以来 {v}kg',
@@ -790,7 +796,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       mc_state_agreed:'已同意（{d}）', mc_state_revoked:'已撤回（{d}）', mc_state_none:'尚未同意',
       mc_state_old:'已同意舊版內容（{d}），尚未同意目前內容', mc_reagree:'如需同意目前內容，請勾選下方並點選「傳送」。',
       mc_revoke:'撤回對錄音與 AI 使用的同意', mc_revoke_confirm:'要撤回對錄音及使用 AI 製作紀錄的同意嗎？\n撤回後，自下次課程起不再錄音。',
-      mc_health_store:'如需撤回健康資訊與照片的同意，請向店鋪提出。', mc_err_send:'傳送失敗，請再點一次。', mc_err_reopen:'登入已過期，請重新開啟頁面後再試。',
+      mc_state_store:'已在店內（紙本）同意（{d}）', mc_store_keep:'在店內給予的同意，不會因為此處未勾選就傳送而被取消。如需取消，請點選「撤回同意」。',
+      mc_health_revoke:'撤回對健康資訊與照片的同意', mc_health_revoke_c1:'撤回後，檔案中記錄的健康資訊（既往病史、傷病、疼痛、服藥、運動限制等）與照片將立即刪除，且無法復原。\n要繼續嗎？',
+      mc_health_revoke_c2:'確定要撤回嗎？\n即使再次同意，已刪除的資訊也不會復原（我們會重新詢問）。', mc_err_send:'傳送失敗，請再點一次。', mc_err_reopen:'登入已過期，請重新開啟頁面後再試。',
       mk_goal_title:'目標與進度', mk_to_body:'體組成 ›', mk_now:'現在', mk_target:'目標', mk_deadline:'期限', mk_days_left:'還有{n}天', mk_days_over:'已過期限', mk_goal_unset:'尚未設定目標，請與教練討論。', mk_ring_aria:'已完成目標的{p}',
       mk_last_note:'最近的指導（{date}）', mk_to_notes:'指導記錄 ›', mk_todo_n:'下次之前 {n} 項',
       mk_progress_title:'目標進度', mk_weight_goal:'體重 {w}kg（{d}前）', mk_weight_goal_nodl:'體重 {w}kg', mk_now_rest:'現在 {now}kg ／ 還差 {rest}kg', mk_since_join:'入會以來 {v}kg',
@@ -2833,7 +2841,8 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     var data = state.mc && state.mc.data; if (!data) return;
     var sheet = document.getElementById('mcSheet'); if (!sheet) return;
     var revokeOnly = data.mode === 'revoke_only';
-    var kinds = how === 'ask' ? data.ask.slice() : (revokeOnly ? ['rec_ai'] : ['health', 'rec_ai']);
+    //   revoke_only は Worker が返した kind だけ（録音・AI／会員画面で同意した健康情報）
+    var kinds = how === 'ask' ? data.ask.slice() : (revokeOnly ? (data.docs || []).map(function(d){ return d && d.kind; }) : ['health', 'rec_ai']);
     var st = data.state || {};
     sheet.innerHTML = '';
     var panel = _mcEl('div', 'mc-panel');
@@ -2851,7 +2860,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       var agreed = s.state === 'agreed';
       var agreedNow = agreed && s.current === true;   // 現行の版に同意済み（同意のチェックを出さない）
       if (how === 'all') box.appendChild(_mcEl('div', 'mc-state' + (agreedNow ? ' ok' : ''),
-        agreedNow ? t('mc_state_agreed', { d: _mcDate(s.at) }) : agreed ? t('mc_state_old', { d: _mcDate(s.at) }) : (s.state === 'revoked' ? t('mc_state_revoked', { d: _mcDate(s.at) }) : t('mc_state_none'))));
+        agreedNow ? t('mc_state_agreed', { d: _mcDate(s.at) }) : (agreed && s.viaStore === true) ? t('mc_state_store', { d: _mcDate(s.at) }) : agreed ? t('mc_state_old', { d: _mcDate(s.at) }) : (s.state === 'revoked' ? t('mc_state_revoked', { d: _mcDate(s.at) }) : t('mc_state_none'))));
       //   ★撤回は「同意している」なら版に関係なく出す（current は最新の版か・AI に使えるかの表示にだけ使う・関門② 高）
       if (how === 'all' && agreed && d.kind === 'rec_ai') {
         var rb = _mcEl('button', 'btn btn-danger mc-revoke', t('mc_revoke'));
@@ -2859,7 +2868,19 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
         rb.onclick = function(){ if (!window.confirm(t('mc_revoke_confirm'))) return; _mcSend({ rec_ai: 'revoked' }, sheet, panel); };
         box.appendChild(rb);
       }
-      if (how === 'all' && agreed && d.kind === 'health') box.appendChild(_mcEl('p', 'mc-lead', t('mc_health_store')));
+      //   健康情報の撤回（オーナー決定 2026-11-16）：その場で健康情報と写真が消えて戻せない＝確かめを2段にする
+      if (how === 'all' && agreed && d.kind === 'health') {
+        var hb = _mcEl('button', 'btn btn-danger mc-revoke-health', t('mc_health_revoke'));
+        hb.type = 'button';
+        hb.onclick = function(){
+          if (!window.confirm(t('mc_health_revoke_c1'))) return;
+          if (!window.confirm(t('mc_health_revoke_c2'))) return;
+          _mcSend({ health: 'revoked' }, sheet, panel);
+        };
+        box.appendChild(hb);
+      }
+      //   紙で同意済みの人：ここで「同意しない」と答えても、紙の同意は取り消されない（CEO 裁定 2026-11-16）。取り消すのは撤回のボタンだけ
+      if (d.kind === 'health' && agreed && s.viaStore === true && !revokeOnly) box.appendChild(_mcEl('p', 'mc-lead mc-store-keep', t('mc_store_keep')));
       if (!agreedNow && !revokeOnly) {
         if (agreed && how === 'all') box.appendChild(_mcEl('p', 'mc-lead', t('mc_reagree')));   // 以前の内容に同意している人：新しい内容に同意し直すためのチェック（関門② 2周目 中）
         var lab = _mcEl('label', 'mc-check');

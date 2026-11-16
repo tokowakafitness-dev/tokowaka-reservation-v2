@@ -18,7 +18,7 @@ import { synthesizeBody, pickGoalLine } from '../lib/body-series.js';
 import { normalizeHearing, normalizePainMap, normalizeReasons, normalizeTag, parseJsonCol, has, HEARING_REVISION_SQL } from '../lib/karte-hearing.js';
 import { buildMemberKarte } from '../lib/member-karte.js';
 import { EXERCISE_LIMITS, normalizeExerciseName, normalizePart } from '../lib/karte-exercises.js';
-import { readRecRow, recConsentValid } from './member-consent.js';
+import { readRecRow, recConsentValid, readHealthCurAnswer } from './member-consent.js';
 import { MEMBER_ACTOR } from '../lib/consent-docs.js';
 import { oneClosed, coversGate, countCovers } from '../lib/write-covers.js';   // 設計45・I79
 
@@ -1275,6 +1275,12 @@ async function summary(c) {
     //   録音・AI の同意（設計44）。読めなければ 'unknown'（同意なしと言わない）。版は返さない（改訂1 中9）
     let rec;
     try { rec = await readRecRow(env, cid); } catch (_) { rec = undefined; }
+    //   紙で同意済みの会員が、会員画面では現行の版に「同意しない」と答えたか（止めずに見せる・CEO 裁定 2026-11-16）。読めなければ付けない
+    //   hAns：undefined＝読めない（memberDeclined を付けない）／null＝回答なし／行＝最新の回答（関門② 低）
+    let hAns = null;
+    if (consent && consent.state === 'agreed' && consent.recorded_by !== MEMBER_ACTOR) {
+      try { hAns = await readHealthCurAnswer(env, cid); } catch (_) { hAns = undefined; }
+    }
     return {
       karteSchema: karteSchemaFor(c.env, c.who),
       customer: { customerId: cust.customer_id, name: cust.name, age: ageOf(cust.birthday, now),
@@ -1283,7 +1289,8 @@ async function summary(c) {
                   ...(assigned ? { contractStatus: cust.contract_status || null } : {}) },
       assigned,
       profile: profile ? Object.assign({}, profile, { hearing: parseJsonCol(profile.hearing_json), hearing_json: undefined }) : null,
-      consent: consent ? { state: consent.state, changedAt: consent.changed_at, method: consent.method, byMember: consent.recorded_by === MEMBER_ACTOR } : { state: 'none' },
+      consent: consent ? Object.assign({ state: consent.state, changedAt: consent.changed_at, method: consent.method, byMember: consent.recorded_by === MEMBER_ACTOR },
+                                        hAns === undefined ? {} : { memberDeclined: !!(hAns && hAns.answer === 'declined') }) : { state: 'none' },
       recConsent: rec === undefined ? { state: 'unknown' }
         : (rec ? { state: rec.state, changedAt: rec.changed_at, byMember: rec.recorded_by === MEMBER_ACTOR, current: recConsentValid(rec) } : { state: 'none' }),
       safetyBrief: safety ? { restrictions: safety.restrictions, painSites: safety.pain_sites, pain: parseJsonCol(safety.pain_json) || [],

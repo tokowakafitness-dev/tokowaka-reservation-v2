@@ -62,7 +62,7 @@ async function token(sub, iatAge = 0) {
 
 // ---------------- 見本（架空）----------------
 db.exec(`INSERT INTO trainers (trainer_id, name, line_user_id, role, active) VALUES ('A', '乙川 二郎', 'U_TA', 'owner', 1), ('T2', '丁村 三郎', 'U_T2', 'trainer', 1)`);
-const custs = [['C1', 'A'], ['C2', 'T2'], ['C3', 'A'], ['C4', 'A'], ['C5', '']];
+const custs = [['C1', 'A'], ['C2', 'T2'], ['C3', 'A'], ['C4', 'A'], ['C5', ''], ['C6', 'A'], ['C7', 'A'], ['C8', 'A']];
 for (const [id, t] of custs) db.exec(`INSERT INTO customers (customer_id, name, kana, line_user_id, default_trainer_id, created_at, updated_at) VALUES ('${id}', '甲野 一郎', 'コウノ イチロウ', 'U_${id}', '${t}', 1, 1)`);
 const now0 = Date.now();
 db.exec(`INSERT INTO sync_state (key, synced_at, rows, ok) VALUES ('customers', ${now0}, 5, 1), ('trainers', ${now0}, 2, 1), ('reservations', ${now0}, 0, 1)`);
@@ -154,7 +154,7 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
   //   紙で同意済み（版なし）→ health は出さない
   db.exec(`INSERT INTO karte_consent (customer_id, kind, state, changed_at, method, recorded_by) VALUES ('C3', 'health', 'agreed', 1, 'paper', 'A')`);
   const r3 = await call('U_C3', 'm_myConsent');
-  ok('C3 紙で同意済みの健康情報は ask に入らない（有効）', same(r3.ask, ['rec_ai']) && r3.state.health.current === true && r3.state.health.byMember === false);
+  ok('C3 ★紙で同意済みの健康情報も会員画面で聞く（オーナー決定 2026-11-16 §9-2）・viaStore', same(r3.ask, ['health', 'rec_ai']) && r3.state.health.current === false && r3.state.health.viaStore === true && r3.state.health.byMember === false, r3.raw.slice(0, 300));
   //   撤回済みは出さない
   db.exec(`INSERT INTO karte_consent (customer_id, kind, state, changed_at, method, recorded_by) VALUES ('C4', 'health', 'revoked', 1, NULL, 'A')`);
   const r4 = await call('U_C4', 'm_myConsent');
@@ -190,10 +190,10 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
   //   紙の agreed → 会員の agreed は版つきに置き換える
   const s4 = await save('U_C3', { health: 'agreed' });
   ok('D6 紙で同意済みに会員が同意すると、版つきの会員の記録に置き換わる', s4.status === 200 && q1(`SELECT recorded_by FROM karte_consent WHERE customer_id = 'C3'`).recorded_by === '@member');
-  //   health の revoked は受けない
+  //   health の revoked：同意の無い人（C2）は CONFLICT・何も書かない（同意済みの撤回は K 節）
   const c5 = counts();
-  const s5 = await save('U_C1', { health: 'revoked' });
-  ok('D7 ★会員画面から健康情報の撤回は 400・何も書かない（健康情報を消さない）', s5.status === 400 && same(counts(), c5) && q1(`SELECT state FROM karte_consent WHERE customer_id = 'C1'`).state === 'agreed');
+  const s5 = await save('U_C2', { health: 'revoked' });
+  ok('D7 ★同意の無い人の健康情報の撤回は 409 CONFLICT・何も書かない', s5.status === 409 && s5.code === 'CONFLICT' && same(counts(), c5));
   //   版の違い
   const s6 = await save('U_C2', { rec_ai: 'agreed' }, { rec_ai: 'rec_ai-1999-01-01' });
   ok('D8 版が現行と違うと 409 DOC_CHANGED・何も書かない', s6.status === 409 && s6.code === 'DOC_CHANGED' && same(counts(), c5));
@@ -368,6 +368,71 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
   const sm2 = await call('U_TA', 'k_summary', { customerId: 'C1' });
   dbFail = null;
   ok('H7 録音・AI の同意が読めなければ recConsent は unknown（同意なしと言わない）', sm2.status === 200 && sm2.recConsent.state === 'unknown');
+}
+
+// ================= K オーナーの答え（2026-11-16）と CEO 裁定 =================
+{
+  setMode('on');
+  const now = Date.now();
+  //   カルテのほかの記録（撤回で消してはいけないもの）と健康情報の中身を用意する（架空）
+  const seed = (cid) => {
+    db.prepare(`INSERT OR REPLACE INTO karte_safety (customer_id, restrictions, updated_by, updated_at) VALUES (?, 'テスト制限', 'A', ?)`).run(cid, now);
+    db.prepare(`INSERT INTO karte_notes (note_id, customer_id, session_date, author_trainer_id, created_at) VALUES (?, ?, '2026-11-01', 'A', ?)`).run('n-' + cid, cid, now);
+    db.prepare(`INSERT INTO karte_tr_sessions (session_id, customer_id, session_date, author_trainer_id, created_at) VALUES (?, ?, '2026-11-01', 'A', ?)`).run('s-' + cid, cid, now);
+  };
+  const has = (t, cid) => !!q1(`SELECT 1 x FROM ${t} WHERE customer_id = ?`, cid);
+  //   K1 会員画面での健康情報の撤回（§9-1）
+  await save('U_C6', { health: 'agreed' });
+  seed('C6');
+  const r1 = await save('U_C6', { health: 'revoked' });
+  ok('K1 ★会員画面から健康情報の撤回を受け、その場で健康情報（karte_safety）を消す（I48）', r1.status === 200 && q1(`SELECT state, recorded_by FROM karte_consent WHERE customer_id = 'C6'`).state === 'revoked'
+     && !has('karte_safety', 'C6') && q1(`SELECT COUNT(*) n FROM karte_consent_log WHERE customer_id = 'C6' AND kind = 'health' AND state = 'revoked'`).n === 1
+     && q1(`SELECT COUNT(*) n FROM karte_consent_answers WHERE customer_id = 'C6' AND kind = 'health' AND answer = 'revoked'`).n === 1, r1.raw);
+  ok('K2 健康情報の撤回でも、メモ・トレーニングの記録は消さない', has('karte_notes', 'C6') && has('karte_tr_sessions', 'C6'));
+  const c0 = counts();
+  const r2 = await save('U_C6', { health: 'revoked' });
+  ok('K3 撤回の再送は何も書かない', r2.status === 200 && same(counts(), c0));
+  const r3 = await call('U_C6', 'm_myConsent');
+  ok('K4 撤回した人には健康情報を勧めない（ask に入らない）', !r3.ask.includes('health'));
+  //   K5 紙で同意済みの人が会員画面で「同意しない」（CEO 裁定：自動で撤回しない・消さない・トレーナーに見せる）
+  db.exec(`INSERT INTO karte_consent (customer_id, kind, state, changed_at, method, recorded_by) VALUES ('C7', 'health', 'agreed', 1, 'paper', 'A')`);
+  seed('C7');
+  const a7 = await call('U_C7', 'm_myConsent');
+  ok('K5 紙で同意済みの人にも健康情報を聞く', a7.ask.includes('health') && a7.state.health.viaStore === true);
+  const d7 = await save('U_C7', { health: 'declined' });
+  const row7 = q1(`SELECT state, method, recorded_by FROM karte_consent WHERE customer_id = 'C7'`);
+  ok('K6 ★紙で同意済みの人が「同意しない」：紙の同意は agreed のまま・健康情報は消さない・回答は declined', d7.status === 200 && row7.state === 'agreed' && row7.method === 'paper' && row7.recorded_by === 'A'
+     && has('karte_safety', 'C7') && q1(`SELECT answer FROM karte_consent_answers WHERE customer_id = 'C7' ORDER BY id DESC LIMIT 1`).answer === 'declined', d7.raw);
+  ok('K7 同じ版ではもう聞かない（あとでではなく答えたので）・状態に memberDeclined', !d7.ask.includes('health') && d7.state.health.memberDeclined === true);
+  const sm7 = await call('U_TA', 'k_summary', { customerId: 'C7' });
+  ok('K8 ★トレーナーの k_summary に memberDeclined（会員画面では同意しなかった・紙は同意済み）', sm7.status === 200 && sm7.consent.state === 'agreed' && sm7.consent.memberDeclined === true && sm7.consent.byMember === false, sm7.raw.slice(0, 300));
+  const sm6 = await call('U_TA', 'k_summary', { customerId: 'C6' });
+  ok('K9 紙の同意でない（会員の撤回済み）なら memberDeclined は false', sm6.consent.memberDeclined === false);
+  dbFail = "kind = 'health' AND doc_ver = ?";
+  const sm7e = await call('U_TA', 'k_summary', { customerId: 'C7' });
+  dbFail = null;
+  ok('K9b 回答の表が読めなければ memberDeclined を付けない（false と言わない）・応答は返す', sm7e.status === 200 && sm7e.consent.state === 'agreed' && !('memberDeclined' in sm7e.consent), sm7e.raw.slice(0, 300));
+  //   K10 録音・AI の撤回では、確認済みのカルテの記録（メモ・トレーニング・健康情報）を残す（§9-6）
+  await save('U_C7', { rec_ai: 'agreed' });
+  const rv = await save('U_C7', { rec_ai: 'revoked' });
+  ok('K10 ★録音・AI の撤回ではカルテの記録（メモ・トレーニング・健康情報）を消さない', rv.status === 200 && has('karte_notes', 'C7') && has('karte_tr_sessions', 'C7') && has('karte_safety', 'C7'));
+  //   K11 切替が閉じているとき：会員画面で健康情報に同意した本人は revoke_only に健康情報も入り、撤回できる
+  await save('U_C8', { health: 'agreed' });
+  seed('C8');
+  setMode('off');
+  const f8 = await call('U_C8', 'c_memberStatus');
+  const m8 = await call('U_C8', 'm_myConsent');
+  ok('K11 ★off：会員画面で健康情報に同意した本人は起動の印 true・revoke_only に健康情報', f8.memberConsent === true && m8.status === 200 && m8.mode === 'revoke_only' && m8.docs.some((d) => d.kind === 'health') && m8.state.health.state === 'agreed', m8.raw.slice(0, 200));
+  const x8 = await save('U_C8', { health: 'revoked' });
+  ok('K12 off：その撤回は受ける（健康情報を消す）・応答に撤回した状態', x8.status === 200 && x8.mode === 'revoke_only' && x8.state.health.state === 'revoked' && !has('karte_safety', 'C8'), x8.raw);
+  //   K13 off：紙で同意済みの人（会員画面を見たことが無い）には入口を出さず、会員画面からの撤回も受けない（既定 off の約束）
+  db.exec(`DELETE FROM karte_consent_rec WHERE customer_id = 'C7'`);
+  db.exec(`DELETE FROM karte_consent_answers WHERE customer_id = 'C7'`);
+  const f7 = await call('U_C7', 'c_memberStatus');
+  const m7 = await call('U_C7', 'm_myConsent');
+  const x7 = await save('U_C7', { health: 'revoked' });
+  ok('K13 ★off：紙の同意だけの人は印 false・503・会員画面からの撤回も 503（健康情報は消えない）', f7.memberConsent === false && m7.status === 503 && x7.status === 503 && has('karte_safety', 'C7'), JSON.stringify([f7.memberConsent, m7.status, x7.status]));
+  setMode('on');
 }
 
 // ================= I 文面の版の固定 =================

@@ -283,6 +283,13 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   rb.click(); await settle();
   const sv = a.sent.filter((x) => x.body.action === 'k_saveConsent');
   ok('L9-2 ★撤回を記録：確かめてから k_saveConsent に kind:rec_ai・state:revoked だけ（同意は送らない）', a.w.confirms >= 1 && sv.length === 1 && sv[0].body.kind === 'rec_ai' && sv[0].body.state === 'revoked' && !('method' in sv[0].body), JSON.stringify(sv.map((x) => x.body)));
+  //   紙で同意済み・会員画面では「同意しない」（CEO 裁定 2026-11-16：止めずに見せる）
+  const md = boot({ cfg: { summary: SUM({ state: 'none' }, { state: 'agreed', changedAt: Date.UTC(2026, 10, 1), method: 'paper', byMember: false, memberDeclined: true }) } });
+  md.w.KarteUI.open('C1', '会員', 'contract'); await settle();
+  ok('L9-4 ★紙で同意済みで会員画面では同意しなかった人：同意の行に「会員画面では同意しなかった（紙は同意済み）」', R(md.w).textContent.includes('同意済み') && R(md.w).textContent.includes('会員画面では同意しなかった（紙は同意済み）'));
+  const md2 = boot({ cfg: { summary: SUM({ state: 'none' }, { state: 'agreed', changedAt: 1, method: 'paper', byMember: false, memberDeclined: false }) } });
+  md2.w.KarteUI.open('C1', '会員', 'contract'); await settle();
+  ok('L9-5 memberDeclined が無ければ出さない', !R(md2.w).textContent.includes('会員画面では同意しなかった'));
   for (const [label, rc, want] of [['未回答', { state: 'none' }, '未回答'], ['撤回済み', { state: 'revoked', changedAt: 1 }, '撤回済み'], ['読めない', { state: 'unknown' }, '確認できませんでした']]) {
     const b = boot({ cfg: { summary: SUM(rc) } });
     b.w.KarteUI.open('C1', '会員', 'contract'); await settle();

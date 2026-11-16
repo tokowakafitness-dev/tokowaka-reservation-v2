@@ -9,7 +9,8 @@
 //     ・切替 MEMBER_CONSENT は「勧誘と新しい同意」にだけ効く。録音・AI に同意している本人は、切替が閉じていても状態を読み、撤回できる（改訂2 高2・改訂3）
 //     ・健康情報のいまの状態は karte_consent（I48 の正本）に書く。録音・AI は karte_consent_rec。回答と版は karte_consent_answers。状態の変化は karte_consent_log
 //     ・declined（今回は同意しない）は回答の表にだけ＝いまの状態を変えない（誤って外しても撤回にならない）
-//     ・会員画面から健康情報の撤回は受けない（撤回は I48 で健康情報を同じ batch で消す＝会員の操作で走らせるかはオーナーの未決・設計44 §9-1）
+//     ・会員画面から健康情報の撤回も受ける（オーナー決定 2026-11-16・設計44 §9-1）。I48 のとおり同じ batch で健康情報（karte_safety）を消す。画面は2段で確かめる
+//     ・紙（トレーナーの記録）で同意済みの会員にも会員画面で聞く（§9-2）。「同意しない」と答えても紙の同意は撤回しない・消さない（CEO 裁定）
 //     ・再送（同じ状態・同じ版）は状態・log・回答に何も書かない（最初の時刻が残る）。監査（access_log）だけは書く
 //     ・全ての例外を固定のコードにする（message・ID を console に出さない）
 
@@ -47,13 +48,28 @@ export async function memberConsentFlag(env, defaultTrainerId, recP) {
   if (memberConsentOpen(env, defaultTrainerId)) return true;
   const x = recP ? await recP : { err: true };
   if (x.err) return 'unknown';
-  return !!(x.row && x.row.state === 'agreed');
+  return revokeKinds(x.rec, x.health).length > 0;
+}
+/**
+ * 切替が閉じているときに撤回だけを見せてよい kind：録音・AI に同意している／健康情報に**会員画面で**同意している
+ *   ★紙（トレーナーの記録）の健康情報の同意は入れない＝切替 off のまま、会員画面を見たことの無い人に入口を出さない（既定 off の約束）
+ */
+function revokeKinds(rec, health) {
+  const k = [];
+  if (health && health.state === 'agreed' && health.recorded_by === MEMBER_ACTOR) k.push('health');
+  if (rec && rec.state === 'agreed') k.push('rec_ai');
+  return k;
+}
+function readHealthRow(env, customerId) {
+  return env.DB.prepare(`SELECT state, changed_at, method, recorded_by FROM karte_consent WHERE customer_id = ? AND kind = 'health'`)
+    .bind(String(customerId)).first();
 }
 /** 起動で先に読み始める（失敗しても投げない＝未処理の reject を作らない）。on のときは読まない */
 export function startRecRead(env, customerId) {
   if (memberConsentMode(env) === 'on') return null;
   try {
-    return readRecRow(env, customerId).then((row) => ({ row }), () => ({ err: true }));
+    return Promise.all([readRecRow(env, customerId), readHealthRow(env, customerId)])
+      .then(([rec, health]) => ({ rec, health }), () => ({ err: true }));
   } catch (_) { return Promise.resolve({ err: true }); }
 }
 export function readRecRow(env, customerId) {
@@ -79,35 +95,51 @@ async function logAccessMember(env, customerId, action, result) {
 /** 本人の状態を読む（例外はそのまま投げる＝呼び出し側で固定コードに） */
 async function readState(env, cid) {
   //   ★回答は件数で切らずに、必要な事実だけを個別の SQL で引く（関門② 中：200件で切ると古い版を「紙」と取り違えた）
-  const [h, r, hAns, curAns] = await Promise.all([
-    env.DB.prepare(`SELECT state, changed_at, method, recorded_by FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first(),
+  const [h, r, hAns, curAns, hCurLast] = await Promise.all([
+    readHealthRow(env, cid),
     readRecRow(env, cid),
     //   健康情報のいまの同意の版：health の agreed の最新の回答
     env.DB.prepare(`SELECT doc_ver FROM karte_consent_answers WHERE customer_id = ? AND kind = 'health' AND answer = 'agreed' ORDER BY at DESC, id DESC LIMIT 1`).bind(cid).first(),
     //   現行の版に答えた kind
     env.DB.prepare(`SELECT DISTINCT kind FROM karte_consent_answers WHERE customer_id = ? AND ((kind = 'health' AND doc_ver = ?) OR (kind = 'rec_ai' AND doc_ver = ?))`)
       .bind(cid, CONSENT_DOCS.health.ver, CONSENT_DOCS.rec_ai.ver).all(),
+    //   現行の版への健康情報の最新の回答（紙で同意済みの人が「同意しない」と答えたかをトレーナーに見せるため）
+    readHealthCurAnswer(env, cid),
   ]);
   const answeredKinds = ((curAns && curAns.results) || []).map((x) => x.kind);
   const answeredCur = (k) => answeredKinds.indexOf(k) >= 0;
-  //   紙・トレーナーの記録（版なし）は有効。会員の記録は、対応する回答の版が現行のときだけ「最新」（回答が見つからなければ最新とみなさない）
+  //   current＝会員画面で現行の版に同意済み（同意のチェックを出さない）。紙・トレーナーの記録は利用には有効（I48 は state だけ）だが、
+  //   会員画面でもう一度聞く（オーナー決定 2026-11-16 §9-2）＝current は偽・viaStore を真にする
   const hMember = !!(h && h.recorded_by === MEMBER_ACTOR);
-  const hCurrent = !!(h && h.state === 'agreed' && (!hMember || (hAns && hAns.doc_ver === CONSENT_DOCS.health.ver)));
+  const hAgreed = !!(h && h.state === 'agreed');
+  const hCurrent = hAgreed && hMember && !!(hAns && hAns.doc_ver === CONSENT_DOCS.health.ver);
   const st = {
-    health: h ? { state: h.state, at: h.changed_at, byMember: hMember, current: hCurrent }
-              : { state: 'none', at: null, byMember: false, current: false },
+    health: h ? { state: h.state, at: h.changed_at, byMember: hMember, current: hCurrent, viaStore: hAgreed && !hMember,
+                  //   紙で同意済みのまま、会員画面では現行の版に「同意しない」と答えた（紙の同意は残る・CEO 裁定）
+                  memberDeclined: hAgreed && !hMember && !!(hCurLast && hCurLast.answer === 'declined') }
+              : { state: 'none', at: null, byMember: false, current: false, viaStore: false, memberDeclined: false },
     rec_ai: r ? { state: r.state, at: r.changed_at, byMember: r.recorded_by === MEMBER_ACTOR, current: recConsentValid(r) }
               : { state: 'none', at: null, byMember: false, current: false },
   };
-  //   ask：記録が無い、または会員が古い版に同意している、かつ この版にまだ答えていない（revoked・紙の agreed は出さない）
+  //   ask：記録が無い、または会員画面で現行の版に同意していない agreed（紙・古い版）、かつ この版にまだ答えていない（revoked は出さない）
   const needs = (k) => {
     const s = st[k];
     if (s.state === 'none') return !answeredCur(k);
     if (s.state === 'agreed' && !s.current) return !answeredCur(k);
     return false;
   };
-  return { st, ask: CONSENT_KINDS.filter(needs), recRow: r, healthRow: h, answeredCur };
+  return { st, ask: CONSENT_KINDS.filter(needs), recRow: r, healthRow: h, answeredCur, revokeKinds: revokeKinds(r, h) };
 }
+/** 現行の版への健康情報の最新の回答（無ければ null）。トレーナーの k_summary も使う */
+export function readHealthCurAnswer(env, cid) {
+  return env.DB.prepare(`SELECT answer FROM karte_consent_answers WHERE customer_id = ? AND kind = 'health' AND doc_ver = ? ORDER BY at DESC, id DESC LIMIT 1`)
+    .bind(String(cid), CONSENT_DOCS.health.ver).first();
+}
+const revokeOnlyOut = (s) => {
+  const state = {};
+  for (const k of s.revokeKinds) state[k] = s.st[k];
+  return { mode: 'revoke_only', docs: s.revokeKinds.map(docOut), state, ask: [] };
+};
 
 async function custTrainer(env, cid) {
   const c = await env.DB.prepare('SELECT default_trainer_id FROM customers WHERE customer_id = ?').bind(cid).first();
@@ -124,8 +156,8 @@ export async function myConsent({ env, who }) {
     const open = memberConsentOpen(env, t);
     const s = await readState(env, cid);
     if (open) return { mode: 'full', docs: CONSENT_KINDS.map(docOut), state: s.st, ask: s.ask };
-    //   閉じている：録音・AI に同意している本人にだけ、撤回のための rec_ai の文面と状態（勧誘しない）
-    if (s.st.rec_ai.state === 'agreed') return { mode: 'revoke_only', docs: [docOut('rec_ai')], state: { rec_ai: s.st.rec_ai }, ask: [] };
+    //   閉じている：録音・AI に同意している／健康情報に会員画面で同意している本人にだけ、撤回のための文面と状態（勧誘しない）
+    if (s.revokeKinds.length) return revokeOnlyOut(s);
     return fail('MEMBER_CONSENT_OFF', 503);
   } catch (_) {
     try { console.error('[member-consent] read failed'); } catch (_) {}
@@ -135,7 +167,7 @@ export async function myConsent({ env, who }) {
 
 // ---------------------------------------------------------------- m_saveConsent
 const KEYS = ['action', 'idToken', 'lang', 'answers', 'vers'];
-const ANSWERS_OK = { health: ['agreed', 'declined'], rec_ai: ['agreed', 'declined', 'revoked'] };
+const ANSWERS_OK = { health: ['agreed', 'declined', 'revoked'], rec_ai: ['agreed', 'declined', 'revoked'] };
 const S = (sql, ...args) => ({ sql, args });
 
 /** 本文を検査して [[kind, answer, ver]] を返す。だめなら null */
@@ -159,7 +191,6 @@ export async function saveConsent({ env, who, body }) {
   const cid = String(who.customerId);
   const items = parseBody(body || {});
   if (!items) { await logAccessMember(env, cid, 'm_saveConsent', 'denied'); return fail('BAD_REQUEST', 400); }
-  //   ★会員画面から健康情報の撤回は受けない（parseBody の ANSWERS_OK に無い＝400）
   for (const [k, , ver] of items) {
     if (ver !== CONSENT_DOCS[k].ver) { await logAccessMember(env, cid, 'm_saveConsent', 'conflict'); return fail('DOC_CHANGED', 409); }
   }
@@ -182,9 +213,9 @@ async function saveInner(env, cid, items) {
   const t = await custTrainer(env, cid);
   if (t === null) return fail('FORBIDDEN', 403);
   const open = memberConsentOpen(env, t);
-  //   切替が閉じているときは rec_ai の撤回だけ（勧誘・新しい同意を止める）
-  if (!open && items.some(([k, a]) => !(k === 'rec_ai' && a === 'revoked'))) return fail('MEMBER_CONSENT_OFF', 503);
   const s = await readState(env, cid);
+  //   切替が閉じているときは撤回だけ。しかも revoke_only に出している kind だけ（勧誘・新しい同意を止める・紙の同意の人に会員画面からの撤回を開かない）
+  if (!open && items.some(([k, a]) => !(a === 'revoked' && s.revokeKinds.indexOf(k) >= 0))) return fail('MEMBER_CONSENT_OFF', 503);
   const now = Date.now();
   const stmts = [];
   let nAns = 0;
@@ -198,7 +229,16 @@ async function saveInner(env, cid, items) {
                       ON CONFLICT(customer_id, kind) DO UPDATE SET state = excluded.state, changed_at = excluded.changed_at,
                         method = excluded.method, recorded_by = excluded.recorded_by`, cid, now, MEMBER_ACTOR));
         stmts.push(S(`INSERT INTO karte_consent_log (customer_id, kind, state, at, method, recorded_by) VALUES (?, 'health', 'agreed', ?, 'line', ?)`, cid, now, MEMBER_ACTOR));
-      } else if (s.answeredCur(k)) continue;   // declined の再送
+      } else if (a === 'revoked') {
+        if (s.st.health.state === 'revoked') continue;   // 再送
+        //   ★健康情報の撤回（オーナー決定 2026-11-16）。同意の行が agreed でなければ CONFLICT・何も書かない。
+        //     I48 のとおり同じ batch で健康情報の中身（karte_safety）を消す（再同意しても戻らない）。カルテのほかの記録（メモ・トレーニング・体組成）は消さない
+        stmts.push(S(`INSERT INTO karte_consent_guard (cstate) SELECT 1 WHERE NOT EXISTS (
+                        SELECT 1 FROM karte_consent WHERE customer_id = ? AND kind = 'health' AND state = 'agreed')`, cid));
+        stmts.push(S(`UPDATE karte_consent SET state = 'revoked', changed_at = ?, method = 'line', recorded_by = ? WHERE customer_id = ? AND kind = 'health'`, now, MEMBER_ACTOR, cid));
+        stmts.push(S(`INSERT INTO karte_consent_log (customer_id, kind, state, at, method, recorded_by) VALUES (?, 'health', 'revoked', ?, 'line', ?)`, cid, now, MEMBER_ACTOR));
+        stmts.push(S(`DELETE FROM karte_safety WHERE customer_id = ?`, cid));
+      } else if (s.answeredCur(k)) continue;   // declined の再送（★紙の同意は撤回しない・消さない＝回答の表にだけ残す・CEO 裁定）
     } else {
       if (a === 'agreed') {
         if (s.recRow && s.recRow.state === 'agreed' && s.recRow.doc_ver === ver) continue;
@@ -227,7 +267,11 @@ async function saveInner(env, cid, items) {
     await env.DB.batch(stmts.map((x) => env.DB.prepare(x.sql).bind(...x.args)));
   }
   const s2 = await readState(env, cid);
-  return open ? { mode: 'full', state: s2.st, ask: s2.ask } : { mode: 'revoke_only', state: { rec_ai: s2.st.rec_ai }, ask: [] };
+  if (open) return { mode: 'full', state: s2.st, ask: s2.ask };
+  //   閉じている：いま撤回した kind も状態を返す（画面が「撤回済み」を描けるように）
+  const state = {};
+  for (const [k] of items) state[k] = s2.st[k];
+  return { mode: 'revoke_only', state, ask: [] };
 }
 
 export const MEMBER_CONSENT_HANDLERS = { m_myConsent: myConsent, m_saveConsent: saveConsent };

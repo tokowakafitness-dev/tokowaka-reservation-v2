@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-16a 次回の予約：予約の写しが書き込みに追いついていない間は「確認中」（設計45・I79）';
+  var KARTE_BUILD = '2026-11-19a 同意の規則（紙の同意の人が会員画面で同意しなかった印・設計44 §9）＋次回の予約は写しが追いつくまで「確認中」（設計45・I79）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -3593,6 +3593,8 @@
       var cs = sm.consent ? sm.consent.state : 'none';
       var cAt = sm.consent && typeof sm.consent.changedAt === 'number' ? (function (t) { return (t.getUTCMonth() + 1) + '/' + t.getUTCDate(); })(new Date(sm.consent.changedAt + 9 * 3600000)) : '';
       var cHow = sm.consent && sm.consent.byMember ? '（会員画面）' : (sm.consent && sm.consent.method === 'paper' ? '（紙）' : (sm.consent && sm.consent.method === 'line' ? '（LINE）' : ''));
+      //   紙で同意済みのまま、会員画面では「同意しない」と答えた（紙の同意は有効のまま・止めずに見せる・CEO 裁定 2026-11-16）
+      if (cs === 'agreed' && sm.consent && sm.consent.memberDeclined === true) cHow += '／会員画面では同意しなかった（紙は同意済み）';
       adm.appendChild(el('div', {}, [
         el('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;gap:8px;' }, [
           el('div', { style: 'font-size:14px;font-weight:700;', text: '健康情報の取り扱いの同意' }),

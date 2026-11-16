@@ -55,7 +55,7 @@ function boot(opts) {
   const w = dom.window;
   w.sent = []; w.fetched = []; w.gasScripts = []; w.confirms = [];
   w.Element.prototype.getClientRects = function () { for (let n = this; n; n = n.parentElement) { if (n.hidden || (n.style && n.style.display === 'none')) return []; } return [{}]; };
-  w.confirm = (m) => { w.confirms.push(String(m)); return o.confirm === undefined ? true : o.confirm; };
+  w.confirm = (m) => { w.confirms.push(String(m)); if (Array.isArray(o.confirm)) return o.confirm.length ? o.confirm.shift() : true; return o.confirm === undefined ? true : o.confirm; };
   w.alert = () => {};
   const st = w.setTimeout.bind(w); w.setTimeout = (f, ms) => st(f, Math.min(ms || 0, 3));
   try { w.localStorage.setItem('tkw_lang', o.lang || 'ja'); } catch (e) {}
@@ -178,11 +178,41 @@ for (const [label, v] of [['無い', undefined], ['false', false], ['文字の "
 }
 // ---- 健康情報が同意済みのとき（入口）----
 {
-  const st = { health: { state: 'agreed', current: true, at: Date.UTC(2026, 10, 1) }, rec_ai: { state: 'agreed', current: true, at: Date.UTC(2026, 10, 1) } };
-  const w = boot({ bootRes: Object.assign({}, HOME, { memberConsent: true }), fetch: () => Object.assign({}, FULL, { ask: [], state: st }) }); await settle();
+  //   ★健康情報の撤回（オーナー決定 2026-11-16）：2段の確かめ・「消えて戻せない」を明記・health:revoked だけを送る
+  const st = { health: { state: 'agreed', current: true, at: Date.UTC(2026, 10, 1), byMember: true }, rec_ai: { state: 'agreed', current: true, at: Date.UTC(2026, 10, 1) } };
+  const w = boot({ bootRes: Object.assign({}, HOME, { memberConsent: true }), fetch: (b) => (b.action === 'm_myConsent' ? Object.assign({}, FULL, { ask: [], state: st }) : { success: true, mode: 'full', state: { health: { state: 'revoked' } }, ask: [] }) }); await settle();
   $(w, 'homeConsent').click(); await settle();
-  ok('6-5 健康情報が同意済みなら撤回のボタンは出さず「店舗までお申し出ください」（会員画面から健康情報を消さない）',
-     w.document.querySelectorAll('.mc-revoke').length === 1 && w.document.querySelector('.mc-doc[data-kind="health"]').textContent.includes('店舗までお申し出ください') && !w.document.querySelector('.mc-doc[data-kind="health"] .mc-revoke'));
+  const hb = w.document.querySelector('.mc-doc[data-kind="health"] .mc-revoke-health');
+  ok('6-5 健康情報が同意済みなら健康情報の撤回のボタンが出る（「店舗へ」の文は出さない）', !!hb && !$(w, 'mcSheet').textContent.includes('店舗までお申し出ください'));
+  hb.click(); await settle();
+  const s1 = calls(w, 'm_saveConsent');
+  ok('6-9 ★確かめは2段：1段目に「その場で削除され、元に戻せません」・2段目に「本当に撤回しますか」。両方 OK で health:revoked だけを送る', w.confirms.length === 2 && w.confirms[0].includes('その場で削除され、元に戻せません') && w.confirms[1].includes('本当に撤回しますか')
+     && s1.length === 1 && JSON.stringify(s1[0].body.answers) === JSON.stringify({ health: 'revoked' }) && s1[0].body.vers.health === 'health-v1', JSON.stringify(w.confirms));
+}
+for (const [label, ans] of [['1段目', [false]], ['2段目', [true, false]]]) {
+  const st = { health: { state: 'agreed', current: true, at: 1, byMember: true }, rec_ai: { state: 'none' } };
+  const w = boot({ confirm: ans, bootRes: Object.assign({}, HOME, { memberConsent: true }), fetch: () => Object.assign({}, FULL, { ask: [], state: st }) }); await settle();
+  $(w, 'homeConsent').click(); await settle();
+  w.document.querySelector('.mc-revoke-health').click(); await settle();
+  ok('6-10 ★確かめの' + label + 'で「キャンセル」なら送らない', calls(w, 'm_saveConsent').length === 0);
+}
+{
+  //   紙で同意済み（viaStore）：勧める1枚に健康情報が出て、「外したまま送っても取り消されない」を添える。外したまま送る＝declined
+  const st = { health: { state: 'agreed', current: false, viaStore: true, at: 1 }, rec_ai: { state: 'none' } };
+  const w = boot({ bootRes: Object.assign({}, HOME, { memberConsent: true }), fetch: (b) => (b.action === 'm_myConsent' ? Object.assign({}, FULL, { ask: ['health'], state: st }) : { success: true, mode: 'full', state: st, ask: [] }) }); await settle();
+  const hd = w.document.querySelector('.mc-doc[data-kind="health"]');
+  ok('6-11 紙で同意済みの人にも勧める1枚に健康情報（チェックは外れ）・「取り消されません」の注記', sheetOpen(w) && !!hd && hd.querySelector('.mc-check input').checked === false && hd.textContent.includes('取り消されません'));
+  click(w, '.mc-send'); await settle();
+  ok('6-12 ★外したまま送ると declined（撤回ではない）', JSON.stringify(calls(w, 'm_saveConsent')[0].body.answers) === JSON.stringify({ health: 'declined' }));
+  $(w, 'homeConsent').click(); await settle();
+  ok('6-13 入口では「店頭（紙）で同意済み」・撤回のボタンと同意のチェック', w.document.querySelector('.mc-doc[data-kind="health"]').textContent.includes('店頭（紙）で同意済み') && !!w.document.querySelector('.mc-revoke-health') && !!w.document.querySelector('.mc-doc[data-kind="health"] .mc-check'));
+}
+{
+  //   切替が閉じている：revoke_only に健康情報（会員画面で同意した人）が入れば、その撤回だけを出す
+  const RO = { success: true, mode: 'revoke_only', docs: [DOCS[0]], ask: [], state: { health: { state: 'agreed', current: true, byMember: true, at: 1 } } };
+  const w = boot({ bootRes: Object.assign({}, HOME, { memberConsent: true }), fetch: () => RO }); await settle();
+  $(w, 'homeConsent').click(); await settle();
+  ok('6-14 revoke_only の健康情報：撤回のボタンだけ（チェック・送るを作らない・録音の文面も出さない）', !!w.document.querySelector('.mc-revoke-health') && !w.document.querySelector('.mc-check') && !w.document.querySelector('.mc-send') && !$(w, 'mcSheet').textContent.includes('【録音】'));
 }
 // ---- 7 辞書 ----
 {

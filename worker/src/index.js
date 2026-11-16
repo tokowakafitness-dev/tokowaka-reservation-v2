@@ -35,7 +35,7 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
 
 // 版の印（/health に載せる・認証不要・個人情報なし）。★Worker を変えて出すたびに上げる。
 //   無いと「反映したつもりで入っていない」を外から見分けられない（2026-11-07・設計38 の設置で気づいた）
-export const WORKER_BUILD = '2026-11-18a 印だけ（行0件）の送信で表の全行を読まない（打ち手A）・設計45 写しが書き込みの印を含まなければ答えない（I79）';
+export const WORKER_BUILD = '2026-11-19a 設計44 同意の規則（会員画面からの健康情報の撤回・紙の同意の人にも聞く）＋印だけ（行0件）の送信で表の全行を読まない（打ち手A）・設計45 写しが書き込みの印を含まなければ答えない（I79）';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
