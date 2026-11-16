@@ -65,6 +65,8 @@ function world({ actor, start, channel = 'line', maySee = true }) {
     _lbGrantTransferCredit: () => { log.credit++; },
     _lbFmtResvLabel: () => 'L', _lbMemberLang: () => 'ja', _lbSt: (lang, key) => '[' + key + ']',
     _lbPush: (to, text, kind) => { log.push.push({ to, text, kind }); },
+    //   設計45b：要求の外として扱う（保留しない・待ちは空）
+    _lbNotifyHolding: () => false, _lbNotifyDeferFlushRes: () => {},
     getTrainerLineId: () => 'Utr', _lbTrainerNameLang: () => '担当', _lbTrainerRemainText: () => '',
     _lbTrainerMaySeeCustomer: () => maySee, _lbCustOwnerOf: () => 'T1',
     _lbContractTypeOf: () => '通常',

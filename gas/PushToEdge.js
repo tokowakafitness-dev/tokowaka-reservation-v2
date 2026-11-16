@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-16a 写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・写しに番号（coversSeq）（設計45）';
+var LB_EDGE_BUILD = '2026-11-16b LINE 通知の受け皿を一回限りトリガーと5分ごとに（設計45b）・写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・写しに番号（coversSeq）（設計45）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -2423,6 +2423,8 @@ function lbCalSyncTick() {
   //     引数は取らない（時間主導トリガーは第1引数にイベントを渡す・trigger-args.test.js）。
   //   ★設計45：一回限りトリガーが消えた・遅れた・時間切れの待ちを拾う（90秒より古いものだけ）
   try { _lbEdgePendingDrain('TICK', LB_EDGE_DEFER.AFTER_BUDGET_MS, LB_EDGE_DEFER.TICK_MIN_AGE_MS); } catch (eP) {}
+  //   ★設計45b：一回限りトリガーが拾えなかった LINE 通知（90秒より古いもの）
+  try { _lbNotifyDeferDrain('TICK', LB_NOTIFY_DEFER.BUDGET_MS, LB_NOTIFY_DEFER.TICK_MIN_AGE_MS); } catch (eN) {}
   var r = _lbCalSyncCore();
   _lbCalSlotsWired();
   _lbCalSlotsAfter(r, 'TICK');
@@ -2514,6 +2516,8 @@ function _lbCalSyncAfterWrite(e) {
   //   ★設計45：後ろへ回した写しを最初に送る（同期・二重書き・枠より前＝写しをいちばん早く届ける）。スイッチに関係なく待ちがあれば送る
   try { _lbEdgePendingDrain('AFTER', LB_EDGE_DEFER.AFTER_BUDGET_MS, 0); }
   catch (eP) { Logger.log('[edge] 待ちの写しの送信で例外（5分ごとの受け皿が拾います）'); }
+  //   ★設計45b：後ろへ回した LINE 通知を送る（スイッチに関係なく待ちがあれば。同期より前）
+  try { _lbNotifyDeferDrain('AFTER', LB_NOTIFY_DEFER.BUDGET_MS, 0); } catch (eN) {}
   var r = null;
   try { r = _lbCalSyncCore(); }
   catch (e) { Logger.log('[calsync] 予約直後の同期に失敗（1分ごとの同期で追いつきます）: ' + (e && e.message)); }
@@ -2793,6 +2797,7 @@ function _lbScheduleCalSync() {
     // 同時刻に複数の予約が入っても1本にまとめる（同期は全量を読み直すので1回で足りる）
     _lbCleanCalSyncAfterTriggers();
     ScriptApp.newTrigger(LB_CALSYNC.AFTER_HANDLER).timeBased().after(1000).create();
+    _LB_CAL_SCHEDULED = true;   // 設計45b：作れた（handleLineGet が保留した LINE 通知を後ろへ回してよい）
     return true;
   } catch (e) {
     // 作れなくても予約は通る。1分ごとの同期が最大60秒で拾う。

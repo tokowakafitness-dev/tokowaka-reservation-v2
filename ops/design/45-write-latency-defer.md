@@ -236,3 +236,125 @@ LIFF の書き込みの待ち切りは 20秒（`liff/index.html` `_rawApi` の `
 
 ## 関門② 2周目（Codex スレッド 01a1e387-ac21-7890-9f93-0d5903db7bf4・コミット aa79f85）
 判定：**通過**（指摘なし）。修正で指摘が解消し、ほかの引数つきトリガー（dailyHealthCheck・weeklyPaceReport・lbNudgeDaily）の判定は変わらないと確認された。
+
+---
+
+# 設計45b（M3）予約・取消の LINE 通知を応答の後ろへ回す
+
+> 2026-11-16・CTO。オーナー承認（2026-11-16）：「予約の会員宛とトレーナー宛、取消の会員宛と契約上の担当宛の LINE を、応答の後（数十秒後）に送ってよい。取消の『その枠のトレーナー』宛は今どおり応答の前」。
+> 版の印：GAS `LB_HEALTH_BUILD` を `2026-11-16b`（`expected-builds.json` も）。M2 と同じ反映にまとめる（M2 は未 push）。
+> 戻し方：Script Property `LB_NOTIFY_DEFER`（既定オフ＝`'1'` のときだけ）。**`LB_EDGE_DEFER` とは別**＝片方だけ戻せる。オフなら送る相手・文・順序・時刻は今と同じ（段の印が2つ増えるだけ）。
+
+## 目的（1行）
+会員の予約・取消の応答を待たせている段 notify（予約の中央 3.7秒・取消 2.2秒）のうち、**LINE を送る通信だけ**を応答の後ろへ回す。文面は書き込みの時点で作って固定する。
+
+## 対象（コードで確かめた事実）
+| 操作（`handleLineGet` の action） | 後ろへ回す通知 | 応答の前に残す |
+|---|---|---|
+| `line_makeReservationLine`・`line_makeReservationLineProxy`（代行）・`line_makeTransferReservation`（振替） | `_lbNotifyReservation` の会員宛 `booking_customer`・トレーナー宛 `booking_trainer` | — |
+| `line_cancelReservation`・`line_ownerFreeCancel` | `_lbCxlAfter` の担当宛（`send('owner')`）・会員宛（`send('customer')`）＝どちらも `cancel_*` | その枠のトレーナー（`send('slot', …, direct=true)`） |
+- 対象外（今のまま）：変更（`change_*`）・まとめて予約・固定枠の自動予約（どれも `suppressNotify` で `_lbNotifyReservation` を通らない）・手動の紐付け（`booking_customer` 7679行）・リマインド・旧経路 doPost／liffApi（`handleLineGet` を通らない）。
+- 判定は「要求の入口で対象の操作か」だけ（`LB_NOTIFY_DEFER_OPS`）。トリガー・作業依頼から呼ばれた `_lbNotifyReservation` は今のまま送る。
+
+## 文面の固定（条件「残数・日時は書き込みの時点」）
+- **文面は今と同じ場所・同じ順序で、応答の前に作る。** `_lbNotifyReservation` の会員宛の文、`getTrainerLineId`、`_lbTrainerRemainText`（ロックの中・台帳に書いた直後＝今と同じ値）、取消の `trText()`・`_lbMemberLang`・`_lbTrainerNameLang`。後ろへ回すのは `_lbPush(to, text, purpose, ctx, opts)` の**呼び出しだけ**。だから届く文は今と1文字も同じ。
+- 代償：予約の notify のうち残数の計算（`_lbTrainerRemainText`＝`_lbBuildHome`）は応答の前に残る。**どれだけ縮むかは LINE の通信の時間しだいで、今の記録では分けられない**（段 notify は通信と計算の合計）。→ 段 `notifyCalc`（`_lbTrainerRemainText` だけ）を足し、**スイッチがオフのまま**反映の翌日に通信と計算の割合が分かるようにする。
+- 見込み（推測を含む）：LINE の push 1回は数百ms＋送り間隔の 260ms（`LB_PUSH_MIN_GAP_MS`）。予約は2通、取消は会員の1通（担当は理由・ひとことがあるときだけ）。縮むのは予約で「notify − notifyCalc − 名簿の読み」、取消で会員の1通ぶん。**目標の数字は notifyCalc を測るまで言わない。**
+
+## 流れ
+1. 入口 `handleLineGet`：`_LB_NOTIFY_HOLD = null`・`_LB_CAL_SCHEDULED = false` に戻す。action が `LB_NOTIFY_DEFER_OPS` にあり、`LB_NOTIFY_DEFER === '1'` かつ `_calsyncAutoOn()`（一回限りトリガーを作れる設定）のときだけ `_LB_NOTIFY_HOLD = []`。
+2. 書き込みの中：`_lbPushOrHold(to, text, purpose, ctx, opts)` ＝ `_LB_NOTIFY_HOLD` が配列で `to` があれば `{to, text, p, c, nr}` を足して `'held'`、それ以外は今の `_lbPush`。
+   - 取消の `send()`：`direct` でなく保留できるときは、時間予算（`over()`）より先に保留する（`st[name] = 'held'`）。`relayed`・`notified`（`st !== 'unsent'`）は今の `'deferred'` と同じ扱い。`CXL_NOTIFY_SLOW` の `deferred` には数えない。
+3. 書き込みが返った後・`edgeAfterWrite` の**前**：`_lbNotifyHoldPersist()` が保留を待ち `LB_NOTIFY_PENDING` に足す（ScriptLock・待ち3秒）。**トリガーを作る前に待ちへ入れる**のは、1秒後のトリガーが先に動いて待ちが空のまま終わるのを避けるため。足せなければ保留はメモリに残る。
+4. `edgeAfterWrite`（`_lbScheduleCalSync` が作れたら `_LB_CAL_SCHEDULED = true`）。
+5. `_lbNotifyHoldSettle()`：
+   - 待ちに足せた かつ `_LB_CAL_SCHEDULED === true` → 何もしない（数える `held`）。
+   - 待ちに足せたがトリガーを作れなかった → 足した ID だけを取り戻して（取り分けと同じ排他）**今の `_lbPush` で送る**（`inline_noTrigger`）。既に別の実行が取っていた分はその実行が送る。
+   - 足せなかった → メモリの保留を今の `_lbPush` で送る（`inline_pendFail`）。
+   - `_lbDispatch` が例外を投げたとき（`handleLineGet` の catch）も、投げ直す前にメモリの保留を送る（`inline_throw`）。
+6. 送る側（`_lbNotifyDeferDrain(who, budgetMs, minAgeMs)`・新しいトリガー0本）：
+   - `AFTER`：一回限りトリガー `_lbCalSyncAfterWrite` の**最初**（写しの待ちより前。通知は数秒で終わる）。年齢の下限 0。
+   - `TICK`：5分ごとの `lbCalSyncTick` の最初。90秒より古いものだけ。
+   - `WARM`：10分ごとの `warmupCache` の末尾（`lbNotifyRetryTick` の後）。5分より古いものだけ。★`lbCalSyncTick` は `LB_CALSYNC_ON='0'` でも走るが、トリガーごと外されると止まる。`warmupCache` はスイッチで止まらない（設計17 が相乗りした理由と同じ）＝2つ目の受け皿。
+   - 最悪（トリガーが失われた）：TICK で書き込みから約6分半、TICK も止まっていれば WARM で約15分。
+7. 順序を守る（取消・変更の直前に古い保留を先に出す）：`_lbNotifyDeferFlushRes(resId)` を `_lbCxlAfter` の最初（その枠のトレーナーより前）と、`changeReservationLine` の変更の通知の前（旧予約ID）で呼ぶ。待ちにその予約IDの項目があれば、取り分けて今すぐ送る（`sentFlush`）。無ければ Property を1回読むだけ。★これが無いと「予約してすぐ取消」で、トレーナーに【予約キャンセル】（応答の前）が【新規予約】（後ろ）より先に届く。
+
+## 待ち `LB_NOTIFY_PENDING`（Script Property・個人情報を含む）
+- 形：配列 `[{id, at, to, text, p, c:{resId, customerId, startMs}, nr, li, lu}]`。`id` は UUID、`li`/`lu` は取り分けの印と期限（5分）。
+- **個人情報**：`to`（LINE ID）と `text`（トレーナー宛は会員の氏名を含む・取消のひとことを含みうる）。入れる理由：送る瞬間に作り直すと「書き込みの時点で固定」が崩れる。最小にするため、ほかの欄（氏名・電話・言語）は持たない。
+- **消す条件**：送る試みをしたら必ず消す（成否は問わない。失敗は `_lbPush` → `_lbNqOnFail` が設計17 の `notify_retry` に積む＝今と同じ）。30分より古い項目は送らずに `notify_retry` へ `pending`（送る前に I17 の台帳確認が走る・本文は30日で空になる既存の扱い）で移して消す（`handover`）。期限の切れた取り分け（送ったか分からない）は `notify_retry` へ `alert`（`delivery_unknown`・オーナーへメール・送り直さない）で移して消す（`leaseLost`）。★だから Script Properties に残るのは通常数十秒・最長30分（受け皿が全部止まったときを除く）。
+- 上限：16件・UTF-8 で 8,000 バイト（1つの Property の上限 9KB）。超えるなら足さない＝今の経路。
+- 壊れていたら（JSON が読めない・形が違う）：**書き換えない**（中身を消すと誰にも届かず知らせもしない）。時刻だけ `LB_NOTIFY_PENDING_BAD` に立て、新しい保留は今の経路で送る。日次点検で high。中身はログ・点検・応答に出さない。
+- ログ・日次点検・作業依頼の結果には数だけを出す（LINE ID・本文・会員ID を出さない）。
+
+## 設計17（届かなかった通知の積み直し・I17）と二重送信・取りこぼし
+| 起きること | 二重送信 | 取りこぼし |
+|---|---|---|
+| 送る | 取り分け（ScriptLock の中で `li`/`lu` を書く）が唯一の排他。AFTER・TICK・WARM・取り戻し・FLUSH は同じ関数を通る | — |
+| LINE が失敗 | `_lbPush` が今と同じく `notify_retry` に1行積む。待ちからは消す＝積むのは1回 | 送り直し（I17）が拾う |
+| 送った後、待ちから消す書き込みでロックが取れない | 送り直さない：期限切れの取り分けは「送ったか分からない」＝`notify_retry` に `alert`（送らずオーナーへ・設計17 の `uncertain` と同じ） | オーナーのメールで気づく（届いていた場合は誤報＝安全側） |
+| 実行が途中で死ぬ | 同上 | 同上 |
+| 30分より古い | `notify_retry` の `pending` へ移し、送る前に台帳で確かめる（取消・変更済み・開始後なら送らない） | — |
+- 冪等の鍵が書き換えるもの：待ちの項目の `li`/`lu`（取り分け）と、項目の削除（`id` かつ `li` が自分のときだけ）。`notify_retry` の行は `_lbPush` 失敗時に新しい `N`+UUID で作られ、待ちの `id` とは独立（同じ通知が2行になるのは「待ちから消せず、かつ LINE も失敗した」場合で、そのとき alert と pending が1行ずつ＝送り直しは pending の1回だけ）。
+- 引き渡しの書き込み（handover・leaseLost の `notify_retry` 追記）は**取り分けのロックの中**で行い、追記できた項目だけ待ちから消す（追記してから消す＝途中で死んでも待ちに残る→次の回にもう一度引き渡す。追記の重複は alert が2行になるだけで送らない／pending の重複は I17 が送る前に確かめるが**2通になりうる**→ pending の引き渡しは追記の直後に同じロックの中で消すので、重複は「追記の後・消す前に死ぬ」だけ）。
+
+## 記録と見張り
+- `LB_NOTIFY_DEFER_COUNT`（日ごと・直近3日・数とミリ秒だけ）：`held`・`inline_noTrigger`・`inline_pendFail`・`inline_throw`（通数）・`sentAfter`・`sentTick`・`sentWarm`・`sentFlush`・`sendFail`（`_lbPush` が false）・`leaseLost`・`handover`・`maxAgeMs`（書き込み→送る試み）・`sendMsMax`・`sendMsSum`・`sendN`（後ろへ回した通信の時間＝段 notify から抜けた分）。壊れていたら退避して作り直す（M2 の `LB_EDGE_DEFER_COUNT` と同じ作り）。
+- 段の印：`LB_WP.STAGES` の後ろに `notifyCalc`（予約のトレーナー宛の残数の文）・`notifyQ`（待ちへの追加と取り戻し）を足す。M2 の `member`・`edgeMark` は未反映なので並びは 15 にまとめ、旧い並び（11）も読む。
+- `writePerfText`（作業依頼 `remaining {writePerf:true}`）に昨日と今日の `LB_NOTIFY_DEFER_COUNT` を数だけ1行で出す。
+- 日次点検 `lbNotifyDeferDailyCheck`：待ちが壊れている → high（スイッチに関係なく）／待ちに10分より古い項目 → warn（同）／昨日 `leaseLost > 0`・`handover > 0`・`maxAgeMs > 10分` → warn／`inline_*` が `held` の2割超 → warn（スイッチがオンのときだけ）。
+
+## 判定できないとき（倒れる向き）
+| 起きたこと | 顧客に起きること |
+|---|---|
+| スイッチがオフ・対象外の操作・トリガー経路・calsync が止まっている | 今と同じ |
+| 待ちに足せない（ロック・上限・壊れている）・トリガーを作れない・振り分けが例外 | 今の `_lbPush` で応答の前に送る（今と同じ文・少し後ろ＝写しの後） |
+| トリガーが遅い・失われた | 確認の LINE が遅れる（TICK 最悪6分半・WARM 最悪15分）。数える（maxAgeMs・待ちの古さ） |
+| 送ったか分からない | 送らずオーナーへメール（設計17 と同じ） |
+
+## 変えないもの
+送る相手・文・順序（同じ要求の中の）・設計17 の送り直しの規則・設計36 の時間予算（保留できないときは今どおり）・その枠のトレーナーの即時送信・変更の通知。
+
+## 検査（実装の前に書く）`worker/test/gas-notify-defer.test.js`
+入口 `handleLineGet` から、本物の `_lbNotifyReservation`・`_lbCxlAfter`・`_lbPush`（`_lbPushOnce` は身代わり）・待ちの関数を通す。
+1. スイッチオフ：送る相手・文・順序・`_lbPush` の引数が今と同じ／待ちを作らない。
+2. スイッチオン：応答の前に `_lbPush` を呼ばない（予約2通・取消の会員）／その枠のトレーナーは応答の前／待ちの中の文が今の文と1文字も同じ／保留はトリガーを作る前に待ちへ入る。
+3. 今の経路に倒れる：トリガーを作れない（取り戻して送る）・ロック失敗・上限超え・壊れた待ち（書き換えない）・振り分けの例外。
+4. 送る側：AFTER は全部・TICK は90秒・WARM は5分より古いものだけ／送った項目を消す／失敗は `notify_retry` に1行（`_lbNqOnFail`）で待ちから消える／二重に取らない（2つの実行）／期限切れの取り分けは alert で送らない／30分より古いものは pending で引き渡す。
+5. FLUSH：取消の前に同じ予約IDの保留を先に送る（トレーナーに【新規予約】→【予約キャンセル】の順）。
+6. 新しいトリガー0本・`_lbCalSyncAfterWrite`・`lbCalSyncTick`・`warmupCache` の配線。
+7. 日次点検と記録（数だけ・LINE ID と本文を出さない）。
+8. 1行ずつ壊して落ちることを確かめる（保留の条件・取り分けの排他・消す条件・FLUSH の位置）。
+
+## 45b 関門① 1周目（Codex スレッド 01a1e3b1-688d-7683-936f-f4499309d9a2）
+判定：差し戻し（高2・中3・低2）。指摘は全部、該当行を読んで裏を取った（取消は台帳更新・ロック解放の後に `_lbCxlAfter`＝8183〜8190行、送り直しの書き戻しの既知の制約＝5238行、`notify_retry` の id は毎回新しい UUID＝4948行）。
+
+| # | 指摘 | 対処（この節が上の本文より優先） |
+|---|---|---|
+| 高1 | 送る側が取り分けて LINE を送っている最中は FLUSH が取れず、取消の通知が先に出る | **FLUSH は待つ。** 同じ予約IDの項目が取り分け中（期限内の `li`）なら 300ms ごとに読み直し、消えるまで最大6秒待つ。取り分けていない項目は自分で取り分けて送る。送る側は**1通送るごとにその項目を消す**（まとめて消さない＝待ちが1通ぶんで済む）。6秒で消えなければ先へ進み `flushTimeout` に数える（順序が逆になりうる回を数える・日次 warn）。待つのは取消・変更の直前に同じ予約の保留があったときだけ |
+| 高2 | 30分超の引き渡し（追記してから待ちから消す）の間に死ぬと `notify_retry` に2行＝2通 | **引き渡しを冪等にする。** `notify_retry` の行の id を `'D' + 待ちの id` にし、追記の前に id 列を読んで同じ id の行があれば追記しない（消すだけ）。leaseLost の alert も同じ id の作り。id 列の読みは引き渡しのときだけ（まれ） |
+| 中1 | 個人情報の保持が「受け皿が全部止まれば」無期限・壊れた値も無期限 | 日次点検（`dailyHealthCheck`・別のトリガー）も30分超の項目を引き渡す＝送る側が全部止まっても**最長およそ1日**で Script Properties から消え、`notify_retry` の既存の扱い（本文30日で空）に移る。壊れた値は 24時間は残し（オーナーが確かめられる）、その後に日次点検が**中身を出さずに消す**（時刻と長さだけ記録）。どちらも日次点検で high |
+| 中2 | 要求の中で ScriptLock を持つ区間が増え、他の予約の待ちに効く | ロックの中は Property の読み1回・書き1回だけ（文の組み立て・バイト数の計算はロックの外で先に済ませ、ロックの中では結合と上限の確認だけ）。持った時間の最大 `lockMsMax` と取れなかった回 `inline_pendFail` を数え、日次点検で `lockMsMax > 1秒` を warn |
+| 中3 | 待ちに入れた後に実行が強制終了すると、TICK も WARM も止まっていれば送られない | 受け皿は3つ（TICK・WARM・日次点検の引き渡し）。待ちの件数と最古の経過分を作業依頼 `remaining {writePerf:true}` の結果にも出す（数だけ）＝ CEO がトリガーと独立に読める |
+| 低1 | 文面を drain 側で作らないことをソースの順序でも固定 | 検査に入れる（`_lbPushOrHold` の引数は完成した文・drain は `text` を組み立てない） |
+| 低2 | 30分の根拠 | 根拠：TICK 5分×3回・WARM 10分×2回の受け皿をすべて逃した＝通常の遅れ（数十秒）の60倍。ここより遅い確認は取消・変更されている可能性があるので、送る前に台帳を確かめる設計17 へ渡す |
+
+## 45b 関門① 2周目（Codex スレッド 01a1e3b4-01ad-70e3-b4d9-771776f57ff1）
+判定：差し戻し（高2・中2・低1）。1周目の高2（引き渡しの冪等）と文面の固定は確認された。指摘は該当行で裏を取った（受付の起点 8077行・予算 8219行・本文を空にするのは sent/stale/closed だけ＝5152行）。
+
+| # | 指摘 | 対処（この節が上の本文・1周目の表より優先） |
+|---|---|---|
+| 高1・高2 | FLUSH の6秒待ちは順序を保証できず（通信が6秒を超えれば逆転）、しかも取消の受付12秒の予算を食う | **FLUSH の意味を変える：待ちの中のその予約の通知は、送らずに捨てる（stale）。** 取消・変更の時点でその予約はもう `confirmed` ではない＝設計17 の I17 が送り直しで捨てる条件（`booking_*` は `confirmed` のときだけ送る・`_lbNqValidate` 5089〜5091行）と同じ判断。会員には取消／変更の通知（変更は終了時刻・場所まで載る＝8833〜8841行）が届く。送らないので取消の応答に通信の時間を足さない。捨てた通数を `staleDropped` に数える。★取り分け中（期限内の `li`）のその予約の項目だけは止められない：**ロックを持たずに** 250ms ごとに Property を1回読み、消えるまで待つ。待つ上限は `min(2秒, 12秒 − (いま − t0) − 2秒)`（0以下なら待たない）。上限で消えなければ先へ進み `flushTimeout` に数える（日次 warn）＝順序の逆転は「同じ予約の確定の通知を送っている最中の数百ms に取消が通知の段へ入った」ときだけ残り、数で見える。★順序は努力目標で、不変条件は「二重に送らない・黙って落とさない」（下の I80） |
+| 中1 | 引き渡した先の `notify_retry` でも、送り直しが止まっていれば `pending`／`alert` の本文は消えない | `notify_retry` の扱いは既存のまま（失敗した通知も同じ）。送り直しが止まったことは既存の見張り（`LB_NOTIFY_RETRY_COMPLETED` が1時間より古い → 日次点検）で気づける。この設計は**待ちから出す期限（最長およそ1日）まで**を受け持ち、`notify_retry` の保持期間は変えない（残る危険として MODEL に書く） |
+| 中2 | 引き渡しの id 列の読みと追記を ScriptLock の中で行うと予約を待たせる | **ロックの外で行う。** 引き渡す項目はまず通常どおり取り分ける（ロックの中は Property の読み書きだけ）→ ロックの外で `notify_retry` の**末尾200行**の id 列を読み、`'D'+id` が無ければ追記 → ロックの中でその項目を消す。取り分けの期限（5分）の間は他の実行が触らないので、確認と追記はロックが無くても1つの実行だけが行う（5分を超えて死んだときだけ、次の実行が id で重複を見つけて追記しない）。追記は末尾＝`lbNotifyRetryTick` の範囲書き込み（読んだ行数ぶん・5160行）と `_lbNqWriteBack`（lo〜hi）の外。既存の `_lbNqOnFail` も同じくロックの外で追記している。1回に引き渡すのは5件まで。送る側の各ロックの保持時間の最大も `lockMsMax` に入れる |
+| 低1 | FLUSH の待ちの間にロックを持たない | 上のとおり。検査で「sleep の間・LINE の通信の間にロックを持っていない」を固定する |
+
+## 45b 関門① 3周目（Codex スレッド 01a1e3b6-3717-7e30-8f45-aa149c71a2dc）
+判定：**通過**（高0・中0・低1）。FLUSH は取消・変更が台帳を確定し成立した後だけ呼ばれる（取消 8148・8183・8190行、変更の失敗は旧行を confirmed に戻して return＝8815・8826行）、`undoSameDayCancel` は confirmed に戻さない（8717行）、取り直しは別の予約ID（6334・6342行）＝確定の通知を誤って捨てない、と確認された。
+| # | 指摘 | 対処 |
+|---|---|---|
+| 低 | FLUSH の境界（取消・変更の失敗では捨てない／新しい予約IDの通知は捨てない）と `staleDropped`・`flushTimeout` の配線を検査に固定 | 検査 5 に入れる。捨てるのは `booking_*` の項目だけ（取消・変更の通知は捨てない） |
+**実装の通過条件**：FLUSH は台帳の確定と成立の後・ロックの外。待ちの間と LINE の通信の間に ScriptLock を持たない。
+
+### I80（新しい不変条件・MODEL §3）
+**後ろへ回した LINE 通知は、二重に送らず黙って落とさない。** 待ち `LB_NOTIFY_PENDING` の項目は、取り分け（ScriptLock の中で `li`/`lu`）をした1つの実行だけが送る試みをし、試みたら消す（失敗は `_lbPush` が `notify_retry` に1回積む）。期限切れの取り分けは送らずに `notify_retry` の alert（id `'D'+待ちのid`・重複は追記しない）、30分超は pending で引き渡す。待ちが壊れていたら書き換えずに今の経路で送る。文面は書き込みの時点で作った完成文（送る側で組み立てない）。取消・変更の後、その予約の確定の通知（`booking_*`）は待ちから捨てる（I17 と同じ判断）。

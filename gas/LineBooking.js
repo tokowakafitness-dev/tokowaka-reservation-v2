@@ -249,6 +249,7 @@ function handleLineGet(params) {
   var action = String((params && params.action) || '');
   _LB_WRITE_CUST = null;   // 設計45：前の要求の値を持ち越さない
   _lbWpStart(action);   // 書き込みの段ごとの時間（設計43 A）。対象外の操作では何もしない
+  _lbNotifyHoldStart(action);   // 設計45b：対象の操作でスイッチがオンなら LINE 通知を保留する（オフ・対象外は何もしない）
   var res, auth;
   try {
     var _tv = new Date().getTime();
@@ -261,12 +262,17 @@ function handleLineGet(params) {
     _lbWpMark('other');
   } catch (eD) {
     //   ★認証と振り分けが外へ投げた例外だけ。記録してから同じ例外を投げ直す（ふるまいは変えない・設計43 関門①）
+    _lbNotifyHoldSettle(false);   // 設計45b：保留した通知を投げ直す前に今の経路で送る（黙って落とさない）
     _lbWpFinish(null, eD);
     throw eD;
   }
 
+  //   設計45b：保留した通知を、トリガーを作る前に待ちへ入れる（先に動いたトリガーが空振りしない）
+  _lbNotifyHoldPersist();
   // 写しを直す。ここで何が起きても、返す答えは変えない。
   try { edgeAfterWrite(action, params, res, auth.lineUserId); } catch (e) {}
+  //   設計45b：トリガーを作れなかった・待ちに入れられなかった通知は、ここで今の _lbPush で送る
+  _lbNotifyHoldSettle(true);
   _lbWpFinish(res, null);
   return res;
 }
@@ -281,7 +287,9 @@ function handleLineGet(params) {
 // ============================================================
 var LB_WP = {
   PROP: 'LB_WRITE_PERF', BAD_PROP: 'LB_WRITE_PERF_BAD', MAX: 60, MAX_BYTES: 8000,
-  STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark'],
+  STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark', 'notifyCalc', 'notifyQ'],
+  //   ★設計45b：notifyCalc（予約のトレーナー宛の残数の文＝応答の前に残る計算）・notifyQ（通知の待ちへの追加と片付け）を後ろに足した。
+  //     M2 の member・edgeMark は未反映なので、並びは 15 にまとめる（反映済みの旧い並びは段11個だけ）
   //   ★設計45：member（会員名簿の読み）・edgeMark（写しを後ろへ回すときの待ちへの追加と印の送信）を**後ろに**足した。
   //     反映の前の記録（段11個の行）も読めるように、古い並びを残す（行の長さで見分ける）
   STAGES_V1: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other'],
@@ -298,6 +306,11 @@ var _LB_WP = null;   // GAS の実行は要求ごとに独立＝この要求だ�
 //   ★設計45：書き込みの関数が既に知っている会員ID（氏名は持たない）。edgeAfterWrite が名簿を読み直さずに使う。
 //     handleLineGet の入口で null に戻す。応答には載せない
 var _LB_WRITE_CUST = null;
+//   ★設計45b：要求の中で保留した LINE 通知（配列のときだけ保留する）・待ちに入れた id・一回限りトリガーを作れたか。
+//     handleLineGet の入口（_lbNotifyHoldStart）で戻す。トリガー・作業依頼の実行では null のまま＝今のまま送る
+var _LB_NOTIFY_HOLD = null;
+var _LB_NOTIFY_PERSISTED = null;
+var _LB_CAL_SCHEDULED = false;
 
 function _lbWpStart(action) {
   _LB_WP = null;
@@ -391,7 +404,8 @@ function writePerfText() {
   var bad = '';
   try { bad = PropertiesService.getScriptProperties().getProperty(LB_WP.BAD_PROP) || ''; } catch (e2) {}
   var head = '書き込みの計測（設計43・版 ' + String(LB_HEALTH_BUILD).slice(0, 11) + '・直近' + LB_WP.MAX + '件までの標本＝同時に終わった回が落ちることがある）'
-    + (bad ? '\n★記録が壊れていて作り直した: ' + bad : '');
+    + (bad ? '\n★記録が壊れていて作り直した: ' + bad : '')
+    + '\n' + _lbNotifyDeferSummaryText();   // 設計45b：後ろへ回した LINE 通知の待ち・回数・通信の時間（数だけ）
   if (!raw) return head + '\nまだ記録がありません（反映後、予約・取消・変更が1回あると入ります）';
   var o = null;
   try { o = JSON.parse(raw); } catch (eP) { return head + '\n記録が読めません（壊れています）'; }
@@ -2086,7 +2100,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-16a 写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・段 member／edgeMark・I79 の見張り（設計45）';
+var LB_HEALTH_BUILD = '2026-11-16b LINE 通知を応答の後ろへ（LB_NOTIFY_DEFER 既定オフ・設計45b）・写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・段 member／edgeMark／notifyCalc／notifyQ・I79 の見張り（設計45）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2727,6 +2741,14 @@ function dailyHealthCheck(dryRunArg) {
     for (var edi = 0; edi < ed.length; edi++) add(ed[edi].key, '写しの後ろ回し', ed[edi].severity, ed[edi].count, ed[edi].detail);
   } catch (e) {
     add('edge_defer_check_fail', '写しの後ろ回し', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
+  }
+  // ---- LINE 通知を応答の後ろへ（設計45b）：30分超の引き渡し（送る側が止まっていても待ちに残さない）→ 待ち・回数の点検 ----
+  try {
+    if (!dryRun) lbNotifyDeferDailyMaint();   // 試し実行（dryRun）では書かない
+    var nd = lbNotifyDeferDailyCheck(Date.now(), function (k) { return _lbProp(k); });
+    for (var ndi = 0; ndi < nd.length; ndi++) add(nd[ndi].key, '通知の後ろ回し', nd[ndi].severity, nd[ndi].count, nd[ndi].detail);
+  } catch (e) {
+    add('notify_defer_check_fail', '通知の後ろ回し', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
   }
 
   _step('カルテのAI');
@@ -4966,19 +4988,22 @@ function _lbNqOnFail(to, text, purpose, ctx, r) {
 //   ★例外は握る（キャンセルの応答を壊さない）。積めなければ非常用の記録へ
 //   積む行：attempts=0・next_at=いま+10分・state=pending（ctx が揃っていれば。揃わなければ alert）・last_code=DEFERRED
 //   送り直しの判定（I17）は送る直前に台帳を見る＝取消の状態のまま・開始前のときだけ送られる
-function _lbNqDefer(to, text, purpose, ctx) {
+//   opt（任意・設計45b の引き渡しだけが渡す）：{ id, alert, code, detail }
+//     id … 行の id（'D'+待ちの id＝重複を見分ける鍵）／alert … 送らずオーナーへ（送ったか分からない）／code・detail … last_code・last_detail
+function _lbNqDefer(to, text, purpose, ctx, opt) {
   try {
     if (!to) return false;                         // LINE 未連携＝送る先が無い（_lbPush の NO_TO と同じ扱い）
     var pol = _lbNqPolicy(purpose);
     if (pol === 'none') return false;
+    var o = opt || {};
     var c = ctx || {};
     var hasCtx = !!(c.resId && c.customerId && _lbIsFiniteNum(Number(c.startMs)));
     if (String(purpose || '').indexOf('change_') === 0 && !c.oldResId) hasCtx = false;
-    var state = (pol === 'single' && hasCtx) ? 'pending' : 'alert';
+    var state = (pol === 'single' && hasCtx && o.alert !== true) ? 'pending' : 'alert';
     var now = Date.now();
     var row = [];
     for (var i = 0; i < LB_NQ.HEAD.length; i++) row.push('');
-    row[_lbNqCol('id')] = 'N' + Utilities.getUuid();
+    row[_lbNqCol('id')] = (typeof o.id === 'string' && o.id) ? o.id : ('N' + Utilities.getUuid());
     row[_lbNqCol('created_at')] = now;
     row[_lbNqCol('token_key')] = 'msg';
     row[_lbNqCol('to')] = String(to);
@@ -4988,8 +5013,8 @@ function _lbNqDefer(to, text, purpose, ctx) {
     row[_lbNqCol('state')] = state;
     row[_lbNqCol('attempts')] = 0;
     row[_lbNqCol('next_at')] = (state === 'pending') ? now + LB_NQ.RETRY_AFTER_MIN[0] * 60000 : '';
-    row[_lbNqCol('last_code')] = 'DEFERRED';
-    row[_lbNqCol('last_detail')] = 'not_sent: CANCEL_TIME_BUDGET';
+    row[_lbNqCol('last_code')] = (typeof o.code === 'string' && o.code) ? o.code : 'DEFERRED';
+    row[_lbNqCol('last_detail')] = (typeof o.detail === 'string' && o.detail) ? o.detail : 'not_sent: CANCEL_TIME_BUDGET';
     row[_lbNqCol('email_attempts')] = 0;
     _lbNqAppendRow(row);
     return true;
@@ -5266,6 +5291,424 @@ function _lbNqWriteBack(sh, leaseId, items) {
   return n;
 }
 
+// ============================================================
+// 設計45b（M3）予約・取消の LINE 通知を応答の後ろへ回す（2026-11-16・ops/design/45-write-latency-defer.md の 45b）
+//   スイッチ LB_NOTIFY_DEFER（'1' のときだけ・LB_EDGE_DEFER とは別＝片方だけ戻せる）。オフなら今と同じ。
+//   ・応答の前：文面は今と同じ場所・順序で作る（残数・日時は書き込みの時点で固定）。_lbPush の呼び出しだけを保留する
+//   ・待ち LB_NOTIFY_PENDING に入れてから edgeAfterWrite（一回限りトリガー）。作れなければ取り戻して今の _lbPush
+//   ・送る側：_lbCalSyncAfterWrite（年齢0）・lbCalSyncTick（90秒）・warmupCache（5分）・日次点検（30分超の引き渡しだけ）。新しいトリガー0本
+//   ★I80：取り分け（ScriptLock の中で li/lu）をした1つの実行だけが送り、試みたら消す（失敗は _lbPush が notify_retry に1回積む）。
+//     期限切れの取り分けは送らず notify_retry の alert、30分超は pending で引き渡す（id 'D'+待ちの id・重複は追記しない）
+//   ★待ちには LINE ID と本文（氏名・ひとことを含みうる）が入る＝送る試みで消す・最長およそ1日。ログ・点検・作業依頼には数だけ
+// ============================================================
+var LB_NOTIFY_DEFER = {
+  ON_PROP: 'LB_NOTIFY_DEFER',
+  PENDING_PROP: 'LB_NOTIFY_PENDING',
+  PENDING_BAD_PROP: 'LB_NOTIFY_PENDING_BAD',   // '時刻|長さ'（中身は写さない）
+  COUNT_PROP: 'LB_NOTIFY_DEFER_COUNT',         // { 'yyyy-MM-dd': {held,…,maxAgeMs} } 直近3日
+  COUNT_BAD_PROP: 'LB_NOTIFY_DEFER_COUNT_BAD',
+  MAX_ITEMS: 16, MAX_BYTES: 8000,              // 1つの Property の上限 9KB（UTF-8）
+  REQ_LOCK_MS: 3000,                           // 要求の中で待つ上限（取れなければ今の経路）
+  BG_LOCK_MS: 10000,                           // 送る側の取り分け
+  WRITEBACK_LOCK_MS: 5000,                     // 送った後に消す・取り分けを戻す（取れなければ期限後に alert＝送り直さない）
+  LEASE_MS: 5 * 60000,
+  CLAIM_MAX: 10, HANDOVER_MAX: 5,
+  BUDGET_MS: 30000,
+  TICK_MIN_AGE_MS: 90000, WARM_MIN_AGE_MS: 300000,
+  HANDOVER_AGE_MS: 30 * 60000,                 // これより古いものは送らず notify_retry（送る前に台帳を確かめる I17）へ
+  BAD_CLEAR_MS: 86400000,                      // 壊れた値はこの後に日次点検が中身を出さずに消す
+  FLUSH_POLL_MS: 250, FLUSH_WAIT_MAX_MS: 2000, FLUSH_MARGIN_MS: 2000,
+  DUP_SCAN_ROWS: 200,                          // 引き渡しの重複を探す notify_retry の末尾の行数
+  KEEP_DAYS: 3
+};
+//   後ろへ回す操作（handleLineGet の action）。ここに無い操作・要求の外（トリガー等）は今のまま送る
+var LB_NOTIFY_DEFER_OPS = { line_makeReservationLine: 1, line_makeReservationLineProxy: 1, line_makeTransferReservation: 1,
+                            line_cancelReservation: 1, line_ownerFreeCancel: 1 };
+var LB_NOTIFY_DEFER_KINDS = ['held', 'inline_noTrigger', 'inline_pendFail', 'inline_throw', 'sentAfter', 'sentTick', 'sentWarm',
+                             'sendFail', 'leaseLost', 'handover', 'staleDropped', 'flushTimeout', 'badCleared', 'sendMsSum', 'sendN'];
+var LB_NOTIFY_DEFER_MAXES = ['maxAgeMs', 'sendMsMax', 'lockMsMax'];
+
+function _lbNotifyDeferOn() {
+  try { return String(PropertiesService.getScriptProperties().getProperty(LB_NOTIFY_DEFER.ON_PROP) || '') === '1'; } catch (e) { return false; }
+}
+
+// 要求の入口。対象の操作で、スイッチがオンで、一回限りトリガーを作れる設定のときだけ保留を始める
+function _lbNotifyHoldStart(action) {
+  _LB_NOTIFY_HOLD = null; _LB_NOTIFY_PERSISTED = null; _LB_CAL_SCHEDULED = false;
+  if (!LB_NOTIFY_DEFER_OPS[String(action || '')]) return;
+  try { if (_lbNotifyDeferOn() && _calsyncAutoOn() === true) _LB_NOTIFY_HOLD = []; } catch (e) { _LB_NOTIFY_HOLD = null; }
+}
+
+function _lbNotifyHolding() { return typeof _LB_NOTIFY_HOLD !== 'undefined' && Object.prototype.toString.call(_LB_NOTIFY_HOLD) === '[object Array]'; }
+
+// 保留できるなら完成した文を保留し 'held'、それ以外は今の _lbPush（引数もそのまま）
+function _lbPushOrHold(to, text, purpose, ctx, opts) {
+  if (to && _lbNotifyHolding()) {
+    var c = ctx || {};
+    _LB_NOTIFY_HOLD.push({ to: String(to), text: String(text), p: String(purpose || ''),
+      c: { resId: String(c.resId || ''), customerId: String(c.customerId || ''), startMs: Number(c.startMs) },
+      nr: (opts && opts.noInlineRetry) ? 1 : 0, at: Date.now() });
+    return 'held';
+  }
+  return _lbPush(to, text, purpose, ctx, opts);
+}
+
+// UTF-8 のバイト数（純粋）
+function _lbUtf8Len(s) {
+  s = String(s == null ? '' : s);
+  var n = 0;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
+
+// 待ちを読む（純粋）。[] ／ null（壊れている）
+function _lbNdParse(raw) {
+  if (raw == null || raw === '') return [];
+  try {
+    var a = JSON.parse(String(raw));
+    if (Object.prototype.toString.call(a) !== '[object Array]') return null;
+    for (var i = 0; i < a.length; i++) {
+      var it = a[i];
+      if (!it || typeof it !== 'object') return null;
+      if (typeof it.id !== 'string' || !it.id) return null;
+      if (!(typeof it.at === 'number' && it.at > 0)) return null;
+      if (typeof it.to !== 'string' || typeof it.text !== 'string' || typeof it.p !== 'string') return null;
+      if (!it.c || typeof it.c !== 'object') return null;
+      if (typeof it.li !== 'string' || !(typeof it.lu === 'number' && it.lu >= 0)) return null;
+      if (it.nr !== 0 && it.nr !== 1) return null;
+    }
+    return a;
+  } catch (e) { return null; }
+}
+
+// 壊れていた印（時刻と長さだけ・中身は写さない）。既に立っていれば最初の時刻を残す
+function _lbNdMarkBad(p, raw) {
+  try { if (!p.getProperty(LB_NOTIFY_DEFER.PENDING_BAD_PROP)) p.setProperty(LB_NOTIFY_DEFER.PENDING_BAD_PROP, Date.now() + '|' + String(raw == null ? '' : raw).length); } catch (e) {}
+}
+
+// 記録（数とミリ秒だけ）。inc＝足す数、mx＝最大を取る欄。★ロックを取らない＝同時の回の片方が落ち得る（標本）
+function _lbNdCount(inc, mx) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var rec = _lbEdgeDeferParse(p.getProperty(LB_NOTIFY_DEFER.COUNT_PROP));
+    if (rec === null) { try { p.setProperty(LB_NOTIFY_DEFER.COUNT_BAD_PROP, String(Date.now())); } catch (eB) {} rec = {}; }
+    var key = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    var day = rec[key] || {};
+    var k;
+    for (k in (inc || {})) if (inc.hasOwnProperty(k) && LB_NOTIFY_DEFER_KINDS.indexOf(k) >= 0 && typeof inc[k] === 'number' && isFinite(inc[k]) && inc[k] > 0) day[k] = Number(day[k] || 0) + Math.round(inc[k]);
+    for (k in (mx || {})) if (mx.hasOwnProperty(k) && LB_NOTIFY_DEFER_MAXES.indexOf(k) >= 0 && typeof mx[k] === 'number' && isFinite(mx[k]) && mx[k] >= 0) day[k] = Math.max(Number(day[k] || 0), Math.round(mx[k]));
+    rec[key] = day;
+    var keys = []; for (var d in rec) if (/^\d{4}-\d{2}-\d{2}$/.test(d)) keys.push(d); else delete rec[d];
+    keys.sort(); keys.reverse();
+    for (var i = LB_NOTIFY_DEFER.KEEP_DAYS; i < keys.length; i++) delete rec[keys[i]];
+    p.setProperty(LB_NOTIFY_DEFER.COUNT_PROP, JSON.stringify(rec));
+  } catch (e) { /* 記録の失敗で通知を止めない */ }
+}
+
+// 書き込みが返った後・edgeAfterWrite の前：保留を待ちに入れる（トリガーを作る前に入れる＝先に動いたトリガーが空振りしない）
+function _lbNotifyHoldPersist() {
+  var h = _LB_NOTIFY_HOLD;
+  if (!_lbNotifyHolding() || !h.length) return;
+  try {
+    var items = [], ids = [];
+    for (var i = 0; i < h.length; i++) {
+      var id = 'q' + Utilities.getUuid();
+      items.push({ id: id, at: h[i].at, to: h[i].to, text: h[i].text, p: h[i].p, c: h[i].c, nr: h[i].nr, li: '', lu: 0 });
+      ids.push(id);
+    }
+    var lockMs = 0;
+    var r = _lbDwLocked(function () {
+      var tl = Date.now();
+      try {
+        var p = PropertiesService.getScriptProperties();
+        var raw = p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+        var q = _lbNdParse(raw);
+        if (q === null) { _lbNdMarkBad(p, raw); return 'BAD'; }   // ★書き換えない
+        if (q.length + items.length > LB_NOTIFY_DEFER.MAX_ITEMS) return 'FULL';
+        var s = JSON.stringify(q.concat(items));
+        if (_lbUtf8Len(s) > LB_NOTIFY_DEFER.MAX_BYTES) return 'FULL';
+        p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, s);
+        return 'OK';
+      } finally { lockMs = Date.now() - tl; }
+    }, LB_NOTIFY_DEFER.REQ_LOCK_MS);
+    _lbNdCount({}, { lockMsMax: lockMs });
+    if (r === 'OK') _LB_NOTIFY_PERSISTED = ids;
+  } catch (e) { _LB_NOTIFY_PERSISTED = null; }
+  if (typeof _lbWpMark === 'function') _lbWpMark('notifyQ');
+}
+
+// 応答の前の片付け。normal=false は振り分けが例外を投げたとき
+function _lbNotifyHoldSettle(normal) {
+  var h = _LB_NOTIFY_HOLD, ids = _LB_NOTIFY_PERSISTED;
+  _LB_NOTIFY_HOLD = null; _LB_NOTIFY_PERSISTED = null;
+  if (Object.prototype.toString.call(h) !== '[object Array]' || !h.length) return;
+  try {
+    if (ids && ids.length) {
+      if (normal && _LB_CAL_SCHEDULED === true) {
+        _lbNdCount({ held: h.length }, {});
+        if (typeof _lbWpMark === 'function') _lbWpMark('notifyQ');
+        return;
+      }
+      //   ★トリガーを作れなかった：自分が入れた項目だけ取り戻して今の経路で送る（別の実行が取っていた分はその実行が送る）
+      _lbNotifyDeferRun('RECLAIM', function (it) { return ids.indexOf(it.id) >= 0; }, LB_NOTIFY_DEFER.BUDGET_MS);
+      if (typeof _lbWpMark === 'function') _lbWpMark('notify');
+      return;
+    }
+  } catch (eR) { return; }   // 取り戻しの途中の例外：待ちに残った分は送る側が拾う
+  //   待ちに入れられなかった：メモリの保留を今の _lbPush で送る（同じ文・同じ引数）
+  var n = 0;
+  for (var i = 0; i < h.length; i++) {
+    try { _lbPush(h[i].to, h[i].text, h[i].p, h[i].c, h[i].nr ? { noInlineRetry: true } : undefined); } catch (eP) {}
+    n++;
+  }
+  var inc = {}; inc[normal ? 'inline_pendFail' : 'inline_throw'] = n;
+  _lbNdCount(inc, {});
+  if (typeof _lbWpMark === 'function') _lbWpMark('notify');
+}
+
+// 取り分けた項目を消す（id と取り分けの印が自分のものだけ）
+function _lbNdRemove(idList, leaseId) {
+  return _lbDwLocked(function () {
+    var p = PropertiesService.getScriptProperties();
+    var raw = p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+    var q = _lbNdParse(raw);
+    if (q === null) { _lbNdMarkBad(p, raw); return false; }
+    var keep = [], n = 0;
+    for (var i = 0; i < q.length; i++) {
+      if (idList.indexOf(q[i].id) >= 0 && q[i].li === leaseId) { n++; continue; }
+      keep.push(q[i]);
+    }
+    if (n) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(keep));
+    return true;
+  }, LB_NOTIFY_DEFER.WRITEBACK_LOCK_MS) === true;
+}
+
+// 取り分けを戻す（送らなかった項目）
+function _lbNdRelease(idList, leaseId) {
+  if (!idList.length) return;
+  _lbDwLocked(function () {
+    var p = PropertiesService.getScriptProperties();
+    var q = _lbNdParse(p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP));
+    if (q === null) return false;
+    var n = 0;
+    for (var i = 0; i < q.length; i++) if (idList.indexOf(q[i].id) >= 0 && q[i].li === leaseId) { q[i].li = ''; q[i].lu = 0; n++; }
+    if (n) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(q));
+    return true;
+  }, LB_NOTIFY_DEFER.WRITEBACK_LOCK_MS);
+}
+
+// notify_retry へ引き渡す（★ロックの外。取り分けの期限の間は他の実行が触らない）。行の id は 'D'+待ちの id。
+//   末尾の行に同じ id があれば追記しない（途中で死んだ回の重複を作らない）。引き渡せた（既にある）なら true
+function _lbNdHandover(it, alert) {
+  var sh = _lbSs().getSheetByName(LB_NQ.SHEET);
+  if (!sh) return false;
+  var rid = 'D' + it.id;
+  var last = sh.getLastRow();
+  if (last >= 2) {
+    var n = Math.min(LB_NOTIFY_DEFER.DUP_SCAN_ROWS, last - 1);
+    var col = sh.getRange(last - n + 1, 1, n, 1).getValues();
+    for (var i = 0; i < col.length; i++) if (String(col[i][0]) === rid) return true;
+  }
+  return _lbNqDefer(it.to, it.text, it.p, it.c, alert
+    ? { id: rid, alert: true, code: 'DEFER_LEASE_LOST', detail: 'delivery_unknown: DEFER_LEASE_LOST' }
+    : { id: rid, code: 'DEFER_LATE', detail: 'not_sent: DEFER_LATE' }) === true;
+}
+
+// 待ちを送る本体（AFTER・TICK・WARM・DAILY・RECLAIM が通る）。pick(it, now) が真の項目を送る
+//   ★取り分けだけが排他（ロックの中は Property の読み書きだけ）。LINE の通信・引き渡しはロックの外。1通ごとに消す
+function _lbNotifyDeferRun(who, pick, budgetMs) {
+  var t0 = Date.now(), out = { sent: 0, failed: 0, lost: 0, handed: 0 };
+  var bg = (who !== 'RECLAIM');
+  var leaseId = Utilities.getUuid(), claimed = [], lost = [], hand = [], lockMs = 0;
+  var r = _lbDwLocked(function () {
+    var tl = Date.now();
+    try {
+      var p = PropertiesService.getScriptProperties();
+      var raw = p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+      var q = _lbNdParse(raw);
+      if (q === null) { _lbNdMarkBad(p, raw); return 'BAD'; }
+      if (!q.length) return 'EMPTY';
+      var now = Date.now(), changed = false;
+      for (var i = 0; i < q.length; i++) {
+        var it = q[i];
+        if (it.li && it.lu > now) continue;                       // 別の実行が取り分け中
+        var take = function (list) { it.li = leaseId; it.lu = now + LB_NOTIFY_DEFER.LEASE_MS; list.push(it); changed = true; };
+        if (it.li) { if (bg && lost.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(lost); continue; }   // 期限切れ＝送ったか分からない
+        if (bg && now - it.at > LB_NOTIFY_DEFER.HANDOVER_AGE_MS) { if (hand.length < LB_NOTIFY_DEFER.HANDOVER_MAX) take(hand); continue; }
+        if (!pick(it, now)) continue;
+        if (claimed.length < LB_NOTIFY_DEFER.CLAIM_MAX) take(claimed);
+      }
+      if (changed) p.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(q));
+      return 'OK';
+    } finally { lockMs = Date.now() - tl; }
+  }, bg ? LB_NOTIFY_DEFER.BG_LOCK_MS : LB_NOTIFY_DEFER.REQ_LOCK_MS);
+  if (r !== 'OK') return { skipped: r || 'LOCK' };
+
+  var inc = {}, mx = { lockMsMax: lockMs }, sentKind = { AFTER: 'sentAfter', TICK: 'sentTick', WARM: 'sentWarm', RECLAIM: 'inline_noTrigger' }[who] || 'sentTick';
+  function add(k, n) { inc[k] = (inc[k] || 0) + n; }
+  //   引き渡し（送らない）
+  var handedIds = [], backIds = [];
+  for (var j = 0; j < lost.length + hand.length; j++) {
+    var hi = (j < lost.length) ? lost[j] : hand[j - lost.length], isLost = j < lost.length;
+    var okH = false;
+    try { okH = _lbNdHandover(hi, isLost); } catch (eH) { okH = false; }
+    if (okH) { handedIds.push(hi.id); add(isLost ? 'leaseLost' : 'handover', 1); }
+    else backIds.push(hi.id);   // ★引き渡せなければ待ちに残す（黙って消さない）
+  }
+  if (handedIds.length) _lbNdRemove(handedIds, leaseId);
+  //   送る（今の _lbPush と同じ引数。失敗は _lbPush が notify_retry に積む）
+  var unsent = [];
+  for (var k = 0; k < claimed.length; k++) {
+    var it2 = claimed[k];
+    if (Date.now() - t0 > budgetMs) { unsent.push(it2.id); continue; }
+    var ts = Date.now(), okS = false;
+    mx.maxAgeMs = Math.max(mx.maxAgeMs || 0, ts - it2.at);
+    try { okS = _lbPush(it2.to, it2.text, it2.p, it2.c, it2.nr ? { noInlineRetry: true } : undefined) === true; } catch (eS) { okS = false; }
+    var ms = Date.now() - ts;
+    add('sendMsSum', ms); add('sendN', 1); mx.sendMsMax = Math.max(mx.sendMsMax || 0, ms);
+    add(sentKind, 1); if (!okS) add('sendFail', 1);
+    _lbNdRemove([it2.id], leaseId);   // ★試みたら消す。消せなければ取り分けのまま＝期限後に alert（送り直さない）
+    out.sent++;
+  }
+  _lbNdRelease(unsent.concat(backIds), leaseId);
+  _lbNdCount(inc, mx);
+  out.handed = handedIds.length; out.ms = Date.now() - t0;
+  return out;
+}
+
+// 受け皿（AFTER・TICK・WARM）。★待ちが空ならロックを取らない。例外を外へ出さない
+function _lbNotifyDeferDrain(who, budgetMs, minAgeMs) {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+    if (raw == null || raw === '' || raw === '[]') return { sent: 0 };
+    return _lbNotifyDeferRun(who, function (it, now) { return now - it.at >= minAgeMs; }, budgetMs);
+  } catch (e) {
+    Logger.log('[notify-defer] 待ちの送信で例外（次の受け皿が拾います）: ' + String((e && e.name) || 'Error'));
+    return { skipped: 'EXCEPTION' };
+  }
+}
+
+// 取消・変更の後（台帳の確定・成立の後・ロックの外）：その予約の確定の通知（booking_*）を待ちから捨てる（I17 と同じ判断）。
+//   取り分け中のものだけは止められない＝ロックを持たずに読み直して待つ（受付12秒の予算の内側・最大2秒）。消えなければ数えて進む
+function _lbNotifyDeferFlushRes(resId, t0) {
+  try {
+    var id = String(resId || '');
+    if (!id) return;
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+    if (raw == null || raw === '' || raw === '[]') return;
+    var match = function (it) { return it.c && String(it.c.resId) === id && /^booking_/.test(String(it.p)); };
+    var q0 = _lbNdParse(raw);
+    if (!q0) return;
+    var any = false; for (var a = 0; a < q0.length; a++) if (match(q0[a])) any = true;
+    if (!any) return;
+    var r = _lbDwLocked(function () {
+      var q = _lbNdParse(props.getProperty(LB_NOTIFY_DEFER.PENDING_PROP));
+      if (q === null) return null;
+      var now = Date.now(), keep = [], dropped = 0, inflight = 0;
+      for (var i = 0; i < q.length; i++) {
+        if (!match(q[i])) { keep.push(q[i]); continue; }
+        if (q[i].li && q[i].lu > now) { inflight++; keep.push(q[i]); } else dropped++;
+      }
+      if (dropped) props.setProperty(LB_NOTIFY_DEFER.PENDING_PROP, JSON.stringify(keep));
+      return { dropped: dropped, inflight: inflight };
+    }, LB_NOTIFY_DEFER.REQ_LOCK_MS);
+    if (!r) { _lbNdCount({ flushTimeout: 1 }, {}); return; }
+    if (r.dropped) _lbNdCount({ staleDropped: r.dropped }, {});
+    if (!r.inflight) return;
+    var base = (typeof t0 === 'number' && isFinite(t0)) ? t0 : null;
+    var limit = LB_NOTIFY_DEFER.FLUSH_WAIT_MAX_MS;
+    if (base !== null) limit = Math.min(limit, LB_CXL_BUDGET.ACCEPT_MS - (Date.now() - base) - LB_NOTIFY_DEFER.FLUSH_MARGIN_MS);
+    var w0 = Date.now(), gone = false;
+    while (limit > 0 && Date.now() - w0 < limit) {
+      Utilities.sleep(LB_NOTIFY_DEFER.FLUSH_POLL_MS);   // ★ロックを持たない
+      var q2 = _lbNdParse(props.getProperty(LB_NOTIFY_DEFER.PENDING_PROP));
+      if (!q2) break;
+      var still = false, nw = Date.now();
+      for (var b = 0; b < q2.length; b++) if (match(q2[b]) && q2[b].li && q2[b].lu > nw) still = true;
+      if (!still) { gone = true; break; }
+    }
+    if (!gone) _lbNdCount({ flushTimeout: 1 }, {});
+  } catch (e) { /* 取消・変更の応答を壊さない */ }
+}
+
+// 日次の手入れ（dailyHealthCheck から・別のトリガー）：30分超の引き渡しと期限切れの取り分け。壊れた値は24時間後に中身を出さず消す
+function lbNotifyDeferDailyMaint() {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var raw = p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+    if (raw == null || raw === '') return;
+    if (_lbNdParse(raw) === null) {
+      _lbNdMarkBad(p, raw);
+      var bad = Number(String(p.getProperty(LB_NOTIFY_DEFER.PENDING_BAD_PROP) || '').split('|')[0]) || 0;
+      if (bad && Date.now() - bad > LB_NOTIFY_DEFER.BAD_CLEAR_MS) {
+        p.deleteProperty(LB_NOTIFY_DEFER.PENDING_PROP);
+        p.deleteProperty(LB_NOTIFY_DEFER.PENDING_BAD_PROP);
+        _lbNdCount({ badCleared: 1 }, {});
+      }
+      return;
+    }
+    _lbNotifyDeferRun('DAILY', function () { return false; }, LB_NOTIFY_DEFER.BUDGET_MS);
+  } catch (e) { /* 点検を止めない */ }
+}
+
+// 日次点検（純粋）。get(k) で Script Property を読む。★数だけ（LINE ID・本文を出さない）
+function lbNotifyDeferDailyCheck(nowMs, get) {
+  var out = [];
+  function add(key, sev, n, detail) { if (n) out.push({ key: key, severity: sev, count: n, detail: detail }); }
+  var q = _lbNdParse(get(LB_NOTIFY_DEFER.PENDING_PROP));
+  if (q === null) add('notify_defer_pending_broken', 'high', 1, 'LINE 通知を後ろへ回す待ち（LB_NOTIFY_PENDING）が読めません。新しい通知は応答の前に送っています。読めない待ちの中の通知は届いていない可能性があります（24時間後に消します）');
+  else {
+    var old = 0;
+    for (var i = 0; i < q.length; i++) if (nowMs - q[i].at > 10 * 60000) old++;
+    add('notify_defer_pending_old', 'warn', old, '後ろへ回した LINE 通知のうち、10分より長く送れていないもの ' + old + '通（受け皿のトリガーが止まっている疑い）');
+  }
+  var bad = Number(String(get(LB_NOTIFY_DEFER.PENDING_BAD_PROP) || '').split('|')[0]) || 0;
+  if (bad && nowMs - bad <= 86400000) add('notify_defer_pending_rebuilt', 'high', 1, 'LINE 通知の待ちが壊れていた（24時間以内）');
+  if (String(get(LB_NOTIFY_DEFER.ON_PROP) || '') !== '1') return out;
+  var rec = _lbEdgeDeferParse(get(LB_NOTIFY_DEFER.COUNT_PROP));
+  if (rec === null) { add('notify_defer_count_broken', 'warn', 1, 'LINE 通知を後ろへ回した回数の記録が壊れています'); return out; }
+  var y = rec[Utilities.formatDate(new Date(nowMs - 86400000), 'Asia/Tokyo', 'yyyy-MM-dd')];
+  if (!y) return out;
+  var n = function (f) { return Number(y[f] || 0); };
+  add('notify_defer_lease_lost', 'warn', n('leaseLost'), '昨日、送ったか分からない LINE 通知 ' + n('leaseLost') + '通（送り直さずオーナーへメール）');
+  add('notify_defer_handover', 'warn', n('handover'), '昨日、30分以上送れず送り直しの仕組みへ渡した LINE 通知 ' + n('handover') + '通');
+  add('notify_defer_flush_timeout', 'warn', n('flushTimeout'), '昨日、取消・変更の直前に確定の通知を止めきれなかった回 ' + n('flushTimeout') + '（トレーナーに順序が逆に届いた可能性）');
+  if (n('maxAgeMs') > 10 * 60000) add('notify_defer_slow', 'warn', 1, '昨日、書き込みから LINE を送るまでの最大 ' + Math.round(n('maxAgeMs') / 1000) + '秒（10分超）');
+  if (n('lockMsMax') > 1000) add('notify_defer_lock_slow', 'warn', 1, '昨日、待ちのロックを持った最大 ' + n('lockMsMax') + 'ms（1秒超・他の予約を待たせうる）');
+  var inl = n('inline_noTrigger') + n('inline_pendFail') + n('inline_throw');
+  if (n('held') + inl > 0 && inl > (n('held') + inl) * 0.2) add('notify_defer_inline', 'warn', inl, '昨日、後ろへ回せず応答の前に送った LINE 通知 ' + inl + '通（後ろへ回した ' + n('held') + '通）');
+  return out;
+}
+
+// 作業依頼 remaining {writePerf:true} の結果に載せる1行（数だけ）
+function _lbNotifyDeferSummaryText() {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var q = _lbNdParse(p.getProperty(LB_NOTIFY_DEFER.PENDING_PROP));
+    var now = Date.now(), head = '通知の後ろ回し（設計45b・LB_NOTIFY_DEFER=' + (String(p.getProperty(LB_NOTIFY_DEFER.ON_PROP) || '') === '1' ? '1' : '未設定') + '）：';
+    if (q === null) head += '待ち 読めない（壊れている）';
+    else {
+      var oldest = null; for (var i = 0; i < q.length; i++) oldest = (oldest === null) ? q[i].at : Math.min(oldest, q[i].at);
+      head += '待ち ' + q.length + '件' + (oldest !== null ? '・最古 ' + Math.floor((now - oldest) / 60000) + '分' : '');
+    }
+    var rec = _lbEdgeDeferParse(p.getProperty(LB_NOTIFY_DEFER.COUNT_PROP)) || {};
+    var keys = Object.keys(rec).sort().reverse().slice(0, 2), parts = [];
+    for (var k = 0; k < keys.length; k++) {
+      var d = rec[keys[k]], f = [];
+      for (var x in d) if (d.hasOwnProperty(x) && d[x]) f.push(x + '=' + d[x]);
+      parts.push(keys[k] + ' ' + (f.length ? f.join(' ') : '0'));
+    }
+    return head + (parts.length ? '／' + parts.join('／') : '');
+  } catch (e) { return '通知の後ろ回し：読めません'; }
+}
+
 var LB_NQ_LABEL = {
   booking_customer: '予約確定（お客様へ）', booking_trainer: '予約確定（トレーナーへ）',
   change_customer: '予約変更（お客様へ）', change_trainer: '予約変更（トレーナーへ）',
@@ -5518,16 +5961,19 @@ function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerN
   var e = Utilities.formatDate(end, tz, 'HH:mm');
   var isTransfer = (channel === 'transfer');
   // 顧客へ完了push（代理予約で顧客のlineUserId未確定なら skip）
+  //   ★設計45b：_lbPushOrHold＝要求の中で保留できるなら完成した文を保留（送る相手・文・引数は今と同じ）。それ以外は今の _lbPush
   if (customerLineUserId) {
-    _lbPush(customerLineUserId, isTransfer
+    _lbPushOrHold(customerLineUserId, isTransfer
       ? '振替セッションを承りました。\n日時：' + s + '〜' + e + '\n担当：' + trainer.name + '\n場所：' + SETTINGS.GYM_NAME + '\n※振替料金 5,500円は別途ご請求します。'
       : 'ご予約を承りました。\n日時：' + s + '〜' + e + '\n担当：' + trainer.name + '\n場所：' + SETTINGS.GYM_NAME + '\nキャンセルは前日17時まで無料です。', 'booking_customer', _nctx);
   }
   // 選択トレーナーへ通知push
   var trId = getTrainerLineId(trainer.id);
+  _lbWpMark('notify');
   if (trId) {
     var _remTxt = isTransfer ? '' : _lbTrainerRemainText(customerId, customerName, start);   // 振替は残数を消化しないため残数は載せない
-    _lbPush(trId, (isTransfer ? '【振替予約】' : '【新規予約】') + customerName + '様\n日時：' + s + '〜' + e + _remTxt +
+    _lbWpMark('notifyCalc');   // 設計45b：残数の文（書き込みの時点で固定するため応答の前に残る計算）
+    _lbPushOrHold(trId, (isTransfer ? '【振替予約】' : '【新規予約】') + customerName + '様\n日時：' + s + '〜' + e + _remTxt +
       (isTransfer ? '\n※振替セッション（5,500円・手動請求）' : ''), 'booking_trainer', _nctx);
   }
 }
@@ -8278,6 +8724,8 @@ function _lbCxlAfter(d, t0) {
   function over() { var n = Date.now(); return (n - t0 > LB_CXL_BUDGET.ACCEPT_MS) || (n - tN > LB_CXL_BUDGET.NOTIFY_MS); }
   function send(name, to, text, purpose, direct) {
     if (st[name] !== 'unsent' || !to) return;
+    //   ★設計45b：保留できるなら時間予算より先に保留（'held'＝relayed・notified では送った／積んだと同じ扱い・CXL_NOTIFY_SLOW には数えない）
+    if (!direct && _lbNotifyHolding()) { st[name] = 'held'; _lbPushOrHold(to, text, purpose, ctx, { noInlineRetry: true }); return; }
     if (!direct && over()) { st[name] = 'deferred'; _lbNqDefer(to, text, purpose, ctx); return; }
     st[name] = 'attempted';
     _lbPush(to, text, purpose, ctx, { noInlineRetry: true });   // キャンセルの要求の中では429で粘らない（改訂2-1）
@@ -8288,6 +8736,8 @@ function _lbCxlAfter(d, t0) {
       + (d.ownerApplied ? '\n（無料取消・オーナー権限）' : (d.free ? '\n（無料取消）' : '\n（当日消化）'))
       + (d.key ? '\n理由：' + LB_CXL_KEYS[d.key] : '') + (d.note ? '\nひとこと：' + d.note : '');
   }
+  // 0. 設計45b：この予約の確定の通知がまだ待ちにあれば捨てる（取消の後に【新規予約】を届けない・I17 と同じ判断）
+  try { _lbNotifyDeferFlushRes(d.resId, t0); } catch (eF) { _lbCxlLogErr('flush', eF); }
   // 1. その枠のトレーナー
   try {
     if (d.trainer) { slotLine = String(getTrainerLineId(d.trainer.id) || ''); send('slot', slotLine, trText(), 'cancel_trainer', true); }
@@ -8828,6 +9278,8 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
     _lbWpMark('sheet');
   }
 
+  //   ★設計45b：旧い予約の確定の通知がまだ待ちにあれば捨てる（変更の通知に終了時刻・場所まで載る＝確定の通知は要らない）
+  try { _lbNotifyDeferFlushRes(reservationId); } catch (eF) {}
   var _cl = _lbMemberLang(String(r[3]));
   var _chCtx = { resId: String(made.reservationId || ''), oldResId: String(reservationId), customerId: String(r[2]), startMs: new Date(newStartISO).getTime() };
   //   ★変更の通知だけで足りるように補う（2026-10-13・関門③）。

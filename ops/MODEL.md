@@ -103,7 +103,9 @@ D1                      その写し ＋ D1で作った枠・引当
 | 表 | 主キー | 書くのは | 読むのは | 消える条件 |
 |---|---|---|---|---|
 | `cancel_notes` | res_id（1予約に1行） | `cancelReservationLine`（ロックの中で appendRow 1回・**すべての取消**＝会員・トレーナー・オーナー）／`_lbCnMaintain`（ロックの外・ひとことと識別子を空にする・notified を直す）／作るのは `setupCancelNotesSheet` だけ | オーナー（シート）／作業依頼 `remaining` の `cancelNotes`（件数だけ・COUNT_COLS）／日次点検（cancelled_at と note_purged_at だけ） | 行は消さない。ひとこと（note）は1年で空・res_id・customer_id・trainer_id は2年で空 |
-| `notify_retry`（既存・設計17） | id | `_lbNqOnFail`／`_lbNqDefer`（キャンセルの時間予算を超えた残り・設計36） | `lbNotifyRetryTick` | ★設計36 から：終わった行（sent・stale・closed）の本文 text を30日で空にする（取り分けのロックと同じ1回の書き込み・1回50行まで）。行は消さない |
+| `notify_retry`（既存・設計17） | id | `_lbNqOnFail`／`_lbNqDefer`（キャンセルの時間予算を超えた残り・設計36／★設計45b の引き渡し＝id `'D'+待ちのid`・30分超は pending・期限切れの取り分けは alert） | `lbNotifyRetryTick` | ★設計36 から：終わった行（sent・stale・closed）の本文 text を30日で空にする（取り分けのロックと同じ1回の書き込み・1回50行まで）。行は消さない |
+
+| Script Property `LB_NOTIFY_PENDING`（設計45b・既定オフ `LB_NOTIFY_DEFER`） | 項目の id（`q`+UUID） | `_lbNotifyHoldPersist`（要求の中・edgeAfterWrite の前・ScriptLock 3秒） | `_lbNotifyDeferRun`（一回限りトリガー `_lbCalSyncAfterWrite`・5分ごと `lbCalSyncTick` 90秒超・10分ごと `warmupCache` 5分超・日次点検は30分超の引き渡しだけ）／`_lbNotifyDeferFlushRes`（取消・変更の後に同じ予約の `booking_*` を捨てる） | ★**個人情報（LINE ID・氏名を含む本文・ひとこと）を持つ**。送る試みで消す／30分超は `notify_retry` へ引き渡して消す（日次点検も行う＝最長およそ1日）／壊れた値は書き換えず24時間後に日次点検が中身を出さずに消す。16件・8,000バイト（UTF-8）まで。ログ・点検・作業依頼には数だけ |
 
 - ★`cancel_notes.note_purged_at` は「ひとことが残っていない」印を兼ねる（ひとことが無い行は書いた時点で `-`）。だから点検と作業依頼は **note 列を一度も読まずに**「残っている行」を数えられる（I-C6）。
 - ★**キャンセルした時刻は cancel_notes の `cancelled_at` にしか無い**（台帳にキャンセルの時刻の列は無い。当日消化のときだけ transfer_credits の付与時刻が実質の時刻）。設計37 の計測の土台。
@@ -204,6 +206,7 @@ trg_alloc_return_pack       同
 | I77 | **書き込み（予約・取消・変更）の段ごとの所要時間（設計43 A）は、数と固定の文字だけを Script Properties `LB_WRITE_PERF` の直近60件・8,000バイトのリングに残す**：操作名（固定の9つ）・成否・コード（許可リスト `LB_WP_CODES` に完全一致・外は OTHER・例外は THROW）・版・最後の印・段の ms。氏名・電話・LINE ID・予約ID・例外の文・応答の message を持たない。記録の失敗で予約の結果を変えない。認証と振り分けの例外は記録してから同じ例外を投げ直す（edgeAfterWrite の中の例外は今までどおり握りつぶす）。ロックを取らない＝標本（全数は booking_metrics）。読むのは作業依頼 `remaining {writePerf:true}`（op を足さない） | `write-perf.test.js` ①〜⑥ |
 | I78 | **書き込みの後、Worker が空き枠を答えてよいのは、`slots_cache` の payload の `readStartAt`（その写しがカレンダーを読み始めた時刻・GAS の時計・数値型の整数だけ）≧ 画面が送った `slotsAfter`（GAS の `edgeAfterWrite` 入口の時刻）＋2秒 のときだけ（設計43 B）**。答えたら `slotsAfterOk` に同じ値を返し、画面は一致を確かめてから使う。`readStartAt` は作りたての枠を送る回（`pushToEdgeSlots` が自分で作り直せた回）だけ載る。①（カレンダーから計算）・写しが古い・連続ルールで答えない回も答えない。答えた／答えない理由は `remain_source_daily` の entry `slots_after` に数え、日次点検は残数の出どころと混ぜない。画面が残数・予約一覧を Worker に戻すのは、`edgeSyncedExceptSlots`（`EDGE_SLOTS_ONLY_LAG` の操作で、写しと予約一覧を送れて通し番号を積めた）と正しい `edgeWriteAt` が来て、ほかの書き込みが途中でないときだけ。スイッチ `WL_DEFAULT_ON`（既定 false・`?wl=1`） | `write-latency.test.js` ①〜④・`liff-write-latency.test.js` 1〜3 |
 | I79 | **写しが書き込みの印を含んでいなければ Worker は答えない（設計45）**：会員が「閉じている」＝ `dirty_seq > 0` かつ（covers が NULL か `dirty_seq > covers`）。★NULL は閉じる（migration 0034 は初期化しない＝番号つきの押し出しが成功した会員から開く）。home の covers で閉じた会員の残数（D1 から作った値も写しも・振替権も）を `readHome` が null にする（写しを読む前と、値を全部読んだ後の2回。読めなければ閉じる）。resv の covers で閉じた会員の予約から作った値（会員の予約一覧・会員の boot・顧客詳細）は FALLBACK、トレーナー／オーナーの一覧と boot の今後の件数は**誰か1人でも**閉じていれば FALLBACK、カルテの概要は `nextUnknownOk` の要求にだけ `nextReservationUnknown`（印の無い古い画面は概要ごと 503 RESV_SYNCING）、一覧の `noNextBooking` は `'unknown'`。covers は写しの行と**同じ batch** で**置き換える（MAX にしない）**・dirty の文の後ろに積む。番号は写しを作るために台帳を読む**前**に読んだ全体の通し番号（GAS `_edgeCoversSeqNow`）。予約一覧は一部の送信が customerId、全体の送信が coveredCustomers（final の batch・行1件以上・2,000件まで）。印だけの送信（`rows:[]`＋`dirtySeq`）は covers を触らない。`remain-from-d1.js` の件数は I31 が先に守るので門を足さない。答えなかった回は `remain_source_daily` の entry `covers`、閉じている数と最長は `/quota/status` の `writeCovers`（会員IDなし・退会を除く）→ 日次点検（10分 warn・60分 high・移行の残り warn）。★GAS は写しの送信を応答の後ろへ回せる（スイッチ `LB_EDGE_DEFER`・既定オフ・既にある一回限りトリガー `_lbCalSyncAfterWrite` の先頭と5分ごとの `lbCalSyncTick`・新しいトリガー0本・どれか1つでもできなければ今の経路） | `write-covers.test.js` ①〜⑥、`gas-edge-defer.test.js` ①〜⑧、`karte.test.js` 11-1〜11-6、`liff-karte.test.js` 11-9・11-10、`read-on.test.js` ①-3〜①-3c |
+| I80 | **後ろへ回した LINE 通知は、二重に送らず黙って落とさない（設計45b）**：スイッチ `LB_NOTIFY_DEFER`（既定オフ・`LB_EDGE_DEFER` とは別）。対象は `handleLineGet` の予約・代行予約・振替予約（`booking_customer`・`booking_trainer`）と取消・オーナーの無料取消（会員宛・契約上の担当宛の `cancel_*`）。その枠のトレーナー・変更・まとめて予約・トリガーからの通知は今のまま。文面は今と同じ場所・順序で応答の前に作る（残数は `_lbTrainerRemainText`＝書き込みの時点で固定）＝送る側は待ちの `text` をそのまま `_lbPush` へ。待ち `LB_NOTIFY_PENDING` へは edgeAfterWrite（一回限りトリガー）の**前**に入れ、トリガーを作れなければ自分の項目だけ取り戻して今の `_lbPush`、入れられなければメモリの保留を今の `_lbPush`、振り分けの例外でも投げ直す前に送る。項目は取り分け（ScriptLock の中で `li`/`lu`・5分）をした1つの実行だけが送り、試みたら1通ごとに消す（失敗は `_lbPush` → `_lbNqOnFail` が `notify_retry` に1回）。期限切れの取り分けは送らず `notify_retry` の alert（送ったか分からない）、30分超は pending（I17 が送る前に台帳を確かめる）。引き渡しの行 id は `'D'+待ちのid`・末尾200行に同じ id があれば追記しない。取消・変更が成立した後（ロックの外）、その予約の `booking_*` は待ちから捨てる（I17 と同じ）。取り分け中だけはロックを持たずに最大2秒（受付12秒の予算の内）待ち、消えなければ `flushTimeout`。数は `LB_NOTIFY_DEFER_COUNT`（held・inline_*・sent*・sendFail・leaseLost・handover・staleDropped・flushTimeout・maxAgeMs・sendMs・lockMsMax）→ 日次点検（壊れた待ち high・10分超の待ち warn はスイッチに関係なく）・作業依頼 `remaining {writePerf:true}`。段 `notifyCalc`・`notifyQ` | `gas-notify-defer.test.js` ①〜⑦、`gas-cancel-reason.test.js`、`write-perf.test.js` ④-10〜④-12 |
 | I-M1 | **会員のカルテ（c_myKarte）の本人は who.customerId だけで決める。body を一切読まない**（customerId・noteId・sessionId 等で他人を指させない）。customer 以外・who.customerId が無ければ 403（設計35） | `member-karte.test.js` 1-7〜1-15・2-17・5-7 |
 | I-M2 | **応答は専用の allowlist で組み立てる**（k_ の応答を流用して落とす形にしない）。SQL の段階で列を選ぶ（全部の列を取らない）。値が無いものは null／空配列（推測で埋めない）。体の記録は I51 のまま（verified の凍結＋d1） | `member-karte.test.js` 2-3〜2-16・5-3 |
 | I-M3 | **社内メモ（karte_notes の本文・次回の計画・確かめること・理由）・健康情報（karte_safety・同意）・セットのメモ・ヒアリングの自由文・契約の金額と報酬を読まない・返さない**。契約は I53 を満たすときだけ・期間の列が無ければ null・担当は名簿の表示名（当たらなければ null）。includeContract=false なら契約の SQL を1本も出さない | `member-karte.test.js` 2-2・3-1〜3-4・4-1〜4-3・5-1〜5-5・6-6 |
@@ -447,6 +450,8 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 　★設計45（スイッチ LB_EDGE_DEFER・既定オフ）：オンのとき予約・取消・変更の写しは応答の後ろ（一回限りトリガー）で送る。
 　　その間、**別の端末・トレーナーの画面**も、その会員の残数・予約一覧は Worker が答えず GAS（I79）。
 　　オーナー・トレーナーの一覧は誰か1人の書き込みで GAS に落ちる（写しが届くまで）。書き込みをした端末は今と同じ35分 GAS
+　★設計45b（スイッチ LB_NOTIFY_DEFER・既定オフ）：オンのとき予約の会員宛・トレーナー宛、取消の会員宛・担当宛の LINE は応答の後ろ
+　　（一回限りトリガーの起動の遅れ＝本番の分布は未計測・最悪は TICK で約6分半・WARM で約15分）。その枠のトレーナーへの取消は今どおり応答の前
 
 ---
 
@@ -454,7 +459,8 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 
 | | 上限 | いまの状況 | 当たったら |
 |---|---|---|---|
-| GASのトリガー | 20本 | コード上21ハンドラ分。既存に相乗りで回避（設計45 の写しの後ろ回しも既存の一回限りトリガーと5分ごとの同期に相乗り・`gas-edge-defer.test.js` ⑦ が集合を固定） | 新しい定期処理を作れない |
+| GASのトリガー | 20本 | コード上21ハンドラ分。既存に相乗りで回避（設計45 の写しの後ろ回しも既存の一回限りトリガーと5分ごとの同期に相乗り・`gas-edge-defer.test.js` ⑦ が集合を固定。設計45b の LINE 通知の後ろ回しも同じ2つと `warmupCache` に相乗り・`gas-notify-defer.test.js` ⑥） | 新しい定期処理を作れない |
+| Script Property 1つの値 | 9KB | 通知の待ち `LB_NOTIFY_PENDING` は 16件・8,000バイト（UTF-8）まで | 超えたら今の経路（応答の前に送る） |
 | LINE通知の送り直し | 1回8件・90秒 | `warmupCache`（10分ごと）の末尾に相乗り。開始3分超なら見送り | 次の10分へ回る |
 | GASのバージョン | 200・削除不可（上限は「本数」＝`clasp versions` の件数。GASエディタの「番号」ではない） | 2026-10-06 の確認で 109本（以前ここにあった「188」は番号を本数と読み違えた値）。いまの本数は**未確認**（唯一の出所は GitHub Actions「GASを反映する」のログ）。床だけは分かる：反映ワークフローは残り5本以下で止まる＝直前の反映が成功していれば残り6本以上 | プロジェクト作り直し＝**LIFFのURLが変わる** |
 | GASの実行時間 | 6分 | 押し出しは打ち切り方式 | 途中から再開する作りが必須 |

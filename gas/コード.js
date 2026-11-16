@@ -250,6 +250,8 @@ function warmupCache() {
     //     ★枠の温め直しを先に終える。送り直しは開始から3分を過ぎていたら見送る（中で判定）。
     //     ★例外を外へ出さない（枠の温め直しの結果を変えない）。
     try { lbNotifyRetryTick(_wcStart); } catch (eNq) { Logger.log('通知の送り直しで例外: ' + eNq.message); }
+    //   ★設計45b：後ろへ回した LINE 通知の2つ目の受け皿（5分より古いもの）。この関数はスイッチで止まらない
+    try { _lbNotifyDeferDrain('WARM', LB_NOTIFY_DEFER.BUDGET_MS, LB_NOTIFY_DEFER.WARM_MIN_AGE_MS); } catch (eNd) {}
   }
 }
 
