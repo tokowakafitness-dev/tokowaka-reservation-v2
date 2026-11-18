@@ -351,13 +351,21 @@ async function ingest(request, env) {
   //
   //     ここで読む目的は**書くかどうかではなく、世代を進めるかどうか**である。
   //     表1つにつき1日1回の SELECT なので安い（読み取りは1日500万行まで無料）。
+  //
+  //   ★行が0件の送信では読まない（2026-11-18・打ち手A）。
+  //     existing を使うのは下の行のループ（same()）と世代を進める判定だけで、どちらも行を1件ずつ回す。
+  //     行0件なら一度も参照されない＝読んでも捨てるだけ。印だけの送信（rows:[]＋dirtySeq・書き込みの直後の
+  //     応答の前に走る）が表の全行を読んでいた（実測 edgeMark 1.76秒の一部）。
+  //     ★I79 の順序（dirty の文を積む・covers を触らない）は変えない。下の stmts の組み立ては同じ。
   let existing = {};
-  try {
-    const cur = await env.DB.prepare(
-      `SELECT ${conf.cols.join(', ')} FROM ${conf.table}`
-    ).all();
-    for (const row of (cur.results || [])) existing[String(row[conf.key])] = row;
-  } catch (_) { existing = {}; }   // 読めなければ全部書く＋全部進める（安全側＝写しへ落ちる）
+  if (rows.length > 0) {
+    try {
+      const cur = await env.DB.prepare(
+        `SELECT ${conf.cols.join(', ')} FROM ${conf.table}`
+      ).all();
+      for (const row of (cur.results || [])) existing[String(row[conf.key])] = row;
+    } catch (_) { existing = {}; }   // 読めなければ全部書く＋全部進める（安全側＝写しへ落ちる）
+  }
   const skipCmp = new Set(conf.skipCompare || []);
   const same = (a, b) => {
     if (!b) return false;

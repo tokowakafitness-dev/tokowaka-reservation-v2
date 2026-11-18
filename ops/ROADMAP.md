@@ -21,6 +21,7 @@
   └ 実装（Worker の門 I79＋GAS の後ろ回し・スイッチ LB_EDGE_DEFER 既定オフ）   ✅ 11/16 関門②2周で通過（claude/write-latency-c・未 push）
   └ main へ（CEO 判断・オーナーのマージ）                                     🔄 ■ いまここ ■
   └ GAS 反映 → Worker push → 移行の残り0 → 関門③ → スイッチ               ⬜ ★オーナー
+  └ 打ち手A 印だけ（行0件）の送信で表の全行を読まない（Worker 2026-11-18a）  ✅ 11/18 実装（未 push・関門②待ち）
   設計45b LINE 通知を応答の後ろへ（実測：notify 予約3.7秒・取消2.2秒）   ✅ 11/16 オーナー承認・関門①3周で通過
   └ 実装（スイッチ LB_NOTIFY_DEFER 既定オフ・段 notifyCalc で計算と通信を分ける） ✅ 11/16（claude/write-latency-c・未 push）
   └ GAS 反映（M2 と同じ1回）→ notifyCalc を見て縮む量を確かめる → 関門③ → スイッチ ⬜ ★オーナー
