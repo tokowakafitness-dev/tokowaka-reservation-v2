@@ -73,7 +73,8 @@ function make(opt = {}) {
 }
 const ring = (props) => JSON.parse(props.LB_WRITE_PERF || '{"items":[]}');
 //   ★設計45：member・edgeMark を後ろに足した（並びの途中に入れない＝古い行の位置が変わらない）
-const STAGES = ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark', 'notifyCalc', 'notifyQ'];
+//   ★2026-11-18：preTrainer・preLedger・preType・remainText を後ろに足した
+const STAGES = ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark', 'notifyCalc', 'notifyQ', 'preTrainer', 'preLedger', 'preType', 'remainText'];
 const idx = (s) => 6 + STAGES.indexOf(s);
 
 console.log('=== ① 入口から ===');
@@ -140,7 +141,15 @@ console.log('=== ④ リングの上限・壊れた記録・記録の失敗 ==='
   const t = make();
   for (let i = 0; i < 75; i++) t.ctx.handleLineGet({ action: 'line_makeReservationLine', idToken: 'x' });
   const r = ring(t.props);
-  ok('④-1 60件まで', r.items.length === 60, r.items.length);
+  //   ★2026-11-18：段が19個になり、この並びの行では 8,000 バイトの上限が先に来る（60件の手前で止まる）。件数の上限は短い行で別に見る
+  ok('④-1 60件まで（バイトの上限が先なら少ない＝それでも 55件以上）', r.items.length <= 60 && r.items.length >= 55, r.items.length);
+  {
+    const t2 = make();
+    const shortRow = [1795000000000, 'cancelReservation', 1, 'OK', '', 'pre'].concat(Array(STAGES.length + 1).fill(0));
+    t2.props.LB_WRITE_PERF = JSON.stringify({ v: 1, stages: STAGES, items: Array(70).fill(shortRow) });
+    t2.ctx.handleLineGet({ action: 'line_cancelReservation', idToken: 'x' });
+    ok('④-1b 件数の上限は60件（短い行）', ring(t2.props).items.length === 60, ring(t2.props).items.length);
+  }
   ok('④-2 8,000バイト以内', t.props.LB_WRITE_PERF.length <= 8000, t.props.LB_WRITE_PERF.length);
   const b = make({ props: { LB_WRITE_PERF: '{壊れ' } });
   b.ctx.handleLineGet({ action: 'line_cancelReservation', idToken: 'x' });
@@ -188,9 +197,10 @@ console.log('=== ⑤ 印を置く場所 ===');
   ok('⑤-2 取消：カレンダーの後に cal・ロックを離した後に sheet・通知の後に notify',
      /_lbConsumeReservationEvents\(customerName, trainer, start\);\s*_lbWpMark\('cal'\);/.test(cx) && /lock\.releaseLock\(\);\s*_lbWpMark\('sheet'\);/.test(cx) && /_lbCxlAfter\(done, _cxT0\);[^\n]*\n\s*_lbWpMark\('notify'\);/.test(cx));
   const ch = pluckFn(LB, 'changeReservationLine');
-  ok('⑤-3 ★変更：pre → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var lock = LockService\.getScriptLock\(\);\s*lock\.waitLock\(10000\);\s*_lbWpMark\('lock'\);/.test(ch));
+  //   ★2026-11-18：契約種別の読み（preType）がロックの直前の段になった
+  ok('⑤-3 ★変更：pre → preType → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var _chType = _lbContractTypeOf\(customerName\);[^\n]*\n\s*_lbWpMark\('preType'\);[^\n]*\n(\s*\/\/[^\n]*\n)*\s*var lock = LockService\.getScriptLock\(\);\s*lock\.waitLock\(10000\);\s*_lbWpMark\('lock'\);/.test(ch));
   ok('⑤-4 ★変更：トレーナー宛の残数の文は trId があるときだけ作る（以前と同じ評価の条件）・remain に数える',
-     /if \(trId\) \{\s*\/\/[^\n]*\n\s*var _chRemainText = _lbTrainerRemainText\(String\(r\[2\]\), customerName, _newStart\);\s*_lbWpMark\('remain'\);/.test(ch) && !/\+ _lbTrainerRemainText\(/.test(ch));
+     /if \(trId\) \{\s*(\/\/[^\n]*\n\s*)+var _chRemainText = _lbTrainerRemainText\(String\(r\[2\]\), customerName, _newStart, 'remain'\);\s*_lbWpMark\('remainText'\);/.test(ch) && !/\+ _lbTrainerRemainText\(/.test(ch));
   const co = pluckFn(LB, '_lbReserveCoreImpl');
   ok('⑤-5 予約の芯：ロックの前後に pre・lock', /_lbWpMark\('pre'\);\s*var lock = LockService\.getScriptLock\(\);\s*var _lbOwnedLock = false;\s*if \(!lock\.hasLock\(\)\) \{ lock\.waitLock\(10000\); _lbOwnedLock = true; \}\s*_lbWpMark\('lock'\);/.test(co));
   const laps = [...co.matchAll(/_lap\('([^']+)'\)/g)].map((m) => m[1]);

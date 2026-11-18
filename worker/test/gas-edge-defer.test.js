@@ -290,7 +290,13 @@ console.log('=== ⑧ 日次点検 ===');
   const w = t.ctx.lbWriteCoversDailyCheck(sv({ table: 'ok', homeClosed: 2, homeOldestSince: now - 70 * 60000, resvClosed: 1, resvOldestSince: now - 12 * 60000, homeRemnant: 0, resvRemnant: 3 }), now);
   ok('⑧-7 ★閉じている最長：60分で high・10分で warn・移行の残りは warn', w.some((x) => x.key === 'covers_home_stuck' && x.severity === 'high') && w.some((x) => x.key === 'covers_resv_slow' && x.severity === 'warn')
      && w.some((x) => x.key === 'covers_resv_remnant' && x.count === 3), JSON.stringify(w));
-  ok('⑧-8 閉じていても5分なら言わない', t.ctx.lbWriteCoversDailyCheck(sv({ table: 'ok', homeClosed: 1, homeOldestSince: now - 5 * 60000 }), now).length === 0);
+  //   ★2026-11-18：問題なしのときは info を1行だけ出す（動いたことが分かるように）。warn・high は出さない
+  const w5 = t.ctx.lbWriteCoversDailyCheck(sv({ table: 'ok', homeClosed: 1, homeOldestSince: now - 5 * 60000 }), now);
+  ok('⑧-8 閉じていても5分なら warn・high を言わない（info だけ）', w5.length === 1 && w5[0].key === 'covers_ok' && w5[0].severity === 'info', JSON.stringify(w5));
+  ok('⑧-9 ★問題なしの info に数（閉じている・移行の残り）が載る・会員IDなし', /残数 閉じている 1名・移行の残り 0名／予約一覧 閉じている 0名・移行の残り 0名/.test(w5[0].detail) && !/C\d/.test(w5[0].detail), w5[0].detail);
+  ok('⑧-10 問題があるときは info を出さない', !w.some((x) => x.key === 'covers_ok'));
+  const w0 = t.ctx.lbWriteCoversDailyCheck(sv({ table: 'ok', homeClosed: 0, resvClosed: 0, homeRemnant: 0, resvRemnant: 0 }), now);
+  ok('⑧-11 全部0でも info が1行（何も出ない＝動いていない、と区別できる）', w0.length === 1 && w0[0].key === 'covers_ok' && w0[0].count === 1, JSON.stringify(w0));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} 設計45 写しの送信を応答の後ろへ（GAS） 検証: ${pass} passed / ${fail} failed`);

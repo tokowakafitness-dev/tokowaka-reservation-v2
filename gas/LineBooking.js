@@ -287,7 +287,12 @@ function handleLineGet(params) {
 // ============================================================
 var LB_WP = {
   PROP: 'LB_WRITE_PERF', BAD_PROP: 'LB_WRITE_PERF_BAD', MAX: 60, MAX_BYTES: 8000,
-  STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark', 'notifyCalc', 'notifyQ'],
+  STAGES: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark', 'notifyCalc', 'notifyQ',
+           'preTrainer', 'preLedger', 'preType', 'remainText'],
+  //   ★2026-11-18：変更の pre をトレーナー名簿（preTrainer）・台帳（preLedger）・契約種別（preType）に、
+  //     remain を芯（remain）とトレーナー宛の文（remainText）に分けた。後ろに足した＝古い行の位置は変わらない。
+  //     反映の前の行（段15個）も読めるように STAGES_V3 を残す
+  STAGES_V3: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark', 'notifyCalc', 'notifyQ'],
   //   ★設計45b：notifyCalc（予約のトレーナー宛の残数の文＝応答の前に残る計算）・notifyQ（通知の待ちへの追加と片付け）を後ろに足した。
   //     M2（段13個）が先に反映された場合の行も読めるように STAGES_V2 を残す
   STAGES_V2: ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'notify', 'edgeQ', 'edgeSend', 'other', 'member', 'edgeMark'],
@@ -352,6 +357,7 @@ function _lbWpStagesOf(r) {
   //   行の長さで段の並びを決める（設計45 で段を後ろに足した。古い行は段11個）
   if (Object.prototype.toString.call(r) !== '[object Array]') return null;
   if (r.length === 6 + LB_WP.STAGES.length + 1) return LB_WP.STAGES;
+  if (r.length === 6 + LB_WP.STAGES_V3.length + 1) return LB_WP.STAGES_V3;
   if (r.length === 6 + LB_WP.STAGES_V2.length + 1) return LB_WP.STAGES_V2;
   if (r.length === 6 + LB_WP.STAGES_V1.length + 1) return LB_WP.STAGES_V1;
   return null;
@@ -2102,7 +2108,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-16b LINE 通知を応答の後ろへ（LB_NOTIFY_DEFER 既定オフ・設計45b）・写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・段 member／edgeMark／notifyCalc／notifyQ・I79 の見張り（設計45）';
+var LB_HEALTH_BUILD = '2026-11-18a 写し・通知の後ろ回しの切り替え関数（lbEdgeDeferSetOn 等）・変更の段を細かく（preTrainer／preLedger／preType／remainText）・変更のトレーナー名簿を1回に・I79 の見張りが問題なしでも info を出す';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -4139,6 +4145,32 @@ function _lbConsecPerf(days) {
 function lbConsecSetOff() { return _lbConsecSwitch('off'); }
 function lbConsecSetDry() { return _lbConsecSwitch('dry'); }
 function lbConsecSetOn()  { return _lbConsecSwitch('on'); }
+
+// ★写しの後ろ回し（LB_EDGE_DEFER）・LINE 通知の後ろ回し（LB_NOTIFY_DEFER）の切り替え（2026-11-18）
+//   オーナーが GAS エディタで1回押す（引数なし）。理由：スクリプト プロパティが50個を超えて画面から追加できず、
+//   エディタでの一時編集が HEAD を古い版で上書きする事故が 11/17 に起きた＝コードを書き換えずに切り替える手段を置く。
+//   On は '1' を入れる。Off は**消す**（未設定＝オフ。'0' を置くとプロパティの数が減らない）。
+//   返す文と Logger に、切り替え前→後の値と EDGE_PUSH_ON（写しの押し出しの元栓）の値を出す。
+//   ★切り替えの前提（移行の残り0・関門③）はこの関数では確かめない。押す前に CEO が日次点検で確かめる。
+function lbEdgeDeferSetOn()    { return _lbDeferSwitch('LB_EDGE_DEFER', true); }
+function lbEdgeDeferSetOff()   { return _lbDeferSwitch('LB_EDGE_DEFER', false); }
+function lbNotifyDeferSetOn()  { return _lbDeferSwitch('LB_NOTIFY_DEFER', true); }
+function lbNotifyDeferSetOff() { return _lbDeferSwitch('LB_NOTIFY_DEFER', false); }
+function _lbDeferSwitch(key, on) {
+  if (key !== 'LB_EDGE_DEFER' && key !== 'LB_NOTIFY_DEFER') throw new Error('切り替えられるのは LB_EDGE_DEFER / LB_NOTIFY_DEFER だけ');
+  var p = PropertiesService.getScriptProperties();
+  function show(v) { return (v === null || v === undefined) ? '（未設定＝オフ）' : ("'" + v + "'"); }
+  var before = p.getProperty(key);
+  if (on) p.setProperty(key, '1'); else p.deleteProperty(key);
+  var after = p.getProperty(key);
+  var edgeOn = p.getProperty('EDGE_PUSH_ON');
+  var okNow = on ? (after === '1') : (after === null || after === undefined);
+  var msg = key + ': ' + show(before) + ' → ' + show(after) + '／EDGE_PUSH_ON: ' + show(edgeOn)
+    + (okNow ? '　✅ 切り替え完了' : '　❌ 切り替わっていません（CEO に連絡してください）')
+    + ((key === 'LB_EDGE_DEFER' && on && edgeOn !== '1') ? '　★EDGE_PUSH_ON が 1 ではないため、写しの押し出しそのものが動いていません' : '');
+  Logger.log(msg);
+  return msg;
+}
 function _lbConsecSwitch(mode) {
   if (mode !== 'off' && mode !== 'dry' && mode !== 'on') throw new Error('mode は off / dry / on');
   var p = PropertiesService.getScriptProperties();
@@ -5978,10 +6010,14 @@ function _lbWelcomeText() {
 // トレーナー向けの「顧客の残り」の文面（予約した日の月で出す）。
 //   ★予約確定と予約変更の両方で使う（2026-10-13・関門③）。変更で「新規予約」通知を止めたとき、
 //     この情報が変更通知から消えていた。月をまたぐ変更では対象月の残数が変わるので、変更でも要る。
-function _lbTrainerRemainText(customerId, customerName, start) {
+//   coreStage（2026-11-18・任意）：渡されたら _lbBuildHome（芯）の直後にその段の印を付ける（変更だけが 'remain' を渡す）。
+//     予約の通知（_lbNotifyReservation）は渡さない＝今までどおり呼び出し側の notifyCalc に全部数える
+function _lbTrainerRemainText(customerId, customerName, start, coreStage) {
   var _remTxt = '';
   try {
-    var _h = _lbBuildHome(customerId, customerName, null, start.getTime());   // 予約した日の月で出す
+    var _h;
+    try { _h = _lbBuildHome(customerId, customerName, null, start.getTime()); }   // 予約した日の月で出す
+    finally { if (coreStage && typeof _lbWpMark === 'function') _lbWpMark(coreStage); }
     if (_h && _h.type) {
       var _lines = [];
       // 予約が翌月以降なら「10月分：」のように月を明記する（今月の残数と取り違えないため）
@@ -9248,6 +9284,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
   var rec = getCustomerByLine(lineUserId);
   _lbWpMark('member');   // 設計45：会員名簿の読み
   var _actorTrainerC = getTrainerByLine(lineUserId);   // トレーナーも操作可（管理ページ）＝会員verified必須の対象外。行単位で担当を再検証する。
+  _lbWpMark('preTrainer');   // 2026-11-18：トレーナー名簿の読み（pre を分ける）
   var _ownerFreeReqC = !!(opts && opts.ownerFree === true);
   if (_ownerFreeReqC && !_lbIsOwnerRole(_actorTrainerC)) return { success: false, code: 'FORBIDDEN', message: 'オーナーのみ操作できます。' };
   if (!_actorTrainerC && (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified')) return { success: false, code: 'NOT_VERIFIED', message: '会員登録が必要です。' };
@@ -9267,8 +9304,11 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
     if (String(values[i][8]) === reservationId) { row = i + 2; r = values[i]; break; }
   }
   if (!r) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
+  _lbWpMark('preLedger');   // 2026-11-18：台帳の読みと検索
   // 本人（顧客）または担当トレーナーのみ操作可（トレーナー管理ページ対応）
-  var _actorTr = getTrainerByLine(lineUserId);
+  //   ★2026-11-18：トレーナー名簿を2回読んでいた。同じ関数・同じ引数（lineUserId はこの関数の中で書き換えない）で、
+  //     間に名簿を書く処理は無い（台帳を読むだけ）＝値は同じ。1回目の値を使う（getTrainerByLine は名簿を毎回読む・キャッシュなし）
+  var _actorTr = _actorTrainerC;
   var _isOwner = String(r[3]) === String(lineUserId);
   var _isTrainer = _actorTr && String(r[4]) === String(_actorTr.trainerId);
   if (!_isOwner && !_isTrainer && !_lbIsOwnerRole(_actorTr)) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };   // オーナーは全予約を操作可
@@ -9286,10 +9326,11 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
   if (!free) return { success: false, code: 'SAME_DAY', message: '当日の変更はできません。キャンセルのうえ振替セッションをお申し込みください。' };
   var customerName = String(r[1]);
   var trainer = _lbTrainerById(String(r[4]));
+  _lbWpMark('pre');
 
   var _chType = _lbContractTypeOf(customerName);   // 予約の作成と通知の終了時刻で同じ値を使う（ロックの外で読む）
+  _lbWpMark('preType');   // 2026-11-18：契約種別の読み（契約表）
   // 変更全体を単一Lockで原子化（並行二重変更を防ぐ・C3）。_lbReserveCore は hasLock を見て再取得しない。
-  _lbWpMark('pre');
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   _lbWpMark('lock');
@@ -9350,8 +9391,9 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
     var trId = getTrainerLineId(trainer.id);
     if (trId) {
       //   ★残数の文を先に作る（設計43 A：計算の時間を remain に数える）。以前も _lbPush の引数として呼ぶ前に評価していた＝順序は同じ
-      var _chRemainText = _lbTrainerRemainText(String(r[2]), customerName, _newStart);
-      _lbWpMark('remain');
+      //   ★2026-11-18：芯（_lbBuildHome）は中で remain に、文を組む残りを remainText に数える
+      var _chRemainText = _lbTrainerRemainText(String(r[2]), customerName, _newStart, 'remain');
+      _lbWpMark('remainText');
       _lbPush(trId, '【予約変更】' + customerName + '様\n変更前：' + _lbFmtResvLabel(r[0]) + '\n変更後：' + _lbFmtResvLabel(_newStart) + '〜' + _newEndHm
         + (_ownerAppliedC ? '\n（当日の無料変更・オーナー権限）' : '')
         + _chRemainText, 'change_trainer', _chCtx);

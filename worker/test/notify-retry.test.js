@@ -459,7 +459,7 @@ ok('4-13 ★変更の通知だけで足りる：お客様へ終了時刻・場�
    '「承りました」を止めたとき、これらはそちらにしか無かった（関門③）');
 ok('4-14 ★変更の通知だけで足りる：トレーナーへ変更後の残数',
    //   設計43：残数の文を先に変数へ取り出して計測の段に数える（中身と宛先は同じ）
-   /var _chRemainText = _lbTrainerRemainText\(String\(r\[2\]\), customerName, _newStart\);/.test(S)
+   /var _chRemainText = _lbTrainerRemainText\(String\(r\[2\]\), customerName, _newStart, 'remain'\);/.test(S)
    && /\+ _chRemainText, 'change_trainer', _chCtx\)/.test(S));
 ok('4-15 予約確定の残数も同じ関数で作る（文面が分かれない）',
    /var _remTxt = isTransfer \? '' : _lbTrainerRemainText\(customerId, customerName, start\);/.test(S));

@@ -421,7 +421,7 @@ console.log('=== ⑦ 日次点検と記録 ===');
   ok('⑦-11 writePerfText がこの要約を載せる', /_lbNotifyDeferSummaryText\(\)/.test(pluckFn(LB, 'writePerfText')));
   // 段：notifyCalc・notifyQ を後ろに足す（旧い並び11も読む）
   const st = (LB.match(/STAGES: \[([^\]]*)\]/) || [])[1] || '';
-  ok('⑦-12 段 notifyCalc・notifyQ を後ろに足す', /'member', 'edgeMark', 'notifyCalc', 'notifyQ'$/.test(st.trim()), st);
+  ok('⑦-12 段 notifyCalc・notifyQ を後ろに足す（2026-11-18 にその後ろへ preTrainer 等を足した）', /'member', 'edgeMark', 'notifyCalc', 'notifyQ',\s*'preTrainer', 'preLedger', 'preType', 'remainText'$/.test(st.trim()), st);
   ok('⑦-13 Script Properties の待ちは会員の氏名・電話の欄を持たない（to・text・p・c・nr・li・lu・id・at だけ）', (() => {
     const t2 = make({ on: true, dispatch: book() }); t2.ctx.handleLineGet({ action: 'line_makeReservationLine' });
     return pend(t2.props).every((x) => Object.keys(x).sort().join(',') === 'at,c,id,li,lu,nr,p,text,to' && Object.keys(x.c).sort().join(',') === 'customerId,resId,startMs');

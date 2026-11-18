@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-16b LINE 通知の受け皿を一回限りトリガーと5分ごとに（設計45b）・写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）・写しに番号（coversSeq）（設計45）';
+var LB_EDGE_BUILD = '2026-11-18a I79 の見張りが問題なしでも info を出す・カレンダー同期の間隔のコメントを実際の5分に・LINE 通知の受け皿を一回限りトリガーと5分ごとに（設計45b）・写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）（設計45）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -1359,6 +1359,16 @@ function lbWriteCoversDailyCheck(sv, nowMs) {
     var rem = Number(w[k + 'Remnant'] || 0);
     add('covers_' + k + '_remnant', 'warn', rem, label + 'の写しが番号つきの押し出しをまだ受けていない会員 ' + rem + '名（migration 0034 の後の移行の残り・その間は GAS）');
   }
+  //   ★問題が無いときも1行（info）出す（2026-11-18）。何も出ないと「見張りが動いて問題なし」と「動いていない」を見分けられない。
+  //     閉じている数（10分未満で warn にならない分も含む）と移行の残りを数だけ出す（会員IDなし）
+  if (!out.length) {
+    var parts = [];
+    for (var j = 0; j < kinds.length; j++) {
+      var kk = kinds[j][0];
+      parts.push(kinds[j][1] + ' 閉じている ' + Number(w[kk + 'Closed'] || 0) + '名・移行の残り ' + Number(w[kk + 'Remnant'] || 0) + '名');
+    }
+    out.push({ key: 'covers_ok', severity: 'info', count: 1, detail: '写しが書き込みの印を含むか（I79）：問題なし（' + parts.join('／') + '）' });
+  }
   return out;
 }
 
@@ -2281,7 +2291,7 @@ function buildCalSyncPayload(nowMs) {
   };
 }
 
-// D1へ送る。1分ごとのトリガーと、予約の確定直後から呼ぶ。
+// D1へ送る。5分ごとのトリガー（lbCalSyncTick）と、予約の確定直後から呼ぶ。
 //   ★何が起きたかを必ずログに出す。出さないとGASエディタで実行しても
 //     「実行開始／実行完了」しか出ず、成功したのか途中で止まったのか分からない。
 //     2026-10-02、まさにそれで切り分けに往復した。
@@ -2358,7 +2368,7 @@ function calSyncPreview() {
 // ①-b カレンダー → D1 の同期を自動で回す（2026-10-02・設計書 ops/design/01-calendar-to-d1.md 第4版）
 //
 //   誰が呼ぶか（設計書「誰が呼ぶか」）：
-//     ・1分ごとの時間主導トリガー … lbCalSyncTick（カレンダー全量を読んでD1へ押し出す）
+//     ・5分ごとの時間主導トリガー … lbCalSyncTick（カレンダー全量を読んでD1へ押し出す）
 //     ・予約の確定・変更・取消 … edgeAfterWrite から、その場で押し出す
 //
 //   ★なぜ予約の処理の中で直接 pushCalSync を呼ばないか（顧客の待ち時間を増やさないため）：
@@ -2369,8 +2379,8 @@ function calSyncPreview() {
 //     そこで会員登録後の同期（_lbScheduleSyncAfterRegister）と同じ作法を使う：
 //       「1秒後の一回限りトリガー」を作って別の実行に逃がす。作るのは数十ミリ秒。
 //     押し出しは1〜2秒後に別実行で走るので、顧客の応答は遅くならず、反映はほぼ即時。
-//     ★トリガーを作れなくても（上限20件・一時的な失敗）予約は通る。1分ごとの同期が
-//       最大60秒後に拾うだけ。だから作成の失敗は例外にせずログに残す。
+//     ★トリガーを作れなくても（上限20件・一時的な失敗）予約は通る。5分ごとの同期が
+//       最大5分後に拾うだけ。だから作成の失敗は例外にせずログに残す。
 //
 //   止めかた（押し出し全体は止めずに、同期だけ止める）：
 //     ・LB_CALSYNC_ON を '0' にする … トリガーは残るが何もしない（すぐ戻せる）
@@ -2386,7 +2396,7 @@ var LB_CALSYNC = {
   LAST_OK_PROP:  'LB_CALSYNC_LAST_OK',   // 最後に成功した時刻（ミリ秒）
   FAILS_PROP:    'LB_CALSYNC_FAILS',     // 連続して失敗した回数
   LAST_ERR_PROP: 'LB_CALSYNC_LAST_ERR',  // 最後の失敗の理由（個人情報は入らない）
-  TICK_HANDLER:  'lbCalSyncTick',        // 1分ごとに呼ばれる関数
+  TICK_HANDLER:  'lbCalSyncTick',        // 5分ごとに呼ばれる関数（EVERY_MINUTES）
   AFTER_HANDLER: '_lbCalSyncAfterWrite', // 予約直後に一度だけ呼ばれる関数
   STALE_MS:      15 * 60000              // 15分以上成功していなければ「止まっている」と見なす
 };
@@ -2394,7 +2404,7 @@ var LB_CALSYNC = {
 // 予約の直後にカレンダー同期をやり直す操作。
 //   ★カレンダーの予定が変わるものだけを挙げる。残数や紐付けだけが変わる操作
 //     （チケット追加・会員登録・未紐付けの解消）は席の埋まりを変えないので入れない。
-//   もし取りこぼしても、1分ごとの同期が最大60秒で追いつく（安全側に倒れる）。
+//   もし取りこぼしても、5分ごとの同期が最大5分で追いつく（安全側に倒れる）。
 var EDGE_CALSYNC_AFTER = {
   line_makeReservationLine: 1, line_makeReservationLineProxy: 1,
   line_makeRecurringReservation: 1, line_makeBatchReservation: 1,
@@ -2415,7 +2425,7 @@ function _calsyncAutoOn() {
 }
 
 // ------------------------------------------------------------
-// 1分ごとの入口。トリガーからも、予約直後の一回限りトリガーからも、ここを通す。
+// 定期（5分ごと）の入口。トリガーからも、予約直後の一回限りトリガーからも、ここを通す。
 //   記録（成功時刻・連続失敗）と重なり防止を1か所にまとめるため。
 // ------------------------------------------------------------
 function lbCalSyncTick() {
@@ -2436,8 +2446,8 @@ function _lbCalSyncCore() {
   if (!_edgeEnabled()) return { ok: false, code: 'EDGE_OFF' };          // 元栓が閉じている（静かに終わる）
   if (_edgeProp(LB_CALSYNC.ON_PROP) === '0') return { ok: false, code: 'CALSYNC_OFF' };
 
-  // 同期同士が重ならないようにする（1分ごとの実行と、予約直後の実行がぶつかりうる）。
-  //   ★押し出し本体の _edgeLocked（スクリプトロック）は使わない。1分ごとに数秒握ると、
+  // 同期同士が重ならないようにする（5分ごとの実行と、予約直後の実行がぶつかりうる）。
+  //   ★押し出し本体の _edgeLocked（スクリプトロック）は使わない。5分ごとに数秒握ると、
   //     10分ごとの枠の押し出しがロック待ちで見送られる。別のロックで同期だけを直列化する。
   var lock = null;
   try { lock = LockService.getUserLock(); } catch (e) { lock = null; }
@@ -2460,7 +2470,7 @@ function _lbCalSyncCore() {
   return r;
 }
 
-// 実行の記録。1分ごとに回るので「失敗が続いていること」に気づけなければ意味がない。
+// 実行の記録。5分ごとに回るので「失敗が続いていること」に気づけなければ意味がない。
 function _calsyncNote(r) {
   try {
     if (r && r.ok) {
@@ -2476,7 +2486,7 @@ function _calsyncNote(r) {
     _calsyncSetProp(LB_CALSYNC.LAST_ERR_PROP, code + ' / ' + new Date().toISOString());
     Logger.log('[calsync] 失敗（連続' + n + '回目・理由 ' + code + '）');
 
-    // 設定が足りない失敗は、回り続けても直らない。1分ごとに失敗して実行枠を食うだけなので
+    // 設定が足りない失敗は、回り続けても直らない。5分ごとに失敗して実行枠を食うだけなので
     //   同期だけ止める（押し出し全体は触らない）。setupCalSyncTrigger で再開できる。
     if (code === 'EDGE_NOT_CONFIGURED') {
       _calsyncSetProp(LB_CALSYNC.ON_PROP, '0');
@@ -2520,7 +2530,7 @@ function _lbCalSyncAfterWrite(e) {
   try { _lbNotifyDeferDrain('AFTER', LB_NOTIFY_DEFER.BUDGET_MS, 0); } catch (eN) {}
   var r = null;
   try { r = _lbCalSyncCore(); }
-  catch (e) { Logger.log('[calsync] 予約直後の同期に失敗（1分ごとの同期で追いつきます）: ' + (e && e.message)); }
+  catch (e) { Logger.log('[calsync] 予約直後の同期に失敗（5分ごとの同期で追いつきます）: ' + (e && e.message)); }
   // ★二重書きの速い道（2026-10-08・段階3-a）。
   //   このトリガーは予約系の書き込みの1秒後に一度だけ動く。そこへ相乗りする。
   //   失敗しても待ち行列に残るので、心拍（15分ごと）が拾う。
@@ -2800,8 +2810,8 @@ function _lbScheduleCalSync() {
     _LB_CAL_SCHEDULED = true;   // 設計45b：作れた（handleLineGet が保留した LINE 通知を後ろへ回してよい）
     return true;
   } catch (e) {
-    // 作れなくても予約は通る。1分ごとの同期が最大60秒で拾う。
-    Logger.log('[calsync] 予約直後の同期を予約できませんでした（1分ごとの同期で反映されます）: ' + (e && e.message));
+    // 作れなくても予約は通る。5分ごとの同期が最大5分で拾う。
+    Logger.log('[calsync] 予約直後の同期を予約できませんでした（5分ごとの同期で反映されます）: ' + (e && e.message));
     //   ★作れなかったことを記録する（2026-10-09）。
     //     いままでログだけで、**誰も気づけなかった。**
     //     作れない原因はほぼ「トリガーが上限（20本）に当たった」。
@@ -2816,7 +2826,7 @@ function _lbScheduleCalSync() {
 // トリガーの登録／解除（★オーナーがGASエディタで1回実行する）
 // ------------------------------------------------------------
 function setupCalSyncTrigger() {
-  // 設定が揃っていなければ始めない。1分ごとに失敗し続けるのを防ぐ（setupEdgeJobTrigger と同じ考え方）。
+  // 設定が揃っていなければ始めない。5分ごとに失敗し続けるのを防ぐ（setupEdgeJobTrigger と同じ考え方）。
   if (!_edgeProp('EDGE_URL') || !_edgeProp('EDGE_SECRET')) {
     Logger.log('❌ EDGE_URL / EDGE_SECRET が未設定です。スクリプト プロパティに登録してから実行してください。');
     return;
@@ -2888,7 +2898,7 @@ function calSyncStatus() {
   var h = calSyncHealth();
   var out = ['===== カレンダー → D1 同期の状態 ====='];
   out.push('同期: ' + (h.on ? '動かす設定' : '止めている（EDGE_PUSH_ON か LB_CALSYNC_ON）'));
-  out.push('1分ごとのトリガー: ' + (h.triggerAlive ? 'あり' : 'なし（setupCalSyncTrigger() を実行してください）'));
+  out.push('5分ごとのトリガー: ' + (h.triggerAlive ? 'あり' : 'なし（setupCalSyncTrigger() を実行してください）'));
   out.push('最後に成功: ' + (h.lastOkMs ? (h.ageMin + '分前') : 'まだ成功していません'));
   out.push('連続失敗: ' + h.fails + '回' + (h.lastError ? '（最後の理由 ' + h.lastError + '）' : ''));
   if (h.stale) out.push('⚠️ 15分以上成功していません。公開中の世代が古いままです。');
@@ -2968,7 +2978,7 @@ function pushCalCompare(nowMsOpt) {
   return { ok: true, result: out, gasSlots: slots.length };
 }
 
-// 1分ごとの同期のあとに、そのまま突き合わせる。
+// 5分ごとの同期のあとに、そのまま突き合わせる。
 //   ★押し出した直後に比べる。別のタイミングで比べると、D1が最大7分古いせいで
 //     「カレンダー変更直後の時間差」が大量の不一致として記録され、本当の実装差が埋もれる。
 function lbCalSyncAndCompare() {

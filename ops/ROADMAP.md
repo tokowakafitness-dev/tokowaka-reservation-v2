@@ -25,6 +25,8 @@
   設計45b LINE 通知を応答の後ろへ（実測：notify 予約3.7秒・取消2.2秒）   ✅ 11/16 オーナー承認・関門①3周で通過
   └ 実装（スイッチ LB_NOTIFY_DEFER 既定オフ・段 notifyCalc で計算と通信を分ける） ✅ 11/16（claude/write-latency-c・未 push）
   └ GAS 反映（M2 と同じ1回）→ notifyCalc を見て縮む量を確かめる → 関門③ → スイッチ ⬜ ★オーナー
+  GAS の束 2026-11-18a（切り替え関数・変更の段を細かく・トレーナー名簿1回・I79 の info・コメント） ✅ 11/18 実装（未 push・関門②待ち）
+  └ GAS 反映（1回）→ writePerf で変更の preTrainer/preLedger/preType/remain/remainText を読む → 打ち手C を決める ⬜ ★オーナー
 既存の穴（別件として記録）：枠の巻き戻し防止は読み終えの時刻だけで比べる（設計43 関門① 中3）
                             edgeSynced（チケット追加等）は通し番号を積めなくても真になる
 ```
