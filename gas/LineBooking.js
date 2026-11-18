@@ -2108,7 +2108,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-18a 写し・通知の後ろ回しの切り替え関数（lbEdgeDeferSetOn 等）・変更の段を細かく（preTrainer／preLedger／preType／remainText）・変更のトレーナー名簿を1回に・I79 の見張りが問題なしでも info を出す';
+var LB_HEALTH_BUILD = '2026-11-18a 写し・通知の後ろ回しの切り替え関数（lbEdgeDeferSetOn 等）・変更の段を細かく（preTrainer／preLedger／preType／remainText）・I79 の見張りが問題なしでも info を出す';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -9306,9 +9306,9 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
   if (!r) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
   _lbWpMark('preLedger');   // 2026-11-18：台帳の読みと検索
   // 本人（顧客）または担当トレーナーのみ操作可（トレーナー管理ページ対応）
-  //   ★2026-11-18：トレーナー名簿を2回読んでいた。同じ関数・同じ引数（lineUserId はこの関数の中で書き換えない）で、
-  //     間に名簿を書く処理は無い（台帳を読むだけ）＝値は同じ。1回目の値を使う（getTrainerByLine は名簿を毎回読む・キャッシュなし）
-  var _actorTr = _actorTrainerC;
+  //   ★認可の直前に名簿を読み直す（1回目は台帳を読む前）。1回にまとめると、その間に無効化・担当変更された
+  //     スタッフを古い権限で通しうる（2026-11-18 関門② Codex 指摘で1回化を取り下げ）。速さより権限の新しさを取る
+  var _actorTr = getTrainerByLine(lineUserId);
   var _isOwner = String(r[3]) === String(lineUserId);
   var _isTrainer = _actorTr && String(r[4]) === String(_actorTr.trainerId);
   if (!_isOwner && !_isTrainer && !_lbIsOwnerRole(_actorTr)) return { success: false, code: 'FORBIDDEN', message: 'この予約は操作できません。' };   // オーナーは全予約を操作可

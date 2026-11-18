@@ -117,26 +117,26 @@ console.log('=== ② 変更の段 ===');
   ok('②-0 変更は成功する', r.success === true && w.log.core === 1, JSON.stringify(r));
   ok('②-1 ★トレーナー名簿の読み → preTrainer（100ms）', ms.preTrainer === 100, JSON.stringify(ms));
   ok('②-2 ★台帳の読み → preLedger（200ms）', ms.preLedger === 200, JSON.stringify(ms));
-  ok('②-3 ★契約種別 → preType（300ms）・pre には入らない', ms.preType === 300 && (ms.pre || 0) === 0, JSON.stringify(ms));
+  ok('②-3 ★契約種別 → preType（300ms）・pre は認可直前の名簿の読み直し（100ms）だけ', ms.preType === 300 && ms.pre === 100, JSON.stringify(ms));
   ok('②-4 ★残数の芯（_lbBuildHome）→ remain（700ms）・文を組む残り → remainText', ms.remain === 700 && 'remainText' in ms && ms.remainText === 0 && w.log.home === 1, JSON.stringify(ms));
   ok('②-5 会員名簿 → member（50ms）・ロック → lock（10ms）', ms.member === 50 && ms.lock === 10, JSON.stringify(ms));
   ok('②-6 トレーナー宛の文の中身は今までどおり', w.log.push.some((p) => p.kind === 'change_trainer' && /【顧客の残り】\n(11月分　)?チケット：残3枚/.test(p.text)), JSON.stringify(w.log.push));
   const row = w.ctx._lbWpRow(w.ctx._LB_WP, r, null, Date.now());
   ok('②-7 行は段19個の並び・形の検査を通る', row.length === 6 + STAGES.length + 1 && w.ctx._lbWpValidRow(row) === true && row[6 + STAGES.indexOf('preType')] === 300, JSON.stringify(row));
 }
-console.log('=== ③ トレーナー名簿は1回 ===');
+console.log('=== ③ トレーナー名簿は認可の直前に読み直す ===');
 {
   const w = world({ actor: { trainerId: 'T1', role: 'trainer' } });
   w.ctx.changeReservationLine('Utrainer', 'R1', new Date(2026, 10, 8, 18).toISOString());
-  ok('③-1 ★getTrainerByLine は1回だけ', w.log.trByLine === 1, String(w.log.trByLine));
+  ok('③-1 ★getTrainerByLine は認可の直前にも読み直す（2回）', w.log.trByLine === 2, String(w.log.trByLine));
   const x = world({ actor: { trainerId: 'T9', role: 'trainer' } });
   const rx = x.ctx.changeReservationLine('Uother', 'R1', new Date(2026, 10, 8, 18).toISOString());
-  ok('③-2 担当外のトレーナーは今までどおり FORBIDDEN・予約の本体へ行かない', rx.code === 'FORBIDDEN' && x.log.core === 0 && x.log.trByLine === 1, JSON.stringify(rx));
+  ok('③-2 担当外のトレーナーは今までどおり FORBIDDEN・予約の本体へ行かない', rx.code === 'FORBIDDEN' && x.log.core === 0 && x.log.trByLine === 2, JSON.stringify(rx));
   const o = world({ actor: { trainerId: 'T0', role: 'owner' } });
-  ok('③-3 オーナーは担当外でも変更できる（今までどおり）', o.ctx.changeReservationLine('Uowner', 'R1', new Date(2026, 10, 8, 18).toISOString()).success === true && o.log.trByLine === 1);
+  ok('③-3 オーナーは担当外でも変更できる（今までどおり）', o.ctx.changeReservationLine('Uowner', 'R1', new Date(2026, 10, 8, 18).toISOString()).success === true && o.log.trByLine === 2);
   const m = world({ actor: null });
   ok('③-4 会員（未登録・トレーナーでない）は NOT_VERIFIED（今までどおり）', m.ctx.changeReservationLine('Ucust', 'R1', new Date(2026, 10, 8, 18).toISOString()).code === 'NOT_VERIFIED');
-  ok('③-5 ★コード上も getTrainerByLine の呼び出しは1か所', (pluckFn(LB, 'changeReservationLine').match(/getTrainerByLine\(/g) || []).length === 1);
+  ok('③-5 ★コード上も getTrainerByLine の呼び出しは2か所（認可の直前で読み直す）', (pluckFn(LB, 'changeReservationLine').match(/getTrainerByLine\(/g) || []).length === 2);
 }
 console.log('=== ④ 予約の通知は印を付けない ===');
 {
