@@ -1,7 +1,7 @@
 {
   "LB_EDGE_BUILD": "2026-11-18a I79 の見張りが問題なしでも info を出す・カレンダー同期の間隔のコメントを実際の5分に・LINE 通知の受け皿を一回限りトリガーと5分ごとに（設計45b）・写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）（設計45）",
   "LB_AUDIT_BUILD": "2026-11-13a 出勤枠の新しさに、すぐ押し出しの最後の失敗の理由を出す（設計42）",
-  "LB_HEALTH_BUILD": "2026-11-18a 写し・通知の後ろ回しの切り替え関数（lbEdgeDeferSetOn 等）・変更の段を細かく（preTrainer／preLedger／preType／remainText）・変更のトレーナー名簿を1回に・I79 の見張りが問題なしでも info を出す",
+  "LB_HEALTH_BUILD": "2026-11-18a 写し・通知の後ろ回しの切り替え関数（lbEdgeDeferSetOn 等）・変更の段を細かく（preTrainer／preLedger／preType／remainText）・I79 の見張りが問題なしでも info を出す",
   "LB_NUDGE_BUILD": "2026-10-24a 改行をLINEの幅に合わせる・固定枠の時刻が日付型でも崩れない",
   "LB_JOB_BUILD": "2026-11-13c 書き込みの段ごとの時間を読む窓口（remaining の writePerf・設計43）"
 }
