@@ -239,3 +239,8 @@ MEMBER_CONSENT_TRAINERS allow のとき：会員の担当（customers.default_tr
 - `consent-docs.test.js`：版と SHA-256 の固定・文面に `［` `］`（空欄）が無い。
 - `liff-member-consent.test.js`（jsdom・入口から）：memberConsent のときだけ聞く／ask の kind だけ出る／チェックの初期値は外れ／送る本文（answers・vers）／あとでは何も送らない／textContent（HTML を解釈しない）。
 - `liff-karte` に：aiConsent が agreed でなければ AI のボタンが出ない・契約タブに録音・AI の行。
+
+## 関門③（2026-11-19・Codex）
+- 判定：本人の意図に反する削除・担当A以外への勧誘・未同意の同意記録・本人以外への露出・判定不能時の扱い、いずれも「起きない」（該当行で確認）。
+- 指摘1：撤回の確かめと同意の文面は「写真も消す」と言うが、撤回が消すのは karte_safety だけ。→ 裏取り：写真の保存はまだ無い（設計32 未実装・R2 未結合）＝約束は空のまま守られている。将来の入れ忘れを `consent-photo-guard.test.js` で止める（写真の表／R2 が現れたら、撤回と掃除で消していなければ落ちる。壊して落ちることを確認）。
+- 指摘2：切替オフでも、会員画面で健康情報に同意済みの本人は撤回できる（取り消し不能な削除）。→ 仕様どおり（I-CS5：同意した人が撤回できなくなるのを防ぐ）。本番で allow にしたことは無い＝該当者は0名。
