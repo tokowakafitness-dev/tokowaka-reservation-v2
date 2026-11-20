@@ -263,7 +263,8 @@ console.log('=== ⑦ トリガー ===');
   const BEFORE = ["'_lbSyncAfterRegister'", "'_lbWarmContract'", "'autoBookRecurringPatterns'", "'checkLineQuota'", "'dailyHealthCheck'", "'dailySync'",
     "'edgeJobPoll'", "'lbNudgeDaily'", "'pushToEdgeFullSync'", "'pushToEdgeHome'", "'pushToEdgeLight'", "'pushToEdgeSlots'", "'refreshPaceBoard'",
     "'sendLineReminders'", "'sendReminderMails'", "'sendShiftReminders'", "'syncContractStatus'", "'warmupCache'", "'weeklyPaceReport'",
-    'LB_CALSYNC.AFTER_HANDLER', 'LB_CALSYNC.TICK_HANDLER'].sort();
+    'LB_CALSYNC.AFTER_HANDLER', 'LB_CALSYNC.TICK_HANDLER',
+    'LB_AB_RETRY.HANDLER'].sort();   // 設計47 §7：固定枠の自動予約の取り直し（一回限り・保留があるときだけ）。定期のトリガーは増やしていない
   ok('⑦-1 ★トリガーを作る呼び出しの集合が設計45 の前と同じ（新しいトリガー0本）', JSON.stringify(uniq) === JSON.stringify(BEFORE), JSON.stringify(uniq));
   const block = PE.slice(PE.indexOf('// 設計45 写しの送信を応答の後ろへ回す'), PE.indexOf('// 振り分けの出口から呼ぶ。'));
   ok('⑦-2 後ろ回しの部品はトリガーを作らない', block.length > 1000 && !/newTrigger/.test(block));
