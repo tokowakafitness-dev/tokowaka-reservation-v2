@@ -2142,10 +2142,13 @@
     spkPre: new RegExp('^\\s*' + ATT_SPK + '\\s*(?:[\\[(]?' + ATT_ANY + '[\\])]?)?\\s*[:：]\\s*', 'i'),
     tsPre: new RegExp('^\\s*\\[' + ATT_ANY + '\\]\\s*|^\\s*' + ATT_HMS + '\\s+')
   };
+  //   設計49 段階0：アプリが先頭に付ける見出しの行。★実物の文言を確かめるまでは空（自動で消さない・行全体の完全一致だけ・先頭3行だけ）
+  var ATT_HEADER_LINES = [];
   function attClean(s, kind) {
     var L = String(s).split(/\r\n|\r|\n/), out = [], dropped = 0, sub = kind === 'srt' || kind === 'vtt', skip = false, blockTop = true;
     for (var i = 0; i < L.length; i++) {
       var t = L[i];
+      if (i < 3 && ATT_HEADER_LINES.indexOf(t.trim()) >= 0) { dropped++; continue; }
       if (sub) {
         //   字幕の形：空行で区切ったかたまり。WEBVTT の見出し（先頭）と NOTE/STYLE/REGION のかたまりは、次の空行まで丸ごと落とす
         if (!t.trim()) { skip = false; blockTop = true; continue; }
@@ -2182,6 +2185,22 @@
     return o;
   }
   function impLine(sets) { return (sets || []).map(function (st) { return setOneLine({ weight_kg: st.w === '' ? 0 : st.w, reps: st.r, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (d) { return { weight_kg: d.w === '' ? 0 : d.w, reps: d.r, assist_reps: d.assist, forced: d.forced }; }) }); }).join('・'); }
+  //   設計49 段階0：「読み取る」の結果が文字起こしらしいか（件数だけで決めない＝全部満たすとき）。案内を出すだけで何も止めない
+  //     ①3,000字以上 ②構造になった行（種目・セット）が空でない行の1割未満 ③決定待ちが40件を超える
+  function memoLooksTranscript(text, r) {
+    var t = String(text || '');
+    if (t.length < 3000 || !r || r.pending.length <= 40) return false;
+    var lines = t.split(/\r\n|\r|\n/).filter(function (x) { return x.trim(); }).length;
+    var built = r.items.length; r.items.forEach(function (it) { built += (it.sets || []).length; });
+    return lines > 0 && built / lines < 0.1;
+  }
+  //   AI のボタンが出ない理由（出るなら ''）
+  function aiOffReason() {
+    if (!cur.aiDraft) return 'AIの振り分けは、このアカウントではまだ使えません（切替が閉じています）。';
+    if (cur.aiConsent === 'none') return 'このお客様は録音と AI の利用に同意していないため、AIの振り分けは使えません（会員画面の「同意の内容」から同意できます）。';
+    if (cur.aiConsent !== 'agreed') return '録音と AI の利用の同意を確認できなかったため、AIの振り分けは使えません。';
+    return '';
+  }
   function trImportSub(sessions, mode) {
     navPush({ cid: cur.customerId, tab: 'training', sub: 'trimport' }, mode);
     var box = cur.body; box.innerHTML = '';
@@ -2248,23 +2267,24 @@
     wrap.appendChild(out);
     var bar = el('div', { class: 'k-savebar' });
     box.appendChild(wrap); box.appendChild(bar);
-    var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [], planOpen = false;
+    var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [], planOpen = false, tlike = false;   // tlike：設計49 段階0（文字起こしらしい＝カードの前に案内）
     var aiBusy = false, aiGen = 0;   // 設計39：送信中・応答の世代（文字を変えたら古い応答を捨てる）
     ta.oninput = function () {
       var was = aiBusy; aiGen++; aiBusy = false;
-      if (res || err || ask || was) { res = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; draw(); }
+      if (res || err || ask || was) { res = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; tlike = false; draw(); }
     };
     function allDecided() { return !!res && dec.every(function (d) { return !!d; }); }
     function read() {
       err = ''; ask = false; planOpen = false;
       lines0 = String(ta.value || '').split(/\r\n|\r|\n/);
       res = parseMemo(ta.value, today(), autoKnown, sugg);
+      tlike = memoLooksTranscript(ta.value, res);
       dec = res.pending.map(function () { return null; });
       ui = res.pending.map(function (p) { return { name: (p.parsed && p.parsed.exercise) || '', open: false }; });
       if (!res.items.length && !res.pending.length) { res = null; err = '読み取れる行がありませんでした。'; draw(); return; }
       if (!res.pending.length) { place(); return; }
       draw();
-      var first = out.querySelector('.k-impcard'); if (first) { try { first.scrollIntoView({ block: 'center' }); } catch (e) {} }
+      var first = out.querySelector(tlike ? '.k-imptguide' : '.k-impcard'); if (first) { try { first.scrollIntoView({ block: 'center' }); } catch (e) {} }
     }
     //   決定待ちの名前を、メモの行の順の位置に入れる：その行より前だけを読み取り直して、前にある種目の数を数える（読み取りの関数は変えない）
     function posOf(p) { if (p.pos != null) return p.pos; return parseMemo(lines0.slice(0, p.lines[0] - 1).join('\n'), today(), autoKnown, sugg).items.length; }
@@ -2716,7 +2736,16 @@
           btnCol([act('いまの入力の後ろに足す', function () { commit(); }, ''), act('やめる', function () { ask = false; draw(); })])]));
         return;
       }
-      if (res && !err) {
+      if (res && !err && tlike) {
+        //   設計49 段階0：文字起こしらしい＝1件ずつのカードの前に案内。★止めない（「それでも1件ずつ確認する」で今のカードが出る）
+        var why = aiOffReason();
+        out.appendChild(el('div', { class: 'k-card k-imptguide', role: 'status', style: 'display:flex;flex-direction:column;gap:8px;' }, [
+          el('div', { style: 'font-weight:700;', text: '文字起こしのようです（確かめが必要な行が' + res.pending.length + '件）' }),
+          el('div', { class: 'k-sub', text: '「読み取る」は紙のメモ向けです。録音の文字起こしは「AIで振り分ける」の方が向いています。' }),
+          why ? el('div', { class: 'k-sub k-impaioff', style: 'color:var(--k-warn);', text: why }) : el('div', { class: 'k-sub', text: '下の「AIで振り分ける」を押してください。' }),
+          act('それでも1件ずつ確認する', function () { tlike = false; draw(); var f = out.querySelector('.k-impcard'); if (f) { try { f.scrollIntoView({ block: 'center' }); } catch (e) {} } }, 'k-imptone')]));
+      }
+      if (res && !err && !tlike) {
         //   設計40 §4：提案どおりに決める。押すと「決める内容」を全部並べ、末尾の「この内容で決める」で計画をそのまま適用する（ダイアログなし）
         var plan = makePlan();
         if (plan.length && !planOpen) out.appendChild(el('button', { type: 'button', class: 'k-btn k-impplan', text: '提案どおりに決める（' + plan.length + '件）', onclick: function () { planOpen = true; draw(); } }));
@@ -2729,7 +2758,7 @@
         }
         res.pending.forEach(function (p, j) { out.appendChild(card(p, j)); });
       }
-      if (res && res.pending.length && !err) {
+      if (res && res.pending.length && !err && !tlike) {
         var go = el('button', { type: 'button', class: 'k-btn k-impput', text: '記録の画面に入れる', onclick: function () { if (allDecided()) place(); } });
         if (!allDecided()) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
         bar.appendChild(go);
