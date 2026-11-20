@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-20a 録音の文字起こしをファイルで添付（端末の中で読んで貼り付け欄へ・送らない・設計48）';
+  var KARTE_BUILD = '2026-11-20b AI の下書き v2 を1画面で確認（試用＝v1 と同じ範囲だけ移せる・設計49）＋文字起こしの案内（段階0）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2172,6 +2172,7 @@
     if (c === 'AI_DAILY_LIMIT') return '今日のAIの振り分けの回数の上限に達しました。「読み取る」で取り込めます。';
     if (c === 'AI_TOO_LONG' || c === 'TOO_LARGE') return '長すぎます（3万字まで）。分けて貼ってください。';
     if (c === 'UNAUTHORIZED') return AI_STALE;
+    if (c === 'AI_UI_TIMEOUT' || c === 'AI_TIMEOUT') return 'AIの振り分けに時間がかかりすぎました。もう一度押すと1日の回数を1回使います。「読み取る」でも取り込めます。';
     if (c === 'AI_REFUSED' || c === 'AI_BAD_OUTPUT' || c === 'AI_TRUNCATED') return 'AIが下書きを作れませんでした。「読み取る」で取り込めます（もう一度押すと1日の回数を1回使います）。';
     return 'AIの振り分けに失敗しました（' + (c || '通信') + '）。もう一度押すと1日の回数を1回使います。「読み取る」でも取り込めます。';
   }
@@ -2185,6 +2186,134 @@
     return o;
   }
   function impLine(sets) { return (sets || []).map(function (st) { return setOneLine({ weight_kg: st.w === '' ? 0 : st.w, reps: st.r, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (d) { return { weight_kg: d.w === '' ? 0 : d.w, reps: d.r, assist_reps: d.assist, forced: d.forced }; }) }); }).join('・'); }
+  //   ---- 設計49：AI の下書き v2 の確認（1画面）。★状態は純粋なデータ（rv）だけ・DOM を読まない・端末のメモリの中だけ（I63・I71）
+  //     AI_V2_SAVE_SCOPE：D8（同意の文面の範囲）が決まるまで 'trial'。'full' にする変更は単独の PR。★不正な値も 'trial'
+  var AI_V2_SAVE_SCOPE = 'trial';
+  var AI_UI_TIMEOUT_MS = 110000;   // 画面の締切（Worker の 90秒より長く＝Worker が先に終了処理まで行く・設計49 §6-4）
+  function aiScope() { return AI_V2_SAVE_SCOPE === 'full' ? 'full' : 'trial'; }
+  //   移してよい項目（表示と reviewBuild の唯一の判定）。trial＝v1 と同じ範囲。next（次回やること）は next_plan の線（§7-5）を作る段で full に足す
+  var AI_SCOPE = {
+    trial: ['set:match', 'exercise', 'exnote', 'setnote', 'coaching', 'hearing', 'member', 'todo'],
+    full: ['set:match', 'set:inferred', 'set:nobasis', 'set:healthHidden', 'exercise', 'exnote', 'setnote', 'coaching', 'hearing', 'member', 'todo', 'summary', 'condition', 'unclear']
+  };
+  function scopeAllows(kind, scope) { return AI_SCOPE[scope === 'full' ? 'full' : 'trial'].indexOf(kind) >= 0; }
+  var AI_SRC_TEXT = { inferred: '推　AIの推論を確定', nobasis: '！　根拠なしで確定', healthHidden: '手で入力（AIの根拠は使っていません）' };
+  var AI_HH_TEXT = '健康の情報を含む根拠だったため、そのままは使えません';
+  var AI_STATUSES = ['match', 'inferred', 'nobasis', 'healthHidden'];
+  function rvStr(v) { return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; }
+  //   文の行：quiet＝名前の印（初期値で入れない・押せば入る）／health＝健康語（入れる操作が無い）
+  function rvTxt(t, initial) {
+    t = rvStr(t);
+    var quiet = MEMO_PII_WEAK.test(t), health = MEMO_HEALTH.test(t);
+    return { text: t, quiet: quiet, health: health, include: !!initial && !quiet && !health };
+  }
+  /** Worker の draft（v:2）→ 確認の状態。sourceStatus は以後変えない。★初期値で「入れる」にするのは scope が許す項目だけ（範囲外は include を立てない） */
+  function reviewFromDraft(dr, isAuto, scope) {
+    scope = scope === 'full' ? 'full' : 'trial';
+    function ini(kind) { return scopeAllows(kind, scope); }
+    var rv = { v: 2, effort: rvStr(dr.effort) };
+    rv.summary = (Array.isArray(dr.summary) ? dr.summary : []).map(function (t) { return rvTxt(t, ini('summary')); }).filter(function (x) { return x.text; });   // D1：初期値で入れる
+    rv.exercises = (Array.isArray(dr.exercises) ? dr.exercises : []).map(function (e, ei) {
+      var name = exName(e && e.name), heard = rvStr(e && e.heard), known = !!name && isAuto(name);
+      var ex = { id: 'e' + ei, nameStatus: known ? 'known' : 'unresolved', name: (known ? name : (name || heard)).slice(0, EX_NAME_MAX), heard: heard, part: null, include: true, pickPart: false,
+        note: rvTxt(e && e.note, ini('exnote')), sets: [] };
+      ex.sets = (Array.isArray(e && e.sets) ? e.sets : []).map(function (s, si) {
+        var st = AI_STATUSES.indexOf(s && s.status) >= 0 ? s.status : 'nobasis';
+        var hid = st === 'healthHidden';
+        var w = hid || !(s && typeof s.w === 'number') ? null : s.w, r = hid || !(s && Number.isInteger(s.r)) ? null : s.r;
+        return { id: ex.id + 's' + si, sourceStatus: st, resolution: st === 'match' ? 'confirmed' : 'unresolved',
+          aiW: w, aiR: r, w: w == null ? '' : String(w), r: r == null ? '' : String(r),
+          evidence: hid ? '' : rvStr(s && s.evidence), unsure: hid ? '' : rvStr(s && s.unsure), note: rvTxt(s && s.note, ini('setnote')) };
+      });
+      return ex;
+    });
+    function lst(k, initial) { return (Array.isArray(dr[k]) ? dr[k] : []).map(function (t) { return rvTxt(t, initial); }).filter(function (x) { return x.text; }); }
+    rv.condition = lst('condition', ini('condition')); rv.next = lst('next_actions', ini('next')); rv.coaching = lst('coaching', ini('coaching')); rv.hearing = lst('hearing', ini('hearing'));
+    rv.unclear = (Array.isArray(dr.unclear) ? dr.unclear : []).map(function (u) { var x = rvTxt(u && u.text, false); x.evidence = rvStr(u && u.evidence); return x; }).filter(function (x) { return x.text; });
+    rv.member = { message: rvTxt(dr.member_message, false), todo: lst('member_todo', false) };
+    rv.caution = (Array.isArray(dr.caution) ? dr.caution : []).map(rvStr).filter(Boolean);
+    return rv;
+  }
+  function rvNumOk(s) {
+    var r = String(s.r == null ? '' : s.r).trim(), w = String(s.w == null ? '' : s.w).trim();
+    if (!/^\d{1,3}$/.test(r) || Number(r) < 1 || Number(r) > 100) return false;
+    if (w === '') return true;   // 自重
+    var n = Number(w);
+    return /^\d{1,3}(\.\d)?$/.test(w) && n > 0 && n <= 500;
+  }
+  var RV_INCLUDE = { match: ['confirmed', 'edited'], inferred: ['confirmed', 'edited'], nobasis: ['confirmed', 'edited'], healthHidden: ['edited'] };
+  function rvNamed(ex) { return ex.include !== false && (ex.nameStatus === 'known' || ex.nameStatus === 'named'); }
+  /** そのセットを下書きへ入れるか（§7-4 の表・scope・種目名・数字の形） */
+  function reviewSetIn(ex, s, scope) {
+    if (!rvNamed(ex) || !scopeAllows('set:' + s.sourceStatus, scope)) return false;
+    return (RV_INCLUDE[s.sourceStatus] || []).indexOf(s.resolution) >= 0 && rvNumOk(s);
+  }
+  /** 残っている要確認の数（移せる行だけ数える＝見るだけの行で最後のボタンを止めない） */
+  function reviewOpen(rv, scope) {
+    var n = 0;
+    rv.exercises.forEach(function (ex) {
+      if (ex.include === false) return;
+      var live = ex.sets.filter(function (s) { return scopeAllows('set:' + s.sourceStatus, scope) && s.resolution !== 'excluded'; });
+      if (ex.nameStatus === 'unresolved' && (live.length || ex.note.include)) n++;
+      live.forEach(function (s) { if (s.resolution === 'unresolved' || ((s.resolution === 'confirmed' || s.resolution === 'edited') && !rvNumOk(s))) n++; });
+    });
+    return n;
+  }
+  /** 区分ごとの採用件数（最後のボタンの直上に出す） */
+  function reviewCounts(rv, scope) {
+    var c = { sets: 0, fromCheck: 0, exnote: 0, summary: 0, memo: 0, member: 0 };
+    rv.exercises.forEach(function (ex) {
+      ex.sets.forEach(function (s) { if (reviewSetIn(ex, s, scope)) { c.sets++; if (s.sourceStatus !== 'match') c.fromCheck++; } });
+      if (rvNamed(ex) && ex.note.include && scopeAllows('exnote', scope)) c.exnote++;
+    });
+    rv.summary.forEach(function (x) { if (x.include && scopeAllows('summary', scope)) c.summary++; });
+    [['condition', 'condition'], ['coaching', 'coaching'], ['hearing', 'hearing'], ['unclear', 'unclear']].forEach(function (p) { rv[p[0]].forEach(function (x) { if (x.include && scopeAllows(p[1], scope)) c.memo++; }); });
+    if (rv.member.message.include && scopeAllows('member', scope)) c.member++;
+    rv.member.todo.forEach(function (x) { if (x.include && scopeAllows('todo', scope)) c.member++; });
+    return c;
+  }
+  /**
+   * 確認の状態 → commit() が受け取る形（items・memos・members・todos）。★表に無い組み合わせ・scope の外の採用・健康語の採用・要確認の残りは投げる（取り込み全体を止める）
+   *   evidence はどこにも入れない（表示だけ・設計49 §5-5）。AI の要確認から入ったセットだけ src（出所の印・保存の payload には入らない）
+   */
+  function reviewBuild(rv, scope) {
+    if (reviewOpen(rv, scope) > 0) throw new Error('RV_OPEN');
+    function chk(kind, x) { if (!x.include) return false; if (!scopeAllows(kind, scope)) throw new Error('RV_SCOPE'); if (x.health) throw new Error('RV_HEALTH'); return true; }
+    var items = [], memos = [], members = [], todos = [];
+    var sum = rv.summary.filter(function (x) { return chk('summary', x); }).map(function (x) { return x.text; });
+    if (sum.length) memos.push('今日の流れ：' + sum.join(' '));
+    rv.exercises.forEach(function (ex) {
+      ex.sets.forEach(function (s) {
+        var on = s.resolution === 'confirmed' || s.resolution === 'edited';
+        if (on && !scopeAllows('set:' + s.sourceStatus, scope) && s.sourceStatus !== 'match') throw new Error('RV_SCOPE');
+        if (s.sourceStatus === 'healthHidden' && s.resolution === 'confirmed') throw new Error('RV_TABLE');
+      });
+      if (!rvNamed(ex)) return;
+      var sets = [];
+      ex.sets.forEach(function (s) {
+        if (!reviewSetIn(ex, s, scope)) return;
+        var o = { w: String(s.w).trim(), r: String(s.r).trim(), done: false };   // ★✓は外して入れる（I57）
+        if (s.note.text && s.note.include && chk('setnote', s.note)) o.note = s.note.text.slice(0, 200);
+        if (s.sourceStatus !== 'match') { o.src = s.sourceStatus; if (s.resolution === 'edited') o.srcEdited = true; }
+        sets.push(o);
+      });
+      var exNoteOn = ex.note.text && chk('exnote', ex.note);
+      if (!sets.length && ex.sets.length) { if (exNoteOn) memos.push(ex.name + '：' + ex.note.text); return; }   // セットを全部外した種目は入れない（メモは社内メモへ）
+      var it = { exercise: ex.name, sets: sets, fromMemo: true };
+      if (!sets.length) it.doneOnly = false;
+      if (ex.nameStatus === 'named' && ex.part) it.regPart = ex.part;
+      items.push(it);
+      if (exNoteOn) memos.push(ex.name + '：' + ex.note.text);
+    });
+    rv.condition.forEach(function (x) { if (chk('condition', x)) memos.push('状態：' + x.text); });
+    rv.coaching.forEach(function (x) { if (chk('coaching', x)) memos.push(x.text); });
+    rv.hearing.forEach(function (x) { if (chk('hearing', x)) memos.push('ヒアリング：' + x.text); });
+    rv.unclear.forEach(function (x) { if (chk('unclear', x)) memos.push('要確認：' + x.text); });
+    rv.next.forEach(function (x) { chk('next', x); });   // next は今どちらの scope でも移せない（include なら投げる）
+    if (chk('member', rv.member.message)) members.push(rv.member.message.text);
+    rv.member.todo.forEach(function (x) { if (chk('todo', x)) todos.push(x.text); });
+    return { items: items, memos: memos, nNote: 0, nSet: 0, blocked: {}, members: members, todos: todos, memoMax: 2000 };
+  }
   //   設計49 段階0：「読み取る」の結果が文字起こしらしいか（件数だけで決めない＝全部満たすとき）。案内を出すだけで何も止めない
   //     ①3,000字以上 ②構造になった行（種目・セット）が空でない行の1割未満 ③決定待ちが40件を超える
   function memoLooksTranscript(text, r) {
@@ -2269,9 +2398,10 @@
     box.appendChild(wrap); box.appendChild(bar);
     var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [], planOpen = false, tlike = false;   // tlike：設計49 段階0（文字起こしらしい＝カードの前に案内）
     var aiBusy = false, aiGen = 0;   // 設計39：送信中・応答の世代（文字を変えたら古い応答を捨てる）
+    var rv = null, pendingB = null;   // 設計49：v2 の確認の状態（端末のメモリだけ）・最後のボタンで組み立てた中身
     ta.oninput = function () {
       var was = aiBusy; aiGen++; aiBusy = false;
-      if (res || err || ask || was) { res = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; tlike = false; draw(); }
+      if (res || rv || err || ask || was) { res = null; rv = null; pendingB = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; tlike = false; draw(); }
     };
     function allDecided() { return !!res && dec.every(function (d) { return !!d; }); }
     function read() {
@@ -2356,14 +2486,28 @@
       if (tokenNeedsRefresh()) { err = AI_STALE; draw(); return; }   // ★送らない・読み直さない（原文を保存領域へ退避できない＝I63）
       var known = [];
       autoKnown.forEach(function (n) { var x = exName(n); if (x && x.length <= EX_NAME_MAX && known.indexOf(x) < 0) known.push(x); });
-      var gen = ++aiGen; aiBusy = true; res = null; draw();
-      fetch(String(EDGE_URL).replace(/\/+$/, '') + '/karte/ai-draft', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'k_aiDraft', idToken: idToken, customerId: cid, text: text, known: known.slice(0, 600) }) })
-        .then(function (r) { return r.json().catch(function () { return { success: false, code: 'BAD_RESPONSE' }; }); }, function () { return { success: false, code: 'NETWORK' }; })
+      var gen = ++aiGen; aiBusy = true; res = null; rv = null; pendingB = null; draw();
+      //   設計49：client_ai_format:2＝この画面は v2 を扱える（Worker は設定が v2 のときだけ v2 を返す）。clientReqId＝記録と失敗の1行を突き合わせる番号
+      //     画面の締切 110秒（Worker の 90秒より長く）。超えたら応答を捨てて1行で知らせる
+      var reqNo = newReqId(), ac = window.AbortController ? new AbortController() : null;
+      var tmo = setTimeout(function () { if (ac) try { ac.abort(); } catch (e) {} }, AI_UI_TIMEOUT_MS);
+      var opt = { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'k_aiDraft', idToken: idToken, customerId: cid, text: text, known: known.slice(0, 600), client_ai_format: 2, clientReqId: reqNo }) };
+      if (ac) opt.signal = ac.signal;
+      fetch(String(EDGE_URL).replace(/\/+$/, '') + '/karte/ai-draft', opt)
+        .then(function (r) { return r.json().catch(function () { return { success: false, code: 'BAD_RESPONSE' }; }); }, function (e) { return { success: false, code: e && e.name === 'AbortError' ? 'AI_UI_TIMEOUT' : 'NETWORK' }; })
         .then(function (r) {
+          clearTimeout(tmo);
           if (gen !== aiGen || !out.isConnected || cur.customerId !== cid) return;   // 文字を変えた・画面を離れた・別の顧客＝捨てる
           aiBusy = false;
-          if (!r || !r.success || !r.draft || typeof r.draft !== 'object') { err = aiErr(r); draw(); return; }
+          if (!r || !r.success || !r.draft || typeof r.draft !== 'object') { err = aiErr(r) + '（番号 ' + reqNo.slice(-4) + '）'; draw(); return; }
+          if (r.draft.v === 2) {
+            try { rv = reviewFromDraft(r.draft, isAuto, aiScope()); } catch (e) { rv = null; err = aiErr({ code: 'AI_BAD_OUTPUT' }); draw(); return; }
+            lines0 = []; res = null;
+            draw();
+            try { out.scrollIntoView({ block: 'start' }); } catch (e) {}
+            return;
+          }
           var rr;
           try { rr = aiToRes(r.draft); } catch (e) { err = aiErr({ code: 'AI_BAD_OUTPUT' }); draw(); return; }
           lines0 = [];
@@ -2474,7 +2618,7 @@
       var T = draftNow();
       if (T && (T.pending || T.mpending || T.memoPending)) { err = '前回の保存の結果を確かめるまで取り込めません。'; draw(); return; }
       if (T && (T.items || []).length) {
-        if (res.date && res.date !== T.sessionDate) { err = '入力中の記録は ' + md(T.sessionDate) + ' です。' + md(res.date) + ' のメモは、いまの記録を保存してから取り込んでください。'; draw(); return; }
+        if (res && res.date && res.date !== T.sessionDate) { err = '入力中の記録は ' + md(T.sessionDate) + ' です。' + md(res.date) + ' のメモは、いまの記録を保存してから取り込んでください。'; draw(); return; }
         ask = true; draw(); return;
       }
       commit();
@@ -2484,9 +2628,10 @@
       if (T && (T.pending || T.mpending || T.memoPending)) { err = '前回の保存の結果を確かめるまで取り込めません。'; ask = false; draw(); return; }
       var wasEmpty = !T || !(T.items || []).length;
       if (!T) T = { v: 1, tid: tid, cid: cid, sessionDate: today(), items: [], reqId: newReqId(), pending: null, at: Date.now() };
-      if (wasEmpty && res.date) T.sessionDate = res.date;
+      var rdate = res ? res.date : null;
+      if (wasEmpty && rdate) T.sessionDate = rdate;
       var b;
-      try { b = build(); } catch (e) { ask = false; err = 'この選び方では入れられません。カードを選び直してください。'; draw(); return; }   // ★下書きは変えない
+      try { b = pendingB || build(); } catch (e) { ask = false; err = 'この選び方では入れられません。カードを選び直してください。'; draw(); return; }   // ★下書きは変えない
       var all = (T.items || []).concat(b.items);
       //   上限（20種目・1種目10セット・合計60＝ドロップも数える）。超えるなら入れない（黙って切らない）
       //   ★設計41 G：決めたセットが上限で入らなかった（blocked）ものが1つでもあれば、取り込み全体を止める（黙って落とさない）
@@ -2510,6 +2655,8 @@
       T.items = all;
       if (mNew) T.member = mNew;
       if (b.memos.length) T.memo = (String(T.memo || '').trim() ? String(T.memo).replace(/\s+$/, '') + '\n' : '') + b.memos.join('\n');   // 選んだものだけ社内メモの末尾へ
+      //   設計49：社内メモは2,000字まで（Worker も超えたら受けない）。超えるなら入れない（切らない・下書きは変えない）
+      if (b.memoMax && String(T.memo || '').length > b.memoMax) { ask = false; err = '社内メモが' + b.memoMax + '字を超えます（' + String(T.memo).length + '字）。どれかを外してください。'; draw(); return; }
       T.openEi = first;
       T.at = Date.now();
       if (!lsSet(key, T)) { err = 'この端末に下書きを残せないため、入れられませんでした。'; ask = false; draw(); return; }
@@ -2518,8 +2665,8 @@
         + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
         + (b.nSet ? 'セットのメモ ' + b.nSet + '件は、そのセットのメモに入れました。' : '')
         + (mNew ? 'お客様に見える欄に ' + (b.members.length + b.todos.length) + '件入れました（保存するとお客様に見えます）。' : '')
-        + (res.date ? '' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。') };
-      res = null; dec = []; ui = [];
+        + (rdate ? '' : (pendingB ? 'AIの下書きを ' + md(T.sessionDate) + ' の記録に入れました。' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。')) };
+      res = null; rv = null; pendingB = null; dec = []; ui = [];
       goBack();
     }
     function exNoteText(p) { if (p.note != null) return String(p.note).trim(); return p.kind === 'name' ? memoBullet(String(lines0[p.lines[0] - 1] || p.parsed.exercise).trim()) : String(p.text).trim(); }   // 箇条書きの記号は外す（設計40 G8）
@@ -2722,9 +2869,133 @@
       c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '社内メモはお客様には見えません。' + I55_HINT }));
       return c;
     }
+    //   ---- 設計49：AI の下書き v2 を1画面で見て直して入れる（rv は純粋なデータ・ここは描くだけ）
+    function rvToggle(on, can, onText, offText, fn) {
+      if (!can) return null;
+      var b = el('button', { type: 'button', class: 'k-btn small ' + (on ? '' : 'out') + ' k-rvtog', 'aria-pressed': on ? 'true' : 'false', style: 'min-height:44px;margin:0;', text: on ? onText : offText, onclick: function () { fn(); draw(); } });
+      return b;
+    }
+    function rvTextRow(x, kind, dest) {
+      var sc = aiScope(), can = scopeAllows(kind, sc) && !x.health;
+      var row = el('div', { class: 'k-rvrow', 'data-kind': kind, style: 'display:flex;flex-direction:column;gap:4px;padding:6px 0;border-top:1px solid var(--k-line,#e3e6ea);' }, [el('div', { class: 'k-imptext', text: x.text })]);
+      if (x.health) row.appendChild(el('div', { class: 'k-sub', text: '健康の言葉を含むため入れられません（「注意すること」の画面で入れてください）' }));
+      else if (!scopeAllows(kind, sc)) row.appendChild(el('div', { class: 'k-sub k-rvview', text: '見るだけ（試用中のため移せません）' }));
+      else {
+        if (x.quiet && !x.include) row.appendChild(el('div', { class: 'k-sub', text: '名前の印（敬称・初回など）を含むため、初期値では入れません' }));
+        row.appendChild(rvToggle(x.include, can, '✓ ' + dest + 'に入れる', dest + 'に入れない（押すと入れる）', function () { x.include = !x.include; }));
+      }
+      return row;
+    }
+    function rvSection(title, kids, cls) {
+      var box = el('div', { class: 'k-card k-rvsec ' + (cls || ''), style: 'display:flex;flex-direction:column;gap:4px;' }, [el('div', { style: 'font-weight:700;', text: title })]);
+      kids.forEach(function (k) { if (k) box.appendChild(k); });
+      return box;
+    }
+    function rvNumIn(s, key, label, onDone) {
+      var i = el('input', { type: 'text', inputmode: 'decimal', 'aria-label': label, 'data-nodirty': '1', autocomplete: 'off', style: 'width:72px;min-height:44px;font-size:16px;' + (s.sourceStatus === 'nobasis' ? 'border-bottom:3px solid var(--k-warn);' : '') });
+      i.value = s[key];
+      i.onchange = function () { s[key] = String(i.value || '').trim(); onDone(); };
+      return i;
+    }
+    function rvSetRow(ex, s, si) {
+      var sc = aiScope(), can = scopeAllows('set:' + s.sourceStatus, sc) && rvNamed(ex);
+      var st = s.sourceStatus, open = (s.resolution === 'unresolved') && scopeAllows('set:' + st, sc) && ex.include !== false;
+      var row = el('div', { class: 'k-rvset k-rvset-' + st + (open ? ' k-rvopen' : ''), 'data-status': st, 'data-res': s.resolution,
+        style: 'display:flex;flex-direction:column;gap:4px;padding:8px;border-radius:10px;' + (st === 'inferred' ? 'background:#fff8e1;' : st === 'nobasis' ? 'border:2px solid var(--k-warn);background:#fff1f0;' : st === 'healthHidden' ? 'background:#f3f4f6;' : '') });
+      var mark = st === 'inferred' ? '推 ' : st === 'nobasis' ? '！ ' : '';
+      var lab = (si + 1) + '　';
+      if (st === 'healthHidden') row.appendChild(el('div', { class: 'k-rvhh', text: lab + AI_HH_TEXT }));
+      else row.appendChild(el('div', { style: 'font-weight:700;', text: lab + mark + (s.aiW == null ? '自重' : s.aiW + 'kg') + ' × ' + (s.aiR == null ? '?' : s.aiR) + '回' }));
+      if (st === 'inferred') row.appendChild(el('div', { class: 'k-sub k-rvwhy', text: '要確認：推論' + (s.unsure ? '（' + s.unsure + '）' : '') }));
+      if (st === 'nobasis') row.appendChild(el('div', { class: 'k-sub k-rvwhy', style: 'color:var(--k-warn);font-weight:700;', text: '要確認：根拠なし（文字起こしに見つかりません）' + (s.unsure ? '（' + s.unsure + '）' : '') }));
+      if (s.evidence) row.appendChild(el('div', { class: 'k-sub k-rvev', text: '根拠：「' + s.evidence + '」' }));
+      if (!scopeAllows('set:' + st, sc)) { row.appendChild(el('div', { class: 'k-sub k-rvview', text: '見るだけ（試用中のため移せません）' })); return row; }
+      if (st === 'match') {
+        var tg = rvToggle(s.resolution !== 'excluded', can, s.resolution === 'unresolved' ? '採用する（種目名を選び直したため未確定）' : '✓ 採用', '外した（押すと採用）', function () { s.resolution = s.resolution === 'confirmed' ? 'excluded' : 'confirmed'; });
+        if (tg) row.appendChild(tg); else row.appendChild(el('div', { class: 'k-sub', text: '種目名を決めると入れられます' }));
+      } else {
+        var redo = function () { s.resolution = rvNumOk(s) ? 'edited' : 'unresolved'; draw(); };
+        row.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;' }, [rvNumIn(s, 'w', (si + 1) + 'セット目の重量', redo), el('span', { text: 'kg ×' }), rvNumIn(s, 'r', (si + 1) + 'セット目の回数', redo), el('span', { text: '回' })]));
+        var btns = [];
+        if (st !== 'healthHidden') btns.push(act(st === 'inferred' ? 'この数字で確定' : '根拠なしのまま確定', function () { if (!rvNumOk(s)) { err = '数字を入れてから確定してください（回数は1〜100・重さは空＝自重か0.1刻み）。'; draw(); return; } err = ''; s.resolution = 'confirmed'; draw(); }, s.resolution === 'confirmed' ? 'k-rvok' : 'out k-rvok'));
+        btns.push(act(s.resolution === 'excluded' ? '外した（押すと戻す）' : '外す', function () { s.resolution = s.resolution === 'excluded' ? 'unresolved' : 'excluded'; draw(); }, 'out k-rvex'));
+        row.appendChild(btnCol(btns));
+      }
+      if (s.note.text) row.appendChild(rvTextRow(s.note, 'setnote', 'セットのメモ'));
+      return row;
+    }
+    function rvExCard(ex) {
+      var sc = aiScope();
+      var c = el('div', { class: 'k-card k-rvex' + (ex.nameStatus === 'unresolved' && ex.include !== false ? ' k-rvopen' : ''), style: 'display:flex;flex-direction:column;gap:6px;' });
+      var badge = ex.include === false ? '（外した）' : ex.nameStatus === 'known' ? '一覧と一致' : ex.nameStatus === 'named' ? '種目にした' + (ex.part ? '（' + label(PART_KEYS, ex.part) + '）' : '') : '要確認：種目名';
+      c.appendChild(el('div', { style: 'font-weight:700;', text: ex.name + '　' + badge + (ex.heard && ex.heard !== ex.name ? '（聞こえた言葉：' + ex.heard + '）' : '') }));
+      if (ex.include !== false && ex.nameStatus === 'unresolved' && scopeAllows('exercise', sc)) {
+        var ni = el('input', { type: 'text', maxlength: String(EX_NAME_MAX), 'aria-label': '種目名', 'data-nodirty': '1', autocomplete: 'off' });
+        ni.value = ex.name; ni.oninput = function () { ex.name = ni.value; };
+        c.appendChild(ni);
+        if (ex.pickPart) {
+          var pp = el('div', { class: 'k-pills', role: 'radiogroup', 'aria-label': '部位', style: 'gap:6px;' });
+          PART_KEYS.forEach(function (pk) { pp.appendChild(el('button', { type: 'button', role: 'radio', class: 'k-pill', 'aria-checked': 'false', 'data-part': pk[0], text: pk[1], onclick: function () { ex.name = exName(ex.name); ex.part = pk[0]; ex.nameStatus = 'named'; ex.pickPart = false; draw(); } })); });
+          c.appendChild(el('div', { class: 'k-sub', text: '部位を選ぶと種目になります' }));
+          c.appendChild(pp);
+        }
+        c.appendChild(btnCol([act('種目にする', function () {
+          var n = exName(ex.name);
+          if (!n || n.length > EX_NAME_MAX) { err = '種目名は1〜' + EX_NAME_MAX + '字で入れてください。'; draw(); return; }
+          ex.name = n;
+          if (isAuto(n)) { ex.nameStatus = 'named'; ex.part = null; draw(); return; }
+          ex.pickPart = true; draw();
+        }, ''), act('この種目を外す', function () { ex.include = false; draw(); }, 'out k-danger')]));
+      } else if (ex.include !== false && ex.nameStatus === 'named') {
+        c.appendChild(btnCol([act('種目名を選び直す', function () { ex.nameStatus = 'unresolved'; ex.part = null; ex.sets.forEach(function (s) { s.resolution = 'unresolved'; }); draw(); }, 'out')]));   // ★配下は match も含めて未確定に戻す（§7-4）
+      } else if (ex.include === false) {
+        c.appendChild(btnCol([act('この種目を戻す', function () { ex.include = true; draw(); }, 'out')]));
+      } else if (ex.nameStatus === 'known') {
+        c.appendChild(btnCol([act('この種目を外す', function () { ex.include = false; draw(); }, 'out k-danger')]));
+      }
+      if (ex.include !== false) {
+        ex.sets.forEach(function (s, si) { c.appendChild(rvSetRow(ex, s, si)); });
+        if (ex.note.text) c.appendChild(rvTextRow(ex.note, 'exnote', '社内メモ'));
+      }
+      return c;
+    }
+    function drawReview() {
+      var sc = aiScope(), n = reviewOpen(rv, sc);
+      var head = el('div', { class: 'k-rvhead', role: 'status', style: 'position:sticky;top:0;z-index:2;display:flex;gap:8px;align-items:center;justify-content:space-between;background:#fff;padding:6px 0;' }, [
+        el('div', { style: 'font-weight:700;', text: n ? '要確認 あと' + n + '件' : '要確認なし' }),
+        n ? act('次の要確認へ', function () { var f = out.querySelector('.k-rvopen'); if (f) { try { f.scrollIntoView({ block: 'center' }); } catch (e) {} } }, 'out small') : null]);
+      out.appendChild(head);
+      if (sc === 'trial') out.appendChild(el('div', { class: 'k-note-hint k-rvtrial', style: 'margin:0;', text: '試用中：記録の画面へ移せるのは、文字起こしで数字を確かめられたセット・種目・指導・ヒアリング・お客様に見える欄だけです。要約・状態・次回やること・要確認の数字は見るだけです。' }));
+      out.appendChild(rvSection('今日あったこと（要約）', rv.summary.length ? rv.summary.map(function (x) { return rvTextRow(x, 'summary', '社内メモ'); }) : [el('div', { class: 'k-sub', text: '（なし）' })], 'k-rvsum'));
+      out.appendChild(rvSection('種目', rv.exercises.length ? rv.exercises.map(rvExCard) : [el('div', { class: 'k-sub', text: '（なし）' })], 'k-rvexs'));
+      if (rv.condition.length) out.appendChild(rvSection('お客様の状態', rv.condition.map(function (x) { return rvTextRow(x, 'condition', '社内メモ'); })));
+      if (rv.next.length) out.appendChild(rvSection('次回やること', rv.next.map(function (x) { return rvTextRow(x, 'next', '次回やること'); })));
+      if (rv.coaching.length) out.appendChild(rvSection('指導の要点', rv.coaching.map(function (x) { return rvTextRow(x, 'coaching', '社内メモ'); })));
+      if (rv.hearing.length) out.appendChild(rvSection('ヒアリング', rv.hearing.map(function (x) { return rvTextRow(x, 'hearing', '社内メモ'); })));
+      if (rv.caution.length) out.appendChild(rvSection('体のこと（入れません）', [el('div', { class: 'k-sub', text: '体の状態は「注意すること」の画面で入れてください（同意が要ります）。' })].concat(rv.caution.map(function (t) { return el('div', { class: 'k-imptext k-rvcaution', text: t }); })), 'k-rvcau'));
+      var mem = [];
+      if (rv.member.message.text) mem.push(rvTextRow(rv.member.message, 'member', 'お客様へ'));
+      rv.member.todo.forEach(function (x) { mem.push(rvTextRow(x, 'todo', '次回までに')); });
+      if (mem.length) out.appendChild(rvSection('お客様に見える欄（保存するとお客様に見えます）', mem, 'k-rvmem'));
+      if (rv.unclear.length) out.appendChild(rvSection('要確認の点', rv.unclear.map(function (x) { var r = rvTextRow(x, 'unclear', '社内メモ'); if (x.evidence) r.appendChild(el('div', { class: 'k-sub', text: '「' + x.evidence + '」' })); return r; })));
+      var c = reviewCounts(rv, sc);
+      bar.appendChild(el('div', { class: 'k-sub k-rvcount', style: 'text-align:center;margin-bottom:6px;', text: '採用：セット ' + c.sets + (c.fromCheck ? '（うち要確認から確定 ' + c.fromCheck + '）' : '') + '／種目のメモ ' + c.exnote + '／要約 ' + c.summary + '文／社内メモ ' + c.memo + '／お客様に見える ' + c.member }));
+      var go = el('button', { type: 'button', class: 'k-btn k-rvput', text: 'この内容をまとめて記録の画面に入れる', onclick: function () { if (!reviewOpen(rv, aiScope())) placeReview(); } });
+      if (n) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
+      bar.appendChild(go);
+      bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: n ? '要確認があと' + n + '件あります（確定・直す・外すのどれかを選ぶと押せます）' : '押すと、上の「採用」の項目をまとめて記録の画面に入れます（まだ保存はしません）' }));
+    }
+    function placeReview() {
+      var b;
+      try { b = reviewBuild(rv, aiScope()); } catch (e) { err = 'この選び方では入れられません。選び直してください。'; draw(); return; }   // ★下書きは変えない
+      if (!b.items.length && !b.memos.length && !b.members.length && !b.todos.length) { err = '入れる項目がありません。'; draw(); return; }
+      pendingB = b;
+      place();
+    }
     function draw() {
       out.innerHTML = ''; bar.innerHTML = '';
       if (err) out.appendChild(msg(err, true));
+      if (rv && !ask) { drawReview(); return; }   // 設計49：AI の下書き v2
       if (res) {
         var ns = 0, nd = 0; res.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
         out.appendChild(el('div', { class: 'k-impsum', style: 'font-weight:700;', text: (res.ai ? 'AIの下書き' : res.date ? md(res.date) : '日付の行なし') + '・' + res.items.length + '種目・本セット' + ns + (nd ? '（ドロップ' + nd + '）' : '') + (res.pending.length ? '　確かめが必要 ' + res.pending.length + '件' : '') }));
@@ -2956,6 +3227,8 @@
           //   印（補助・ドロップ・無理やり）はセットの行の真下に小さく＝✎ を閉じていても分かる（設計38 §5-4）
           var mk = marksOf(s);
           if (mk) blk.appendChild(el('div', { class: 'k-marks', text: mk }));
+          //   設計49 §7-6：AI の要確認から入ったセットの出所の印（保存する直前まで出す・保存の payload には入らない＝buildPayload は許可した鍵だけ）
+          if (s.src && AI_SRC_TEXT[s.src]) blk.appendChild(el('div', { class: 'k-aisrc k-aisrc-' + s.src, style: 'font-size:12px;font-weight:700;' + (s.src === 'nobasis' ? 'color:var(--k-warn);' : 'color:#8a6d00;'), text: AI_SRC_TEXT[s.src] + (s.srcEdited ? '（直した）' : '') }));
           //   セットのメモ（✎ で開く・入っていれば開いたまま）。痛み・診断は書かない（注意すること へ）
           if (s.note || s.memoOpen) {
             var mi = el('input', { type: 'text', maxlength: '200', placeholder: '例：最後の2回は補助', 'aria-label': (si + 1) + 'セット目のメモ（200字まで）', 'data-memo': ei + ':' + si, enterkeyhint: 'done', autocomplete: 'off' });
@@ -3929,6 +4202,6 @@
 
   window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
     //   検査用（純粋な部分だけ）
-    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
+    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewOpen: reviewOpen, reviewCounts: reviewCounts, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
 })();

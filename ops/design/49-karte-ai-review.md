@@ -527,3 +527,11 @@ rv = {
 5. LINE の中の画面が長い fetch を何秒まで待つか。
 6. 構造化出力で形の順序が生成の順序になるか（要約が先に作られ割り振りが沿うか）・effort medium で質が足りるか・90秒に入るか。
 7. 同意の文面の範囲（D8）。
+
+## 17. 実装の記録（2026-11-20・段階0 と v2 の trial）
+| 設計 | 実装 | 差・理由 |
+|---|---|---|
+| §4 段階0 | `liff/karte.js` memoLooksTranscript・aiOffReason・ATT_HEADER_LINES（空）／検査 `liff-karte-transcript-guide.test.js` | なし |
+| §5 Worker v2 | `worker/src/routes/karte-ai-v2.js`（形・指示・readSse・validateDraftV2）・`karte-ai.js`（形式の選び方・innerV2・記録）・`karte.js` aiFormat・migration 0035・`karte-ai-health.js`（lost・formatBad・effortBad・v2Zero・okByFmt・okByEffort）／検査 `karte-ai-v2.test.js` | 日次点検の **warn の表示は GAS 側**（Worker は値を返すだけ）。GAS の「カルテのAI」の段に lost・formatBad・effortBad・v2Zero を出す変更は、次の GAS の反映にまとめる（未実装） |
+| §7 画面 v2 | `liff/karte.js` reviewFromDraft・reviewOpen・reviewCounts・reviewBuild・scopeAllows・drawReview・placeReview・出所の印／検査 `liff-karte-ai-review.test.js` | ①要約は「まとめて1つのトグル」ではなく**1文ずつのトグル**（名前の印の文だけ初期値で外す、を1つのトグルでは表せないため）②次回やること（next）は trial・full とも見るだけ（§7-5 の next_plan の線は full にする段で作る）③初期値の include は scope が許す項目だけに立てる（trial で範囲外が立っていると reviewBuild が投げるため） |
+| §6-4 画面の締切 | AbortController 110秒（`AI_UI_TIMEOUT_MS`） | 画面の切断で Worker の処理が続くか・ハンドラに ctx が渡るかは未確認のまま（Worker の締切と lost で守る） |
