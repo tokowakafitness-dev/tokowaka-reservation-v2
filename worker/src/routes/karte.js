@@ -82,9 +82,18 @@ export function aiDraftOn(env, who) {
   const list = String((env && env.KARTE_AI_DRAFT_TRAINERS) || '').split(',').map((x) => x.trim()).filter((x) => x !== '');
   return list.indexOf(tid) >= 0;
 }
-/** 画面にボタンを出してよいか＝切替が開いていて鍵が登録されている（真偽値だけ返す・鍵の値は出さない） */
+/**
+ * 設計49 §5-1：AI の下書きの形式の設定。キーが無い・空文字＝'v1'／厳密に 'v1'・'v2'＝その値／それ以外＝null（AI を閉じる）
+ *   ★実際に使う形式は、設定が 'v2' かつ要求の client_ai_format が数値の 2 のときだけ v2（karte-ai.js）
+ */
+export function aiFormat(env) {
+  const v = env ? env.KARTE_AI_FORMAT : undefined;
+  if (v === undefined || v === null || v === '') return 'v1';
+  return v === 'v1' || v === 'v2' ? v : null;
+}
+/** 画面にボタンを出してよいか＝切替が開いていて鍵が登録されていて、形式の設定が正しい（真偽値だけ返す・鍵の値は出さない） */
 export function aiDraftReady(env, who) {
-  return aiDraftOn(env, who) && !!(env && env.ANTHROPIC_API_KEY);
+  return aiDraftOn(env, who) && !!(env && env.ANTHROPIC_API_KEY) && aiFormat(env) !== null;
 }
 /** 画面の補助（設計44）：その会員の録音・AI の同意。'agreed'|'none'|'unknown'。AI が使えないときは読まない（undefined）。★関門は k_aiDraft の中だけ */
 async function aiConsentFor(env, who, cid) {

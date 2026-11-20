@@ -17,11 +17,12 @@
 //     書き方は claude-api の資料どおり：POST /v1/messages・x-api-key・anthropic-version 2026-10-21・
 //     構造化出力は output_config.format（json_schema）。強制の tool_choice は Sonnet 5.5 で 400 のため使わない
 
-import { aiDraftOn, canSeeKarteShared, logAccess } from './karte.js';
+import { aiDraftOn, aiFormat, canSeeKarteShared, logAccess } from './karte.js';
+import { AI_V2_LIMITS, AI_SCHEMA_V2, AI_SYSTEM_V2, aiEffort, readSse, SseError, validateDraftV2, BadOutputV2 } from './karte-ai-v2.js';
 import { normalizeExerciseName } from '../lib/karte-exercises.js';
 import { readRecRow, recConsentValid } from './member-consent.js';
 
-export const AI_BUILD = '2026-11-13a 設計39＋設計44 録音・AI の同意がある会員だけ送る';
+export const AI_BUILD = '2026-11-20a 設計39＋設計44 同意＋設計49 v2（推論・要約→カルテの形・数字4状態）';
 
 export const AI_LIMITS = {
   BODY_BYTES: 128 * 1024,   // このパス（/karte/ai-draft）だけ。3万字×3バイト＋余裕
@@ -294,14 +295,17 @@ const ACCESS_OF = { ok: 'ok', off: 'denied', no_key: 'denied', daily_limit: 'den
                     no_consent: 'no_consent', consent_error: 'error' };
 //   ★karte_ai_log の result は CHECK（0030）で新しい値を入れられない（0018 の教訓で作り直さない）＝同意の2つは access_log にだけ残す（設計44 4-5）
 const NOT_IN_AI_LOG = ['no_consent', 'consent_error'];
+const nz = (v) => (v == null ? null : v);
 async function record(env, who, cid, row) {
   if (NOT_IN_AI_LOG.indexOf(row.result) < 0) try {
     await env.DB.prepare(
-      `INSERT INTO karte_ai_log (at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, n_sets, build)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(Date.now(), String((who && who.trainerId) || ''), row.model || null, row.chars == null ? null : row.chars, row.ms == null ? null : row.ms,
-           row.result, row.inTok == null ? null : row.inTok, row.outTok == null ? null : row.outTok,
-           row.nEx == null ? null : row.nEx, row.nUnv == null ? null : row.nUnv, row.nSets == null ? null : row.nSets, AI_BUILD).run();
+      `INSERT INTO karte_ai_log (at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, n_sets, build,
+                                 fmt, effort, client_req_id, n_inferred, n_nobasis, n_health_hidden, n_unclear, n_summary, stream_events, stream_bytes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(Date.now(), String((who && who.trainerId) || ''), row.model || null, nz(row.chars), nz(row.ms),
+           row.result, nz(row.inTok), nz(row.outTok), nz(row.nEx), nz(row.nUnv), nz(row.nSets), AI_BUILD,
+           row.fmt || null, row.effort || null, row.reqId || null, nz(row.nInf), nz(row.nNob), nz(row.nHid), nz(row.nUnclear), nz(row.nSummary),
+           nz(row.events), nz(row.bytes)).run();
   } catch (_) {
     try { console.error('[karte-ai] log write failed', row.result); } catch (_) {}
   }
@@ -310,13 +314,21 @@ async function record(env, who, cid, row) {
 const fail = (code, status, detail) => ({ _error: code, _status: status, detail });
 
 // ---------------------------------------------------------------- 窓口
-const KEYS = ['action', 'idToken', 'clientReqId', 'customerId', 'text', 'known'];
+const KEYS = ['action', 'idToken', 'clientReqId', 'customerId', 'text', 'known', 'client_ai_format'];
+//   設計49：画面が作る乱数の番号（記録と画面の失敗の1行を突き合わせる）。形が違えば記録しない（400 にもしない＝古い画面を壊さない）
+const REQ_ID = /^[A-Za-z0-9_-]{1,36}$/;
 async function inner(c, st) {
   const { env, who, body } = c;
   st.model = aiModel(env);
   //   ① 切替・鍵（外へ送らない・数えない）
   if (!aiDraftOn(env, who)) { st.result = 'off'; return fail('AI_NOT_CONFIGURED', 503, 'OFF'); }
   if (!env.ANTHROPIC_API_KEY) { st.result = 'no_key'; return fail('AI_NOT_CONFIGURED', 503, 'NO_KEY'); }
+  //   ①-2 設計49：形式の設定の打ち間違いは閉じる（外へ送らない・数えない）。v2 は設定が 'v2' かつ画面が client_ai_format:2 のときだけ
+  const fmtSetting = aiFormat(env);
+  if (fmtSetting === null) { st.result = 'off'; return fail('AI_NOT_CONFIGURED', 503, 'FORMAT'); }
+  if (body && typeof body.clientReqId === 'string' && REQ_ID.test(body.clientReqId)) st.reqId = body.clientReqId;
+  const useV2 = fmtSetting === 'v2' && body && body.client_ai_format === 2;
+  st.fmt = useV2 ? 'v2' : 'v1';
   //   入力の検査
   for (const k of Object.keys(body)) if (KEYS.indexOf(k) < 0) { st.result = 'bad_request'; return fail('BAD_REQUEST', 400, 'UNKNOWN_KEY'); }
   const cid = String(body.customerId || '');
@@ -363,6 +375,7 @@ async function inner(c, st) {
   const masked = mask(text);
   const maskedSquashed = squash(masked);
   const knownSafe = known.filter((n) => !PII_WEAK.test(n) && mask(n) === nfkc(n));
+  if (useV2) return innerV2(env, st, masked, maskedSquashed, knownSafe, mask);
   //   ⑤ API（60秒で打ち切り・再試行なし）
   const req = {
     model: st.model,
@@ -405,6 +418,58 @@ async function inner(c, st) {
   try { v = validateDraft(parsed, maskedSquashed, mask); }
   catch (e) { if (e instanceof BadOutput) { st.result = 'bad_output'; return fail('AI_BAD_OUTPUT', 502); } throw e; }
   st.result = 'ok'; st.nEx = v.nEx; st.nUnv = v.nUnv; st.nSets = v.nSets;
+  return { draft: Object.assign({ v: 1 }, v.draft), model: st.model, build: AI_BUILD };
+}
+
+//   設計49 v2：ストリーミングで受け、message_stop の後に1回だけ parse → 検証。途中の出力は使わない・返さない（I76-3）
+async function innerV2(env, st, masked, maskedSquashed, knownSafe, mask) {
+  st.effort = aiEffort(env);
+  const req = {
+    model: st.model,
+    max_tokens: AI_V2_LIMITS.MAX_TOKENS,
+    stream: true,
+    system: AI_SYSTEM_V2,
+    output_config: { effort: st.effort, format: { type: 'json_schema', schema: AI_SCHEMA_V2 } },
+    messages: [{ role: 'user', content: '<exercises>\n' + knownSafe.join('\n') + '\n</exercises>\n\n<transcript>\n' + masked + '\n</transcript>' }],
+  };
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), AI_V2_LIMITS.TIMEOUT_MS);
+  const t0 = Date.now();
+  let sse;
+  try {
+    let res;
+    try {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': String(env.ANTHROPIC_API_KEY), 'anthropic-version': '2026-10-21' },
+        body: JSON.stringify(req),
+        signal: ac.signal,
+      });
+    } catch (e) {
+      if (e && e.name === 'AbortError') { st.result = 'timeout'; return fail('AI_TIMEOUT', 504); }
+      st.result = 'http_error'; return fail('AI_HTTP', 502, 'NETWORK');
+    }
+    if (res.status !== 200) {
+      try { if (res.body && res.body.cancel) await res.body.cancel(); } catch (_) {}
+      st.result = 'http_error'; return fail('AI_HTTP', 502, String(res.status));
+    }
+    try { sse = await readSse(res.body); }
+    catch (e) {
+      if (e && e.name === 'AbortError') { st.result = 'timeout'; return fail('AI_TIMEOUT', 504); }
+      if (e instanceof SseError) { st.result = e.code === 'AI_HTTP' ? 'http_error' : 'bad_output'; return fail(e.code, 502, e.detail); }
+      throw e;
+    }
+  } finally { clearTimeout(timer); st.ms = Date.now() - t0; }
+  st.events = sse.events; st.bytes = sse.bytes; st.inTok = sse.inTok; st.outTok = sse.outTok;
+  if (sse.stopReason === 'refusal') { st.result = 'refused'; return fail('AI_REFUSED', 502); }
+  if (sse.stopReason === 'max_tokens') { st.result = 'truncated'; return fail('AI_TRUNCATED', 502); }
+  let parsed;
+  try { parsed = JSON.parse(sse.text); } catch (_) { st.result = 'bad_output'; return fail('AI_BAD_OUTPUT', 502); }
+  let v;
+  try { v = validateDraftV2(parsed, maskedSquashed, mask, st.effort); }
+  catch (e) { if (e instanceof BadOutputV2) { st.result = 'bad_output'; return fail('AI_BAD_OUTPUT', 502); } throw e; }
+  const k = v.counts;
+  Object.assign(st, { result: 'ok', nEx: k.nEx, nSets: k.nSets, nUnv: k.nInf + k.nNob + k.nHid, nInf: k.nInf, nNob: k.nNob, nHid: k.nHid, nUnclear: k.nUnclear, nSummary: k.nSummary });
   return { draft: v.draft, model: st.model, build: AI_BUILD };
 }
 

@@ -7,6 +7,10 @@
 //   ★読めないときは table:'error'・数を出さない（0件と答えない＝MODEL §0）
 import { aiDailyMax, AI_BUILD, isKanaName } from '../routes/karte-ai.js';
 import { CONSENT_VALID_REC } from './consent-docs.js';
+import { aiFormat } from '../routes/karte.js';
+import { aiEffort, aiEffortBad } from '../routes/karte-ai-v2.js';
+//   設計49 §5-6-3：回数を数えた後に終了処理まで届いた結果（usage との差＝届かなかった数 lost）
+const REACHED = ['ok', 'timeout', 'http_error', 'refused', 'truncated', 'bad_output', 'error'];
 
 const H = 3600000;
 function jstDayStart(ms) {
@@ -32,6 +36,9 @@ export async function buildKarteAiHealth(env, nowMs) {
     keySet: !!(env && env.ANTHROPIC_API_KEY),
     dailyMax: aiDailyMax(env),
     build: AI_BUILD,
+    //   設計49：形式・考える量の設定（打ち間違いは formatBad／effortBad＝warn）
+    format: aiFormat(env) === null ? 'bad' : aiFormat(env), formatBad: aiFormat(env) === null,
+    effort: aiEffort(env), effortBad: aiEffortBad(env),
   };
   try {
     const r = await env.DB.prepare(
@@ -52,8 +59,20 @@ export async function buildKarteAiHealth(env, nowMs) {
     }
     const u = await env.DB.prepare('SELECT n FROM karte_ai_usage WHERE day = ?').bind(out.day).first();
     const usage = u ? Number(u.n || 0) : 0;
+    //   設計49：形式別の成功・終了処理まで届かなかった数（強制終了など＝記録が残らない）。負は 0（回数を数える前の error がある）
+    const f = await env.DB.prepare(
+      `SELECT fmt, effort, COUNT(*) AS n FROM karte_ai_log WHERE at >= ? AND at < ? AND result = 'ok' GROUP BY fmt, effort`
+    ).bind(start, end).all();
+    const okByFmt = {}, okByEffort = {};
+    for (const x of (f.results || [])) {
+      const k = String(x.fmt || 'v1'); okByFmt[k] = (okByFmt[k] || 0) + Number(x.n || 0);
+      if (x.effort) okByEffort[String(x.effort)] = (okByEffort[String(x.effort)] || 0) + Number(x.n || 0);
+    }
+    const reached = REACHED.reduce((a, k) => a + (byResult[k] || 0), 0);
     Object.assign(out, { table: 'ok', total, byResult, unverified, usage,
-      limitHit: (byResult.daily_limit || 0) > 0 || usage >= out.dailyMax });
+      limitHit: (byResult.daily_limit || 0) > 0 || usage >= out.dailyMax,
+      okByFmt, okByEffort, lost: Math.max(0, usage - reached),
+      v2Zero: out.format === 'v2' && (okByFmt.v2 || 0) === 0 && (byResult.ok || 0) > 0 });
   } catch (_) {
     out.table = 'error';
   }
