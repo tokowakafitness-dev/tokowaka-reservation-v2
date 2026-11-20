@@ -1,6 +1,6 @@
 # 設計47 定期の押し出しが ScriptLock を握り続け、予約・取消・変更がロック待ちで落ちる
 
-> 2026-11-20・CTO（CEO玄から受けた）。**第3版（関門①第2周の差し戻しを反映。第2版は第1周の差し戻しで書き直したもの）**。実装・push・GAS 反映はしていない。
+> 2026-11-20・CTO（CEO玄から受けた）。**第4版（関門①第3周の差し戻しを反映。第2版＝第1周、第3版＝第2周の差し戻しへの対処）**。実装・push・GAS 反映はしていない。
 > 第1版の推奨（押し出し同士の排他をリースへ移す＝手段A）は、**共通の ScriptLock が「書きかけの名簿を写さない」守りになっている**ことが確かめられたため不採用（§6）。
 > 2段に分ける：**段1＝押し出しと書き込みのロックの関係は変えずに測る＋ロック待ちの案内を正しくする＋`_edgeLocked` の入れ子の扱いを直す（今回の反映）**／**段2＝構造を直す（段1の実測の後に別の設計）**。
 > 版の印：実装時に GAS `LB_HEALTH_BUILD`・`LB_EDGE_BUILD` を実装日に。
@@ -95,32 +95,68 @@
 ```
 function _edgeLocked(fn, waitMs, label):
   lock = getScriptLock()
-  owned = false
-  if lock.hasLock():            // 呼び出し元（作業依頼など）が既に持っている＝取り直さない
-     held = true（取らない）
+  kind = _edgeKindOf(label)                 // 許可リスト { slots, all, home, fullSync }・外は OTHER
+  owned = false; nested = false
+  if lock.hasLock():                        // 呼び出し元が既に持っている＝取り直さない
+     nested = true
   else:
-     owned = lock.tryLock(wait)
-     if !owned: 見送りを数える（3-1）→ return
-  try { r = fn() }               // 本体
-  finally { if (owned) lock.releaseLock() }   // ★自分で取ったときだけ放す
-  記録（3-1・ロックを放した後）
-  return r
+     t = now(); owned = lock.tryLock(wait); waitMs = now() − t
+     if !owned:
+        _edgeTallySkip(kind)                // メモリに溜める（ロックは持っていない）
+        _edgePushFlushIfOwner()             // 外側が無ければここで書く（best-effort）
+        return                              // 今と同じ（undefined＝見送り）
+  t0 = now(); r = undefined; err = null; threw = false
+  try {
+     try { r = fn() }
+     catch (e) { err = e; threw = true }
+     finally {
+        // ★内側の finally：本体が戻っても投げても、ここで終了時刻と記録項目をメモリに確定する
+        _edgeTallyRun(kind, nested, now() − t0, waitMs)   // 数だけ（固定の kind と数値）
+     }
+  } finally {
+     if (owned) lock.releaseLock()          // ★自分で取ったときだけ放す
+  }
+  if (owned) _edgePushFlush()               // ★解放の後に best-effort（例外は握りつぶす）。nested はここで書かない（3-1b）
+  if (threw) throw err                      // 元の例外をそのまま投げ直す（包まない）
+  return r                                  // 元の戻り値をそのまま
 ```
 - `_lbReserveCoreImpl`（6112〜6115 の `hasLock` と `_lbOwnedLock`）と同じ型。
 - GAS のロックが入れ子を数えるかに頼らない。外側が取ったロックは外側が放す。
 - 押し出し同士・押し出しと書き込みの関係は変わらない（ScriptLock 1つのまま）。作業依頼の中から呼んだ押し出しも、作業依頼のロックの中で走る（今の意図どおり）。
+- 本体の例外の扱いは今と同じ（今の `_edgeLocked` も `try { return fn(); } finally { releaseLock }` で例外を外へ出す・1539）。変わるのは、例外の回も記録に残ることだけ。
 
 ### 3-1 押し出しの記録：`LB_EDGE_PUSH_COUNT`
 ```
-{ 'yyyy-MM-dd': { <kind>: { n, skip, holdMax, holdSum, over10Sum, waitMax } } }   直近3日
+{ 'yyyy-MM-dd': { <kind>: { n, thrown, skip, holdMax, holdSum, over10Sum, waitMax } } }   直近3日
 kind ＝ 許可リスト { slots, all, home, fullSync, OTHER }
-       ＋ 作業依頼の中から呼ばれた回（入口で hasLock() が真）は 'job_' を前に付けた別の鍵（job_all 等）
-       ＋ 作業依頼の全体 jobHold（edgeJobPoll が書き込みの作業でロックを持った時間）
+       ＋ 呼び出し元が既に ScriptLock を持っていた回（nested）：
+           作業依頼の実行中（edgeJobPoll が立てるメモリの印 _EJ_IN_RUN が真）なら 'job_' ＋ kind
+           それ以外なら 'nested_' ＋ kind（いまのコードには無い経路。出たら日次点検が warn）
+       ＋ jobHold（edgeJobPoll が書き込みの作業でロックを持った時間：n・thrown・holdMax・holdSum・over10Sum）
 ```
-- `_edgeLocked` の中で測る：`waitMs`＝`tryLock` にかかった時間、`holdMs`＝本体の時間、`over10Sum`＝Σmax(0, holdMs−10,000)（**書き込みが落ちうる到着の窓の秒数＝2-1 の推定を実測に置き換える**）。`n`＝本体を走らせた回、`skip`＝見送った回（既存の `LB_EDGE_LOCK_SKIPS` は累計のまま残す）。
-- ★**記録はロックの中で書かない。** 順序は「本体が終わる → 計測値をメモリで確定 → `releaseLock()`（自分で取ったときだけ）→ 記録を best-effort で書く（例外は握りつぶす）」。ロックを持たずに読み・足し・書くので、同時に終わった2つの片方が落ちうる＝点検では**下限**と表示。ロックを持つ時間を記録の分だけ延ばさない。
-- 作業依頼の中から呼ばれた回（`owned:false`）の記録は、ロックを放さないので作業依頼のロックの中で書くことになる。これも作業依頼の終わりまでメモリに溜め、`edgeJobPoll` がロックを放した後に `jobHold` と一緒に書く。
+- `_edgeLocked` の中で測る：`waitMs`＝`tryLock` にかかった時間、`holdMs`＝本体の時間（例外で終わった回も含む）、`over10Sum`＝Σmax(0, holdMs−10,000)（**書き込みが落ちうる到着の窓の秒数＝2-1 の推定を実測に置き換える**）。`n`＝本体を走らせた回（例外の回を含む）、`thrown`＝そのうち本体が例外を投げた回、`skip`＝見送った回（既存の `LB_EDGE_LOCK_SKIPS` は累計のまま残す）。
+- ★**記録はロックの中で書かない。** 順序は「本体が終わる（戻る／投げる）→ 内側の finally で計測値をメモリに確定 → `releaseLock()`（自分で取ったときだけ）→ 記録を best-effort で書く（例外は握りつぶす）→ 元の戻り値を返す／元の例外を投げ直す」。ロックを持たずに読み・足し・書くので、同時に終わった2つの片方が落ちうる＝点検では**下限**と表示。
+- **nested の分類の根拠（第4版で grep した `_edgeLocked` の全呼び出し元）**：
+  | 呼び出し元 | 経路 | 外側の ScriptLock |
+  |---|---|---|
+  | `pushToEdgeAll`（1545） | トリガー `pushToEdgeLight`（1785）・`pushToEdgeAllText`（1635）＝エディタか作業依頼 `pushAll`（EdgeJob.js 205）・MemberMerge.js 207 の案内（エディタで手動） | **作業依頼 `pushAll` のときだけ持つ**（`pushAll` は書き込みの作業＝worker/src/routes/jobs.js 18 `WRITE_OPS`、EdgeJob.js 262〜264 でロック） |
+  | `pushToEdgeFullSync`（1552） | トリガーだけ | 持たない |
+  | `pushToEdgeSlots`（1688） | トリガー・カレンダー同期の後ろ `_lbCalSlotsAfter`（2762・UserLock を放した後）・切り替え関数 `_lbConsecSwitch`（LineBooking.js 4189・4199＝エディタ） | 持たない |
+  | `pushToEdgeHome`（1824） | トリガーだけ | 持たない |
+  作業依頼のもう1つの書き込みの作業 `quotaBuild`（EdgeJob.js 204 → `quotaBuildText` 3577〜3852）は押し出しを呼ばない（grep）。
+  ＝いまのコードで nested になるのは作業依頼 `pushAll` だけ。ただし「`hasLock()` が真＝作業依頼」と決め打たず、作業依頼の印で分ける（将来ほかの外側ロックの経路が増えても `job_` に混ざらない）。
 - 第2版の `jobLockLost`（数えるだけ）はやめた。所有権方式で原因を取り除く（3-1a）。
+
+### 3-1b 作業依頼の中の押し出しの記録（専用の flush）
+- `edgeJobPoll` は `_ejRun` を呼ぶ前にメモリの印 `_EJ_IN_RUN = true` を立て、溜めの器 `_EDGE_PUSH_TALLY` を空にしておく。nested の `_edgeLocked` は記録を**溜めるだけ**で書かない（作業依頼のロックの中で setProperty しない）。
+- **`edgeJobPoll` のロックの解放（EdgeJob.js 280〜281 の `finally { lock.releaseLock() }`）の直後に専用の flush を置く**：`_EJ_IN_RUN = false` → `jobHold` を溜めに足す → `_edgePushFlush()`（best-effort）。この flush は `_ejPost`（報告）より前でも後でもよいが、報告の `ok`／`error`／`result` を作り終えた値に触らない。
+- 規定：
+  1. `_ejRun` が押し出しの**後**に例外を投げても flush する（flush は `finally` の外側の、解放の後に必ず通る位置＝`try { _ejRun } catch { err } finally { release }` の次の文。catch が例外を飲むので必ず到達する）。
+  2. 1回の作業依頼で押し出しを複数回呼んだら、**全部**溜めに足す（kind ごとに n・holdSum 等を加算）。
+  3. flush の後は溜めを空にする（同じ実行で二度書かない）。flush が失敗しても溜めは空にする（次の実行へ持ち越さない＝GAS の実行ごとに器は消えるが、同じ実行の中の二重記録を防ぐ）。
+  4. setProperty は必ずロックの解放の後。
+  5. 記録の例外は `ok`／`error`／`result` を変えない（flush は try/catch で握りつぶす）。
+- 書き込みの作業でない（`isWrite` が偽で）ロックを取らない作業依頼から押し出しが呼ばれた場合は、`_edgeLocked` が自分で取る（owned）＝通常の記録の経路（作業依頼の印が立っていても nested ではないので `job_` にしない）。いまのコードでは `pushAll` は書き込みの作業なので起きない。
 
 ### 3-2 書き込みの記録：`LB_WRITE_LOCK_COUNT`
 ```
@@ -186,8 +222,9 @@ op ＝ 許可リスト { reserve, cancel, change, undoSdc, recurAdd, recurDel, v
 | 行 | 出すもの | 重さ |
 |---|---|---|
 | **対象10操作のロック競合**（全書き込みのロックではない） | op ごとの `busy/n`（下限）・`waitMax` | `busy` ≥1 で warn |
-| 押し出しが握った時間 | kind ごとの `n・holdMax・平均・over10Sum`・`skip`（作業依頼の中の分と `jobHold` は別の行・下限） | `over10Sum` > 0 で warn（書き込みが落ちうる窓の秒数） |
+| 押し出しが握った時間 | kind ごとの `n・thrown・holdMax・平均・over10Sum`・`skip`（`job_`・`nested_`・`jobHold` は別の行・下限） | `over10Sum` > 0 で warn（書き込みが落ちうる窓の秒数）／`thrown` ≥1 で warn |
 | 長すぎる押し出し | `holdMax` > 300秒（6分の制限に近い） | warn |
+| 想定外の入れ子 | `nested_*`（作業依頼の外で、呼び出し元が ScriptLock を持ったまま押し出しを呼んだ回） | ≥1 で warn |
 | 記録が壊れた／大きすぎた | `LB_LOCK_COUNT_BAD` | high |
 | 昨日の押し出しの記録が無い | — | high（押し出しが走った証拠が無い） |
 
@@ -202,12 +239,14 @@ LockService の身代わりは**再入を許さない**（GAS の未確認の仕
 | ⑤ | ①の各関数で、ロックの前に台帳・名簿へ書く文が無いこと | 身代わりのシートへの書き込みが0回 | ロックの前に1セル書く行を足す → 落ちる |
 | ⑥ | 画面（jsdom・`liff/index.html`）：確定・会員の取消（新しい経路）・**旧取消経路 `_cancelReservationLegacy`（`CXL_ON` が偽のとき・3520〜3525／3538〜3540）**・トレーナーの取消・無料取消・当日取消の戻し・固定枠の追加/削除に応答 `{success:false, code:'BUSY', message}` | `busy_retry` の文（確定と自己登録は `res.message`）が出る・ボタンが押せる・SLOT_TAKEN の封鎖をしない・会員の取消は理由の入力が残る。4言語に鍵がある | 1画面の `BUSY` の分岐を消す → 「コード：BUSY」の文になり落ちる |
 | ⑦ | **所有権方式**：(a) 外側の実行がロックを取得 → `_edgeLocked` を通す（作業依頼から `pushToEdgeAllText` と同じ形）→ 戻った後も外側の `hasLock()===true`。(b) 外側が持たないとき `_edgeLocked` は取り、終わったら放す（`hasLock()===false`）。(c) 別の実行が持つとき見送り | (a)(b)(c) のとおり・(a) で `tryLock` が呼ばれない | `finally` の `if (owned)` を外す → (a) で外側のロックが外れて落ちる。入口の `hasLock()` を消す → 身代わりの例外で落ちる |
-| ⑧ | 押し出しの記録：`pushToEdgeLight`／`pushToEdgeSlots`／`pushToEdgeHome` を身代わりの時計で走らせる（本体 15秒・2秒・0秒）・見送り・作業依頼の中から | `n・holdMax・over10Sum`（15秒→5,000）・`skip`・`job_all` と `jobHold` が別の鍵に入る。★**呼ばれた順が「本体の終わり → releaseLock → setProperty」**（身代わりが呼び出しの順を記録し、`LB_EDGE_PUSH_COUNT` の `setProperty` がロックを持たない間に呼ばれたことを確かめる） | `over10Sum` の 10,000 を 0 にする → 落ちる。記録を `finally` の `releaseLock()` の前へ移す → 順序の確かめで落ちる |
+| ⑧ | 押し出しの記録：`pushToEdgeLight`／`pushToEdgeSlots`／`pushToEdgeHome` を身代わりの時計で走らせる（本体 15秒・2秒・0秒）・見送り・**押し出しの本体が例外を投げた回**（本体 12秒の後に投げる身代わり） | `n・holdMax・over10Sum`（15秒→5,000）・`skip`。例外の回も `n`・`thrown`・`holdMax`（12秒）・`over10Sum`（2,000）が記録され、**解放の後に元の例外が同じオブジェクトのまま投げ直される**（`===` で比べる）。★呼ばれた順が「本体の終わり → releaseLock → setProperty」（身代わりが呼び出しの順を記録し、`LB_EDGE_PUSH_COUNT` の setProperty がロックを持たない間に呼ばれたことを確かめる）。例外の回も同じ順 | `over10Sum` の 10,000 を 0 にする → 落ちる。記録を `releaseLock()` の前へ移す → 順序の確かめで落ちる。内側の finally を外して記録を `fn()` の後ろに置く → 例外の回が記録されず落ちる。例外を包んで投げ直す → `===` で落ちる |
 | ⑨ | 記録の大きさ：大きな過去の日を入れた状態で書く | 書いた値が 8,000バイト以下・古い日から落ちる・今日だけで超えたら書かず `LB_LOCK_COUNT_BAD` | バイト数の確認を文字数にする（多バイト文字を混ぜた身代わりで落ちる）・確認を消す |
 | ⑩ | 個人情報：①⑧の後の全 Script Property の値 | 会員ID（`C`+数字）・`U`+32桁・予約ID の形・例外の文が無い（正規表現で全数） | 記録の関数に reservationId を渡す行を足す → 落ちる（⑪でも落ちる） |
 | ⑪ | **記録の API の引数の構文検査**：④と同じ字句解析で、記録の関数（押し出しの記録・書き込みの記録・flush）の呼び出しをすべて集め、引数が文字列リテラル（許可リストの値）・数値リテラル・計測用のローカル変数（名前の許可リスト）だけであること | 全呼び出しが条件を満たす・呼び出しが0件でない | 引数に `customerId`・`e.message`・`reservationId` を渡す行を足す → 落ちる。陽性 fixture（いまの許された呼び出しを全部拾う）・陰性 fixture（コメントの中の呼び出しを数えない） |
 | ⑫ | **fault injection**：記録の関数（`PropertiesService` の `getProperty`/`setProperty`）が例外を投げる身代わりで、①②⑦⑧を流し直す | 本体の戻り値（`BUSY`・成功）・本体の例外（②）・ロックの解放（⑦⑧の `hasLock`）が、記録が成功したときと同じ | 記録の呼び出しから try/catch を外す → 戻り値か解放が変わり落ちる |
 | ⑬ | トリガーの集合 | 0本増（`gas-edge-defer.test.js` ⑦ と同じ集合） | — |
+| ⑭ | **作業依頼の中の押し出し**（`edgeJobPoll` を身代わりの Worker と一緒に入口から）：(a) `pushAll` の押し出しが成功した後、`_ejRun` の後続が例外を投げる (b) 1回の作業依頼で押し出しを2回呼ぶ (c) flush の setProperty が例外を投げる | 3つとも、作業依頼のロックを**放した後**に `LB_EDGE_PUSH_COUNT` の setProperty が**一度だけ**呼ばれ、溜めた全部（(b) は `job_all` の n=2）と `jobHold` が入る。作業依頼のロックの中では setProperty が0回。報告 `_ejPost` の `ok`／`error`／`result` は記録が無い場合と同じ（(a) は ok:false と同じ error・(c) は ok:true と同じ result）。nested の分類は `job_all`（`nested_all` ではない） | flush を `finally` の中（解放の前）へ移す → 順序で落ちる。flush の後に溜めを空にしない → 二度書いて落ちる。flush の try/catch を外す → (c) で報告が変わり落ちる。作業依頼の印を見ずに nested を全部 `job_` にする → (d) で落ちる |
+| ⑮ | **nested の分類**：(d) 作業依頼の印を立てずに、外側でロックを取ってから `pushToEdgeAll` を呼ぶ | `nested_all` に入り `job_all` に入らない・日次点検が warn を出す | 分類を `hasLock()` だけにする → 落ちる |
 
 ★文字列の有無で合否を決めない（コメントに当たって素通りする）。入口から通して返る値・身代わりのシートとロックの状態・呼ばれた順で見る。④⑪は構文を見るが、コメント・文字列を落としてから数え、陽性・陰性の fixture で字句解析そのものを確かめる。
 
@@ -229,9 +268,9 @@ LockService の身代わりは**再入を許さない**（GAS の未確認の仕
 ## 5. 段取り（WBS）
 | # | 作業 | 依存 | 完了の条件 |
 |---|---|---|---|
-| 1 | 関門①第3周：第3版＋MODEL.md を Codex に | — | §6 に対処を残す |
-| 2 | 検査を先に書く（3-9 ①〜⑬） | 1 | 今のコードで ①③④⑥⑦⑧⑪ が落ちる（赤）ことを確かめる（④⑪は陽性・陰性 fixture が通ることも） |
-| 3 | 実装：3-1a・3-1・3-2（全出口の flush）・3-3・3-4・3-8 | 2 | `bash worker/test/run-all.sh` 全部通る・3-9 の壊し方で落ちた記録 |
+| 1 | 関門①第4周：第4版＋MODEL.md を Codex に | — | §6 に対処を残す |
+| 2 | 検査を先に書く（3-9 ①〜⑮） | 1 | 今のコードで ①③④⑥⑦⑧⑪⑭⑮ が落ちる（赤）ことを確かめる（④⑪は陽性・陰性 fixture が通ることも） |
+| 3 | 実装：3-1a（本体の例外も記録）・3-1・3-1b（作業依頼の専用 flush）・3-2（全出口の flush）・3-3・3-4・3-8 | 2 | `bash worker/test/run-all.sh` 全部通る・3-9 の壊し方で落ちた記録 |
 | 4 | 関門②（とくに「この変更が新しく持ち込んだ不具合」・個人情報・ロックの区間を延ばしていないか） | 3 | — |
 | 5 | 関門③（既定オフのスイッチが無い＝全員に出る）：「BUSY の文が出て困る場面は無いか」「BUSY のはずが例外に／例外のはずが BUSY に化ける経路は無いか」 | 4 | — |
 | 6 | GAS 反映1回（★オーナー・他の束と同梱可）＋画面は main へ（オーナーのマージ） | 5 | 版の印・作業依頼で `LB_EDGE_PUSH_COUNT` が増えている |
@@ -263,7 +302,14 @@ LockService の身代わりは**再入を許さない**（GAS の未確認の仕
 | 点検の表示が全書き込みのロックに見える | 「対象10操作のロック競合」と明記（3-2・3-8） |
 | 記録の API の引数が固定値と数値だけであることを構文で固定していない | 検査⑪を新設（引数は文字列リテラル・数値リテラル・計測用のローカル変数の許可リストだけ・陽性/陰性 fixture つき） |
 
-### 第3周
+### 第3周（第3版）— 差し戻し（第2周の7点は十分・残り3点）
+| 指摘 | 対処 |
+|---|---|
+| `_edgeLocked` の本体が例外を投げた回は記録に届かない（第3版の擬似コード） | 内側の finally で終了時刻と記録項目をメモリに確定 → 自分で取ったロックを解放 → 解放後に best-effort で flush → 元の戻り値を返す／元の例外をそのまま投げ直す、に直した（3-1a）。`thrown` を数える。検査⑧に「本体が例外を投げた回」（n・holdMax・over10Sum が入る・解放後に同じ例外オブジェクトが投げ直される・順序）を足した |
+| 作業依頼の中で溜めた記録をいつどう書くかが本文に無い | `edgeJobPoll` のロック解放（EdgeJob.js 280〜281）の直後に専用の flush を置くと明記（3-1b）。`_ejRun` が押し出しの後で例外でも書く／複数回の押し出しは全部溜める／書いたら空にする／setProperty は解放の後／記録の例外は ok・error・result を変えない、を規定。検査⑭(a)(b)(c) を新設 |
+| `owned:false` を `job_` と呼ぶのは「呼び出し元が既に ScriptLock を持つ経路」と同値でない | `_edgeLocked` の全呼び出し元を grep でたどった表を 3-1 に載せた（いまは作業依頼 `pushAll` だけが外側のロックを持つ）。分類は作業依頼の印 `_EJ_IN_RUN` と `hasLock()` の両方で決め、印が無い入れ子は `nested_` に入れて日次点検が warn（3-1・3-8）。検査⑮を新設 |
+
+### 第4周
 （ここに追記する）
 
 ---
