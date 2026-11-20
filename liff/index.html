@@ -1799,7 +1799,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     api({ action:'line_selfRegister', name:name, phone:phone, email:email, birthday:birthday, goal:goal, lang:LANG }).then(function(res){
       state._regBusy = false; btn.disabled=false; btn.textContent=t('reg_submit');
       if (res.success && res.verified) { api({ action:'line_getMemberStatus' }).then(function(r){ if (r && r.success && r.verified) renderHome(r); else show('s-home'); }); }
-      else { errEl.textContent = res.message || t('reg_fail'); errEl.hidden=false; }
+      else { errEl.textContent = (res && res.code === 'BUSY') ? t('busy_retry') : (res.message || t('reg_fail')); errEl.hidden=false; }   // 設計47（関門③）：混み合いは画面の言語で
     }).catch(function(e){ state._regBusy = false; btn.disabled=false; btn.textContent=t('reg_submit'); errEl.textContent=t('comm_fail',{msg:e}); errEl.hidden=false; });
   });
 
@@ -4216,7 +4216,8 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
           state._repaint = function(){ document.getElementById('doneDetail').textContent = _doneFn(); };   // 言語切替で完了の詳細も今の言語に（改訂1-2）
           show('s-done');
         } else {
-          errEl.textContent = res.message || t('book_fail');
+          //   設計47（関門③）：混み合い（BUSY）は GAS の日本語の文ではなく、画面の言語の案内を出す（予約・変更・代行・振替・まとめて予約）
+          errEl.textContent = (res.code === 'BUSY') ? t('busy_retry') : (res.message || t('book_fail'));
           errEl.hidden = false;
           //   ★その時間が取れなかった（SLOT_TAKEN）ときは、裏で枠の一覧だけ新しくする（2026-10-13・設計18 §3-7）。
           //     それまではエラー文を出すだけで一覧が古いまま残り、戻ると同じ枠をまた選べた。

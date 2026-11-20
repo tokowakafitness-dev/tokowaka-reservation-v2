@@ -6,7 +6,7 @@
 //     トレーナー・オーナーの画面は、ボタンが呼ぶ関数（trainerCancel・ownerFreeCancel・renderSameDayCancels・_buildRecurSection）から入る
 //   1. 会員の取消（旧経路 _cancelReservationLegacy＝CXL_ON が偽・いまの既定）→「混み合っています」・コードを出さない
 //   2. 会員の取消（新しい経路 ?cxl=1）→ 同じ文・理由の入力が残る・押し直せる
-//   3. 会員の予約・変更の確定 → res.message が出る・SLOT_TAKEN の封鎖をしない（押し直せる）
+//   3. 会員の予約・変更の確定・自己登録 → BUSY は画面の言語の busy_retry（GAS の日本語の文を出さない・関門③）・SLOT_TAKEN の封鎖をしない（押し直せる）
 //   4. トレーナーの取消・オーナーの無料取消・当日取消を無料に直す・固定枠の追加/削除 → busy_retry
 //   5. 4言語に busy_retry がある
 import { readFileSync } from 'node:fs';
@@ -104,8 +104,9 @@ const sentOf = (w, action) => w.sent.filter((p) => p.action === action);
 
 // ================= 3. 予約・変更の確定 =================
 {
-  //   確定のボタンの処理は res.message を出す（変えていない）。BUSY は SLOT_TAKEN の封鎖の条件に入らない
-  ok('3-1 確定の画面は res.message を出す（BUSY の message＝混み合っています）', /errEl\.textContent = res\.message \|\| t\('book_fail'\);/.test(HTML));
+  //   関門③（2026-11-20）：BUSY は GAS の日本語の文ではなく画面の言語の busy_retry。ほかの失敗は今までどおり res.message
+  ok('3-1 確定の画面は BUSY なら busy_retry・ほかは res.message', /errEl\.textContent = \(res\.code === 'BUSY'\) \? t\('busy_retry'\) : \(res\.message \|\| t\('book_fail'\)\);/.test(HTML));
+  ok('3-3 自己登録も BUSY なら busy_retry', /errEl\.textContent = \(res && res\.code === 'BUSY'\) \? t\('busy_retry'\) : \(res\.message \|\| t\('reg_fail'\)\);/.test(HTML));
   ok('3-2 ★枠の封鎖（押せなくする）は SLOT_TAKEN のときだけ＝BUSY では押し直せる', /if \(res\.code === 'SLOT_TAKEN' && !state\.proxyMode\) \{/.test(HTML) && !/code === 'BUSY'[^\n]*slotTakenKey/.test(HTML));
 }
 
