@@ -406,7 +406,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-19a 設計44 同意の規則（健康情報の撤回・紙の同意の人にも聞く）＋カルテの次回の予約は写しが追いつくまで「確認中」（karte.js 2026-11-19a・設計45）';
+  var LIFF_BUILD = '2026-11-20a 混み合いでロックを取れなかったとき（BUSY）は「混み合っています」と出す（設計47）＋設計44 同意の規則（健康情報の撤回・紙の同意の人にも聞く）＋カルテの次回の予約は写しが追いつくまで「確認中」（karte.js 2026-11-19a・設計45）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -467,6 +467,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       err_init:'初期化に失敗しました：{msg}', err_trainers:'トレーナー情報の取得に失敗しました。',
       err_slots:'空き枠の取得に失敗しました。', err_myres:'予約の取得に失敗しました（コード：{code}）。',
       err_cancel:'キャンセルに失敗しました（コード：{code}）。',
+      busy_retry:'ただいま混み合っています。少し時間をおいてもう一度お試しください（まだ何も変更されていません）。',
       already_gone:'このご予約は、すでに取り消されています。一覧を最新にしました。',
       overage_note:'超過 {n}回：追加のお支払いが必要です',
       already_gone_recur:'この固定枠は、すでに削除されています。一覧を最新にしました。', comm_fail:'通信に失敗しました：{msg}',
@@ -566,6 +567,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       err_init:'Initialization failed: {msg}', err_trainers:'Failed to get trainer information.',
       err_slots:'Failed to get available slots.', err_myres:'Failed to get bookings (code: {code}).',
       err_cancel:'Cancellation failed (code: {code}).',
+      busy_retry:'The system is busy right now. Please wait a moment and try again (nothing has been changed yet).',
       already_gone:'This booking has already been cancelled. The list has been refreshed.',
       overage_note:'{n} session(s) over: additional payment required',
       already_gone_recur:'This recurring slot has already been removed. The list has been refreshed.', comm_fail:'Connection failed: {msg}',
@@ -665,6 +667,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       err_init:'初始化失败：{msg}', err_trainers:'获取教练信息失败。',
       err_slots:'获取可预约时段失败。', err_myres:'获取预约失败（代码：{code}）。',
       err_cancel:'取消失败（代码：{code}）。',
+      busy_retry:'系统繁忙，请稍后再试（目前尚未做任何更改）。',
       already_gone:'此预约已被取消。列表已更新。',
       overage_note:'超出 {n} 次：需要追加付款',
       already_gone_recur:'此固定时段已被删除。列表已更新。', comm_fail:'通信失败：{msg}',
@@ -764,6 +767,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       err_init:'初始化失敗：{msg}', err_trainers:'取得教練資訊失敗。',
       err_slots:'取得可預約時段失敗。', err_myres:'取得預約失敗（代碼：{code}）。',
       err_cancel:'取消失敗（代碼：{code}）。',
+      busy_retry:'系統繁忙，請稍後再試（目前尚未做任何變更）。',
       already_gone:'此預約已被取消。列表已更新。',
       overage_note:'超出 {n} 次：需要追加付款',
       already_gone_recur:'此固定時段已被刪除。列表已更新。', comm_fail:'連線失敗：{msg}',
@@ -1995,7 +1999,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
           api({ action:'line_undoSameDayCancel', reservationId: it.reservationId }).then(function(res){
             if (!res || !res.success) {
               btn.disabled = false; btn.textContent = '無料キャンセルに直す';
-              window.alert((res && res.message) || ('直せませんでした（' + ((res&&res.code)||'不明') + '）。'));
+              window.alert((res && res.code === 'BUSY') ? t('busy_retry') : ((res && res.message) || ('直せませんでした（' + ((res&&res.code)||'不明') + '）。')));   // 設計47
               return;
             }
             var done = '無料キャンセルに直しました。残数が1回戻りました。';
@@ -2556,6 +2560,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     api({ action:'line_cancelReservation', reservationId: r.reservationId }).then(function(res){
       if (res && res.success) { window.alert('取り消しました。お客様に通知が届きます。'); loadTrainerReservations(); }
       else if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadTrainerReservations(); }
+      else if (res && res.code === 'BUSY') { showError(t('busy_retry')); }   // 設計47：ロック待ちの時間切れ（何も変わっていない）
       else { showError('キャンセルに失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
@@ -2565,6 +2570,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     api({ action:'line_ownerFreeCancel', reservationId: r.reservationId }).then(function(res){
       if (res && res.success) { window.alert('無料で取り消しました。お客様に「今回は無料」と通知が届きます。'); loadTrainerReservations(); }
       else if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadTrainerReservations(); }
+      else if (res && res.code === 'BUSY') { showError(t('busy_retry')); }   // 設計47
       else { showError('無料での取り消しに失敗しました（' + ((res&&res.code)||'不明') + '）。'); }
     }).catch(function(e){ showError('通信に失敗しました：'+e); });
   }
@@ -3404,6 +3410,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
               api({ action:'line_deleteRecurringPattern', patternId: p.patternId }).then(function(r){
                 if (r && r.success) { window.alert(t('recur_deleted')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
                 else if (_alreadyGone(r)) { _edgeMarkStale(); window.alert(t('already_gone_recur')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
+                else if (r && r.code === 'BUSY') { showError(t('busy_retry')); }   // 設計47
                 else { showError(t('err_cancel', { code: (r && r.code) || '?' })); }
               }).catch(function(e){ showError(t('comm_fail', { msg: e })); });
             };
@@ -3426,6 +3433,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
           var addReq = { action:'line_addRecurringPatternByTrainer', customerId: customerId, weekday: wsel.value, time: tsel.value, trainerId: trsel.value };   // 固定枠はトレーナー限定
           api(addReq).then(function(r){
             if (r && r.success) { window.alert(t('recur_added')); _buildRecurSection(container, mode, customerId, defaultTrainerId); }
+            else if (r && r.code === 'BUSY') { showError(t('busy_retry')); }   // 設計47
             else { showError(t('recur_add_fail', { code: (r && r.code) || '?' })); }
           }).catch(function(e){ showError(t('comm_fail', { msg: e })); });
         };
@@ -3542,6 +3550,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
         // ★案内を出してから一覧を取り直すと、取り直しが画面を切り替えて**案内が消える**。
         //   読む間もなく消えるので、確実に目に入る出し方にする（2026-10-04・Codex指摘）。
         if (_alreadyGone(res)) { _edgeMarkStale(); window.alert(t('already_gone')); loadMyReservations(); return; }
+        if (res && res.code === 'BUSY') { showError(t('busy_retry')); return; }   // 設計47：ロック待ちの時間切れ（何も変わっていない）
         showError(t('err_cancel', { code: (res && res.code) || '?' })); return;
       }
       if (res.penalty && !r.transfer) {
@@ -3671,7 +3680,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
           _cxlBackLock(false);
           renderCxl(); return;
         }
-        _cxlErr((res && (res.code === 'BAD_EXPECTATION' || res.code === 'OUTCOME_CHANGED')) ? t('cxl_retry') : t('err_cancel', { code: (res && res.code) || '?' }));
+        _cxlErr((res && (res.code === 'BAD_EXPECTATION' || res.code === 'OUTCOME_CHANGED')) ? t('cxl_retry') : (res && res.code === 'BUSY') ? t('busy_retry') : t('err_cancel', { code: (res && res.code) || '?' }));   // 設計47：BUSY
         return;
       }
       state.cxlDone[id] = true;

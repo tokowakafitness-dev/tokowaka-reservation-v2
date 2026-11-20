@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { writeLockSrc } from './_gas-lock-src.js';   // 設計47：書き込みのロックの部品
 
 process.env.TZ = 'Asia/Tokyo';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -49,7 +50,7 @@ function core(custInfo, startISO, channel) {
     LockService: { getScriptLock: () => { throw new Error(PASSED); } },   // 関門を越えたらここで止める
   };
   vm.createContext(ctx);
-  vm.runInContext([pluck(LB, '_lbBookingHorizonEnd'), pluck(LB, '_lbHorizonGate'), pluck(LB, '_lbReserveCoreImpl')].join('\n'), ctx);
+  vm.runInContext(writeLockSrc(LB) + [pluck(LB, '_lbBookingHorizonEnd'), pluck(LB, '_lbHorizonGate'), pluck(LB, '_lbReserveCoreImpl')].join('\n'), ctx);
   try { return ctx._lbReserveCoreImpl(custInfo, { trainerId: 't1', startISO }, channel); } catch (e) { return { passed: e.message === PASSED, err: e.message }; }
 }
 console.log('=== ① 判定の本体 ===');
@@ -80,7 +81,7 @@ function entry(fnNames, call, { coreImpl, extra = {} } = {}) {
     ...extra,
   };
   vm.createContext(ctx);
-  vm.runInContext([MAP_COL_SRC, pluck(LB, '_lbBookingHorizonEnd'), pluck(LB, '_lbHorizonGate'), pluck(BR, '_lbRecurringStartMs'),
+  vm.runInContext(writeLockSrc(LB) + [MAP_COL_SRC, pluck(LB, '_lbBookingHorizonEnd'), pluck(LB, '_lbHorizonGate'), pluck(BR, '_lbRecurringStartMs'),
     pluck(LB, '_lbContractEndOfDayMs'), ...fnNames.map((n) => pluck(LB, n))].join('\n'), ctx);
   const r = call(ctx);
   return { r, seen, creditUsed };

@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-18a I79 の見張りが問題なしでも info を出す・カレンダー同期の間隔のコメントを実際の5分に・LINE 通知の受け皿を一回限りトリガーと5分ごとに（設計45b）・写しの送信を応答の後ろへ（LB_EDGE_DEFER 既定オフ）（設計45）';
+var LB_EDGE_BUILD = '2026-11-20a 押し出しのロックを所有権方式に・握った時間を数える（例外の回も・放した後に書く）・残数の押し出しに名前 home（設計47）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -1527,16 +1527,81 @@ function _edgeRecordLockSkip(label) {
  *   30分おきに必ずぶつかる。5秒で諦めると**その回を丸ごと捨てて次は10分後**になる。
  *   待てば済む話なので待つ。ただし既定は変えない（重い押し出しまで長く待たせない）。
  */
+//
+// ★設計47（2026-11-20）：所有権方式＋握った時間の記録
+//   ・呼び出し元が既に ScriptLock を持っていれば（作業依頼 pushAll）取り直さず、**自分で取ったときだけ放す**。
+//     以前は tryLock で取り直して finally で放していた＝GAS のロックが入れ子を数えないなら作業依頼のロックまで外れ、
+//     作業の残りが排他なしで走りうる（未確認の仕様に頼らない・_lbReserveCoreImpl の hasLock と同じ型）
+//   ・握った時間は内側の finally でメモリに確定 → ロックを放す → 放した後に best-effort で書く → 元の戻り値／元の例外
+//     （本体が例外で終わった回も数える。記録はロックの中で書かない＝握る時間を延ばさない）
+//   ・入れ子の回（自分で取らなかった回）は書かずに溜める。作業依頼は edgeJobPoll がロックを放した直後に書く（EdgeJob.js）
+var LB_EDGE_KINDS = { slots: 1, all: 1, home: 1, fullSync: 1 };
+var _EDGE_PUSH_TALLY = null;
+function _edgeKindOf(label) { return LB_EDGE_KINDS[label] ? String(label) : 'OTHER'; }
+//   入れ子の名前：作業依頼の実行中（_EJ_IN_RUN）なら job_、それ以外は nested_（いまのコードには無い経路＝点検が warn）
+function _edgeNestedPrefix() { return (typeof _EJ_IN_RUN !== 'undefined' && _EJ_IN_RUN === true) ? 'job_' : 'nested_'; }
+function _edgeTallyKey(key, holdMs, waitMs, threw) {
+  try {
+    if (!_EDGE_PUSH_TALLY) _EDGE_PUSH_TALLY = {};
+    var r = _EDGE_PUSH_TALLY[key] || (_EDGE_PUSH_TALLY[key] = { n: 0, thrown: 0, holdMax: 0, holdSum: 0, over10Sum: 0, waitMax: 0 });
+    r.n++;
+    if (threw === true) r.thrown++;
+    if (holdMs > r.holdMax) r.holdMax = holdMs;
+    r.holdSum += holdMs;
+    r.over10Sum += Math.max(0, holdMs - 10000);
+    if (waitMs > r.waitMax) r.waitMax = waitMs;
+  } catch (e) {}
+}
+function _edgeTallyRun(kind, nested, holdMs, waitMs, threw) {
+  _edgeTallyKey(nested === true ? _edgeNestedPrefix() + kind : kind, holdMs, waitMs, threw);
+}
+function _edgeTallySkip(kind) {
+  try {
+    if (!_EDGE_PUSH_TALLY) _EDGE_PUSH_TALLY = {};
+    var r = _EDGE_PUSH_TALLY[kind] || (_EDGE_PUSH_TALLY[kind] = { skip: 0 });
+    r.skip = Number(r.skip || 0) + 1;
+  } catch (e) {}
+}
+//   溜めを書く（ロックを持たずに・1回だけ）。書いたら空にする。例外は握りつぶす
+function _edgePushFlush() {
+  var t = _EDGE_PUSH_TALLY;
+  _EDGE_PUSH_TALLY = null;
+  if (!t) return false;
+  try { return _lbLcMerge(LB_LC.PUSH_PROP, t); } catch (e) { return false; }
+}
 function _edgeLocked(fn, waitMs, label) {
   var lock = LockService.getScriptLock();
   var wait = (waitMs == null) ? 5000 : Number(waitMs);
-  if (!lock.tryLock(wait)) {
-    Logger.log('[edge] ほかの押し出しが動いているので今回は見送ります（' + (label || '?')
-               + '・' + Math.round(wait / 1000) + '秒待ちました）');
-    _edgeRecordLockSkip(label);
-    return;
+  var kind = _edgeKindOf(label);
+  var nested = false, owned = false, lockWaitMs = 0;
+  try { nested = lock.hasLock() === true; } catch (eH) { nested = false; }
+  if (!nested) {
+    var tw = Date.now();
+    owned = lock.tryLock(wait);
+    lockWaitMs = Date.now() - tw;
+    if (!owned) {
+      Logger.log('[edge] ほかの押し出しが動いているので今回は見送ります（' + (label || '?')
+                 + '・' + Math.round(wait / 1000) + '秒待ちました）');
+      _edgeRecordLockSkip(label);
+      _edgeTallySkip(kind);
+      _edgePushFlush();   // ロックは持っていない
+      return;
+    }
   }
-  try { return fn(); } finally { try { lock.releaseLock(); } catch (e) {} }
+  var t0 = Date.now(), r, err = null, threw = false;
+  try {
+    try { r = fn(); }
+    catch (eF) { err = eF; threw = true; }
+    finally {
+      var holdMs = Date.now() - t0;
+      _edgeTallyRun(kind, nested, holdMs, lockWaitMs, threw);   // メモリに確定（数・固定の名前・真偽値だけ）
+    }
+  } finally {
+    if (owned) { try { lock.releaseLock(); } catch (e) {} }   // ★自分で取ったときだけ放す
+  }
+  if (owned) _edgePushFlush();   // ★放した後に書く。入れ子は外側（作業依頼）が放した後に書く
+  if (threw) throw err;           // 元の例外をそのまま
+  return r;
 }
 
 function pushToEdgeAll(withHome) {
@@ -1821,7 +1886,7 @@ function pushToEdgeHome() {
     try { _edgeMaybeShadowSweep({ pushOk: false, reason: 'EDGE_OFF', startedAt: t0 }); } catch (e) {}
     return { ok: false, reason: 'EDGE_OFF' };
   }
-  var pushed = _edgeLocked(_pushToEdgeHomeImpl);
+  var pushed = _edgeLocked(_pushToEdgeHomeImpl, null, 'home');   // 設計47：記録の名前（無いと OTHER に入る）
   //   ★shadow を毎日まとめて取る（設計19）。**ロックを離した後**・押し出しの成否にかかわらず必ず呼ぶ
   //     （期限切れ・前日の掃除・月初の心拍は成否と関係なく要る）。比べる処理だけが成功時に限られる
   try { _edgeMaybeShadowSweep({ pushOk: !!(pushed && pushed.ok === true), startedAt: t0 }); }

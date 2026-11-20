@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { writeLockSrc } from './_gas-lock-src.js';   // 設計47：書き込みのロックの部品
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
@@ -69,6 +70,7 @@ const STAGES = ['auth', 'pre', 'lock', 'remain', 'calread', 'cal', 'sheet', 'not
 const T0 = new Date(2026, 9, 31, 10).getTime();
 function world({ actor, assigned = 'T1' } = {}) {
   let nowMs = T0;
+  let lockHeld = false;
   class FD extends Date { constructor(...a) { if (a.length === 0) super(nowMs); else super(...a); } static now() { return nowMs; } }
   const start = new Date(2026, 10, 7, 18);   // 期限前＝無料の変更
   const row = [start, '会員', 'C1', 'Ucust', assigned, '', 'confirmed', '', 'R1', 'line', ''];
@@ -88,7 +90,8 @@ function world({ actor, assigned = 'T1' } = {}) {
     getCustomerByLine: () => { nowMs += 50; return null; },
     getTrainerByLine: () => { nowMs += 100; log.trByLine++; return actor; },
     _lbSheet: () => sheet,
-    LockService: { getScriptLock: () => ({ waitLock: () => { nowMs += 10; }, releaseLock: () => {}, hasLock: () => true }) },
+    //   設計47：ロックは共通関数 _lbTakeWriteLock（hasLock → tryLock）で取る。持っている間だけ hasLock が真（予約の芯は取り直さない）
+    LockService: { getScriptLock: () => ({ waitLock: () => { nowMs += 10; }, tryLock: () => { nowMs += 10; lockHeld = true; return true; }, releaseLock: () => { lockHeld = false; }, hasLock: () => lockHeld }) },
     SpreadsheetApp: { flush: () => {} },
     _lbParseResvDate: (v) => v,
     _lbTrainerById: () => ({ id: 'T1', name: '担当' }),
@@ -103,7 +106,7 @@ function world({ actor, assigned = 'T1' } = {}) {
     _lbReserveCore: () => { log.core++; return { success: true, reservationId: 'R2', calendarEventId: '', trainerEventId: '' }; },
   };
   vm.createContext(ctx);
-  vm.runInContext(pluckVar(LB, 'LB_WP') + pluckVar(LB, 'LB_WP_CODES') + 'var _LB_WP = null;\n'
+  vm.runInContext(writeLockSrc(LB) + pluckVar(LB, 'LB_WP') + pluckVar(LB, 'LB_WP_CODES') + 'var _LB_WP = null;\n'
     + ['_lbWpStart', '_lbWpMark', '_lbWpCode', '_lbWpRow', '_lbWpStagesOf', '_lbWpValidRow', '_lbIsOwnerRole', '_lbIsFreeCancelWindow',
        'changeReservationLine', '_lbTrainerRemainText'].map((n) => pluckFn(LB, n)).join('\n'), ctx);
   return { ctx, log, row, adv: (ms) => { nowMs += ms; } };

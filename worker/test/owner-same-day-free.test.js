@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { writeLockSrc } from './_gas-lock-src.js';   // 設計47：書き込みのロックの部品
 
 process.env.TZ = 'Asia/Tokyo';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -76,7 +77,7 @@ function world({ actor, start, channel = 'line', maySee = true }) {
     _lbLogOutcome: () => {}, _lbCnMaintain: () => ({}), _lbCnMark: () => 0, _lbCustOwnerMap: () => ({ C1: 'T1' }), _lbCustOwnerFromMap: (m, c) => (m && c in m ? m[c] : null), Array, Object,
   };
   vm.createContext(ctx);
-  vm.runInContext([(LB.match(/^var LB_CXL_[A-Z_]+ = [^\n]+$/gm) || []).join('\n'), pluck(LB, '_lbIsOwnerRole'), pluck(LB, '_lbIsFreeCancelWindow'), pluck(LB, 'cancelReservationLine'), pluck(LB, 'changeReservationLine'),
+  vm.runInContext(writeLockSrc(LB) + [(LB.match(/^var LB_CXL_[A-Z_]+ = [^\n]+$/gm) || []).join('\n'), pluck(LB, '_lbIsOwnerRole'), pluck(LB, '_lbIsFreeCancelWindow'), pluck(LB, 'cancelReservationLine'), pluck(LB, 'changeReservationLine'),
     pluck(LB, '_lbCxlExpect'), pluck(LB, '_lbCxlNormText'), pluck(LB, '_lbCxlNormalize'), pluck(LB, '_lbCxlLogErr'), pluck(LB, '_lbCxlAfter')].join('\n'), ctx);
   return { ctx, log, row };
 }

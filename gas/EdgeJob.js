@@ -122,7 +122,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-11-13c 書き込みの段ごとの時間を読む窓口（remaining の writePerf・設計43）';
+var LB_JOB_BUILD = '2026-11-20a 作業依頼の中の押し出しの記録をロックを放した直後に書く・実行中の印（設計47）';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);
@@ -258,7 +258,7 @@ function edgeJobPoll() {
   //     ★作業依頼は私（CEO）が調査・修復に使うもの。落ちると調べ直しになり、
   //       そのあいだ本番の状態が分からない。待って取れるほうがよい。
   //   ★取れなかったときは、その回数を記録する（続くなら本当の原因がある）。
-  var lock = null;
+  var lock = null, lockAt = 0;
   if (claimed.isWrite) {
     lock = LockService.getScriptLock();
     if (!lock.tryLock(30000)) {
@@ -267,26 +267,48 @@ function edgeJobPoll() {
                       error: 'ほかの処理が動いていました（30秒待っても取れず）' }); } catch (e2) {}
       return;
     }
+    lockAt = Date.now();
   }
 
-  var t0 = Date.now(), text = '', ok = false, err = null;
+  var t0 = Date.now(), text = '', ok = false, err = null, releasedAt = 0;
   try {
-    text = _ejRun(claimed.op, claimed.args);
-    ok = true;
-  } catch (e) {
-    // 生の例外文は内部構造が漏れるので、種類と短い説明だけにする
-    err = _ejScrub(String((e && e.message) || e)).slice(0, 300);   // ★例外文にも氏名が入りうる
-    ok = false;
+    //   設計47：作業依頼の実行中の印（入れ子の押し出しを job_ として溜める）。★解除は専用の外側の finally
+    _EJ_IN_RUN = true;
+    try {
+      text = _ejRun(claimed.op, claimed.args);
+      ok = true;
+    } catch (e) {
+      // 生の例外文は内部構造が漏れるので、種類と短い説明だけにする
+      err = _ejScrub(String((e && e.message) || e)).slice(0, 300);   // ★例外文にも氏名が入りうる
+      ok = false;
+    } finally {
+      if (lock) { try { lock.releaseLock(); } catch (e3) {} releasedAt = Date.now(); }
+    }
   } finally {
-    if (lock) { try { lock.releaseLock(); } catch (e3) {} }
+    _EJ_IN_RUN = false;
   }
+  var elapsedMs = Date.now() - t0;   // 報告の秒数は記録を書く前に決める（記録が結果を変えない）
+
+  //   設計47：ロックを放した直後に、作業依頼の中で溜めた押し出しの記録と作業依頼の全体（jobHold）を1回だけ書く
+  _ejPushFlush(lock ? releasedAt - lockAt : -1, !ok);
 
   try {
     _ejPost({ action: 'report', requestId: claimed.requestId, ok: ok,
               //   ★最後にもう一度通す（窓口ごとの _ejScrub の付け忘れを、ここで必ず拾う・2026-10-17）
-              result: '[' + claimed.op + '] ' + Math.round((Date.now() - t0) / 1000) + '秒\n' + _ejScrub(text),
+              result: '[' + claimed.op + '] ' + Math.round(elapsedMs / 1000) + '秒\n' + _ejScrub(text),
               error: err });
   } catch (e4) { Logger.log('[job] 報告に失敗: ' + (e4 && e4.message)); }
+}
+
+//   設計47：作業依頼の実行中の印（PushToEdge.js _edgeLocked が入れ子の名前を決めるのに使う）。実行ごとに偽で始まる
+var _EJ_IN_RUN = false;
+//   作業依頼の中の押し出しの記録を書く（ロックを放した後・1回だけ・例外は握りつぶす＝報告を変えない）
+//   holdMs：作業依頼がロックを持った時間（-1＝ロックを取らない作業）
+function _ejPushFlush(holdMs, threw) {
+  try {
+    if (holdMs >= 0) _edgeTallyKey('jobHold', holdMs, 0, threw);
+    _edgePushFlush();
+  } catch (e) {}
 }
 
 // 連続失敗の回数を覚える（届かない設定のまま回り続けないため）

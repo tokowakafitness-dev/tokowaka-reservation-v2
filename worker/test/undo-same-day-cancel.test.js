@@ -17,6 +17,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { writeLockSrc } from './_gas-lock-src.js';   // 設計47：書き込みのロックの部品
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -84,7 +85,7 @@ function env(o) {
     CALENDAR_IDS: { CAPACITY_B1: 'b1' },
     _lbSheet: (n) => (n === 'line_reservations' ? R1 : n === 'transfer_credits' ? TC : null),
     getTrainerByLine: () => (o.owner === false ? { role: 'trainer' } : { role: 'owner' }),
-    LockService: { getScriptLock: () => ({ waitLock: () => { locked++; }, releaseLock: () => {} }) },
+    LockService: { getScriptLock: () => ({ waitLock: () => { locked++; }, tryLock: () => { locked++; return true; }, releaseLock: () => {} }) },   // 設計47：tryLock で取る
     CalendarApp: { getCalendarById: () => cal.api },
     _lbAllocSheet: () => ({}), _lbFindClosedManifest: (sh, mk) => ((o.closed || []).includes(mk) ? { row: 2 } : null),
     _lbFmtResvLabel: (s) => String(s),
@@ -93,7 +94,7 @@ function env(o) {
   vm.createContext(ctx);
   const names = ['_lbIsOwnerRole', '_lbTrainerMaySeeCustomer', '_lbParseResvDate', '_lbResIdOfNote', '_lbSdcVerdict', '_lbSdcCreditRows', '_lbSdcDeleteConsumedEvent',
     'listSameDayCancels', 'undoSameDayCancel', '_lbUseTransferCredit'];
-  vm.runInContext(VARS + '\n' + LB.match(/function _lbNormName\(s\) \{[^\n]*\}/)[0] + '\n' + names.map((n) => (n === '_lbIsOwnerRole' ? LB.match(/function _lbIsOwnerRole\(tr\) \{[^\n]*\}/)[0] : pluckFn(LB, n))).join('\n'), ctx);
+  vm.runInContext(writeLockSrc(LB) + VARS + '\n' + LB.match(/function _lbNormName\(s\) \{[^\n]*\}/)[0] + '\n' + names.map((n) => (n === '_lbIsOwnerRole' ? LB.match(/function _lbIsOwnerRole\(tr\) \{[^\n]*\}/)[0] : pluckFn(LB, n))).join('\n'), ctx);
   return { ctx, R1, TC, cal };
 }
 const ID = 'L20261030160000_B_dffc016d';

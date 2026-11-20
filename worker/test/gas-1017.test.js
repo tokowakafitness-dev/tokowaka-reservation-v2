@@ -58,7 +58,7 @@ console.log('=== ① 氏名を伏せる ===');
   vm.createContext(ctx3); vm.runInContext(pluckFn(EJ, '_ejScrub'), ctx3);
   ok('①-10 一覧が読めなくても落ちない（様の置き換えは効く）', ctx3._ejScrub('甲野一郎様') === '〇〇様');
   //   配線：報告する直前に結果も例外文も通す（窓口ごとの付け忘れをここで拾う）
-  ok('①-7 ★報告の result は必ず _ejScrub を通す', /result: '\[' \+ claimed\.op \+ '\] ' \+ Math\.round\(\(Date\.now\(\) - t0\) \/ 1000\) \+ '秒\\n' \+ _ejScrub\(text\)/.test(EJ));
+  ok('①-7 ★報告の result は必ず _ejScrub を通す', /result: '\[' \+ claimed\.op \+ '\] ' \+ Math\.round\(elapsedMs \/ 1000\) \+ '秒\\n' \+ _ejScrub\(text\)/.test(EJ));
   ok('①-8 ★例外文も _ejScrub を通す', /err = _ejScrub\(String\(\(e && e\.message\) \|\| e\)\)\.slice\(0, 300\)/.test(EJ));
 }
 

@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { writeLockSrc } from './_gas-lock-src.js';   // 設計47：書き込みのロックの部品
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
@@ -90,7 +91,7 @@ function make(opt = {}) {
     _lbDispatch: (params, action) => opt.dispatch(ctx, action),
   };
   vm.createContext(ctx);
-  vm.runInContext(LB_VARS.map((n) => pluckVar(LB, n)).join('') + LB_FNS.map((n) => pluckFn(LB, n)).join('\n') + pluckFn(PE, '_lbEdgeDeferParse'), ctx);
+  vm.runInContext(writeLockSrc(LB) + LB_VARS.map((n) => pluckVar(LB, n)).join('') + LB_FNS.map((n) => pluckFn(LB, n)).join('\n') + pluckFn(PE, '_lbEdgeDeferParse'), ctx);
   return { ctx, props, log, pushes, nqRows, setNow: (v) => { nowMs = v; }, adv: (ms) => { nowMs += ms; }, now: () => nowMs };
 }
 const start = new Date(Date.UTC(2026, 10, 20, 1, 0)), end = new Date(Date.UTC(2026, 10, 20, 2, 0));

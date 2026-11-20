@@ -26,6 +26,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { writeLockSrc } from './_gas-lock-src.js';   // 設計47：書き込みのロックの部品
 
 process.env.TZ = 'Asia/Tokyo';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -166,7 +167,7 @@ function world(o = {}) {
     _lbCustInfoById: () => ({ customerName: '会員見本' }),
   };
   vm.createContext(ctx);
-  vm.runInContext(PARTS, ctx);
+  vm.runInContext(writeLockSrc(LB) + PARTS, ctx);
   const cn = () => sheets.get('cancel_notes');
   const cnRowsOut = () => (cn() ? cn().data.slice(1) : []);
   const nq = () => sheets.get('notify_retry').data.slice(1);

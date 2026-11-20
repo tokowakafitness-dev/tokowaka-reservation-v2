@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { writeLockSrc } from './_gas-lock-src.js';   // 設計47：書き込みのロックの部品
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const LB = readFileSync(join(ROOT, 'gas/LineBooking.js'), 'utf8');
@@ -67,7 +68,7 @@ function make(opt = {}) {
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(pluckVar(LB, 'LB_WP') + pluckVar(LB, 'LB_WP_CODES') + 'var _LB_WP = null;\nvar _LB_WRITE_CUST = null;\n'
+  vm.runInContext(writeLockSrc(LB) + pluckVar(LB, 'LB_WP') + pluckVar(LB, 'LB_WP_CODES') + 'var _LB_WP = null;\nvar _LB_WRITE_CUST = null;\n'
     + ['handleLineGet', '_lbWpStart', '_lbWpMark', '_lbWpCode', '_lbWpRow', '_lbWpStagesOf', '_lbWpValidRow', '_lbWpFinish', 'writePerfText'].map((n) => pluckFn(LB, n)).join('\n'), ctx);
   return { ctx, props, calls, adv: (ms) => { nowMs += ms; } };
 }
@@ -193,16 +194,16 @@ console.log('=== ④ リングの上限・壊れた記録・記録の失敗 ==='
 console.log('=== ⑤ 印を置く場所 ===');
 {
   const cx = pluckFn(LB, 'cancelReservationLine');
-  ok('⑤-1 ★取消：pre → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var lock = LockService\.getScriptLock\(\);\s*lock\.waitLock\(10000\);\s*_lbWpMark\('lock'\);/.test(cx));
+  ok('⑤-1 ★取消：pre → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var _wl = _lbTakeWriteLock\('cancel'\);[^\n]*\n\s*if \(!_wl\.got\) \{ _lbWpMark\('lock'\); return _lbWlBusy\(\); \}\s*var lock = _wl\.lock;\s*_lbWpMark\('lock'\);/.test(cx));
   ok('⑤-2 取消：カレンダーの後に cal・ロックを離した後に sheet・通知の後に notify',
      /_lbConsumeReservationEvents\(customerName, trainer, start\);\s*_lbWpMark\('cal'\);/.test(cx) && /lock\.releaseLock\(\);\s*_lbWpMark\('sheet'\);/.test(cx) && /_lbCxlAfter\(done, _cxT0\);[^\n]*\n\s*_lbWpMark\('notify'\);/.test(cx));
   const ch = pluckFn(LB, 'changeReservationLine');
   //   ★2026-11-18：契約種別の読み（preType）がロックの直前の段になった
-  ok('⑤-3 ★変更：pre → preType → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var _chType = _lbContractTypeOf\(customerName\);[^\n]*\n\s*_lbWpMark\('preType'\);[^\n]*\n(\s*\/\/[^\n]*\n)*\s*var lock = LockService\.getScriptLock\(\);\s*lock\.waitLock\(10000\);\s*_lbWpMark\('lock'\);/.test(ch));
+  ok('⑤-3 ★変更：pre → preType → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var _chType = _lbContractTypeOf\(customerName\);[^\n]*\n\s*_lbWpMark\('preType'\);[^\n]*\n(\s*\/\/[^\n]*\n)*\s*var _wl = _lbTakeWriteLock\('change'\);[^\n]*\n\s*if \(!_wl\.got\) \{ _lbWpMark\('lock'\); return _lbWlBusy\(\); \}\s*var lock = _wl\.lock;\s*_lbWpMark\('lock'\);/.test(ch));
   ok('⑤-4 ★変更：トレーナー宛の残数の文は trId があるときだけ作る（以前と同じ評価の条件）・remain に数える',
      /if \(trId\) \{\s*(\/\/[^\n]*\n\s*)+var _chRemainText = _lbTrainerRemainText\(String\(r\[2\]\), customerName, _newStart, 'remain'\);\s*_lbWpMark\('remainText'\);/.test(ch) && !/\+ _lbTrainerRemainText\(/.test(ch));
   const co = pluckFn(LB, '_lbReserveCoreImpl');
-  ok('⑤-5 予約の芯：ロックの前後に pre・lock', /_lbWpMark\('pre'\);\s*var lock = LockService\.getScriptLock\(\);\s*var _lbOwnedLock = false;\s*if \(!lock\.hasLock\(\)\) \{ lock\.waitLock\(10000\); _lbOwnedLock = true; \}\s*_lbWpMark\('lock'\);/.test(co));
+  ok('⑤-5 予約の芯：ロックの前後に pre・lock', /_lbWpMark\('pre'\);\s*var _wl = _lbTakeWriteLock\('reserve'\);[^\n]*\n\s*if \(!_wl\.got\) \{ _lbWpMark\('lock'\); return _lbWlBusy\(\); \}\s*var lock = _wl\.lock;\s*var _lbOwnedLock = _wl\.owned;\s*_lbWpMark\('lock'\);/.test(co));
   const laps = [...co.matchAll(/_lap\('([^']+)'\)/g)].map((m) => m[1]);
   const table = (co.match(/var _LAP_STAGE = \{([\s\S]*?)\};/) || [])[1] || '';
   ok('⑤-6 ★既存の _lap の名前が全部、段の表にある（無ければ other に寄る）', laps.length >= 7 && laps.every((n) => table.includes("'" + n + "'")), laps.join(','));

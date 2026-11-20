@@ -1,0 +1,47 @@
+// 設計47 検査④の陽性 fixture：反映前（2026-11-18a）の書き込みのロックの取り方 12か所を、元の行の形のまま関数に包んだもの
+//   字句解析が12か所を全部拾うこと（拾い漏れ＝字句解析が壊れている）を確かめる。実行はしない
+function verifyMembership(lineUserId, code) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { } finally { lock.releaseLock(); }
+}
+function selfRegister(lineUserId, body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+}
+function mergeMemberLink(keepCid, dropCid) {
+  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+}
+function _lbReserveCoreImpl(custInfo, body, channel) {
+  var lock = LockService.getScriptLock();
+  var _lbOwnedLock = false;
+  if (!lock.hasLock()) { lock.waitLock(10000); _lbOwnedLock = true; }
+}
+function addOfflineMember(name, phone) {
+  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+}
+function closeAllocationMonth(monthKey, opts) {
+  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+}
+function cancelReservationLine(lineUserId, reservationId, opts) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+}
+function undoSameDayCancel(lineUserId, reservationId) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+}
+function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+}
+function _lbAddRecurPattern(customerId, body, source) {
+  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+}
+function deleteRecurringPattern(lineUserId, patternId) {
+  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+}
+function makeReservation(params) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+}

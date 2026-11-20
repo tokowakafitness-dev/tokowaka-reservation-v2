@@ -188,7 +188,8 @@ console.log('=== ⑤ 方針A：その月の合計回数を「月額の回数＋�
 console.log('=== ⑥ 予約の確定処理：ロックの内側で月の合計を数え直す ===');
 {
   const impl = pluckFn(LB, '_lbReserveCoreImpl');
-  const iLock = impl.indexOf('lock.waitLock('), iCap = impl.indexOf('body.autoBookCap != null');
+  const iLock = impl.indexOf("_lbTakeWriteLock('reserve')"),   // 設計47：ロックの取り方を共通関数に
+       _iLockOld = impl.indexOf('lock.waitLock('), iCap = impl.indexOf('body.autoBookCap != null');
   ok('⑥-1 ★数え直しはロックを取った後（内側）', iLock > 0 && iCap > iLock, iLock + ' / ' + iCap);
   const blk = impl.slice(iCap - 4, impl.indexOf("if (_capN >= Number(body.autoBookCap)) return { success: false, code: 'NO_REMAINING'"));
   const tail = "if (_capN >= Number(body.autoBookCap)) return 'NO_REMAINING'; } return 'OK';";

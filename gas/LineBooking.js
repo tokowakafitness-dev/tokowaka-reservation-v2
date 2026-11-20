@@ -146,6 +146,7 @@ function verifyLineIdToken(idToken) {
 //   ・body の lineUserId / customer_id は一切信用しない（decisions/0032 不変条件②）
 // ============================================================
 function doPost(e) {
+  _LB_LOCK_TALLY = null;   // 設計47
   try {
     if (!e || !e.postData || !e.postData.contents) return _lbJson({ success:false, code:'BAD_REQUEST' });
 
@@ -193,6 +194,8 @@ function doPost(e) {
   } catch (err) {
     Logger.log('doPost エラー: ' + err.message);
     return _lbJson({ success:false, code:'SERVER_ERROR' });
+  } finally {
+    _lbWlFlush();   // 設計47：旧経路の出口でも数を書く（ロックを持たずに・例外は握りつぶす）
   }
 }
 
@@ -205,6 +208,7 @@ function doPost(e) {
 //   互換のため文字列で統一）。
 // ============================================================
 function liffApi(payloadJson) {
+  _LB_LOCK_TALLY = null;   // 設計47
   try {
     var body = JSON.parse(payloadJson || '{}');
     var action = body.action || '';
@@ -231,6 +235,8 @@ function liffApi(payloadJson) {
   } catch (err) {
     Logger.log('liffApi エラー: ' + err.message);
     return JSON.stringify({ success: false, code: 'SERVER_ERROR', message: err.message });
+  } finally {
+    _lbWlFlush();   // 設計47：旧経路の出口でも数を書く（ロックを持たずに・例外は握りつぶす）
   }
 }
 
@@ -248,6 +254,7 @@ function liffApi(payloadJson) {
 function handleLineGet(params) {
   var action = String((params && params.action) || '');
   _LB_WRITE_CUST = null;   // 設計45：前の要求の値を持ち越さない
+  _LB_LOCK_TALLY = null;   // 設計47：前の要求の数を持ち越さない
   _lbWpStart(action);   // 書き込みの段ごとの時間（設計43 A）。対象外の操作では何もしない
   _lbNotifyHoldStart(action);   // 設計45b：対象の操作でスイッチがオンなら LINE 通知を保留する（オフ・対象外は何もしない）
   var res, auth;
@@ -264,6 +271,7 @@ function handleLineGet(params) {
     //   ★認証と振り分けが外へ投げた例外だけ。記録してから同じ例外を投げ直す（ふるまいは変えない・設計43 関門①）
     _lbNotifyHoldSettle(false);   // 設計45b：保留した通知を投げ直す前に今の経路で送る（黙って落とさない）
     _lbWpFinish(null, eD);
+    _lbWlFlush();   // 設計47：ロックを取った後の例外の経路でも数を書く（書き込みのロックは関数の finally で放してある・例外は握りつぶす）
     throw eD;
   }
 
@@ -274,6 +282,7 @@ function handleLineGet(params) {
   //   設計45b：トリガーを作れなかった・待ちに入れられなかった通知は、ここで今の _lbPush で送る
   _lbNotifyHoldSettle(true);
   _lbWpFinish(res, null);
+  _lbWlFlush();   // 設計47：ロックの競合の数（ロックを持たずに1回だけ）
   return res;
 }
 
@@ -404,6 +413,195 @@ function _lbWpFinish(res, err) {
   } catch (e) { return false; }
 }
 
+// ============================================================
+// 設計47（2026-11-20・ops/design/47-push-lock-contention.md）：ロックの競合を数える＋ロック待ちは BUSY で返す
+//   ★記録は数と固定の名前だけ（op／kind は許可リスト・外は OTHER）。例外の文・会員ID・予約ID・氏名・LINE ID を持たない
+//   ★記録はロックを持たずに書く（書き込み・押し出しのロックの区間を延ばさない）＝同時に終わった2件の片方が落ちうる＝下限
+//   ★記録の失敗で予約・押し出しの結果を変えない（握りつぶす）
+// ============================================================
+var LB_LC = {
+  WRITE_PROP: 'LB_WRITE_LOCK_COUNT',   // 書き込み（対象10操作）がロックを取りに行った回・BUSY の回
+  PUSH_PROP: 'LB_EDGE_PUSH_COUNT',     // 押し出しが ScriptLock を握った時間（PushToEdge.js _edgeLocked）
+  BAD_PROP: 'LB_LOCK_COUNT_BAD',       // 壊れていた・大きすぎた：鍵の名前・理由・時刻だけ（中身は写さない）
+  MAX_BYTES: 8000, KEEP_DAYS: 3,
+  WAIT_MS: 10000,                      // 書き込みがロックを待つ時間（今の waitLock(10000) と同じ）
+  WRITE_OPS: { reserve: 1, cancel: 1, change: 1, undoSdc: 1, recurAdd: 1, recurDel: 1, verify: 1, selfReg: 1, merge: 1, offline: 1 },
+  SUM: { n: 1, busy: 1, skip: 1, thrown: 1, holdSum: 1, over10Sum: 1 },
+  MAX: { waitMax: 1, holdMax: 1 },
+  BUSY_MESSAGE: 'ただいま混み合っています。少し時間をおいてもう一度お試しください（まだ何も変更されていません）。'
+};
+//   要求の中で溜める（書き込みの記録）。handleLineGet・doPost・liffApi の出口と保守関数の終わりで1回だけ書く
+var _LB_LOCK_TALLY = null;
+
+function _lbUtf8Bytes(s) {
+  s = String(s);
+  var n = 0;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
+function _lbLcDay(nowMs) { return Utilities.formatDate(new Date(nowMs), 'Asia/Tokyo', 'yyyy-MM-dd'); }
+
+//   溜めた数を日ごとの記録へ足す。key は固定の名前・値は数だけ。壊れていたら上書きせず BAD に時刻だけ
+//   ★書く前に UTF-8 のバイト数を測り、8,000バイトを超えたら古い日から落とす。今日だけで超えたら書かない
+function _lbLcMerge(prop, tally, nowMs) {
+  var p = PropertiesService.getScriptProperties();
+  var now = (typeof nowMs === 'number') ? nowMs : Date.now();
+  var bad = function (why) { try { p.setProperty(LB_LC.BAD_PROP, prop + '|' + why + '|' + now); } catch (e) {} return false; };
+  var raw = p.getProperty(prop);
+  var o = {};
+  if (raw) {
+    try { o = JSON.parse(raw); } catch (eJ) { return bad('BAD_JSON'); }
+    if (!o || typeof o !== 'object' || Object.prototype.toString.call(o) === '[object Array]') return bad('BAD_SHAPE');
+  }
+  var day = _lbLcDay(now);
+  var d = o[day] || {};
+  if (typeof d !== 'object' || Object.prototype.toString.call(d) === '[object Array]') return bad('BAD_DAY');
+  for (var k in tally) {
+    if (!Object.prototype.hasOwnProperty.call(tally, k)) continue;
+    var src = tally[k], dst = d[k] || {};
+    for (var f in src) {
+      if (!Object.prototype.hasOwnProperty.call(src, f)) continue;
+      var v = Number(src[f]);
+      if (!isFinite(v)) continue;
+      if (LB_LC.MAX[f]) dst[f] = Math.max(Number(dst[f] || 0), v);
+      else if (LB_LC.SUM[f]) dst[f] = Number(dst[f] || 0) + v;
+    }
+    d[k] = dst;
+  }
+  o[day] = d;
+  var days = [];
+  for (var dk in o) if (Object.prototype.hasOwnProperty.call(o, dk) && /^\d{4}-\d{2}-\d{2}$/.test(dk)) days.push(dk);
+  days.sort();
+  days = days.slice(-LB_LC.KEEP_DAYS);
+  var keep = {};
+  for (var i = 0; i < days.length; i++) keep[days[i]] = o[days[i]];
+  var s = JSON.stringify(keep);
+  while (_lbUtf8Bytes(s) > LB_LC.MAX_BYTES && days.length > 1) { delete keep[days.shift()]; s = JSON.stringify(keep); }
+  if (_lbUtf8Bytes(s) > LB_LC.MAX_BYTES) return bad('TOO_BIG');
+  p.setProperty(prop, s);
+  return true;
+}
+
+//   書き込みのロックを取る（設計47 A2）。既に持っていれば取り直さない（予約の芯が変更から呼ばれるとき）。
+//   ★取れなければ { got:false }＝呼ぶ側は何も書かずに BUSY を返す。ロックを取った後の例外は呼ぶ側の今のまま
+function _lbTakeWriteLock(op) {
+  var key = LB_LC.WRITE_OPS[op] ? op : 'OTHER';
+  var lock = LockService.getScriptLock();
+  var held = false;
+  try { held = lock.hasLock(); } catch (e) { held = false; }
+  if (held) return { got: true, owned: false, lock: lock };
+  var t0 = Date.now();
+  var got = false;
+  try { got = lock.tryLock(LB_LC.WAIT_MS); } catch (e2) { got = false; }
+  var waitMs = Date.now() - t0;
+  _lbWlTally(key, got, waitMs);
+  return { got: got, owned: got, lock: lock };
+}
+function _lbWlTally(op, got, waitMs) {
+  try {
+    if (!_LB_LOCK_TALLY) _LB_LOCK_TALLY = {};
+    var r = _LB_LOCK_TALLY[op] || (_LB_LOCK_TALLY[op] = { n: 0, busy: 0, waitMax: 0 });
+    r.n++;
+    if (!got) r.busy++;
+    else if (waitMs > r.waitMax) r.waitMax = waitMs;
+  } catch (e) {}
+}
+function _lbWlBusy() { return { success: false, code: 'BUSY', message: LB_LC.BUSY_MESSAGE }; }
+//   溜めを書く（ロックを持たずに・1回だけ）。書いたら空にする（同じ実行で二度書かない）。例外は握りつぶす
+function _lbWlFlush() {
+  var t = _LB_LOCK_TALLY;
+  _LB_LOCK_TALLY = null;
+  if (!t) return false;
+  try { return _lbLcMerge(LB_LC.WRITE_PROP, t); } catch (e) { return false; }
+}
+
+//   日次点検（設計47）：昨日の数。nowMs・getProp を渡す（純粋）。戻り値 [{key,severity,count,detail}]
+function lbLockCountDailyCheck(nowMs, getProp) {
+  var out = [];
+  var yday = _lbLcDay(nowMs - 86400000), today = _lbLcDay(nowMs);
+  function read(prop) {
+    var raw = getProp(prop);
+    if (!raw) return {};
+    try { var o = JSON.parse(raw); return (o && typeof o === 'object') ? o : null; } catch (e) { return null; }
+  }
+  var badRaw = String(getProp(LB_LC.BAD_PROP) || '');
+  if (badRaw) {
+    var bp = badRaw.split('|');
+    out.push({ key: 'lock_count_bad', severity: 'high', count: 1, detail: 'ロックの記録が壊れていた／大きすぎた: ' + bp[0] + ' ' + (bp[1] || '') + '（中身は写していません）' });
+  }
+  var w = read(LB_LC.WRITE_PROP);
+  if (w === null) out.push({ key: 'write_lock_count_unreadable', severity: 'high', count: 1, detail: '書き込みのロックの記録が読めません' });
+  else if (w[yday]) {
+    var busy = 0, parts = [];
+    for (var op in w[yday]) if (Object.prototype.hasOwnProperty.call(w[yday], op)) {
+      var r = w[yday][op];
+      busy += Number(r.busy || 0);
+      if (Number(r.busy || 0) > 0) parts.push(op + ' ' + Number(r.busy || 0) + '/' + Number(r.n || 0));
+    }
+    if (busy > 0) out.push({ key: 'write_lock_busy', severity: 'warn', count: busy,
+      detail: '対象10操作のロック競合（全書き込みのロックではない・下限）: 昨日 ' + parts.join('・') + '（BUSY/ロックを取りに行った回）' });
+  }
+  var pc = read(LB_LC.PUSH_PROP);
+  if (pc === null) out.push({ key: 'push_count_unreadable', severity: 'high', count: 1, detail: '押し出しのロックの記録が読めません' });
+  else {
+    var keys = Object.keys(pc).filter(function (k) { return /^\d{4}-\d{2}-\d{2}$/.test(k); }).sort();
+    if (!keys.length) out.push({ key: 'push_count_none', severity: 'info', count: 1, detail: '押し出しのロックの記録がまだありません（反映の前か、反映した日）' });
+    else if (!pc[yday]) {
+      if (keys[0] < yday) out.push({ key: 'push_count_missing', severity: 'high', count: 1, detail: '昨日の押し出しの記録がありません（押し出しが走った証拠が無い）' });
+    } else {
+      var over = 0, thrown = 0, longest = 0, nested = 0, ps = [];
+      for (var kd in pc[yday]) if (Object.prototype.hasOwnProperty.call(pc[yday], kd)) {
+        var x = pc[yday][kd];
+        over += Number(x.over10Sum || 0); thrown += Number(x.thrown || 0);
+        longest = Math.max(longest, Number(x.holdMax || 0));
+        if (/^nested_/.test(kd)) nested += Number(x.n || 0);
+        ps.push(kd + ' ' + Number(x.n || 0) + '回・最長' + Math.round(Number(x.holdMax || 0) / 1000) + '秒');
+      }
+      if (over > 0) out.push({ key: 'push_lock_over10', severity: 'warn', count: Math.round(over / 1000),
+        detail: '押し出しが ScriptLock を10秒より長く握った（書き込みが落ちうる窓・下限）: 昨日 合計' + Math.round(over / 1000) + '秒／' + ps.join('・') });
+      if (thrown > 0) out.push({ key: 'push_thrown', severity: 'warn', count: thrown, detail: '押し出しの本体が例外で終わった回: 昨日 ' + thrown + '回' });
+      if (longest > 300000) out.push({ key: 'push_hold_long', severity: 'warn', count: 1, detail: '押し出しの最長 ' + Math.round(longest / 1000) + '秒（6分の制限に近い）' });
+      if (nested > 0) out.push({ key: 'push_nested_unexpected', severity: 'warn', count: nested, detail: '作業依頼の外で、ロックを持ったまま押し出しを呼んだ回（nested_）: ' + nested + '回' });
+    }
+  }
+  return out;
+}
+
+//   作業依頼 remaining {writePerf:true} に載せる（数だけ）
+function lbLockCountText() {
+  var p = PropertiesService.getScriptProperties();
+  var lines = ['ロックの競合（設計47・下限＝同時に終わった回は落ちうる）'];
+  function show(label, prop) {
+    var raw = null;
+    try { raw = p.getProperty(prop); } catch (e) { lines.push(label + '：読めません'); return; }
+    if (!raw) { lines.push(label + '：まだ記録がありません'); return; }
+    var o = null;
+    try { o = JSON.parse(raw); } catch (e2) { lines.push(label + '：壊れています'); return; }
+    var days = Object.keys(o || {}).sort();
+    for (var i = 0; i < days.length; i++) {
+      var d = o[days[i]], parts = [];
+      for (var k in d) if (Object.prototype.hasOwnProperty.call(d, k)) {
+        var r = d[k], fs = [];
+        for (var f in r) if (Object.prototype.hasOwnProperty.call(r, f)) fs.push(f + '=' + Number(r[f]));
+        parts.push(k + '{' + fs.join(',') + '}');
+      }
+      lines.push(label + ' ' + days[i] + '：' + parts.join(' '));
+    }
+  }
+  show('対象10操作のロック競合', LB_LC.WRITE_PROP);
+  show('押し出しが握った時間(ms)', LB_LC.PUSH_PROP);
+  var bad = '';
+  try { bad = p.getProperty(LB_LC.BAD_PROP) || ''; } catch (e3) {}
+  if (bad) lines.push('★記録の異常: ' + bad.split('|').slice(0, 2).join(' '));
+  return lines.join('\n');
+}
+
 //   作業依頼 remaining {writePerf:true} の結果（設計43 A）。操作ごとの件数・成功数・段の中央値/90%/最大と、直近10件。
 //   ★数と固定の文字だけ（記録にそれ以外が無い）。読めなければ「0件」と言わない
 function writePerfText() {
@@ -413,7 +611,8 @@ function writePerfText() {
   try { bad = PropertiesService.getScriptProperties().getProperty(LB_WP.BAD_PROP) || ''; } catch (e2) {}
   var head = '書き込みの計測（設計43・版 ' + String(LB_HEALTH_BUILD).slice(0, 11) + '・直近' + LB_WP.MAX + '件までの標本＝同時に終わった回が落ちることがある）'
     + (bad ? '\n★記録が壊れていて作り直した: ' + bad : '')
-    + '\n' + _lbNotifyDeferSummaryText();   // 設計45b：後ろへ回した LINE 通知の待ち・回数・通信の時間（数だけ）
+    + '\n' + _lbNotifyDeferSummaryText()   // 設計45b：後ろへ回した LINE 通知の待ち・回数・通信の時間（数だけ）
+    + ((typeof lbLockCountText === 'function') ? '\n' + lbLockCountText() : '');   // 設計47：ロックの競合（数だけ）
   if (!raw) return head + '\nまだ記録がありません（反映後、予約・取消・変更が1回あると入ります）';
   var o = null;
   try { o = JSON.parse(raw); } catch (eP) { return head + '\n記録が読めません（壊れています）'; }
@@ -684,8 +883,9 @@ function verifyMembership(lineUserId, code) {
   var last = sh.getLastRow();
   if (last < 2) return { success:false, code:'NOT_FOUND', message:'認証番号が正しくないか、有効期限が切れています。' };
 
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('verify');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
   try {
     var values = sh.getRange(2, 1, last - 1, MAP_COL.NOTE).getValues();
     var hash = _lbHashCode(code);
@@ -769,8 +969,9 @@ function selfRegister(lineUserId, body) {
 
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh) return { success: false, code: 'NO_SHEET', message: 'customer_line_map未作成' };
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('selfReg');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
   try {
     // map を正規化して昇格判定（新規発行/既存ID再利用/更新/再バインド認証必須/曖昧）を純粋関数で決める（段階4）
     var last = sh.getLastRow();
@@ -2108,7 +2309,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-18a 写し・通知の後ろ回しの切り替え関数（lbEdgeDeferSetOn 等）・変更の段を細かく（preTrainer／preLedger／preType／remainText）・I79 の見張りが問題なしでも info を出す';
+var LB_HEALTH_BUILD = '2026-11-20a ロック待ちは BUSY で返す（対象10操作）・ロックの競合の数（書き込み・押し出し）を日次点検へ（設計47）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2757,6 +2958,13 @@ function dailyHealthCheck(dryRunArg) {
     for (var ndi = 0; ndi < nd.length; ndi++) add(nd[ndi].key, '通知の後ろ回し', nd[ndi].severity, nd[ndi].count, nd[ndi].detail);
   } catch (e) {
     add('notify_defer_check_fail', '通知の後ろ回し', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
+  }
+  // ---- ロックの競合（設計47）：対象10操作の BUSY・押し出しが10秒より長く握った秒数・例外・入れ子・記録の異常 ----
+  try {
+    var lc = lbLockCountDailyCheck(Date.now(), function (k) { return _lbProp(k); });
+    for (var lci = 0; lci < lc.length; lci++) add(lc[lci].key, 'ロックの競合', lc[lci].severity, lc[lci].count, lc[lci].detail);
+  } catch (e) {
+    add('lock_count_check_fail', 'ロックの競合', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
   }
 
   _step('カルテのAI');
@@ -3448,7 +3656,9 @@ function mergeMemberLink(keepCid, dropCid) {
   keepCid = String(keepCid || ''); dropCid = String(dropCid || '');
   if (!keepCid || !dropCid || keepCid === dropCid) return { ok: false, code: 'BAD_ARGS' };
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET); if (!sh) return { ok: false, code: 'NO_MAP' };
-  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('merge');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { return (_lbWlFlush(), { ok: false, code: 'BUSY' }); }
+  var lock = _wl.lock;
   try {
     var last = sh.getLastRow(); if (last < 2) return { ok: false, code: 'EMPTY' };
     var v = sh.getRange(2, 1, last - 1, MAP_COL.GOAL).getValues();
@@ -3480,7 +3690,7 @@ function mergeMemberLink(keepCid, dropCid) {
     sh.getRange(dropRow, MAP_COL.AUTH_STATE).setValue('rejected');
     Logger.log('✅ 統合：' + dropCid + '→' + keepCid + ' / lineUserId寄せ=' + (dLu ? 'あり' : 'なし') + ' / 予約' + moved + '件付替 / drop行rejected');
     return { ok: true, keepCid: keepCid, dropCid: dropCid, movedReservations: moved };
-  } finally { lock.releaseLock(); }
+  } finally { lock.releaseLock(); _lbWlFlush(); }   // 設計47：放した後に数を書く
 }
 
 // ペア機能の一気通貫を「仮想顧客」で検証（本番SS/カレンダーへ一切書き込まない・純粋ロジック）。
@@ -6109,9 +6319,10 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
   var end = new Date(start.getTime() + _sessMins * 60000);
 
   _lbWpMark('pre');
-  var lock = LockService.getScriptLock();
-  var _lbOwnedLock = false;
-  if (!lock.hasLock()) { lock.waitLock(10000); _lbOwnedLock = true; }
+  var _wl = _lbTakeWriteLock('reserve');   // 設計47：既に持っていれば取り直さない（変更から呼ばれるとき）・取れなければ BUSY
+  if (!_wl.got) { _lbWpMark('lock'); return _lbWlBusy(); }
+  var lock = _wl.lock;
+  var _lbOwnedLock = _wl.owned;
   _lbWpMark('lock');   // 呼び出し側(change)が既にLock保持なら再取得せず＝変更を単一クリティカルセクションで原子化(C3)
   var _t0 = new Date().getTime();
   //   既存の _lap に段の印を相乗りする（設計43 A）。名前 → 段の表に無いものは other
@@ -6496,7 +6707,9 @@ function addOfflineMember(name, phone) {
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
   if (!sh) return { success: false, code: 'NO_SHEET', message: 'customer_line_map未作成' };
   var phoneN = _lbNormPhone(phone), targetName = _lbNormName(name);
-  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('offline');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { return (_lbWlFlush(), _lbWlBusy()); }
+  var lock = _wl.lock;
   try {
     var last = sh.getLastRow();
     if (last >= 2) {   // 冪等：氏名(＋電話)一致の既存があればそのcustomerIdを返す
@@ -6518,7 +6731,7 @@ function addOfflineMember(name, phone) {
     sh.getRange(row, MAP_COL.LINKED_AT).setValue(Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm'));
     Logger.log('addOfflineMember: ' + name + ' を非LINE会員として登録（customerId=' + customerId + '・担当' + trId + '・種別' + kind + '）');
     return { success: true, customerId: customerId, name: name, existing: false };
-  } finally { lock.releaseLock(); }
+  } finally { lock.releaseLock(); _lbWlFlush(); }   // 設計47：放した後に数を書く
 }
 
 // ============================================================
@@ -8643,8 +8856,9 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
   var done = null;
 
   _lbWpMark('pre');
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('cancel');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { _lbWpMark('lock'); return _lbWlBusy(); }
+  var lock = _wl.lock;
   _lbWpMark('lock');
   try {
     var values = sh.getRange(2, 1, last - 1, 11).getValues();
@@ -9199,8 +9413,9 @@ function undoSameDayCancel(lineUserId, reservationId) {
   var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
   if (!sh) return { success: false, code: 'NO_SHEET', message: '予約の台帳が読めません。' };
   var fail = function (code) { return { success: false, code: code, message: LB_SDC_MSG[code] || code }; };
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('undoSdc');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
   try {
     var last = sh.getLastRow();
     if (last < 2) return fail('NOT_FOUND');
@@ -9331,8 +9546,9 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
   var _chType = _lbContractTypeOf(customerName);   // 予約の作成と通知の終了時刻で同じ値を使う（ロックの外で読む）
   _lbWpMark('preType');   // 2026-11-18：契約種別の読み（契約表）
   // 変更全体を単一Lockで原子化（並行二重変更を防ぐ・C3）。_lbReserveCore は hasLock を見て再取得しない。
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('change');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { _lbWpMark('lock'); return _lbWlBusy(); }
+  var lock = _wl.lock;
   _lbWpMark('lock');
   var made;
   try {
@@ -9597,7 +9813,9 @@ function _lbAddRecurPattern(customerId, body, source) {
   if (trainerId && (!_tr || (_tr.hidden && String(trainerId) !== _lbCustTrainerId(customerId)))) return { success: false, code: 'BAD_REQUEST', message: 'トレーナーの指定が不正です。' };
   if (!_lbCustInfoById(customerId)) return { success: false, code: 'NOT_FOUND', message: '対象の会員が見つかりません。' };
   var sh = _lbRecurSheet();
-  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('recurAdd');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
   try {
     if (sh.getLastRow() >= 2) {   // dedup：同一 customer+weekday+time+trainer の有効行が既にあれば返す
       var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
@@ -9676,7 +9894,9 @@ function deleteRecurringPattern(lineUserId, patternId) {
   if (!hit) return { success: false, code: 'NOT_FOUND', message: 'パターンが見つかりません。' };
   var cid = String(hit.row[RP_COL.CUSTOMER_ID - 1]);
   if (!_lbTrainerCanManageRecur(lineUserId, cid)) return { success: false, code: 'FORBIDDEN' };
-  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+  var _wl = _lbTakeWriteLock('recurDel');   // 設計47：取れなければ何も書かずに BUSY（ロックを取った後の例外は今のまま）
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
   try {
     var re = _lbRecurRowByPattern(patternId);   // Lock内で再解決（行ズレ防止）
     if (re === false) return { success: false, code: 'NO_SHEET' };

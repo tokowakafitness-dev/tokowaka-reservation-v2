@@ -189,7 +189,7 @@ const J = (props, k) => JSON.parse(props.get(k) || 'null');
 {
   const s = pluckFn(PE, 'pushToEdgeHome');
   ok('2-20 ★押し出しの成否にかかわらず、ロックの外で必ず呼ぶ',
-     /var pushed = _edgeLocked\(_pushToEdgeHomeImpl\);\s*(\/\/[^\n]*\n\s*)*try \{ _edgeMaybeShadowSweep\(\{ pushOk: !!\(pushed && pushed\.ok === true\), startedAt: t0 \}\); \}/.test(s));
+     /var pushed = _edgeLocked\(_pushToEdgeHomeImpl, null, 'home'\);\s*(\/\/[^\n]*\n\s*)*try \{ _edgeMaybeShadowSweep\(\{ pushOk: !!\(pushed && pushed\.ok === true\), startedAt: t0 \}\); \}/.test(s));
   ok('2-21 押し出しは成否を返す', /return \{ ok: true, result: n \};/.test(pluckFn(PE, '_pushToEdgeHomeImpl')) && /return \{ ok: false, reason:/.test(pluckFn(PE, '_pushToEdgeHomeImpl')));
 }
 

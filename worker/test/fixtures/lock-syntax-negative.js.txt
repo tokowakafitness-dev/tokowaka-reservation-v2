@@ -1,0 +1,20 @@
+// 設計47 検査④⑪の陰性 fixture：拾ってはいけないもの（コメント・文字列・別のロック・別のオブジェクト）と、拾うべき違反
+//   lock.waitLock(10000);   ← コメントの中は拾わない
+function commentsAndStrings() {
+  /* var lock = LockService.getScriptLock(); lock.waitLock(10000); */
+  var s = 'LockService.getScriptLock().waitLock(10000)';
+  var t = "lock.waitLock(10000)";
+  var u = `waitLock(${1})`;
+  var re = /lock\.waitLock\(10000\)/;
+  return [s, t, u, re];
+}
+function otherLocks() {
+  var ul = LockService.getUserLock(); ul.waitLock(2000);        // ユーザーのロックは対象外
+  var obj = { waitLock: function () {} }; obj.waitLock(10000);  // 別のオブジェクト
+  // _edgeTallyRun(customerId, false, 1, 0, false);  ← コメントの中の呼び出しは数えない
+}
+function badRecordCalls(customerId, reservationId, e) {
+  _edgeTallyRun(customerId, false, 1, 0, false);       // 違反：会員ID
+  _lbWlTally('cancel', reservationId, 0);              // 違反：予約ID
+  _edgeTallyKey(e.message, 1, 0, false);               // 違反：例外の文
+}
