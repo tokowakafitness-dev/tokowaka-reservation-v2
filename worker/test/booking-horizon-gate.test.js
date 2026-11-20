@@ -95,7 +95,7 @@ console.log('=== ② 単発・まとめて・代行 ===');
   //   代行：入口は名簿の読み方が別なので、印を付けないことを本文で確かめる
   const proxy = pluck(LB, 'makeReservationLineProxy') + pluck(LB, 'makeBatchReservationLineProxy');
   ok('②-3 代行（単発・まとめて）は印を付けない', !/enforceHorizon/.test(proxy));
-  const auto = pluck(LB, '_lbAutoBookRun');   // 設計47：自動予約の本体
+  const auto = pluck(LB, 'autoBookRecurringPatterns');
   ok('②-4 固定枠の自動予約は印を付けない', !/enforceHorizon/.test(auto));
 }
 console.log('=== ③ 繰り返し ===');

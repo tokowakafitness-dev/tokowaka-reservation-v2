@@ -43,7 +43,7 @@ function run({ rows, quota, mine = [], ledgerNull = false, monthlyRem = null, mo
     _lbDwMarkDirty: () => {}, lbDwEnqueue: (c) => { enq.push(c); return 1; },
     _lbNotifyAutoBook: (c, b, s) => notices.push({ b, s }) };
   vm.createContext(ctx);
-  vm.runInContext([RT, pluckFn(LB, '_lbDatesOfWeekdayInMonth'), pluckFn(LB, '_lbAutoBookRun'), pluckFn(LB, '_lbAutoBookRowPending'), 'var autoBookRecurringPatterns = _lbAutoBookRun;   // 設計47：入口はリースを取ってから本体（_lbAutoBookRun）を呼ぶ。ここは本体を見る'].join('\n'), ctx);
+  vm.runInContext([RT, pluckFn(LB, '_lbDatesOfWeekdayInMonth'), pluckFn(LB, 'autoBookRecurringPatterns')].join('\n'), ctx);
   ctx.autoBookRecurringPatterns();
   return { calls, props, notice: notices[0], logs, enq, bodies };
 }

@@ -68,7 +68,7 @@ console.log('=== ③ 入口から：自動予約の時刻 ===');
     _lbDwMarkDirty: () => {}, lbDwEnqueue: () => 1, _lbResvSessions: () => [],
     _lbNotifyAutoBook: () => {}, LockService: { getScriptLock: () => ({ waitLock: () => {}, tryLock: () => true, releaseLock: () => {} }) } };
   vm.createContext(ctx);
-  vm.runInContext([RT, pluckFn(LB, '_lbDatesOfWeekdayInMonth'), pluckFn(LB, '_lbAutoBookRun'), pluckFn(LB, '_lbAutoBookRowPending'), 'var autoBookRecurringPatterns = _lbAutoBookRun;   // 設計47：入口はリースを取ってから本体（_lbAutoBookRun）を呼ぶ。ここは本体を見る'].join('\n'), ctx);
+  vm.runInContext([RT, pluckFn(LB, '_lbDatesOfWeekdayInMonth'), pluckFn(LB, 'autoBookRecurringPatterns')].join('\n'), ctx);
   ctx.autoBookRecurringPatterns();
   const hours = booked.map((iso) => new Date(iso).getHours());
   ok('③-1 ★11月の火曜（4回）を予約しに行く', booked.length === 4, JSON.stringify(booked));

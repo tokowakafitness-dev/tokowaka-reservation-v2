@@ -85,7 +85,6 @@ const ONE_SHOT = new Set([
   '_lbSyncAfterRegister',   // 会員登録の直後に1回
   '_lbWarmContract',        // 契約の読み込みを温める1回
   '_lbCalSyncAfterWrite',   // 書き込みの直後にカレンダー同期を1回
-  'lbAutoBookRetry',        // 設計47：固定枠の自動予約を混雑で保留した会員の取り直し（15分後に1回・月に4回まで）
 ]);
 
 const missing = [...expected].filter((n) => !registered.has(n));

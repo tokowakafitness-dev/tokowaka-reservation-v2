@@ -212,9 +212,8 @@ console.log('=== ⑩ トリガー ===');
   }
   const want = ['_lbSyncAfterRegister', '_lbWarmContract', 'autoBookRecurringPatterns', 'checkLineQuota', 'dailyHealthCheck', 'dailySync', 'edgeJobPoll', 'lbNudgeDaily',
     'pushToEdgeFullSync', 'pushToEdgeHome', 'pushToEdgeLight', 'pushToEdgeSlots', 'refreshPaceBoard', 'sendLineReminders', 'sendReminderMails', 'sendShiftReminders',
-    'syncContractStatus', 'warmupCache', 'weeklyPaceReport', 'LB_CALSYNC.AFTER_HANDLER', 'LB_CALSYNC.TICK_HANDLER',
-    'LB_AB_RETRY.HANDLER'].sort();   // 設計47 §7：固定枠の自動予約の取り直し（一回限り・保留があるときだけ・月に4回まで）
-  ok('⑩-1 newTrigger のハンドラの集合が決めたものと同じ（設計47 で足したのは一回限りの lbAutoBookRetry だけ）', JSON.stringify([...names].sort()) === JSON.stringify(want), JSON.stringify([...names].sort()));
+    'syncContractStatus', 'warmupCache', 'weeklyPaceReport', 'LB_CALSYNC.AFTER_HANDLER', 'LB_CALSYNC.TICK_HANDLER'].sort();
+  ok('⑩-1 newTrigger のハンドラの集合が変わらない（新しいトリガー0本）', JSON.stringify([...names].sort()) === JSON.stringify(want), JSON.stringify([...names].sort()));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} 設計47 ロックの構文 検証: ${pass} passed / ${fail} failed`);

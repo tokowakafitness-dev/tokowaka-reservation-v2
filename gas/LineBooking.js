@@ -2319,7 +2319,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-20a ロック待ちは BUSY で返す（対象10操作）・ロックの競合の数（書き込み・押し出し）を日次点検へ・固定枠の自動予約は混雑なら取り直し、だめなら保留して一回限りで再実行（設計47）';
+var LB_HEALTH_BUILD = '2026-11-20a ロック待ちは BUSY で返す（対象10操作・tryLock の例外は投げ直す・自分で取ったロックだけ放す）・ロックの競合の数を日次点検へ・固定枠の自動予約は混雑なら取り直し、だめなら保留（印・お知らせなし）して点検で知らせる（設計47）';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2969,9 +2969,9 @@ function dailyHealthCheck(dryRunArg) {
   } catch (e) {
     add('notify_defer_check_fail', '通知の後ろ回し', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
   }
-  // ---- 固定枠の自動予約（設計47）：対象月の未完了（状態で見る）・保留・残っているリース・始められなかった回 ----
+  // ---- 固定枠の自動予約（設計47）：混雑で保留した会員（対象月ごと・月をまたいでも記録の対象月で出す） ----
   try {
-    var abk = lbAutoBookDailyCheck(Date.now(), function (k) { return _lbProp(k); }, function (d) { return _lbAutoBookPendingCount(d); });
+    var abk = lbAutoBookHeldDailyCheck(function (k) { return _lbProp(k); });
     for (var abi = 0; abi < abk.length; abi++) add(abk[abi].key, '固定枠の自動予約', abk[abi].severity, abk[abi].count, abk[abi].detail);
   } catch (e) {
     add('autobook_check_fail', '固定枠の自動予約', 'warn', 1, '点検そのものが失敗しました: ' + String((e && e.name) || 'Error'));
@@ -9949,12 +9949,7 @@ function _lbPickBalancedTrainer(start, assignCount) {
   return pool[Math.floor(Math.random() * pool.length)];       // 同数はランダムで分散
 }
 
-//   月の定期（25日6時）の入口。★引数は使わない（時間主導トリガーは第1引数にイベントを渡す）
-//   ★設計47：実行全体を Properties のリースで1つにする（25日の定期・取り直し lbAutoBookRetry・手動の実行が重なっても
-//     同じ未処理の行を2つの実行が読まない）。予約の ScriptLock を実行全体で握らない（取り直しの sleep 中も他の予約を止めてしまう）
-function autoBookRecurringPatterns() { return _lbAutoBookEntry(false); }
-
-function _lbAutoBookRun() {
+function autoBookRecurringPatterns() {
   var now = new Date();
   var targetY = now.getFullYear() + (now.getMonth() === 11 ? 1 : 0);   // 翌月の年
   var targetM = (now.getMonth() + 1) % 12 + 1;                          // 翌月(1-indexed)
@@ -9971,7 +9966,8 @@ function _lbAutoBookRun() {
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
   var byCustomer = {}, order = [], assignCount = {};   // assignCount=担当なし固定枠のシフトイン均等割当カウント（当バッチ）
   for (var i = 0; i < v.length; i++) {
-    if (!_lbAutoBookRowPending(v[i], targetKey)) continue;   // 無効・当該月は予約済み（冪等・再実行安全）。★点検も同じ関数で数える（設計47）
+    if (!_lbTruthy(v[i][RP_COL.ACTIVE - 1])) continue;
+    if (String(v[i][RP_COL.LAST_MONTH - 1]) === targetKey) continue;   // 当該月は予約済み（冪等・再実行安全）
     var cid = String(v[i][RP_COL.CUSTOMER_ID - 1]);
     var weekday = Number(v[i][RP_COL.WEEKDAY - 1]), time = _lbRecurTime(v[i][RP_COL.TIME - 1]), trainerId = String(v[i][RP_COL.TRAINER_ID - 1]);
     if (!byCustomer[cid]) { byCustomer[cid] = { booked: [], skipped: [], rows: [], pats: [] }; order.push(cid); }
@@ -10136,169 +10132,47 @@ function _lbAutoBookRun() {
     }
     _abProps.setProperty(_abKey, JSON.stringify(_ab));
   } catch (eR) { Logger.log('自動予約の件数を残せませんでした: ' + eR.message); }
-  //   設計47：保留した会員の数を残し、1名以上なら同じ日のうちに一回限りトリガーで取り直す（会員IDは残さない）
-  if (typeof _lbAutoBookHeldNote === 'function') { try { _lbAutoBookHeldNote(targetKey, _heldN); } catch (eHN) { Logger.log('自動予約の保留を残せませんでした: ' + eHN.message); } }
+  //   設計47：保留した会員の数を対象月ごとに残す（会員IDは残さない）。保留0で終わったらその対象月の記録を消す
+  if (typeof _lbAutoBookHeldNote === 'function') { try { _lbAutoBookHeldNote(targetKey, _heldN, Date.now()); } catch (eHN) { Logger.log('自動予約の保留を残せませんでした: ' + eHN.message); } }
   Logger.log('autoBookRecurringPatterns 完了: ' + order.length + '顧客（保留 ' + _heldN + '）/ 対象月 ' + targetKey);
   return { customers: order.length, month: targetKey, held: _heldN };
 }
 
 // ============================================================
-// 設計47：固定枠の自動予約を、予約のロックが混んで保留した会員のために取り直す
-//   ・記録 LB_AUTOBOOK_HELD = { m: 対象月, n: 保留の人数, at, tries: 自動の取り直しを予約した回数, sched: 予約できたか }（会員IDなし）
-//   ・取り直しは一回限りトリガー lbAutoBookRetry（15分後・月の定期 autoBookRecurringPatterns とは別の名前＝掃除で月の定期を消さない）。
-//     1つの月に4回まで。作れなければ（上限20本など）日次点検の warn だけ（手で autoBookRecurringPatterns を実行）
+// 設計47：固定枠の自動予約で、予約のロックが混んで（BUSY）保留した会員の数（会員IDは持たない）
+//   LB_AUTOBOOK_HELD = { 'yyyy-MM'（対象月）: { n: 保留の人数, at: 時刻 } }
+//   ・保留が1名以上なら、その対象月の値を書き直す。保留0で終わったら、その対象月の値を消す（ほかの月は触らない）
+//   ・日次点検は記録の対象月を読む（今日の日付から計算しない＝月をまたいでも見失わない）
+//   ・取り直しは人が GAS エディタで autoBookRecurringPatterns を再実行（自動の取り直し・実行の排他は範囲外＝設計47 §7）
 // ============================================================
 var LB_AUTOBOOK_HELD_PROP = 'LB_AUTOBOOK_HELD';
-var LB_AB_RETRY = { HANDLER: 'lbAutoBookRetry', AFTER_MS: 15 * 60000, MAX_TRIES: 4 };
-function _lbAutoBookTargetKey(now) {
-  var y = now.getFullYear() + (now.getMonth() === 11 ? 1 : 0), m = (now.getMonth() + 1) % 12 + 1;
-  return ('' + y) + '-' + ('0' + m).slice(-2);
-}
-function _lbAutoBookHeldNote(targetKey, heldN) {
+function _lbAutoBookHeldNote(targetKey, heldN, nowMs) {
   var p = PropertiesService.getScriptProperties();
-  var prev = null;
-  try { prev = JSON.parse(p.getProperty(LB_AUTOBOOK_HELD_PROP) || 'null'); } catch (e) { prev = null; }
-  var tries = (prev && prev.m === targetKey && typeof prev.tries === 'number') ? prev.tries : 0;
-  var rec = { m: targetKey, n: heldN, at: Date.now(), tries: tries, sched: false };
-  //   ★リースの中で呼ばれる（掃除・作成・tries の更新を2つの実行が同時にしない）。残っている取り直しの予約は毎回消す
-  try { _lbAutoBookRetryClean(); } catch (eC) { Logger.log('自動予約の取り直しの掃除に失敗: ' + eC.message); }
-  if (heldN > 0 && tries < LB_AB_RETRY.MAX_TRIES) {
-    try {
-      ScriptApp.newTrigger(LB_AB_RETRY.HANDLER).timeBased().after(LB_AB_RETRY.AFTER_MS).create();
-      rec.tries = tries + 1; rec.sched = true;
-    } catch (eT) { Logger.log('自動予約の取り直しを予約できませんでした（日次点検で知らせます）: ' + eT.message); }
+  var raw = p.getProperty(LB_AUTOBOOK_HELD_PROP), rec = {};
+  if (raw) {
+    try { rec = JSON.parse(raw); } catch (e) { rec = null; }
+    if (!rec || typeof rec !== 'object' || Object.prototype.toString.call(rec) === '[object Array]') rec = {};   // 壊れていたら作り直す（今回の分は必ず残す）
   }
-  p.setProperty(LB_AUTOBOOK_HELD_PROP, JSON.stringify(rec));
+  if (heldN > 0) rec[targetKey] = { n: heldN, at: nowMs };
+  else delete rec[targetKey];
+  if (Object.keys(rec).length) p.setProperty(LB_AUTOBOOK_HELD_PROP, JSON.stringify(rec));
+  else p.deleteProperty(LB_AUTOBOOK_HELD_PROP);
   return rec;
 }
-function _lbAutoBookRetryClean() {
-  var ts = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < ts.length; i++) if (ts[i].getHandlerFunction() === LB_AB_RETRY.HANDLER) ScriptApp.deleteTrigger(ts[i]);
-}
-//   一回限りトリガーの入口。★引数は使わない（時間主導トリガーは第1引数にイベントを渡す）
-function lbAutoBookRetry() { return _lbAutoBookEntry(true); }
-
-//   入口の共通部分：リースを取れた実行だけが進む。取れなければ何もせず終わる（記録に残す）
-function _lbAutoBookEntry(isRetry) {
-  var lease = _lbAbLeaseTake();
-  if (!lease.token) {
-    //   ★取れなかった理由を分けて残す（LOCK_BUSY＝ScriptLock を取れない／LOCK_ERROR＝tryLock の例外／LEASE_LIVE＝ほかの実行のリース）。
-    //     25日の定期（run）が取れなかったときは、15分後の取り直しを1本作る（掃除はリースを取れた次の実行が行う＝重なっても本体はリースで1本）
-    var sched = '';
-    if (isRetry !== true) {
-      try { ScriptApp.newTrigger(LB_AB_RETRY.HANDLER).timeBased().after(LB_AB_RETRY.AFTER_MS).create(); sched = 'retry'; }
-      catch (eT) { sched = 'retryFail'; Logger.log('自動予約の取り直しを作れませんでした（日次点検の未完了で知らせます）: ' + eT.message); }
-    }
-    _lbAbNoteLeaseSkip(isRetry === true, lease.why, sched);
-    Logger.log('自動予約：始められませんでした（' + lease.why + '・' + (isRetry === true ? '取り直し' : '定期・手動') + '）');
-    return { skipped: true, reason: lease.why };
+//   日次点検（純粋）。getProp を渡す。戻り値 [{key,severity,count,detail}]
+function lbAutoBookHeldDailyCheck(getProp) {
+  var out = [], raw = getProp(LB_AUTOBOOK_HELD_PROP);
+  if (!raw) return out;
+  var rec = null;
+  try { rec = JSON.parse(String(raw)); } catch (e) { rec = null; }
+  if (!rec || typeof rec !== 'object') return [{ key: 'autobook_held_unreadable', severity: 'warn', count: 1, detail: '固定枠の自動予約の保留の記録が読めません（中身は写していません）' }];
+  var months = Object.keys(rec).sort();
+  for (var i = 0; i < months.length; i++) {
+    var n = Number(rec[months[i]] && rec[months[i]].n);
+    if (!(n > 0)) continue;
+    out.push({ key: 'autobook_held', severity: 'warn', count: n,
+      detail: '対象月 ' + months[i] + ' の固定枠の自動予約を混雑で保留した会員 ' + n + ' 名・GAS エディタで autoBookRecurringPatterns を再実行' });
   }
-  var token = lease.token;
-  try {
-    if (isRetry === true) {
-      try { _lbAutoBookRetryClean(); } catch (e) {}
-      var h = null;
-      try { h = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_AUTOBOOK_HELD_PROP) || 'null'); } catch (e2) { h = null; }
-      //   取り直すのは「対象月の保留がある」か「25日以降で、対象月の固定枠に未完了がある」（定期が始められなかった・途中で止まった）ときだけ。
-      //   ★25日より前は未完了が普通（まだ取る日ではない）なので取らない
-      var _now = new Date(), _key = _lbAutoBookTargetKey(_now);
-      var _heldHere = !!(h && h.n > 0 && h.m === _key);
-      var _pend = 0;
-      if (!_heldHere && _now.getDate() >= 25) { try { _pend = Number(_lbAutoBookPendingCount(_now) || 0); } catch (eP) { _pend = 0; } }
-      if (!_heldHere && !(_pend > 0)) { Logger.log('lbAutoBookRetry: 取り直すものはありません'); return { skipped: true }; }
-    }
-    return _lbAutoBookRun();
-  } finally {
-    _lbAbLeaseRelease(token);
-  }
-}
-
-//   リース：値 { token, until, at }。取る・返す瞬間だけ ScriptLock（5秒）。期限は8分（GAS の1実行の6分より長い）。
-//   期限切れは奪う（落ちた実行のリースで止まり続けない）・壊れた値も奪う（記録に残す）。返すときは token が自分のときだけ消す
-var LB_AB_LEASE = { PROP: 'LB_AUTOBOOK_LEASE', MS: 8 * 60000, LOCK_WAIT_MS: 5000, SKIP_PROP: 'LB_AUTOBOOK_LEASE_SKIP' };
-//   戻り値 { token, why }：token が null なら why＝LOCK_BUSY／LOCK_ERROR／LEASE_LIVE
-function _lbAbLeaseTake() {
-  var lock = LockService.getScriptLock();
-  var got = false;
-  try { got = lock.tryLock(LB_AB_LEASE.LOCK_WAIT_MS); }
-  catch (eL) { return { token: null, why: 'LOCK_ERROR' }; }
-  if (!got) return { token: null, why: 'LOCK_BUSY' };
-  try {
-    var p = PropertiesService.getScriptProperties();
-    var raw = p.getProperty(LB_AB_LEASE.PROP), cur = null, broken = false;
-    if (raw) { try { cur = JSON.parse(raw); } catch (e) { broken = true; } }
-    var now = Date.now();
-    if (cur && typeof cur === 'object' && typeof cur.token === 'string' && typeof cur.until === 'number' && cur.until > now) return { token: null, why: 'LEASE_LIVE' };   // 生きている
-    var token = Utilities.getUuid();
-    p.setProperty(LB_AB_LEASE.PROP, JSON.stringify({ token: token, until: now + LB_AB_LEASE.MS, at: now, took: (raw ? (broken ? 'broken' : 'expired') : 'free') }));
-    return { token: token, why: '' };
-  } finally { lock.releaseLock(); }
-}
-function _lbAbLeaseRelease(token) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(LB_AB_LEASE.LOCK_WAIT_MS)) return false;   // 返せなければ期限で切れる
-  try {
-    var p = PropertiesService.getScriptProperties();
-    var cur = null;
-    try { cur = JSON.parse(p.getProperty(LB_AB_LEASE.PROP) || 'null'); } catch (e) { cur = null; }
-    if (cur && cur.token === token) { p.deleteProperty(LB_AB_LEASE.PROP); return true; }
-    return false;   // ★自分のものでなければ消さない（期限切れで奪われた後）
-  } finally { lock.releaseLock(); }
-}
-//   リースを取れずに何もしなかった回（'件数|最後の時刻|種類'・会員IDなし）。ロックなしの上書き＝下限
-//   '件数|最後の時刻|種類(run/retry)|理由|取り直し(retry/retryFail/空)'
-function _lbAbNoteLeaseSkip(isRetry, why, sched) {
-  try {
-    var p = PropertiesService.getScriptProperties();
-    var cur = String(p.getProperty(LB_AB_LEASE.SKIP_PROP) || '').split('|');
-    p.setProperty(LB_AB_LEASE.SKIP_PROP, (Number(cur[0] || 0) + 1) + '|' + Date.now() + '|' + (isRetry ? 'retry' : 'run') + '|' + String(why || '') + '|' + String(sched || ''));
-  } catch (e) {}
-}
-
-//   設計47：対象月にまだ取っていない有効な固定枠か（本体の対象の抽出と点検が同じ関数を使う＝ずれない）
-function _lbAutoBookRowPending(row, targetKey) {
-  if (!_lbTruthy(row[RP_COL.ACTIVE - 1])) return false;
-  return String(row[RP_COL.LAST_MONTH - 1]) !== targetKey;
-}
-//   対象月の未完了の固定枠の数（行の数・会員IDは返さない）。読めなければ null
-function _lbAutoBookPendingCount(now) {
-  var key = _lbAutoBookTargetKey(now);
-  var sh = _lbRecurSheet();
-  if (!sh) return null;
-  if (sh.getLastRow() < 2) return 0;
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
-  var n = 0;
-  for (var i = 0; i < v.length; i++) if (_lbAutoBookRowPending(v[i], key)) n++;
-  return n;
-}
-//   日次点検（設計47）：失敗の仕方に依らず「状態」で見る。25日から月末までに未完了が1件以上なら warn。
-//   保留（LB_AUTOBOOK_HELD）・残っているリース・リースを取れなかった最新の回を同じ段に並べる。会員IDは出さない
-//   pendingFn(now) は未完了の数（null＝読めない）
-function lbAutoBookDailyCheck(nowMs, getProp, pendingFn) {
-  var out = [];
-  var now = new Date(nowMs);
-  var key = _lbAutoBookTargetKey(now);
-  var extra = [];
-  var ah = null;
-  try { ah = JSON.parse(String(getProp(LB_AUTOBOOK_HELD_PROP) || 'null')); } catch (eA) { ah = null; }
-  if (ah && typeof ah === 'object' && Number(ah.n) > 0) {
-    out.push({ key: 'autobook_held', severity: 'warn', count: Number(ah.n),
-      detail: '固定枠の自動予約を混雑で保留した会員 ' + Number(ah.n) + ' 名（' + String(ah.m || '?') + '・自動の取り直し ' + Number(ah.tries || 0) + ' 回'
-        + (ah.sched ? '・次を予約済み' : '・★次の自動の取り直しはありません') + '）・手動で autoBookRecurringPatterns を再実行' });
-  }
-  var ls = null;
-  try { ls = JSON.parse(String(getProp(LB_AB_LEASE.PROP) || 'null')); } catch (eL) { ls = { broken: true }; }
-  if (ls) extra.push(ls.broken ? 'リースの値が壊れている（次の実行が奪う）' : ('リースが残っている（取得 ' + new Date(Number(ls.at || 0)).toISOString() + '・期限 ' + new Date(Number(ls.until || 0)).toISOString() + (Number(ls.until) < nowMs ? '・期限切れ＝次の実行が奪う' : '') + '）'));
-  var sk = String(getProp(LB_AB_LEASE.SKIP_PROP) || '');
-  if (sk) { var sp = sk.split('|'); extra.push('始められなかった回 ' + Number(sp[0] || 0) + '（最新 ' + new Date(Number(sp[1] || 0)).toISOString() + '・' + (sp[2] || '?') + '・' + (sp[3] || '?') + (sp[4] ? '・' + sp[4] : '') + '）'); }
-  if (now.getDate() >= 25) {
-    var pend = null;
-    try { pend = pendingFn(now); } catch (eP) { pend = null; }
-    if (pend === null || pend === undefined) out.push({ key: 'autobook_pending_unreadable', severity: 'warn', count: 1, detail: '固定枠の台帳が読めず、自動予約が終わったか確かめられません（' + key + '）' + (extra.length ? '／' + extra.join('／') : '') });
-    else if (Number(pend) > 0) out.push({ key: 'autobook_pending', severity: 'warn', count: Number(pend),
-      detail: '固定枠の自動予約が未完了 ' + Number(pend) + '件（' + key + '・有効な固定枠で対象月の印が無い行）・autoBookRecurringPatterns を再実行' + (extra.length ? '／' + extra.join('／') : '') });
-    else if (extra.length) out.push({ key: 'autobook_info', severity: 'info', count: 1, detail: '固定枠の自動予約は完了（' + key + '）／' + extra.join('／') });
-  } else if (extra.length) out.push({ key: 'autobook_info', severity: 'info', count: 1, detail: extra.join('／') });
   return out;
 }
 
