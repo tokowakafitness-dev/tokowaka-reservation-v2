@@ -356,6 +356,17 @@ LockService の身代わりは**再入を許さない**（GAS の未確認の仕
 - `_lbTakeWriteLock` は `tryLock` の例外を BUSY に化けさせていた → 例外はそのまま投げ直す（「false のときだけ BUSY」）。数は別の項目 `err`。検査 `gas-write-lock` ⑬。
 - 予約の芯以外の9関数が、ロックを自分で取らなかった（`owned:false`）ときも放していた → 全部 `if (_wl.owned) lock.releaseLock()`。構文の検査 `gas-lock-syntax` ④-5（陽性・陰性 fixture `fixtures/lock-syntax-release.js.txt`）、入口からの入れ子の検査 `gas-write-lock` ⑭（取消・固定枠の削除・当日取消の戻しで、外側のロックが残る）。
 
+### 7-7 状態で見る検出（関門② 第2周の差し戻し・2026-11-20）
+- リースの ScriptLock が取れない・`tryLock` の例外・本体が6分で強制終了（finally も末尾の保留の記録も走らない）のどれでも、25日の自動予約が**再起動も検出もされなかった**（点検は保留 n>0 しか見ていなかった）。
+- **点検は失敗の仕方に依らず状態で見る**：`lbAutoBookDailyCheck` が「対象月の有効な固定枠で印（LAST_MONTH）が対象月になっていない行の数」を数え、25日から月末までに1件以上なら warn「固定枠の自動予約が未完了 n件・autoBookRecurringPatterns を再実行」。
+  - 判定は本体の対象の抽出と同じ関数 `_lbAutoBookRowPending`（複製しない）。件数だけで会員IDは出さない。
+  - 保留（`LB_AUTOBOOK_HELD`）・残っているリース（取得・期限）・始められなかった最新の回（`LB_AUTOBOOK_LEASE_SKIP`）を同じ段に並べる。
+  - 25日より前は未完了が普通なので鳴らさない。
+- 入口のリースの取得は理由を分ける（`LOCK_BUSY`＝ScriptLock を取れない／`LOCK_ERROR`＝tryLock の例外を捕まえた／`LEASE_LIVE`＝ほかの実行のリース）。`LB_AUTOBOOK_LEASE_SKIP` は `件数|時刻|run/retry|理由|retry/retryFail`。
+- 25日の定期（run）が始められなかったときは、15分後の取り直し `lbAutoBookRetry` を1本作る（掃除はリースを取れた次の実行。重なっても本体はリースで1本）。作れなければ記録に残り、点検の未完了が鳴る。
+- 取り直しは「対象月の保留がある」か「25日以降で未完了がある」ときに走る（保留の記録が書かれずに止まった実行も拾う）。25日より前は保留が無ければ走らない（先の月を早く取らない）。
+- 検査 `gas-autobook-busy.test.js` ⑧：tryLock が false・例外のそれぞれで、何もせず終わり・理由つきで記録・取り直し1本・点検の未完了 warn／強制終了相当（印が途中まで・リースが残る・保留の記録なし）で warn とリースの表示 → 期限後の取り直しで取り終え、warn が消える・二重予約なし／完了後は未完了0／25日より前は鳴らさない。
+
 ---
 
 ## 8. 別件（この設計では扱わない・記録だけ）

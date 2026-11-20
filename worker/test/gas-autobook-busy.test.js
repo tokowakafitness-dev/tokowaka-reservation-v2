@@ -25,7 +25,7 @@ const RP_COL = { PATTERN_ID: 1, CUSTOMER_ID: 2, WEEKDAY: 3, TIME: 4, TRAINER_ID:
 const RT = 'var _LB_RECUR_TZ = null;\n' + pluckFn(LB, '_lbRecurTz') + '\n' + pluckFn(LB, '_lbRecurTime');
 
 //   2026-10-25 06:00 に走らせて 11月を取る。busy(cid, startISO, n) が真のあいだ BUSY
-function world({ rows, busy = () => false, props = {}, startMs = new Date(2026, 9, 25, 6).getTime(), triggerThrows = false, slowReserveMs = 0, onReserve = null }) {
+function world({ rows, busy = () => false, props = {}, startMs = new Date(2026, 9, 25, 6).getTime(), triggerThrows = false, slowReserveMs = 0, onReserve = null, leaseLock = 'ok' }) {
   let nowMs = startMs;
   const st = { rows: rows.map((r) => r.slice()), ledger: {}, calls: [], sleeps: [], notices: [], props: Object.assign({}, props), triggers: [], created: 0, deleted: 0, enq: [], lockOwner: null, uuid: 0, inner: [] };
   class FD extends Date { constructor(...a) { if (a.length === 0) super(nowMs); else super(...a); } static now() { return nowMs; } }
@@ -35,7 +35,7 @@ function world({ rows, busy = () => false, props = {}, startMs = new Date(2026, 
     SETTINGS: { TIMEZONE: 'Asia/Tokyo', SESSION_MINUTES: 60 },
     Utilities: { formatDate: (d, tz, f) => (f === 'HH:mm' ? pad(d.getHours()) + ':' + pad(d.getMinutes()) : String(d)), sleep: (ms) => { st.sleeps.push(ms); nowMs += ms; }, getUuid: () => 'tok-' + (++st.uuid) },
     //   リースを取る・返す瞬間だけの ScriptLock（再入しない身代わり：持っているのに取ろうとしたら例外）
-    LockService: { getScriptLock: () => ({ tryLock: () => { if (st.lockOwner) throw new Error('REENTRANT'); st.lockOwner = 'me'; return true; }, releaseLock: () => { st.lockOwner = null; }, hasLock: () => st.lockOwner === 'me' }) },
+    LockService: { getScriptLock: () => ({ tryLock: () => { if (leaseLock === 'false') return false; if (leaseLock === 'throw') throw new Error('Lock service boom'); if (st.lockOwner) throw new Error('REENTRANT'); st.lockOwner = 'me'; return true; }, releaseLock: () => { st.lockOwner = null; }, hasLock: () => st.lockOwner === 'me' }) },
     _lbSs: () => ({ getSpreadsheetTimeZone: () => 'Asia/Tokyo' }),
     Logger: { log: () => {} },
     _lbTruthy: (v) => v === true, LB_AUTOBOOK_RESULT_PREFIX: 'LB_AUTOBOOK_RESULT_',
@@ -68,7 +68,8 @@ function world({ rows, busy = () => false, props = {}, startMs = new Date(2026, 
   vm.runInContext([RT, pluckFn(LB, '_lbDatesOfWeekdayInMonth'), oneLine('autoBookRecurringPatterns'), pluckFn(LB, '_lbAutoBookRun'),
     pluckVar(LB, 'LB_AUTOBOOK_HELD_PROP'), pluckVar(LB, 'LB_AB_RETRY'), pluckVar(LB, 'LB_AB_LEASE'),
     pluckFn(LB, '_lbAutoBookTargetKey'), pluckFn(LB, '_lbAutoBookHeldNote'), pluckFn(LB, '_lbAutoBookRetryClean'), oneLine('lbAutoBookRetry'),
-    pluckFn(LB, '_lbAutoBookEntry'), pluckFn(LB, '_lbAbLeaseTake'), pluckFn(LB, '_lbAbLeaseRelease'), pluckFn(LB, '_lbAbNoteLeaseSkip')].join('\n'), ctx);
+    pluckFn(LB, '_lbAutoBookEntry'), pluckFn(LB, '_lbAbLeaseTake'), pluckFn(LB, '_lbAbLeaseRelease'), pluckFn(LB, '_lbAbNoteLeaseSkip'),
+    pluckFn(LB, '_lbAutoBookRowPending'), pluckFn(LB, '_lbAutoBookPendingCount'), pluckFn(LB, 'lbAutoBookDailyCheck')].join('\n'), ctx);
   return { ctx, st, adv: (ms) => { nowMs += ms; }, setNow: (ms) => { nowMs = ms; } };
 }
 //   C1：火曜 9:00（11月は 3・10・17・24）／C2：木曜 9:00
@@ -132,11 +133,13 @@ console.log('=== ③ 取り直し ===');
 
 console.log('=== ④ 取り直さないとき・回数の上限・作れないとき ===');
 {
-  const w = world({ rows: ROWS(), props: { LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-10', n: 2, tries: 1 }) } });
+  //   対象月の固定枠が全部済んでいる（未完了0）ときの取り直し
+  const DONE = () => ROWS().map((r) => { const x = r.slice(); x[RP_COL.LAST_MONTH - 1] = '2026-11'; return x; });
+  const w = world({ rows: DONE(), props: { LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-10', n: 2, tries: 1 }) } });
   const r = w.ctx.lbAutoBookRetry();
-  ok('④-1 別の月の保留なら何もしない', r && r.skipped === true && w.st.calls.length === 0);
-  const w2 = world({ rows: ROWS(), props: { LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 0, tries: 1 }) } });
-  ok('④-2 保留0なら何もしない', w2.ctx.lbAutoBookRetry().skipped === true && w2.st.calls.length === 0);
+  ok('④-1 別の月の保留（未完了0）なら何もしない', r && r.skipped === true && w.st.calls.length === 0);
+  const w2 = world({ rows: DONE(), props: { LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 0, tries: 1 }) } });
+  ok('④-2 保留0（未完了0）なら何もしない', w2.ctx.lbAutoBookRetry().skipped === true && w2.st.calls.length === 0);
   const w3 = world({ rows: ROWS(), busy: (cid) => cid === 'C1', props: { LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 1, tries: 4 }) } });
   w3.ctx.autoBookRecurringPatterns();
   ok('④-3 1つの月に4回まで（5回目は予約しない・保留は残す）', w3.st.created === 0 && held(w3.st).n === 1 && held(w3.st).tries === 4 && held(w3.st).sched === false, JSON.stringify(held(w3.st)));
@@ -157,15 +160,14 @@ console.log('=== ⑤ 4分を過ぎたら ===');
   ok('⑤-2 4分を過ぎたら取り直さない（sleep しない）', w3.st.sleeps.length === 0 && held(w3.st).n >= 1, JSON.stringify({ s: w3.st.sleeps, h: held(w3.st) }));
 }
 
-console.log('=== ⑥ 日次点検 ===');
+console.log('=== ⑥ 日次点検（保留） ===');
 {
-  const ctx = { String, Number, JSON, Math, Object, isFinite, Date, Utilities: { formatDate: (d) => new Date(d.getTime() + 9 * 3600000).toISOString().slice(0, 10) } };
-  vm.createContext(ctx);
-  vm.runInContext(pluckVar(LB, 'LB_LC') + pluckFn(LB, '_lbLcDay') + pluckFn(LB, 'lbLockCountDailyCheck'), ctx);
-  const r = ctx.lbLockCountDailyCheck(Date.UTC(2026, 9, 26, 0), (k) => ({ LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 2, tries: 4, sched: false }) })[k] || null);
+  const w = world({ rows: ROWS(), props: { LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 2, tries: 4, sched: false }) } });
+  const chk = (props, ms) => w.ctx.lbAutoBookDailyCheck(ms, (k) => (k in props ? props[k] : null), () => 0);
+  const r = chk(w.st.props, new Date(2026, 9, 26, 7).getTime());
   const a = r.find((x) => x.key === 'autobook_held');
   ok('⑥-1 保留があれば warn（人数・手動で再実行）', a && a.severity === 'warn' && a.count === 2 && /固定枠の自動予約を混雑で保留した会員 2 名/.test(a.detail) && /手動で autoBookRecurringPatterns を再実行/.test(a.detail), JSON.stringify(a));
-  const r0 = ctx.lbLockCountDailyCheck(Date.UTC(2026, 9, 26, 0), (k) => ({ LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 0 }) })[k] || null);
+  const r0 = chk({ LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 0 }) }, new Date(2026, 9, 26, 7).getTime());
   ok('⑥-2 保留0なら鳴らさない', !r0.some((x) => x.key === 'autobook_held'));
 }
 
@@ -176,7 +178,7 @@ console.log('=== ⑦ 実行全体の排他（リース） ===');
   const w = world({ rows: ROWS(), props: { LB_AUTOBOOK_HELD: JSON.stringify({ m: '2026-11', n: 1, tries: 1 }) },
     onReserve: (ctx, st, key, k) => { if (!fired) { fired = true; st.inner.push(ctx.lbAutoBookRetry()); st.inner.push(ctx.autoBookRecurringPatterns()); } } });
   w.ctx.autoBookRecurringPatterns();
-  ok('⑦-1 ★割り込んだ2つの実行はリースを取れず何もしない', w.st.inner.length === 2 && w.st.inner.every((x) => x && x.skipped === true && x.reason === 'LEASE_BUSY'), JSON.stringify(w.st.inner));
+  ok('⑦-1 ★割り込んだ2つの実行はリースを取れず何もしない', w.st.inner.length === 2 && w.st.inner.every((x) => x && x.skipped === true && x.reason === 'LEASE_LIVE'), JSON.stringify(w.st.inner));
   ok('⑦-2 お知らせは会員ごとに1回', noticeOf(w.st, 'C1').length === 1 && noticeOf(w.st, 'C2').length === 1, JSON.stringify(w.st.notices.map((x) => x.c)));
   const res = JSON.parse(w.st.props['LB_AUTOBOOK_RESULT_2026-11'] || '{}');
   ok('⑦-3 件数は1回だけ（C1 b=4・C2 b=4）', (res.C1 || {}).b === 4 && (res.C2 || {}).b === 4, JSON.stringify(res));
@@ -208,6 +210,48 @@ console.log('=== ⑦ 実行全体の排他（リース） ===');
   w4.ctx.autoBookRecurringPatterns();
   ok('⑦-11 ★返すとき token が自分のものでなければ消さない', JSON.parse(w4.st.props.LB_AUTOBOOK_LEASE || '{}').token === 'thief', w4.st.props.LB_AUTOBOOK_LEASE);
   ok('⑦-12 リースを取る・返す瞬間のロックは放してある', w4.st.lockOwner === null && w.st.lockOwner === null);
+}
+
+console.log('=== ⑧ 状態で見る検出（未完了の固定枠）＋始められなかった定期の取り直し ===');
+const AT7 = new Date(2026, 9, 25, 7).getTime();
+const pendWarn = (w, ms) => (w.ctx.lbAutoBookDailyCheck(ms || AT7, (k) => (k in w.st.props ? w.st.props[k] : null), (d) => w.ctx._lbAutoBookPendingCount(d)) || []).find((x) => x.key === 'autobook_pending');
+for (const mode of ['false', 'throw']) {
+  const w = world({ rows: ROWS(), leaseLock: mode });
+  let r; try { r = w.ctx.autoBookRecurringPatterns(); } catch (e) { r = { threw: String(e) }; }   // 例外が外へ出たら落とす
+  const why = mode === 'false' ? 'LOCK_BUSY' : 'LOCK_ERROR';
+  ok(`⑧-${mode}-1 リースの ScriptLock が ${mode === 'false' ? '取れない' : '例外'}：何もせず終わる（例外を外へ出さない）・理由 ${why}`, r && r.skipped === true && r.reason === why && w.st.calls.length === 0, JSON.stringify(r));
+  ok(`⑧-${mode}-2 始められなかった回を理由つきで残す（run・${why}・取り直しを作った）`, new RegExp('^1\\|\\d+\\|run\\|' + why + '\\|retry$').test(w.st.props.LB_AUTOBOOK_LEASE_SKIP || ''), w.st.props.LB_AUTOBOOK_LEASE_SKIP);
+  ok(`⑧-${mode}-3 ★25日の定期が始められなければ15分後の取り直しを1本作る`, w.st.triggers.filter((x) => x === 'lbAutoBookRetry').length === 1 && w.st.lastAfter === 900000);
+  const pw = pendWarn(w);
+  ok(`⑧-${mode}-4 ★点検：未完了2件で warn（会員IDなし）・始められなかった回も同じ段に出る`, pw && pw.severity === 'warn' && pw.count === 2 && /未完了 2件/.test(pw.detail) && /始められなかった回 1/.test(pw.detail) && !/C1|C2/.test(pw.detail), JSON.stringify(pw));
+}
+{
+  //   強制終了の身代わり：本体の途中で止まり、finally も末尾（保留の記録）も走らない＝C1 だけ印が付き、リースが残る
+  const w = world({ rows: ROWS() });
+  w.ctx.autoBookRecurringPatterns();
+  const NOW = new Date(2026, 9, 25, 6).getTime();
+  w.st.rows[1][RP_COL.LAST_MONTH - 1] = '';                       // C2 の行は印が付く前に止まった
+  w.st.props.LB_AUTOBOOK_LEASE = JSON.stringify({ token: 'dead', until: NOW + 8 * 60000, at: NOW });   // 返されないまま
+  delete w.st.props.LB_AUTOBOOK_HELD;                              // 末尾の記録も書かれない
+  const pw = pendWarn(w);
+  ok('⑧-kill-1 ★強制終了相当：未完了1件で warn・リースが残っていることも同じ段に出る', pw && pw.count === 1 && /リースが残っている/.test(pw.detail), JSON.stringify(pw));
+  //   リースの期限が過ぎた後の取り直し（保留の記録は無いが、25日以降で未完了がある）→ 取り終える
+  w.setNow(NOW + 20 * 60000);
+  const r = w.ctx.lbAutoBookRetry();
+  ok('⑧-kill-2 保留の記録が無くても、25日以降で未完了があれば取り直しが走る', r && !r.skipped, JSON.stringify(r));
+  ok('⑧-kill-3 ★取り終えたら未完了0で warn が消える', !pendWarn(w, new Date(2026, 9, 25, 7, 30).getTime()) && w.st.rows[1][RP_COL.LAST_MONTH - 1] === '2026-11');
+  ok('⑧-kill-4 二重予約なし（C1・C2 とも4件）', (w.st.ledger.C1 || []).length === 4 && (w.st.ledger.C2 || []).length === 4);
+}
+{
+  const w = world({ rows: ROWS() });
+  ok('⑧-5 走る前（25日 7時・未完了2件）は warn', (pendWarn(w) || {}).count === 2);
+  w.ctx.autoBookRecurringPatterns();
+  ok('⑧-6 ★完了後は未完了0で warn が消える', !pendWarn(w));
+  const w2 = world({ rows: ROWS() });
+  ok('⑧-7 25日より前は未完了でも鳴らさない（まだ取る日ではない）', !pendWarn(w2, new Date(2026, 9, 24, 7).getTime()));
+  const w3 = world({ rows: ROWS(), startMs: new Date(2026, 9, 20, 6).getTime() });
+  ok('⑧-8 25日より前の取り直しは、保留が無ければ何もしない（先の月を早く取らない）', w3.ctx.lbAutoBookRetry().skipped === true && w3.st.calls.length === 0);
+  ok('⑧-9 点検は本体と同じ判定の関数（_lbAutoBookRowPending）を使う', /_lbAutoBookRowPending\(v\[i\], targetKey\)/.test(LB) && /_lbAutoBookRowPending\(v\[i\], key\)/.test(LB));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} 設計47 自動予約の混雑 検証: ${pass} passed / ${fail} failed`);
