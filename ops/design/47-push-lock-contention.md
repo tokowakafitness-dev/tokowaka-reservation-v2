@@ -343,6 +343,19 @@ LockService の身代わりは**再入を許さない**（GAS の未確認の仕
 ### 7-4 検査（`gas-autobook-busy.test.js`・入口＝`autoBookRecurringPatterns`／`lbAutoBookRetry`）
 ①1回で解ける→取れる・マーク・お知らせに BUSY なし ②続く→3回取り直して保留・マークなし・お知らせなし・件数なし・ほかの会員は今どおり・保留の人数・トリガー1つ ③取り直し→前に取れた枠を二重に取らない・お知らせ1回・取り直しのトリガーだけ消す ④別の月・保留0・4回の上限・作れないとき ⑤4分を過ぎたら ⑥日次点検。トリガーの集合の検査（`gas-lock-syntax` ⑩・`gas-edge-defer` ⑦・`trigger-args` ③）に `lbAutoBookRetry` を一回限りとして足した。
 
+### 7-5 実行全体の排他（関門② 差し戻し・2026-11-20）
+- 25日の定期・取り直し `lbAutoBookRetry`・手動の実行が重なると、両方が同じ未処理の行と古い「本人の予約」を読み、後着が SLOT_TAKEN を skipped にして冪等マークを書き・両方がお知らせを送り・`LB_AUTOBOOK_RESULT_*` を二重に足す。取り直しのトリガーの掃除→作成も2本になりうる。
+- 予約の ScriptLock を実行全体で握るのは不可（取り直しの sleep の間も会員の予約を止める）。→ **Properties のリース `LB_AUTOBOOK_LEASE`** `{token, until, at, took}` で単一実行にした。
+  - 取る・返す瞬間だけ ScriptLock（5秒）。期限は8分（GAS の1実行の6分より長い）。期限切れ・壊れた値は奪う（`took` に expired／broken）。
+  - 返すときは token が自分のときだけ消す（期限切れで奪われた後に他人のリースを消さない）。
+  - 取れなければ何もせず終わり、`LB_AUTOBOOK_LEASE_SKIP`（件数|時刻|run/retry）に残す。取り直しが取れなかった場合も、走っている実行が終わりに保留を見て予約し直す。
+  - 入口は `autoBookRecurringPatterns`（定期・手動）と `lbAutoBookRetry`（取り直し）の2つで、どちらも `_lbAutoBookEntry` → リース → 本体 `_lbAutoBookRun`。取り直しの掃除・保留の確認・トリガーの作成・tries の更新はすべてリースの中。
+- 検査 `gas-autobook-busy.test.js` ⑦：実行の途中に取り直しと手動の実行を割り込ませて、お知らせ1回・件数1回・トリガー1本・二重予約なし／期限切れ・壊れたリースの奪取／生きているリースなら何もしない／返すとき token 不一致なら消さない。
+
+### 7-6 関門②のほかの差し戻し（同じ日）
+- `_lbTakeWriteLock` は `tryLock` の例外を BUSY に化けさせていた → 例外はそのまま投げ直す（「false のときだけ BUSY」）。数は別の項目 `err`。検査 `gas-write-lock` ⑬。
+- 予約の芯以外の9関数が、ロックを自分で取らなかった（`owned:false`）ときも放していた → 全部 `if (_wl.owned) lock.releaseLock()`。構文の検査 `gas-lock-syntax` ④-5（陽性・陰性 fixture `fixtures/lock-syntax-release.js.txt`）、入口からの入れ子の検査 `gas-write-lock` ⑭（取消・固定枠の削除・当日取消の戻しで、外側のロックが残る）。
+
 ---
 
 ## 8. 別件（この設計では扱わない・記録だけ）

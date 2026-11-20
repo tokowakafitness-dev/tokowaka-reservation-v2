@@ -10,7 +10,7 @@ export function pluckVarFrom(src, name) {
   if (!m) throw new Error('見つからない: ' + name);
   return m[0];
 }
-export const WRITE_LOCK_FNS = ['_lbUtf8Bytes', '_lbLcDay', '_lbLcMerge', '_lbTakeWriteLock', '_lbWlTally', '_lbWlBusy', '_lbWlFlush'];
+export const WRITE_LOCK_FNS = ['_lbUtf8Bytes', '_lbLcDay', '_lbLcMerge', '_lbTakeWriteLock', '_lbWlTally', '_lbWlTallyErr', '_lbWlBusy', '_lbWlFlush'];
 export function writeLockSrc(LB) {
   return pluckVarFrom(LB, 'LB_LC') + 'var _LB_LOCK_TALLY = null;\n' + WRITE_LOCK_FNS.map((n) => pluckFnFrom(LB, n)).join('\n') + '\n';
 }

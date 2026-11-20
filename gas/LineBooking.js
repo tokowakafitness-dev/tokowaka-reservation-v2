@@ -426,7 +426,7 @@ var LB_LC = {
   MAX_BYTES: 8000, KEEP_DAYS: 3,
   WAIT_MS: 10000,                      // 書き込みがロックを待つ時間（今の waitLock(10000) と同じ）
   WRITE_OPS: { reserve: 1, cancel: 1, change: 1, undoSdc: 1, recurAdd: 1, recurDel: 1, verify: 1, selfReg: 1, merge: 1, offline: 1 },
-  SUM: { n: 1, busy: 1, skip: 1, thrown: 1, holdSum: 1, over10Sum: 1 },
+  SUM: { n: 1, busy: 1, err: 1, skip: 1, thrown: 1, holdSum: 1, over10Sum: 1 },   // err＝tryLock 自体の例外（BUSY にせず投げ直した回）
   MAX: { waitMax: 1, holdMax: 1 },
   BUSY_MESSAGE: 'ただいま混み合っています。少し時間をおいてもう一度お試しください（まだ何も変更されていません）。'
 };
@@ -498,7 +498,9 @@ function _lbTakeWriteLock(op) {
   if (held) return { got: true, owned: false, lock: lock };
   var t0 = Date.now();
   var got = false;
-  try { got = lock.tryLock(LB_LC.WAIT_MS); } catch (e2) { got = false; }
+  //   ★tryLock の例外は BUSY にしない（「混んでいる」と言い切れない＝今までどおり例外で返す・関門② 設計47）。数だけ別の項目 err に
+  try { got = lock.tryLock(LB_LC.WAIT_MS); }
+  catch (e2) { _lbWlTallyErr(key); throw e2; }
   var waitMs = Date.now() - t0;
   _lbWlTally(key, got, waitMs);
   return { got: got, owned: got, lock: lock };
@@ -510,6 +512,14 @@ function _lbWlTally(op, got, waitMs) {
     r.n++;
     if (!got) r.busy++;
     else if (waitMs > r.waitMax) r.waitMax = waitMs;
+  } catch (e) {}
+}
+function _lbWlTallyErr(op) {
+  try {
+    if (!_LB_LOCK_TALLY) _LB_LOCK_TALLY = {};
+    var r = _LB_LOCK_TALLY[op] || (_LB_LOCK_TALLY[op] = { n: 0, busy: 0, waitMax: 0 });
+    r.n++;
+    r.err = Number(r.err || 0) + 1;
   } catch (e) {}
 }
 function _lbWlBusy() { return { success: false, code: 'BUSY', message: LB_LC.BUSY_MESSAGE }; }
@@ -931,7 +941,7 @@ function verifyMembership(lineUserId, code) {
     }
     return { success:false, code:'NOT_FOUND', message:'認証番号が正しくないか、有効期限が切れています。' };
   } finally {
-    lock.releaseLock();
+    if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */
   }
 }
 
@@ -1023,7 +1033,7 @@ function selfRegister(lineUserId, body) {
     _lbScheduleSyncAfterRegister();
     return { success: true, verified: true, customerId: customerId };
   } finally {
-    lock.releaseLock();
+    if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */
   }
 }
 
@@ -3698,7 +3708,7 @@ function mergeMemberLink(keepCid, dropCid) {
     sh.getRange(dropRow, MAP_COL.AUTH_STATE).setValue('rejected');
     Logger.log('✅ 統合：' + dropCid + '→' + keepCid + ' / lineUserId寄せ=' + (dLu ? 'あり' : 'なし') + ' / 予約' + moved + '件付替 / drop行rejected');
     return { ok: true, keepCid: keepCid, dropCid: dropCid, movedReservations: moved };
-  } finally { lock.releaseLock(); _lbWlFlush(); }   // 設計47：放した後に数を書く
+  } finally { if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */ _lbWlFlush(); }   // 設計47：放した後に数を書く
 }
 
 // ペア機能の一気通貫を「仮想顧客」で検証（本番SS/カレンダーへ一切書き込まない・純粋ロジック）。
@@ -6739,7 +6749,7 @@ function addOfflineMember(name, phone) {
     sh.getRange(row, MAP_COL.LINKED_AT).setValue(Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm'));
     Logger.log('addOfflineMember: ' + name + ' を非LINE会員として登録（customerId=' + customerId + '・担当' + trId + '・種別' + kind + '）');
     return { success: true, customerId: customerId, name: name, existing: false };
-  } finally { lock.releaseLock(); _lbWlFlush(); }   // 設計47：放した後に数を書く
+  } finally { if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */ _lbWlFlush(); }   // 設計47：放した後に数を書く
 }
 
 // ============================================================
@@ -8939,7 +8949,7 @@ function cancelReservationLine(lineUserId, reservationId, opts) {
     }
     if (!done) return { success: false, code: 'NOT_FOUND', message: '予約が見つかりません。' };
   } finally {
-    lock.releaseLock();
+    if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */
     _lbWpMark('sheet');
   }
 
@@ -9491,7 +9501,7 @@ function undoSameDayCancel(lineUserId, reservationId) {
     Logger.log('[undoSameDayCancel] 会員*' + cid.slice(-4) + ' 振替権無効化=' + done.length + ' カレンダー削除=' + calendarDeleted);
     return { success: true, customerId: cid, creditsRevoked: done.length, calendarDeleted: calendarDeleted };
   } finally {
-    lock.releaseLock();
+    if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */
   }
 }
 
@@ -9593,7 +9603,7 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
     _lbWpMark('cal');
     try { sh.getRange(row, 9).setValue(reservationId + '|→' + made.reservationId + (_ownerAppliedC ? '|無料変更（オーナー権限 ' + Utilities.formatDate(new Date(), SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm') + '）' : (free ? '|無料変更' : '|当日消化変更'))); } catch (eN) {}
   } finally {
-    lock.releaseLock();
+    if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */
     _lbWpMark('sheet');
   }
 
@@ -9839,7 +9849,7 @@ function _lbAddRecurPattern(customerId, body, source) {
     // ★時刻は文字のまま残す（時刻型に変えられると読む側が崩れる）。読む側も _lbRecurTime で守っている
     try { sh.getRange(sh.getLastRow(), RP_COL.TIME).setNumberFormat("@").setValue(time); } catch (eTf) { Logger.log("固定枠の時刻を文字にできませんでした: " + eTf.message); }
     return { success: true, patternId: pid };
-  } finally { lock.releaseLock(); }
+  } finally { if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */ }
 }
 
 function _lbListRecurFor(customerId, lang) {
@@ -9910,7 +9920,7 @@ function deleteRecurringPattern(lineUserId, patternId) {
     if (re === false) return { success: false, code: 'NO_SHEET' };
     if (!re) return { success: false, code: 'NOT_FOUND' };
     re.sh.deleteRow(re.rowIndex);
-  } finally { lock.releaseLock(); }
+  } finally { if (_wl.owned) lock.releaseLock();   /* 設計47：自分で取ったときだけ放す */ }
   //   ★会員IDを返す（2026-10-08・Codex関門②）。
   //     固定枠の削除そのものは引当を変えない（既に作られた予約は残る）。
   //     ただし呼び出しは customerId を渡さないので、返さないと
@@ -9940,7 +9950,12 @@ function _lbPickBalancedTrainer(start, assignCount) {
   return pool[Math.floor(Math.random() * pool.length)];       // 同数はランダムで分散
 }
 
-function autoBookRecurringPatterns() {
+//   月の定期（25日6時）の入口。★引数は使わない（時間主導トリガーは第1引数にイベントを渡す）
+//   ★設計47：実行全体を Properties のリースで1つにする（25日の定期・取り直し lbAutoBookRetry・手動の実行が重なっても
+//     同じ未処理の行を2つの実行が読まない）。予約の ScriptLock を実行全体で握らない（取り直しの sleep 中も他の予約を止めてしまう）
+function autoBookRecurringPatterns() { return _lbAutoBookEntry(false); }
+
+function _lbAutoBookRun() {
   var now = new Date();
   var targetY = now.getFullYear() + (now.getMonth() === 11 ? 1 : 0);   // 翌月の年
   var targetM = (now.getMonth() + 1) % 12 + 1;                          // 翌月(1-indexed)
@@ -10147,9 +10162,10 @@ function _lbAutoBookHeldNote(targetKey, heldN) {
   try { prev = JSON.parse(p.getProperty(LB_AUTOBOOK_HELD_PROP) || 'null'); } catch (e) { prev = null; }
   var tries = (prev && prev.m === targetKey && typeof prev.tries === 'number') ? prev.tries : 0;
   var rec = { m: targetKey, n: heldN, at: Date.now(), tries: tries, sched: false };
+  //   ★リースの中で呼ばれる（掃除・作成・tries の更新を2つの実行が同時にしない）。残っている取り直しの予約は毎回消す
+  try { _lbAutoBookRetryClean(); } catch (eC) { Logger.log('自動予約の取り直しの掃除に失敗: ' + eC.message); }
   if (heldN > 0 && tries < LB_AB_RETRY.MAX_TRIES) {
     try {
-      _lbAutoBookRetryClean();   // 前の取り直しの予約は消してから1つだけ作る
       ScriptApp.newTrigger(LB_AB_RETRY.HANDLER).timeBased().after(LB_AB_RETRY.AFTER_MS).create();
       rec.tries = tries + 1; rec.sched = true;
     } catch (eT) { Logger.log('自動予約の取り直しを予約できませんでした（日次点検で知らせます）: ' + eT.message); }
@@ -10162,13 +10178,65 @@ function _lbAutoBookRetryClean() {
   for (var i = 0; i < ts.length; i++) if (ts[i].getHandlerFunction() === LB_AB_RETRY.HANDLER) ScriptApp.deleteTrigger(ts[i]);
 }
 //   一回限りトリガーの入口。★引数は使わない（時間主導トリガーは第1引数にイベントを渡す）
-function lbAutoBookRetry() {
-  try { _lbAutoBookRetryClean(); } catch (e) {}
-  var h = null;
-  try { h = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_AUTOBOOK_HELD_PROP) || 'null'); } catch (e2) { h = null; }
-  //   保留が無い・別の月の保留（月が変わった）なら何もしない
-  if (!h || !(h.n > 0) || h.m !== _lbAutoBookTargetKey(new Date())) { Logger.log('lbAutoBookRetry: 取り直す保留はありません'); return { skipped: true }; }
-  return autoBookRecurringPatterns();
+function lbAutoBookRetry() { return _lbAutoBookEntry(true); }
+
+//   入口の共通部分：リースを取れた実行だけが進む。取れなければ何もせず終わる（記録に残す）
+function _lbAutoBookEntry(isRetry) {
+  var token = _lbAbLeaseTake();
+  if (!token) {
+    _lbAbNoteLeaseSkip(isRetry === true);
+    Logger.log('自動予約：ほかの実行が動いているので何もしません（' + (isRetry === true ? '取り直し' : '定期・手動') + '）');
+    return { skipped: true, reason: 'LEASE_BUSY' };
+  }
+  try {
+    if (isRetry === true) {
+      try { _lbAutoBookRetryClean(); } catch (e) {}
+      var h = null;
+      try { h = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_AUTOBOOK_HELD_PROP) || 'null'); } catch (e2) { h = null; }
+      //   保留が無い・別の月の保留（月が変わった）なら何もしない
+      if (!h || !(h.n > 0) || h.m !== _lbAutoBookTargetKey(new Date())) { Logger.log('lbAutoBookRetry: 取り直す保留はありません'); return { skipped: true }; }
+    }
+    return _lbAutoBookRun();
+  } finally {
+    _lbAbLeaseRelease(token);
+  }
+}
+
+//   リース：値 { token, until, at }。取る・返す瞬間だけ ScriptLock（5秒）。期限は8分（GAS の1実行の6分より長い）。
+//   期限切れは奪う（落ちた実行のリースで止まり続けない）・壊れた値も奪う（記録に残す）。返すときは token が自分のときだけ消す
+var LB_AB_LEASE = { PROP: 'LB_AUTOBOOK_LEASE', MS: 8 * 60000, LOCK_WAIT_MS: 5000, SKIP_PROP: 'LB_AUTOBOOK_LEASE_SKIP' };
+function _lbAbLeaseTake() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(LB_AB_LEASE.LOCK_WAIT_MS)) return null;
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var raw = p.getProperty(LB_AB_LEASE.PROP), cur = null, broken = false;
+    if (raw) { try { cur = JSON.parse(raw); } catch (e) { broken = true; } }
+    var now = Date.now();
+    if (cur && typeof cur === 'object' && typeof cur.token === 'string' && typeof cur.until === 'number' && cur.until > now) return null;   // 生きている
+    var token = Utilities.getUuid();
+    p.setProperty(LB_AB_LEASE.PROP, JSON.stringify({ token: token, until: now + LB_AB_LEASE.MS, at: now, took: (raw ? (broken ? 'broken' : 'expired') : 'free') }));
+    return token;
+  } finally { lock.releaseLock(); }
+}
+function _lbAbLeaseRelease(token) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(LB_AB_LEASE.LOCK_WAIT_MS)) return false;   // 返せなければ期限で切れる
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var cur = null;
+    try { cur = JSON.parse(p.getProperty(LB_AB_LEASE.PROP) || 'null'); } catch (e) { cur = null; }
+    if (cur && cur.token === token) { p.deleteProperty(LB_AB_LEASE.PROP); return true; }
+    return false;   // ★自分のものでなければ消さない（期限切れで奪われた後）
+  } finally { lock.releaseLock(); }
+}
+//   リースを取れずに何もしなかった回（'件数|最後の時刻|種類'・会員IDなし）。ロックなしの上書き＝下限
+function _lbAbNoteLeaseSkip(isRetry) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var cur = String(p.getProperty(LB_AB_LEASE.SKIP_PROP) || '').split('|');
+    p.setProperty(LB_AB_LEASE.SKIP_PROP, (Number(cur[0] || 0) + 1) + '|' + Date.now() + '|' + (isRetry ? 'retry' : 'run'));
+  } catch (e) {}
 }
 
 // 回数が足りずに取らなかった、を表す理由（_lbReserveCore / getBookableRemaining が返す）

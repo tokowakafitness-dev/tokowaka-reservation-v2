@@ -34,6 +34,7 @@ function world(opt = {}) {
     hasLock: () => st.owner === st.cur,
     tryLock: () => {
       st.tryCalls++;
+      if (opt.tryThrow) throw new Error('Lock service boom');
       if (st.owner === st.cur) { st.reentrant++; throw new Error('REENTRANT_TRY'); }
       if (st.owner) return false;
       st.owner = st.cur; st.order.push('lock'); return true;
@@ -237,6 +238,32 @@ console.log('=== 記録の書き方（_lbLcMerge） ===');
   ok('M-2 足し算（n・busy）と最大（waitMax）・2回目の flush は何も書かない（空にしてある）', t.n === 3 && t.busy === 1 && t.waitMax === 70, JSON.stringify(count(w2.st)));
   w2.run(() => { w2.ctx._lbWlTally('ほかの名前', true, 1); });
   ok('M-3 許可リストに無い op は呼び出し側（_lbTakeWriteLock）で OTHER に寄せる', /var key = LB_LC\.WRITE_OPS\[op\] \? op : 'OTHER';/.test(pluckFn(LB, '_lbTakeWriteLock')));
+}
+
+console.log('=== ⑬ tryLock そのものの例外は BUSY にしない ===');
+{
+  const w = world({ tryThrow: true });
+  const x = w.run(() => parseGet(w.ctx.doGet({ parameter: { idToken: 'x', action: 'line_cancelReservation', reservationId: 'R1' } })));
+  const r = x.r || {};
+  ok('⑬-1 ★BUSY ではなく例外が伝わる（doGet の catch で {error}）', r.code !== 'BUSY' && /Lock service boom/.test(String(r.error || '')), JSON.stringify(r));
+  ok('⑬-2 何も書いていない', w.st.writes === 0);
+  const t = todayOf(w.st).cancel || {};
+  ok('⑬-3 数は別の項目（err=1・busy=0）', t.err === 1 && t.busy === 0 && t.n === 1, JSON.stringify(count(w.st)));
+  const w2 = world({ tryThrow: true });
+  const x2 = w2.run(() => w2.ctx.mergeMemberLink('C1', 'C2'));
+  ok('⑬-4 保守関数も例外のまま（BUSY にしない）', x2.e && /Lock service boom/.test(String(x2.e.message)), JSON.stringify(x2.r || null));
+}
+
+console.log('=== ⑭ 入れ子：外側が持つロックを放さない（入口から） ===');
+for (const c of [
+  { name: '取消', get: { action: 'line_cancelReservation', reservationId: 'R1' } },
+  { name: '固定枠の削除', get: { action: 'line_deleteRecurringPattern', patternId: 'P1' } },
+  { name: '当日取消を無料に直す', get: { action: 'line_undoSameDayCancel', reservationId: 'R1' } },
+]) {
+  const w = world();
+  w.st.owner = 'me';   // 同じ実行の外側（作業依頼・まとめての処理と同じ形）が既に持っている
+  w.run(() => w.ctx.doGet({ parameter: Object.assign({ idToken: 'x' }, c.get) }));
+  ok(`⑭ ${c.name}：取り直さない（再入0）・戻った後も外側がロックを持っている`, w.st.reentrant === 0 && w.st.tryCalls === 0 && w.st.owner === 'me', JSON.stringify({ re: w.st.reentrant, tr: w.st.tryCalls, owner: w.st.owner }));
 }
 
 console.log('=== 日次点検（lbLockCountDailyCheck・3-8） ===');

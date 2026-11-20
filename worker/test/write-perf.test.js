@@ -196,7 +196,7 @@ console.log('=== ⑤ 印を置く場所 ===');
   const cx = pluckFn(LB, 'cancelReservationLine');
   ok('⑤-1 ★取消：pre → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var _wl = _lbTakeWriteLock\('cancel'\);[^\n]*\n\s*if \(!_wl\.got\) \{ _lbWpMark\('lock'\); return _lbWlBusy\(\); \}\s*var lock = _wl\.lock;\s*_lbWpMark\('lock'\);/.test(cx));
   ok('⑤-2 取消：カレンダーの後に cal・ロックを離した後に sheet・通知の後に notify',
-     /_lbConsumeReservationEvents\(customerName, trainer, start\);\s*_lbWpMark\('cal'\);/.test(cx) && /lock\.releaseLock\(\);\s*_lbWpMark\('sheet'\);/.test(cx) && /_lbCxlAfter\(done, _cxT0\);[^\n]*\n\s*_lbWpMark\('notify'\);/.test(cx));
+     /_lbConsumeReservationEvents\(customerName, trainer, start\);\s*_lbWpMark\('cal'\);/.test(cx) && /if \(_wl\.owned\) lock\.releaseLock\(\);[^\n]*\n\s*_lbWpMark\('sheet'\);/.test(cx) && /_lbCxlAfter\(done, _cxT0\);[^\n]*\n\s*_lbWpMark\('notify'\);/.test(cx));
   const ch = pluckFn(LB, 'changeReservationLine');
   //   ★2026-11-18：契約種別の読み（preType）がロックの直前の段になった
   ok('⑤-3 ★変更：pre → preType → waitLock → lock の順', /_lbWpMark\('pre'\);\s*var _chType = _lbContractTypeOf\(customerName\);[^\n]*\n\s*_lbWpMark\('preType'\);[^\n]*\n(\s*\/\/[^\n]*\n)*\s*var _wl = _lbTakeWriteLock\('change'\);[^\n]*\n\s*if \(!_wl\.got\) \{ _lbWpMark\('lock'\); return _lbWlBusy\(\); \}\s*var lock = _wl\.lock;\s*_lbWpMark\('lock'\);/.test(ch));

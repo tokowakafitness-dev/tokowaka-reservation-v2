@@ -1,0 +1,33 @@
+// 設計47 検査④-5 の fixture：_lbTakeWriteLock の結果を受けた関数の releaseLock は「自分で取ったとき」の条件の中
+//   good* は通る（陽性）・bad* は違反として拾う（陰性）。コメントの中の lock.releaseLock(); は数えない
+function goodGuarded() {
+  var _wl = _lbTakeWriteLock('cancel');
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
+  try { } finally { if (_wl.owned) lock.releaseLock(); }
+  // lock.releaseLock();  ← コメントの中は数えない
+}
+function goodCore() {
+  var _wl = _lbTakeWriteLock('reserve');
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
+  var _lbOwnedLock = _wl.owned;
+  try { } finally { if (_lbOwnedLock) lock.releaseLock(); }
+}
+function badUnguarded() {
+  var _wl = _lbTakeWriteLock('change');
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
+  try { } finally { lock.releaseLock(); }
+}
+function badElsewhere() {
+  var _wl = _lbTakeWriteLock('recurDel');
+  if (!_wl.got) { return _lbWlBusy(); }
+  var lock = _wl.lock;
+  if (_wl.owned) { var s = 'x'; }
+  lock.releaseLock();
+}
+function notTarget() {
+  var lock = LockService.getScriptLock();
+  lock.releaseLock();   // _lbTakeWriteLock を使わない関数は対象外
+}

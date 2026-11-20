@@ -100,7 +100,7 @@ function findCalls(src, names) {
   return out;
 }
 
-const RECORD_FNS = ['_lbWlTally', '_lbWlFlush', '_lbLcMerge', '_edgeTallyRun', '_edgeTallyKey', '_edgeTallySkip', '_edgePushFlush', '_ejPushFlush'];
+const RECORD_FNS = ['_lbWlTally', '_lbWlTallyErr', '_lbWlFlush', '_lbLcMerge', '_edgeTallyRun', '_edgeTallyKey', '_edgeTallySkip', '_edgePushFlush', '_ejPushFlush'];
 const WRITE_OPS = ['reserve', 'cancel', 'change', 'undoSdc', 'recurAdd', 'recurDel', 'verify', 'selfReg', 'merge', 'offline'];
 const STR_ALLOW = new Set(['jobHold', ...WRITE_OPS]);
 //   計測用のローカル変数（数値・真偽値・固定の名前）と定数だけ
@@ -122,6 +122,25 @@ const files = readdirSync(GAS).filter((f) => f.endsWith('.js'));
 const SRC = Object.fromEntries(files.map((f) => [f, readFileSync(join(GAS, f), 'utf8')]));
 const POS = readFileSync(join(HERE, 'fixtures', 'lock-syntax-positive.js.txt'), 'utf8');
 const NEG = readFileSync(join(HERE, 'fixtures', 'lock-syntax-negative.js.txt'), 'utf8');
+const REL = readFileSync(join(HERE, 'fixtures', 'lock-syntax-release.js.txt'), 'utf8');
+//   _lbTakeWriteLock の結果を受けた関数のうち、releaseLock が「自分で取ったとき」の条件の外にあるもの（関数名の配列）
+function unguardedReleases(src) {
+  const s = strip(src), out = [];
+  const fns = new Set();
+  const re = /_lbTakeWriteLock\s*\(/g; let m;
+  while ((m = re.exec(s))) { const fn = topFnAt(s, m.index); if (!/^function _lbTakeWriteLock/m.test(fnBody(s, fn).slice(0, 40))) fns.add(fn); }
+  for (const fn of fns) {
+    const body = fnBody(s, fn);
+    const rr = /\.\s*releaseLock\s*\(/g; let r;
+    while ((r = rr.exec(body))) {
+      const lineStart = body.lastIndexOf('\n', r.index) + 1;
+      const before = body.slice(lineStart, r.index);
+      if (!/if \((_wl\.owned|_lbOwnedLock)\)\s*[A-Za-z_$][\w$]*\s*$/.test(before)) out.push(fn);
+    }
+  }
+  return out;
+}
+
 
 console.log('=== ④ 字句解析そのもの（fixture） ===');
 {
@@ -153,6 +172,17 @@ console.log('=== ④ 本物の gas/ ===');
     const guarded = (s.match(/_lbTakeWriteLock\s*\([^)]*\)\s*;\s*\n\s*if \(!_wl\.got\) \{[^}\n]*return [^\n]*\}/g) || []).length;
     return calls === guarded;
   }));
+}
+
+console.log('=== ④-5 releaseLock は「自分で取ったとき」の条件の中 ===');
+{
+  const f = unguardedReleases(REL).sort();
+  ok('④-5p 陽性・陰性 fixture：good は通し、bad（条件なし・条件が別の行）を拾い、対象外の関数とコメントは見ない', JSON.stringify(f) === JSON.stringify(['badElsewhere', 'badUnguarded']), JSON.stringify(f));
+  const all = [];
+  for (const fl of files) for (const fn of unguardedReleases(SRC[fl])) all.push(fl + ':' + fn);
+  ok('④-5 ★本物の gas/：_lbTakeWriteLock を使う10関数の releaseLock は全部 if (_wl.owned)／if (_lbOwnedLock) の中', all.length === 0, JSON.stringify(all));
+  const cnt = files.reduce((a, fl) => a + (strip(SRC[fl]).match(/if \((_wl\.owned|_lbOwnedLock)\) lock\.releaseLock\(/g) || []).length, 0);
+  ok('④-5c 条件つきの releaseLock を10か所拾えている（0件で素通りしない）', cnt === 10, String(cnt));
 }
 
 console.log('=== ⑪ 記録の関数の引数 ===');
