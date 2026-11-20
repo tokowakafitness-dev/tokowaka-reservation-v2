@@ -80,9 +80,13 @@ async function attach(w, bytes, name, type, opt = {}) {
   b.click();
   const f = new w.File([bytes], name, { type: type || '' });
   if (opt.size != null) Object.defineProperty(f, 'size', { value: opt.size });
-  Object.defineProperty(inp, 'files', { value: [f], configurable: true });
+  //   本物の file input と同じく、value = '' で選択（files）が空になる身代わり
+  let sel = [f];
+  Object.defineProperty(inp, 'files', { get: () => sel, configurable: true });
+  Object.defineProperty(inp, 'value', { get: () => (sel.length ? 'C:\\fakepath\\' + name : ''), set: (v) => { if (v === '') sel = []; }, configurable: true });
   inp.dispatchEvent(new w.Event('change'));
   if (!opt.noWait) await readDone();
+  w.__lastInp = inp;
   return clicked;
 }
 
@@ -127,6 +131,7 @@ async function attach(w, bytes, name, type, opt = {}) {
   const all = storeText(w.localStorage) + storeText(w.sessionStorage) + w.logs.join('\n');
   ok('T2-6 ★I63：中身・ファイル名が localStorage／sessionStorage／console に無い', !all.includes(SECRET) && !all.includes(FNAME) && !all.includes('スクワット 30キロ'), all.slice(0, 300));
   ok('T2-7 ファイル名は画面にも出さない', !R(w).textContent.includes(FNAME));
+  ok('T2-9 ★読み終えたら隠しの file input に選択が残らない（ファイル名・中身への参照を残さない・関門②）', w.__lastInp.files.length === 0 && w.__lastInp.value === '', String(w.__lastInp.files.length));
   //   以後は貼り付けと同じ：「AIで振り分ける」で1回だけ、整えた字が送られる
   btn(R(w), 'AIで振り分ける').click(); await settle();
   const ai = sent.filter((x) => x.body.action === 'k_aiDraft');
@@ -168,6 +173,7 @@ for (const [label, name, type, want] of [
   const n0 = sent.length;
   TA(w).value = '前からある字';
   await attach(w, utf8('スクワット\n30×10'), name, type);
+  ok('T5-0 ' + label + '：拒否しても file input に選択が残らない', w.__lastInp.files.length === 0);
   ok('T5 ★' + label + '：読まずに知らせる（FileReader を作らない・欄は変えない・送らない）', w.frCount === 0 && TA(w).value === '前からある字' && MSG(w).textContent.includes(want) && sent.length === n0, MSG(w).textContent + ' fr=' + w.frCount);
 }
 {

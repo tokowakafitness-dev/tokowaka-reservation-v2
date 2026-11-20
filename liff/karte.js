@@ -2214,6 +2214,7 @@
     function attSay(t, bad) { attMsg.textContent = t || ''; attMsg.style.display = t ? '' : 'none'; attMsg.style.color = bad ? 'var(--k-warn)' : ''; }
     attIn.onchange = function () {
       var f = attIn.files && attIn.files[0];
+      try { attIn.value = ''; } catch (eV) {}   // ★受け取ったらすぐ選択を消す（隠しの欄にファイル名・中身への参照を残さない・関門②）。読み込みは f で続く
       var gen = ++attGen;
       if (!f) return;
       var kind = attKind(f.name, f.type);
