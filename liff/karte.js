@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-19a 同意の規則（紙の同意の人が会員画面で同意しなかった印・設計44 §9）＋次回の予約は写しが追いつくまで「確認中」（設計45・I79）';
+  var KARTE_BUILD = '2026-11-20a 録音の文字起こしをファイルで添付（端末の中で読んで貼り付け欄へ・送らない・設計48）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2100,6 +2100,68 @@
   var AI_ACTS = { caution: ['discard'], member: ['member', 'memo', 'discard'], todo: ['todo', 'memo', 'discard'], coaching: ['memo', 'discard'], hearing: ['memo', 'discard'],
     aiunv: ['memo', 'discard'], rule: ['addset', 'memo', 'discard'], name: ['item', 'memo', 'discard'] };
   var AI_TEXT_MAX = 30000;
+  //   設計48：文字起こしのファイルを添付する（端末の中で読む・送らない・I63）。音声・.docx 等は読まない
+  var ATT_ACCEPT = '.txt,.srt,.vtt,text/plain';
+  var ATT_BYTES_MAX = 1024 * 1024;
+  var ATT_AUDIO = /\.(m4a|mp3|wav|aac|amr|3gp|3ga|ogg|oga|opus|flac|wma|webm|mp4|caf|aif|aiff|m4b)$/i;
+  var ATT_MSG_AUDIO = '文字起こしのテキストファイルを選んでください（音声は送れません）。';
+  var ATT_MSG_TYPE = '文字起こしのテキストファイル（.txt）を選んでください。この形式は読めません。';
+  function attKind(name, type) {
+    name = String(name || ''); type = String(type || '').toLowerCase();
+    if (/^(audio|video)\//.test(type) || ATT_AUDIO.test(name)) return 'audio';
+    var m = name.match(/\.([A-Za-z0-9]{1,8})$/);
+    if (m && !/^\d+$/.test(m[1])) {
+      var x = m[1].toLowerCase();
+      return x === 'txt' || x === 'text' ? 'txt' : x === 'srt' ? 'srt' : x === 'vtt' ? 'vtt' : 'other';
+    }
+    return type === 'text/plain' ? 'txt' : type === 'text/vtt' ? 'vtt' : type === 'application/x-subrip' ? 'srt' : 'other';
+  }
+  //   BOM → UTF-8 → Shift_JIS（どれも fatal）。読めない・NUL を含む・TextDecoder が無い＝null（欄に入れない）
+  function attDecode(u8) {
+    var TD = window.TextDecoder;
+    if (!TD) return null;
+    function dec(enc, b) { try { return new TD(enc, { fatal: true }).decode(b); } catch (e) { return null; } }
+    var s;
+    if (u8.length >= 2 && u8[0] === 0xFF && u8[1] === 0xFE) s = dec('utf-16le', u8.subarray(2));
+    else if (u8.length >= 2 && u8[0] === 0xFE && u8[1] === 0xFF) s = dec('utf-16be', u8.subarray(2));
+    else {
+      if (u8.length >= 3 && u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xBF) u8 = u8.subarray(3);
+      s = dec('utf-8', u8);
+      if (s == null) s = dec('shift_jis', u8);
+    }
+    if (s == null || s.indexOf('\u0000') >= 0) return null;
+    return s.replace(/^﻿/, '');
+  }
+  //   時刻・話者の行を落とす。★.txt では分:秒だけの行・数字だけの行は残す（「プランク／1:30」「30」は記録そのもの＝落とすと記録が消える）
+  var ATT_HMS = '\\d{1,2}:\\d{2}:\\d{2}(?:[.,]\\d{1,3})?', ATT_ANY = '\\d{1,2}:\\d{2}(?::\\d{2})?(?:[.,]\\d{1,3})?';
+  var ATT_SPK = '(?:speaker|話者|スピーカー)\\s*\\d{1,2}';
+  var ATT_RE = {
+    arrow: new RegExp('^\\s*' + ATT_ANY + '\\s*-->\\s*' + ATT_ANY + '(?:\\s.*)?$'),
+    hms: new RegExp('^\\s*[\\[(]?' + ATT_HMS + '[\\])]?\\s*$'),
+    spk: new RegExp('^\\s*' + ATT_SPK + '\\s*[:：]?\\s*(?:[\\[(]?' + ATT_ANY + '[\\])]?)?\\s*$', 'i'),
+    spkPre: new RegExp('^\\s*' + ATT_SPK + '\\s*(?:[\\[(]?' + ATT_ANY + '[\\])]?)?\\s*[:：]\\s*', 'i'),
+    tsPre: new RegExp('^\\s*\\[' + ATT_ANY + '\\]\\s*|^\\s*' + ATT_HMS + '\\s+')
+  };
+  function attClean(s, kind) {
+    var L = String(s).split(/\r\n|\r|\n/), out = [], dropped = 0, sub = kind === 'srt' || kind === 'vtt', skip = false, blockTop = true;
+    for (var i = 0; i < L.length; i++) {
+      var t = L[i];
+      if (sub) {
+        //   字幕の形：空行で区切ったかたまり。WEBVTT の見出し（先頭）と NOTE/STYLE/REGION のかたまりは、次の空行まで丸ごと落とす
+        if (!t.trim()) { skip = false; blockTop = true; continue; }
+        if (skip) { dropped++; continue; }
+        var top = blockTop; blockTop = false;
+        if (kind === 'vtt' && ((i === 0 && /^\s*WEBVTT\b/.test(t)) || (top && /^\s*(NOTE|STYLE|REGION)\b/.test(t)))) { skip = true; dropped++; continue; }
+        if (top && i + 1 < L.length && ATT_RE.arrow.test(L[i + 1]) && !ATT_RE.arrow.test(t)) { dropped++; continue; }   // かたまりの頭の通し番号・名前（時刻の行の直前）
+        t = t.replace(/<[^>]*>/g, '');
+      }
+      if (ATT_RE.arrow.test(t) || ATT_RE.hms.test(t) || ATT_RE.spk.test(t)) { dropped++; continue; }
+      var t2 = t.replace(ATT_RE.spkPre, '').replace(ATT_RE.tsPre, '');
+      if (t2 !== t) dropped++;
+      out.push(t2);
+    }
+    return { text: out.join('\n').replace(/\n{3,}/g, '\n\n').trim(), dropped: dropped };
+  }
   var AI_STALE = 'ログインの更新が必要です。貼った文字をコピーしてから LINE で開き直し、もう一度貼ってください。';
   function aiErr(r) {
     var c = r && r.code;
@@ -2144,6 +2206,43 @@
     if (exTruncated) wrap.appendChild(el('div', { class: 'k-sub', style: 'color:var(--k-warn);', text: '共有の種目を一部しか読めていないため、確かめが必要な名前が増えます。' }));
     var ta = el('textarea', { rows: '10', class: 'k-memo', 'aria-label': 'メモを貼る', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-nodirty': '1', placeholder: '9/18\nヒップリフト\n30×10 50×10+5' });
     wrap.appendChild(ta);
+    //   設計48：文字起こしのファイルを添付する。★端末の中で読んで上の欄に入れるだけ（fetch しない・中身もファイル名も保存領域・console に出さない＝I63）
+    //     読んでいる途中に別のファイルを選んだ・画面を離れた・別の顧客を開いたら捨てる（世代と cid）。上限を超えたら切らずに入れない
+    var attMsg = el('div', { class: 'k-sub k-attmsg', role: 'status', 'aria-live': 'polite', style: 'display:none;' });
+    var attIn = el('input', { type: 'file', accept: ATT_ACCEPT, 'aria-label': '文字起こしのファイル', 'data-nodirty': '1', tabindex: '-1', style: 'display:none;' });
+    var attGen = 0;
+    function attSay(t, bad) { attMsg.textContent = t || ''; attMsg.style.display = t ? '' : 'none'; attMsg.style.color = bad ? 'var(--k-warn)' : ''; }
+    attIn.onchange = function () {
+      var f = attIn.files && attIn.files[0];
+      var gen = ++attGen;
+      if (!f) return;
+      var kind = attKind(f.name, f.type);
+      if (kind === 'audio') { attSay(ATT_MSG_AUDIO, true); return; }
+      if (kind === 'other') { attSay(ATT_MSG_TYPE, true); return; }
+      if (!(f.size >= 0) || f.size > ATT_BYTES_MAX) { attSay('ファイルが大きすぎます（1MBまで）。分けて書き出してください。欄には入れていません。', true); return; }
+      if (!window.FileReader) { attSay('この端末ではファイルを読めません。文字起こしをコピーして貼ってください。', true); return; }
+      var rd = new FileReader();
+      attSay('読んでいます…');
+      rd.onload = function () {
+        if (gen !== attGen || !ta.isConnected || cur.customerId !== cid) return;
+        var s = attDecode(new Uint8Array(rd.result));
+        if (s == null) { attSay('文字を読めませんでした。文字起こしのテキストファイルを選んでください。欄には入れていません。', true); return; }
+        var c = attClean(s, kind);
+        if (!c.text) { attSay('ファイルに文字がありませんでした。', true); return; }
+        var prev = String(ta.value || '').replace(/\s+$/, ''), next = prev ? prev + '\n' + c.text : c.text;
+        if (next.length > AI_TEXT_MAX) { attSay('長すぎます（3万字まで・' + (prev ? 'いまの欄と合わせて' : '') + next.length + '字）。分けて書き出してください。欄には入れていません。', true); return; }
+        ta.value = next;
+        ta.oninput();   // 貼ったときと同じ：前の読み取り結果・AI の応答を捨てる
+        attSay((prev ? '貼ってあった文字の後ろに ' : '') + c.text.length + '字を入れました' + (c.dropped ? '（時刻・話者の行を ' + c.dropped + '行落としました）' : '') + '。まだどこにも送っていません。');
+      };
+      rd.onerror = function () { if (gen === attGen) attSay('ファイルを読めませんでした。欄には入れていません。', true); };
+      rd.readAsArrayBuffer(f);
+    };
+    wrap.appendChild(el('button', { type: 'button', class: 'k-btn out k-attach', style: 'min-height:48px;margin:0;', text: 'ファイルを添付（文字起こしの .txt）',
+      onclick: function () { attSay(''); attIn.value = ''; attIn.click(); } }));
+    wrap.appendChild(attIn);
+    wrap.appendChild(attMsg);
+    wrap.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '添付したファイルは端末の中で読んで上の欄に入れるだけで、どこにも送りません。音声のファイルは使えません。' }));
     var out = el('div', { style: 'display:flex;flex-direction:column;gap:10px;' });
     wrap.appendChild(out);
     var bar = el('div', { class: 'k-savebar' });
