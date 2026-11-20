@@ -9962,7 +9962,11 @@ function autoBookRecurringPatterns() {
   var _AB = { BUSY_WAITS_MS: [3000, 6000, 10000], RUN_BUDGET_MS: 240000 };
   var _abT0 = Date.now(), _heldN = 0;
   var sh = _lbRecurSheet();
-  if (sh.getLastRow() < 2) { Logger.log('autoBookRecurring: パターンなし'); return { customers: 0 }; }
+  if (sh.getLastRow() < 2) {
+    //   設計47（関門② 第4周）：固定枠が0行でも「保留0で終わった」としてこの対象月の保留記録を消す（残すと warn が鳴り続ける）
+    if (typeof _lbAutoBookHeldNote === 'function') { try { _lbAutoBookHeldNote(targetKey, 0, Date.now()); } catch (eHN0) { Logger.log('自動予約の保留を消せませんでした: ' + eHN0.message); } }
+    Logger.log('autoBookRecurring: パターンなし'); return { customers: 0 };
+  }
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
   var byCustomer = {}, order = [], assignCount = {};   // assignCount=担当なし固定枠のシフトイン均等割当カウント（当バッチ）
   for (var i = 0; i < v.length; i++) {
@@ -10086,6 +10090,7 @@ function autoBookRecurringPatterns() {
       //   設計47：ロックが混んで取れなければ、間隔をあけて取り直す（4分を過ぎたら取り直さない）
       for (var _bt = 0; r && r.code === 'BUSY' && _bt < _AB.BUSY_WAITS_MS.length && (Date.now() - _abT0) < _AB.RUN_BUDGET_MS; _bt++) {
         Utilities.sleep(_AB.BUSY_WAITS_MS[_bt]);
+        if ((Date.now() - _abT0) >= _AB.RUN_BUDGET_MS) break;   // ★待った後にも見る（関門② 第4周：3分59秒で入ると4分09秒に取り直していた）＝ BUSY のまま保留
         r = _lbReserveCore(custInfo, _body, 'line');
       }
       if (r && r.success) { agg0.booked.push({ start: startDate, trainerId: useTrainer }); _budget--; if (!trainerId) assignCount[useTrainer] = (assignCount[useTrainer] || 0) + 1; }

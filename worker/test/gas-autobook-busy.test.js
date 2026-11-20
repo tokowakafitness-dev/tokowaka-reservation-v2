@@ -142,6 +142,23 @@ console.log('=== ⑤ 4分を過ぎたら ===');
   ok('⑤-2 4分を過ぎたら取り直さない（sleep しない）', w3.st.sleeps.length === 0 && JSON.parse(w3.st.props.LB_AUTOBOOK_HELD || '{}')['2026-11'], JSON.stringify(w3.st.sleeps));
 }
 
+{
+  //   関門② 第4周：待つ前は4分未満でも、待った後に4分を過ぎたら取り直さない（1回目の呼び出しで 238秒・3秒待つと 241秒）
+  const w4 = world({ rows: ROWS(), busy: (cid, iso) => cid === 'C1' && iso === isoOf(3), slowReserveMs: 227990 });
+  w4.ctx.autoBookRecurringPatterns();
+  const c1 = w4.st.calls.filter((x) => x === 'C1|' + isoOf(3)).length;
+  ok('⑤-3 待った後に4分を過ぎていたら取り直さない（BUSY のまま保留）', c1 === 1 && JSON.stringify(w4.st.sleeps) === JSON.stringify([3000]) && w4.st.rows[0][RP_COL.LAST_MONTH - 1] === '' && JSON.parse(w4.st.props.LB_AUTOBOOK_HELD || '{}')['2026-11'], JSON.stringify({ c1, s: w4.st.sleeps }));
+}
+
+console.log('=== ⑦ 固定枠が0行 ===');
+{
+  //   関門② 第4周：保留のあとで固定枠を全部消して再実行しても、その対象月の保留の記録を消す（warn が鳴り続けない）
+  const w = world({ rows: [], props: { LB_AUTOBOOK_HELD: JSON.stringify({ '2026-11': { n: 1, at: 1 }, '2026-10': { n: 2, at: 1 } }) } });
+  w.ctx.autoBookRecurringPatterns();
+  const h = JSON.parse(w.st.props.LB_AUTOBOOK_HELD || '{}');
+  ok('⑦-1 固定枠0行でも対象月（2026-11）の保留を消す・ほかの月は残す', !('2026-11' in h) && h['2026-10'] && h['2026-10'].n === 2, w.st.props.LB_AUTOBOOK_HELD);
+}
+
 console.log('=== ⑥ トリガーを作らない ===');
 {
   const w = world({ rows: ROWS(), busy: (cid) => cid === 'C1' });
