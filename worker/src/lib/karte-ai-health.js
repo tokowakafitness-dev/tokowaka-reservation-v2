@@ -60,14 +60,14 @@ export async function buildKarteAiHealth(env, nowMs) {
     const u = await env.DB.prepare('SELECT n FROM karte_ai_usage WHERE day = ?').bind(out.day).first();
     const usage = u ? Number(u.n || 0) : 0;
     //   設計49：形式別の成功・終了処理まで届かなかった数（強制終了など＝記録が残らない）。負は 0（回数を数える前の error がある）
+    //   ★lost は基本の記録（karte_ai_log＝v1・v2 とも1回1行）だけで数える。v2 の別表は形式・考える量の内訳だけ（2つの表を足さない＝二重に数えない）
     const f = await env.DB.prepare(
-      `SELECT fmt, effort, COUNT(*) AS n FROM karte_ai_log WHERE at >= ? AND at < ? AND result = 'ok' GROUP BY fmt, effort`
+      `SELECT effort, COUNT(*) AS n FROM karte_ai_log_v2 WHERE at >= ? AND at < ? AND result = 'ok' GROUP BY effort`
     ).bind(start, end).all();
-    const okByFmt = {}, okByEffort = {};
-    for (const x of (f.results || [])) {
-      const k = String(x.fmt || 'v1'); okByFmt[k] = (okByFmt[k] || 0) + Number(x.n || 0);
-      if (x.effort) okByEffort[String(x.effort)] = (okByEffort[String(x.effort)] || 0) + Number(x.n || 0);
-    }
+    const okByEffort = {};
+    let v2ok = 0;
+    for (const x of (f.results || [])) { const n = Number(x.n || 0); v2ok += n; if (x.effort) okByEffort[String(x.effort)] = (okByEffort[String(x.effort)] || 0) + n; }
+    const okByFmt = { v1: Math.max(0, (byResult.ok || 0) - v2ok), v2: v2ok };
     const reached = REACHED.reduce((a, k) => a + (byResult[k] || 0), 0);
     Object.assign(out, { table: 'ok', total, byResult, unverified, usage,
       limitHit: (byResult.daily_limit || 0) > 0 || usage >= out.dailyMax,

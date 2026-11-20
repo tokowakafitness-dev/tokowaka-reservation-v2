@@ -535,3 +535,10 @@ rv = {
 | §5 Worker v2 | `worker/src/routes/karte-ai-v2.js`（形・指示・readSse・validateDraftV2）・`karte-ai.js`（形式の選び方・innerV2・記録）・`karte.js` aiFormat・migration 0035・`karte-ai-health.js`（lost・formatBad・effortBad・v2Zero・okByFmt・okByEffort）／検査 `karte-ai-v2.test.js` | 日次点検の **warn の表示は GAS 側**（Worker は値を返すだけ）。GAS の「カルテのAI」の段に lost・formatBad・effortBad・v2Zero を出す変更は、次の GAS の反映にまとめる（未実装） |
 | §7 画面 v2 | `liff/karte.js` reviewFromDraft・reviewOpen・reviewCounts・reviewBuild・scopeAllows・drawReview・placeReview・出所の印／検査 `liff-karte-ai-review.test.js` | ①要約は「まとめて1つのトグル」ではなく**1文ずつのトグル**（名前の印の文だけ初期値で外す、を1つのトグルでは表せないため）②次回やること（next）は trial・full とも見るだけ（§7-5 の next_plan の線は full にする段で作る）③初期値の include は scope が許す項目だけに立てる（trial で範囲外が立っていると reviewBuild が投げるため） |
 | §6-4 画面の締切 | AbortController 110秒（`AI_UI_TIMEOUT_MS`） | 画面の切断で Worker の処理が続くか・ハンドラに ctx が渡るかは未確認のまま（Worker の締切と lost で守る） |
+
+### 17-2 関門② 1周目（2026-11-20・差し戻し 高1・中1 → 受け入れ）
+| # | 指摘 | 裏を取った該当行 | 対処 |
+|---|---|---|---|
+| 高1 | 0035 が既存の表に ALTER 10本＝途中で失敗した・適用済みの印だけ書けなかったとき、次から duplicate column で毎回止まる | `.github/workflows/worker-deploy.yml` の「表の変更を一度だけ適用する」：migration の実行（--file）と印の記録（INSERT INTO schema_migrations）が別のコマンド＝事実 | 0035 を `CREATE TABLE IF NOT EXISTS karte_ai_log_v2`＋`CREATE INDEX IF NOT EXISTS` だけにした。v2 の計測はこの別表へ。2回流しても通ることを本物の SQLite で確かめる検査（karte-ai-v2.test.js V2-23） |
+| 中2 | KARTE_AI_FORMAT 未設定でも v1 の応答（v:1）とログ（22列の INSERT）が変わっていた | `karte-ai.js` の v1 の return に `Object.assign({ v: 1 }, …)`・record の INSERT が22列＝事実 | v1 の応答に v を付けない・karte_ai_log の INSERT は12列に戻した・v2 の計測は useV2 のときだけ別表へ。lost は基本の記録だけで数える（2つの表を足さない）。検査 V2-22（未設定：draft の鍵が v1 の6つ・karte_ai_log の列が今のまま・別表に行を足さない）・V2-19（v1 と v2 が混ざっても lost が正しい） |
+- §5-6-3 の「列を足す（migration 0035・ALTER ADD COLUMN）」は、この別表に置き換わった。

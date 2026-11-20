@@ -139,6 +139,9 @@ const setEnv = (o) => { for (const k of ['KARTE_AI_DRAFT', 'KARTE_AI_DRAFT_TRAIN
 const V2 = { ...ON, KARTE_AI_FORMAT: 'v2' };
 const usage = () => { const r = q1('SELECT SUM(n) AS n FROM karte_ai_usage'); return r && r.n ? r.n : 0; };
 const lastLog = () => q1('SELECT * FROM karte_ai_log ORDER BY id DESC LIMIT 1');
+const lastV2 = () => q1('SELECT * FROM karte_ai_log_v2 ORDER BY id DESC LIMIT 1');
+const nV2 = () => q1('SELECT COUNT(*) AS n FROM karte_ai_log_v2').n;
+const LOG12 = ['id', 'at', 'trainer_id', 'model', 'chars_in', 'ms', 'result', 'in_tokens', 'out_tokens', 'n_ex', 'n_unverified', 'build', 'n_sets'];
 const allText = () => JSON.stringify(qa('SELECT * FROM karte_ai_log')) + JSON.stringify(qa('SELECT * FROM karte_access_log')) + JSON.stringify(kvPuts) + logs.join('\n');
 
 // ================= V2-1 形式の選び方 =================
@@ -150,9 +153,10 @@ const allText = () => JSON.stringify(qa('SELECT * FROM karte_ai_log')) + JSON.st
   const n0 = calls.length;
   for (const [label, env2, body] of [['設定 v2・client なし（旧画面の形）', V2, {}], ['設定 v2・client "2"（文字列）', V2, { client_ai_format: '2' }], ['設定 v2・client 1', V2, { client_ai_format: 1 }], ['設定なし・client 2', ON, { client_ai_format: 2 }], ['設定 v1・client 2', { ...ON, KARTE_AI_FORMAT: 'v1' }, { client_ai_format: 2 }]]) {
     setEnv(env2);
+    const v0 = nV2();
     const x = await call(body);
     const cc = calls[calls.length - 1];
-    ok('V2-1 ' + label + ' → v1（非ストリーミング・effort low・8000）', x.status === 200 && x.draft && x.draft.v === 1 && !cc.req.stream && cc.req.max_tokens === 8000 && cc.req.output_config.effort === 'low' && lastLog().fmt === 'v1', JSON.stringify([x.status, x.draft && x.draft.v, cc.req.stream]));
+    ok('V2-1 ' + label + ' → v1（非ストリーミング・effort low・8000・応答に v が無い・別表に行を足さない）', x.status === 200 && x.draft && !('v' in x.draft) && !cc.req.stream && cc.req.max_tokens === 8000 && cc.req.output_config.effort === 'low' && nV2() === v0, JSON.stringify([x.status, x.draft && x.draft.v, cc.req.stream]));
   }
   ok('V2-12 ★旧画面と同じ鍵だけの要求は、設定が v2 でも v1 を受け取る（上の1件目）', calls.length === n0 + 5);
 }
@@ -165,10 +169,11 @@ const allText = () => JSON.stringify(qa('SELECT * FROM karte_ai_log')) + JSON.st
   }
   setEnv({ ...V2, KARTE_AI_EFFORT: 'medium' });
   const r = await call({ client_ai_format: 2 });
-  ok('V2-1b medium が要求・応答・記録で一致', calls[calls.length - 1].req.output_config.effort === 'medium' && r.draft.effort === 'medium' && lastLog().effort === 'medium');
+  ok('V2-1b medium が要求・応答・記録で一致', calls[calls.length - 1].req.output_config.effort === 'medium' && r.draft.effort === 'medium' && lastV2().effort === 'medium');
   setEnv({ ...ON, KARTE_AI_EFFORT: 'medium' });
+  const v0 = nV2();
   await call({});
-  ok('V2-1b v1 には効かない（low のまま・記録の effort は空）', calls[calls.length - 1].req.output_config.effort === 'low' && lastLog().effort === null);
+  ok('V2-1b v1 には効かない（low のまま・別表に行を足さない）', calls[calls.length - 1].req.output_config.effort === 'low' && nV2() === v0);
 }
 // ================= V2-10 形式の設定の打ち間違い =================
 {
@@ -198,10 +203,11 @@ setEnv(V2);
   ok('V2-8・V2-21 ★根拠に健康語 → healthHidden（w/r null・evidence/unsure 空）・文は caution へ', sq.status === 'healthHidden' && sq.w === null && sq.r === null && sq.evidence === '' && sq.unsure === '' && d.caution.some((t) => t.indexOf('スクワット:') === 0 && t.includes('痛い')), JSON.stringify(sq) + JSON.stringify(d.caution));
   ok('V2-9 ★〔人〕を含む文は消えない（人名で採用は止めない）', d.condition.includes('〔人〕と食事に行ったと話していた'));
   ok('V2-9 要約が返る・応答に文字起こしの雑談・伏せた語・生の応答・考えの差分が無い', d.summary.length === 2 && !r.raw.includes(SECRET) && !r.raw.includes('〔会員〕') && !r.raw.includes('stop_reason') && !r.raw.includes('考え中'));
-  const lg = lastLog();
-  ok('V2-11 ★記録：fmt v2・effort・番号・状態ごとの数・ストリームのイベント数とバイト数（中身なし）', lg.result === 'ok' && lg.fmt === 'v2' && lg.effort === 'low' && lg.client_req_id === 'req_ABC-123' && lg.n_sets === 1 && lg.n_inferred === 1 && lg.n_nobasis === 1 && lg.n_health_hidden === 1 && lg.n_unclear === 1 && lg.n_summary === 2 && lg.stream_events > 5 && lg.stream_bytes > 100 && lg.in_tokens === 1234 && lg.out_tokens === 567, JSON.stringify(lg));
+  const lg = lastV2(), base = lastLog();
+  ok('V2-11 ★別表 karte_ai_log_v2：effort・番号・状態ごとの数・ストリームのイベント数とバイト数（中身なし）', lg.result === 'ok' && lg.effort === 'low' && lg.client_req_id === 'req_ABC-123' && lg.n_sets === 1 && lg.n_inferred === 1 && lg.n_nobasis === 1 && lg.n_health_hidden === 1 && lg.n_unclear === 1 && lg.n_summary === 2 && lg.stream_events > 5 && lg.stream_bytes > 100, JSON.stringify(lg));
+  ok('V2-11 ★基本の記録 karte_ai_log も1行（12列の形のまま・トークン数）', base.result === 'ok' && base.in_tokens === 1234 && base.out_tokens === 567 && base.n_sets === 1 && base.n_unverified === 3 && JSON.stringify(Object.keys(base)) === JSON.stringify(LOG12), JSON.stringify(base));
   await call({ client_ai_format: 2, clientReqId: 'bad id with space' });
-  ok('V2-11 番号の形が違えば記録しない（400 にもしない）', lastLog().result === 'ok' && lastLog().client_req_id === null);
+  ok('V2-11 番号の形が違えば記録しない（400 にもしない）', lastV2().result === 'ok' && lastV2().client_req_id === null);
   ok('V2-11 karte_requests に k_aiDraft の行が無い', qa(`SELECT * FROM karte_requests WHERE action = 'k_aiDraft'`).length === 0);
 }
 {
@@ -329,20 +335,43 @@ setEnv(V2);
   dbFail = null;
   ok('V2-17 ★記録（D1）が失敗しても応答は変わらない・console は固定の文だけ', r.status === 200 && r.draft && logs.some((x) => x.includes('[karte-ai] log write failed')) && !logs.join('\n').includes(SECRET));
   //   強制終了の模擬：Anthropic が返らないまま要求を捨てる（終了処理まで届かない）
-  db.exec('DELETE FROM karte_ai_log'); db.exec('DELETE FROM karte_ai_usage');
+  db.exec('DELETE FROM karte_ai_log'); db.exec('DELETE FROM karte_ai_log_v2'); db.exec('DELETE FROM karte_ai_usage');
   await call({ client_ai_format: 2 });
   reply = () => new Promise(() => {});
   void call({ client_ai_format: 2 });
   await new Promise((r2) => setTimeout(r2, 50));
   reply = null;
-  ok('V2-18 ★終了処理まで届かない要求：回数は1増え、記録は残らない', usage() === 2 && qa('SELECT * FROM karte_ai_log').length === 1, JSON.stringify([usage(), qa('SELECT result FROM karte_ai_log')]));
+  ok('V2-18 ★終了処理まで届かない要求：回数は1増え、記録は残らない（基本の記録も別表も1行のまま）', usage() === 2 && qa('SELECT * FROM karte_ai_log').length === 1 && nV2() === 1, JSON.stringify([usage(), qa('SELECT result FROM karte_ai_log')]));
   const h = (await buildKarteAiHealth({ ...env, ...V2 }, Date.now() + 24 * 3600000)).karteAi;
   ok('V2-19 ★日次点検：lost（usage − 終了処理まで届いた数）＝1・形式別の成功・形式と考える量の設定', h.table === 'ok' && h.lost === 1 && h.okByFmt.v2 === 1 && h.format === 'v2' && h.formatBad === false && h.effort === 'low' && h.effortBad === false, JSON.stringify(h));
   const hb = (await buildKarteAiHealth({ ...env, ...ON, KARTE_AI_FORMAT: 'v3', KARTE_AI_EFFORT: 'MEDIUM' }, Date.now() + 24 * 3600000)).karteAi;
   ok('V2-19 形式・考える量の打ち間違いは formatBad・effortBad', hb.formatBad === true && hb.format === 'bad' && hb.effortBad === true);
-  db.exec(`UPDATE karte_ai_log SET fmt = 'v1'`);
+  //   v1 の呼び出しを1回足す（基本の記録だけ・別表は増えない）＝lost は2つの表を足さずに数える
+  setEnv(ON); await call({}); setEnv(V2);
+  const hv = (await buildKarteAiHealth({ ...env, ...V2 }, Date.now() + 24 * 3600000)).karteAi;
+  ok('V2-19 ★v1 と v2 が混ざっても lost は基本の記録だけで数える（usage 3・届いた 2 ＝ 1）・形式別の内訳 v1 1／v2 1', hv.lost === 1 && hv.usage === 3 && hv.okByFmt.v1 === 1 && hv.okByFmt.v2 === 1, JSON.stringify(hv));
+  db.exec('DELETE FROM karte_ai_log_v2');
   const hz = (await buildKarteAiHealth({ ...env, ...V2 }, Date.now() + 24 * 3600000)).karteAi;
   ok('V2-19 ★設定が v2 なのに成功が全部 v1 なら v2Zero（画面の版の取り違え）', hz.v2Zero === true);
+}
+
+// ================= V2-22 未設定なら v1 の応答とログが変わらない =================
+{
+  setEnv(ON);
+  const v0 = nV2();
+  const r = await call({ client_ai_format: 2 });
+  const base = lastLog();
+  ok('V2-22 ★KARTE_AI_FORMAT 未設定：応答の draft に v が無い・鍵は v1 の6つだけ', r.status === 200 && JSON.stringify(Object.keys(r.draft)) === JSON.stringify(['exercises', 'coaching', 'hearing', 'caution', 'member_message', 'member_todo']), JSON.stringify(Object.keys(r.draft || {})));
+  ok('V2-22 ★karte_ai_log の列は今の13列（id＋12列・0032 の n_sets）のまま・別表に行を足さない', JSON.stringify(qa('PRAGMA table_info(karte_ai_log)').map((c) => c.name)) === JSON.stringify(LOG12) && nV2() === v0 && base.result === 'ok', JSON.stringify(qa('PRAGMA table_info(karte_ai_log)').map((c) => c.name)));
+  const SRCW = readFileSync(join(W, 'src/routes/karte-ai.js'), 'utf8');
+  ok('V2-22 karte_ai_log の INSERT は従来の12列', /INSERT INTO karte_ai_log \(at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, n_sets, build\)\s+VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\)/.test(SRCW));
+}
+// ================= V2-23 migration 0035 は何度流しても同じ =================
+{
+  const MIG = readFileSync(join(W, 'migrations/0035_karte_ai_log_v2.sql'), 'utf8').replace(/--.*$/gm, '');
+  ok('V2-23 ★0035 は CREATE … IF NOT EXISTS だけ（既存の表に ALTER しない）', !/ALTER\s+TABLE/i.test(MIG) && (MIG.match(/CREATE (TABLE|INDEX)/g) || []).length === (MIG.match(/CREATE (TABLE|INDEX) IF NOT EXISTS/g) || []).length && (MIG.match(/CREATE (TABLE|INDEX)/g) || []).length >= 1);
+  let twice = true; try { db.exec(readFileSync(join(W, 'migrations/0035_karte_ai_log_v2.sql'), 'utf8')); db.exec(readFileSync(join(W, 'migrations/0035_karte_ai_log_v2.sql'), 'utf8')); } catch (_) { twice = false; }
+  ok('V2-23 ★0035 を2回（さらに）流してもエラーにならない（印を書けなかった次の実行と同じ）', twice);
 }
 
 Object.assign(console, orig);

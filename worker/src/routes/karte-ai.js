@@ -299,15 +299,23 @@ const nz = (v) => (v == null ? null : v);
 async function record(env, who, cid, row) {
   if (NOT_IN_AI_LOG.indexOf(row.result) < 0) try {
     await env.DB.prepare(
-      `INSERT INTO karte_ai_log (at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, n_sets, build,
-                                 fmt, effort, client_req_id, n_inferred, n_nobasis, n_health_hidden, n_unclear, n_summary, stream_events, stream_bytes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(Date.now(), String((who && who.trainerId) || ''), row.model || null, nz(row.chars), nz(row.ms),
-           row.result, nz(row.inTok), nz(row.outTok), nz(row.nEx), nz(row.nUnv), nz(row.nSets), AI_BUILD,
-           row.fmt || null, row.effort || null, row.reqId || null, nz(row.nInf), nz(row.nNob), nz(row.nHid), nz(row.nUnclear), nz(row.nSummary),
-           nz(row.events), nz(row.bytes)).run();
+      `INSERT INTO karte_ai_log (at, trainer_id, model, chars_in, ms, result, in_tokens, out_tokens, n_ex, n_unverified, n_sets, build)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(Date.now(), String((who && who.trainerId) || ''), row.model || null, row.chars == null ? null : row.chars, row.ms == null ? null : row.ms,
+           row.result, row.inTok == null ? null : row.inTok, row.outTok == null ? null : row.outTok,
+           row.nEx == null ? null : row.nEx, row.nUnv == null ? null : row.nUnv, row.nSets == null ? null : row.nSets, AI_BUILD).run();
   } catch (_) {
     try { console.error('[karte-ai] log write failed', row.result); } catch (_) {}
+  }
+  //   設計49：v2 の呼び出しのときだけ別表に計測を1行（best effort・中身なし・失敗は固定の文だけ）。基本の記録（上）は v1・v2 とも同じ12列
+  if (row.fmt === 'v2') try {
+    await env.DB.prepare(
+      `INSERT INTO karte_ai_log_v2 (at, result, effort, client_req_id, ms, n_sets, n_inferred, n_nobasis, n_health_hidden, n_unclear, n_summary, stream_events, stream_bytes, build)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(Date.now(), row.result, row.effort || null, row.reqId || null, nz(row.ms), nz(row.nSets), nz(row.nInf), nz(row.nNob), nz(row.nHid),
+           nz(row.nUnclear), nz(row.nSummary), nz(row.events), nz(row.bytes), AI_BUILD).run();
+  } catch (_) {
+    try { console.error('[karte-ai] v2 log write failed', row.result); } catch (_) {}
   }
   await logAccess(env, who, cid || null, 'ai_draft', 'k_aiDraft', ACCESS_OF[row.result] || 'error');
 }
@@ -418,7 +426,7 @@ async function inner(c, st) {
   try { v = validateDraft(parsed, maskedSquashed, mask); }
   catch (e) { if (e instanceof BadOutput) { st.result = 'bad_output'; return fail('AI_BAD_OUTPUT', 502); } throw e; }
   st.result = 'ok'; st.nEx = v.nEx; st.nUnv = v.nUnv; st.nSets = v.nSets;
-  return { draft: Object.assign({ v: 1 }, v.draft), model: st.model, build: AI_BUILD };
+  return { draft: v.draft, model: st.model, build: AI_BUILD };
 }
 
 //   設計49 v2：ストリーミングで受け、message_stop の後に1回だけ parse → 検証。途中の出力は使わない・返さない（I76-3）
