@@ -76,9 +76,9 @@ MEMBER_KARTE = "off"
 #   "on"        … 全会員に勧める（★全トレーナーへ広げる前に弁護士の確認・関門③・オーナー承認）
 #   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる
 #   ★AI 振り分け（k_aiDraft）は、この切替に関係なく「その会員の録音・AI の同意」が有効なときだけ通る
-MEMBER_CONSENT = "off"
+MEMBER_CONSENT = "allow"
 #   allow のときの担当の trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
-MEMBER_CONSENT_TRAINERS = ""
+MEMBER_CONSENT_TRAINERS = "A"
 
 # ---- トレーニングの記録の新しい項目（補助・無理やり・ドロップ・数字の無い種目）の受付（設計38）----
 #   "off"（既定）… 新しい鍵を含む k_addTraining は 409 TRAINING_EXT_OFF。旧形は今どおり保存。karteSchema は 32

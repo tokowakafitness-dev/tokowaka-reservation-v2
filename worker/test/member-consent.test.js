@@ -454,7 +454,10 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 // ================= J 設定と地図 =================
 {
   const TOML = readFileSync(join(W, 'wrangler.toml'), 'utf8');
-  ok('J1 wrangler.toml：MEMBER_CONSENT は既定 off・担当の一覧は空', /^MEMBER_CONSENT = "off"$/m.test(TOML) && /^MEMBER_CONSENT_TRAINERS = ""$/m.test(TOML));
+  //   ★2026-11-19 オーナーの会員だけに出す（決定0177・0183 の7・関門③通過）。全員（on）は弁護士の確認・オーナー承認の後＝ここで落とす
+  ok('J1 wrangler.toml：MEMBER_CONSENT は off か allow（on ではない）・allow なら担当は A だけ',
+    (/^MEMBER_CONSENT = "off"$/m.test(TOML) && /^MEMBER_CONSENT_TRAINERS = ""$/m.test(TOML))
+    || (/^MEMBER_CONSENT = "allow"$/m.test(TOML) && /^MEMBER_CONSENT_TRAINERS = "A"$/m.test(TOML)));
   const MODEL = readFileSync(join(ROOT, 'ops/MODEL.md'), 'utf8');
   ok('J2 地図：karte_consent_rec・karte_consent_answers と I-CS の不変条件が載っている', MODEL.includes('karte_consent_rec') && MODEL.includes('karte_consent_answers') && /\| I-CS1 \|/.test(MODEL));
   const MIG = readFileSync(join(W, 'migrations/0033_member_consent.sql'), 'utf8').replace(/--.*$/gm, '');
