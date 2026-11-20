@@ -97,10 +97,11 @@ KARTE_TRAINING_EXT_TRAINERS = "A"
 #   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる
 #   ★鍵は Worker の Secret ANTHROPIC_API_KEY（オーナーが登録・ここに書かない）。鍵が無ければ off と同じ
 #   ★お客様の同意（録音・AI・国外の事業者・全文を残さない）と Anthropic の契約条件の確認が済むまで allow/on にしない（I76-7）
+#   ★2026-11-20 allow・担当 A（会社の決定0194 で I76-7 を満たした）。on・担当の追加は弁護士の確認の後（決定0177）＝karte-ai.test.js A9 が落とす
 #   ★会員ごとの同意（設計44・karte_consent_rec）が無い会員は allow/on でも送らない（403 NO_CONSENT・I76-8）
-KARTE_AI_DRAFT = "off"
+KARTE_AI_DRAFT = "allow"
 #   allow のときのトレーナーの trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
-KARTE_AI_DRAFT_TRAINERS = ""
+KARTE_AI_DRAFT_TRAINERS = "A"
 #   "claude-sonnet-5-5"（既定）／"claude-haiku-5-5"。それ以外は既定に倒れる
 KARTE_AI_MODEL = "claude-sonnet-5-5"
 #   1日（JST）の呼び出しの上限・店全体（1〜500。それ以外は30）。API を呼ぶ前に数える＝失敗も1回

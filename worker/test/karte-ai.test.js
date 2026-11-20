@@ -372,5 +372,13 @@ setEnv(ON);
 }
 
 capture(false);
+// A9 本番の切替は off（空）か allow＋担当 A だけ（2026-11-20 決定0194）。on・担当の追加は弁護士の確認の後（決定0177）＝ここで落とす
+{
+  const TOML = readFileSync(join(W, 'wrangler.toml'), 'utf8');
+  ok('A9 wrangler.toml：KARTE_AI_DRAFT は off か allow（on ではない）・allow なら担当は A だけ',
+    (/^KARTE_AI_DRAFT = "off"$/m.test(TOML) && /^KARTE_AI_DRAFT_TRAINERS = ""$/m.test(TOML))
+    || (/^KARTE_AI_DRAFT = "allow"$/m.test(TOML) && /^KARTE_AI_DRAFT_TRAINERS = "A"$/m.test(TOML)));
+}
+
 console.log(`karte-ai: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
