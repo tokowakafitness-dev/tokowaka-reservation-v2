@@ -307,8 +307,17 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
   db.exec(`INSERT INTO karte_consent_rec (customer_id, state, changed_at, method, recorded_by, doc_ver) VALUES ('C3', 'agreed', 1, 'line', '@member', 'rec_ai-1999-01-01')`);
   const old = await send('C3');
   ok('G1 ★同意なし・撤回・古い版は 403 NO_CONSENT・Anthropic を呼ばない・回数を数えない', [none, rev, old].every((x) => x.status === 403 && x.code === 'NO_CONSENT') && calls.length === n0 && usage() === u0, JSON.stringify([none.status, rev.status, old.status, calls.length - n0]));
+  //   G1b 2026-11-21 版を上げた：直前の版（11-12・要約と推測を含まない）の同意は AI を止め、会員画面で再同意をお願いする（決定0195 D8）
+  db.exec(`UPDATE karte_consent_rec SET doc_ver = 'rec_ai-2026-11-12' WHERE customer_id = 'C3'`);
+  const prev = await send('C3');
+  ok('G1b ★直前の版 rec_ai-2026-11-12 の同意は 403 NO_CONSENT（現行は ' + RV + '）', RV === 'rec_ai-2026-11-21' && prev.status === 403 && prev.code === 'NO_CONSENT' && calls.length === n0, JSON.stringify([prev.status, prev.code]));
+  setMode('allow', 'A');   // 本番と同じ（決定0183）
+  const pm = await call('U_C3', 'm_myConsent');
+  setMode('off');
+  ok('G1c ★その会員の画面では rec_ai の再同意をお願いする（ask に rec_ai・current は偽・新しい文面を返す）',
+     pm.status === 200 && pm.ask.includes('rec_ai') && pm.state.rec_ai.current === false && pm.docs.some((d) => d.ver === RV), (pm.raw || '').slice(0, 300));
   ok('G2 同意の2つは karte_ai_log に書かず（CHECK に無い）access_log に no_consent', q1('SELECT COUNT(*) n FROM karte_ai_log').n === l0
-     && q1(`SELECT COUNT(*) n FROM karte_access_log WHERE action = 'k_aiDraft' AND result = 'no_consent'`).n === 3);
+     && q1(`SELECT COUNT(*) n FROM karte_access_log WHERE action = 'k_aiDraft' AND result = 'no_consent'`).n === 4);   // G1 の3回＋G1b の1回
   dbFail = 'FROM karte_consent_rec WHERE customer_id';
   const err = await send('C4');
   dbFail = null;
@@ -330,7 +339,7 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
   ok('G7 AI が使えない（切替 off）ときは aiConsent を読まない（undefined）', tr3.aiConsent === undefined && tr3.aiDraft === false);
   //   日次点検
   const h = await buildKarteAiHealth(env, Date.now() + 86400000);
-  ok('G8 日次点検：前日の no_consent の件数と有効な同意の数（数だけ）', h.karteAi.consent.table === 'ok' && h.karteAi.consent.noConsent === 4 && typeof h.karteAi.consent.recAgreed === 'number' && !JSON.stringify(h).includes('C3'), JSON.stringify(h.karteAi.consent));
+  ok('G8 日次点検：前日の no_consent の件数と有効な同意の数（数だけ）', h.karteAi.consent.table === 'ok' && h.karteAi.consent.noConsent === 5 &&   /* G1b の1回を足した */ typeof h.karteAi.consent.recAgreed === 'number' && !JSON.stringify(h).includes('C3'), JSON.stringify(h.karteAi.consent));
   dbFail = 'FROM karte_consent_rec WHERE state';
   const he = await buildKarteAiHealth(env, Date.now() + 86400000);
   dbFail = null;
@@ -441,6 +450,7 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
   const PIN = {
     'health-2026-11-04': '84a170b60b7e64875996929887adc817929ab13513421e060c0778e2a0e4134b',
     'rec_ai-2026-11-12': '83ad0787ad3b01599cb4ae25dc3c5e42fecfb736f7e8038099237b9d9c532e90',
+    'rec_ai-2026-11-21': '03b2facdb44f663431a46a427fd4f5a12e4fa0101d7f976146fa6cc2ce405a64',
   };
   for (const k of ['health', 'rec_ai']) {
     const d = CONSENT_DOCS[k];

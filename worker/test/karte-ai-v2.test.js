@@ -58,7 +58,7 @@ async function token(sub) {
 }
 db.exec(`INSERT INTO trainers (trainer_id, name, line_user_id, role, active) VALUES ('T1', '乙川 二郎', 'U_T1', 'trainer', 1)`);
 db.exec(`INSERT INTO customers (customer_id, name, kana, line_user_id, default_trainer_id, created_at, updated_at) VALUES ('C1', '甲野 一郎', 'コウノ イチロウ', 'U_C1', 'T1', 1, 1)`);
-db.exec(`INSERT INTO karte_consent_rec (customer_id, state, changed_at, method, recorded_by, doc_ver) VALUES ('C1', 'agreed', 1, 'line', '@member', 'rec_ai-2026-11-12')`);
+db.exec(`INSERT INTO karte_consent_rec (customer_id, state, changed_at, method, recorded_by, doc_ver) VALUES ('C1', 'agreed', 1, 'line', '@member', 'rec_ai-2026-11-21')`);
 const now0 = Date.now();
 db.exec(`INSERT INTO sync_state (key, synced_at, rows, ok) VALUES ('customers', ${now0}, 1, 1), ('trainers', ${now0}, 1, 1), ('reservations', ${now0}, 0, 1)`);
 
