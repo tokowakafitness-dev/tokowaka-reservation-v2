@@ -109,8 +109,9 @@ KARTE_AI_DAILY_MAX = "30"
 #   設計49：AI の下書きの形式。★ここに書かない（未設定）＝"v1"（今の設計39 の形）。"v1"／"v2" の厳密一致だけ。それ以外の値は AI を閉じる（503 FORMAT）
 #     "v2" にしても、画面が client_ai_format:2 を送る版でなければ v1 を返す。"v2" にする変更は単独の PR（試用の開始・オーナーのマージ）
 #   KARTE_AI_FORMAT = "v2"
-#   設計49：v2 の考える量。"low"（既定）／"medium" の厳密一致。それ以外は low（日次点検で warn）。比べてから決める（D6 保留）
-#   KARTE_AI_EFFORT = "low"
+#   設計49：v2 の考える量。"low"（未設定の既定）／"medium" の厳密一致。それ以外は low（日次点検で warn）
+#     2026-11-21 D6＝medium（オーナー決定・同じ文字起こしで比べ、種目の拾い 4→7）。v1 には効かない＝KARTE_AI_FORMAT が未設定のいまは本番の動きは変わらない
+KARTE_AI_EFFORT = "medium"
 
 # 契約・顧客・予約。正確さが要るものを置く
 [[d1_databases]]

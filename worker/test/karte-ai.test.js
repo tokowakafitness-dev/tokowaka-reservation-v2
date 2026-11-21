@@ -378,6 +378,9 @@ capture(false);
   ok('A9 wrangler.toml：KARTE_AI_DRAFT は off か allow（on ではない）・allow なら担当は A だけ',
     (/^KARTE_AI_DRAFT = "off"$/m.test(TOML) && /^KARTE_AI_DRAFT_TRAINERS = ""$/m.test(TOML))
     || (/^KARTE_AI_DRAFT = "allow"$/m.test(TOML) && /^KARTE_AI_DRAFT_TRAINERS = "A"$/m.test(TOML)));
+  // A10 設計49 D6＝medium（2026-11-21 オーナー決定）。打ち間違いは本番で low に黙って倒れる＝値をここで固定する
+  const eff = TOML.match(/^KARTE_AI_EFFORT = "([^"]*)"$/mg) || [];
+  ok('A10 wrangler.toml：KARTE_AI_EFFORT は "medium" が1行だけ', eff.length === 1 && eff[0] === 'KARTE_AI_EFFORT = "medium"', JSON.stringify(eff));
 }
 
 console.log(`karte-ai: ${pass} passed, ${fail} failed`);
