@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-20b AI の下書き v2 を1画面で確認（試用＝v1 と同じ範囲だけ移せる・設計49）＋文字起こしの案内（段階0）';
+  var KARTE_BUILD = '2026-11-21a AI の下書き v2 の保存範囲を full に（要約・推論の数字・状態も確定して移せる・同意 rec_ai-2026-11-21・設計49）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2187,8 +2187,9 @@
   }
   function impLine(sets) { return (sets || []).map(function (st) { return setOneLine({ weight_kg: st.w === '' ? 0 : st.w, reps: st.r, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (d) { return { weight_kg: d.w === '' ? 0 : d.w, reps: d.r, assist_reps: d.assist, forced: d.forced }; }) }); }).join('・'); }
   //   ---- 設計49：AI の下書き v2 の確認（1画面）。★状態は純粋なデータ（rv）だけ・DOM を読まない・端末のメモリの中だけ（I63・I71）
-  //     AI_V2_SAVE_SCOPE：D8（同意の文面の範囲）が決まるまで 'trial'。'full' にする変更は単独の PR。★不正な値も 'trial'
-  var AI_V2_SAVE_SCOPE = 'trial';
+  //     AI_V2_SAVE_SCOPE：D8（同意の文面の範囲）が決まるまで 'trial' だった。2026-11-21 同意の版 rec_ai-2026-11-21（要約・推測・様子・次回の予定を含む）で 'full'（決定0195）。★不正な値は 'trial'
+  //       戻すときはこの1行を 'trial' に（v2 を出す前は効かない＝KARTE_AI_FORMAT 未設定なら Worker が v1 を返す）
+  var AI_V2_SAVE_SCOPE = 'full';
   var AI_UI_TIMEOUT_MS = 110000;   // 画面の締切（Worker の 90秒より長く＝Worker が先に終了処理まで行く・設計49 §6-4）
   function aiScope() { return AI_V2_SAVE_SCOPE === 'full' ? 'full' : 'trial'; }
   //   移してよい項目（表示と reviewBuild の唯一の判定）。trial＝v1 と同じ範囲。next（次回やること）は next_plan の線（§7-5）を作る段で full に足す

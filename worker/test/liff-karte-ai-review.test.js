@@ -3,7 +3,7 @@
 //
 //   ★カルテを開く → 今日の記録 → メモから取り込む → 貼る → 「AIで振り分ける」→ 1画面の確認 → 最後のボタン → 記録の画面 → ✓ → 保存、を click で通す
 //   ★身代わりは fetch（Worker）・LINE の SDK だけ。Worker の応答は worker/src/routes/karte-ai-v2.js の draft（v:2）の形
-//   ★試用（AI_V2_SAVE_SCOPE='trial'・既定）と full（同じ JS の定数を置き換えて）の両方を通す
+//   ★検査は定数を置き換えて trial・full・不正値の3通りを通す（本番の値は 2026-11-21 から full＝R0 で固定）
 //   ★文字起こしは架空（実在の会員・録音の内容を書かない）
 
 import { readFileSync } from 'node:fs';
@@ -16,10 +16,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
 const require = createRequire(join(homedir(), '.cache/claude-node/package.json'));
 const { JSDOM } = require('jsdom');
-const SRC = process.env.KARTE_SRC ? readFileSync(process.env.KARTE_SRC, 'utf8') : readFileSync(join(ROOT, 'liff/karte.js'), 'utf8');
-const SCOPE_LINE = "var AI_V2_SAVE_SCOPE = 'trial';";
-const FULL = SRC.replace(SCOPE_LINE, "var AI_V2_SAVE_SCOPE = 'full';");
-const BOGUS = SRC.replace(SCOPE_LINE, "var AI_V2_SAVE_SCOPE = 'Full';");
+const RAW = process.env.KARTE_SRC ? readFileSync(process.env.KARTE_SRC, 'utf8') : readFileSync(join(ROOT, 'liff/karte.js'), 'utf8');
+//   2026-11-21 本番は 'full'（D8＝同意の版 rec_ai-2026-11-21・決定0195）。検査は定数を置き換えて trial・full・不正値の3通りを通す
+const SCOPE_RE = /^  var AI_V2_SAVE_SCOPE = '[^']*';$/m;
+const SCOPE_LINES = RAW.match(new RegExp(SCOPE_RE.source, 'mg')) || [];
+const withScope = (v) => RAW.replace(SCOPE_RE, "  var AI_V2_SAVE_SCOPE = '" + v + "';");
+const SRC = withScope('trial');
+const FULL = withScope('full');
+const BOGUS = withScope('Full');
 
 let pass = 0, fail = 0;
 function ok(name, cond, detail) { if (cond) pass++; else { fail++; console.log(`❌ ${name}${detail ? '\n   ' + detail : ''}`); } }
@@ -143,6 +147,8 @@ async function saveAll(w) {
   ok('R13 ★下書きのどこにも根拠（evidence）の文字列が無い・保存領域に雑談が無い', !storeText(w.localStorage).includes(EVID) && !storeText(w.localStorage).includes('予告かもしれない') && !storeText(w.localStorage).includes(SECRET));
   ok('R2 確かめのダイアログを増やしていない', w.confirms === 0 && w.alerts.length === 0, JSON.stringify(w.alerts));
 }
+// ================= R0 本番の値 =================
+ok('R0 ★liff/karte.js の AI_V2_SAVE_SCOPE は \'full\' が1行だけ（D8 の後・決定0195）', SCOPE_LINES.length === 1 && SCOPE_LINES[0].trim() === "var AI_V2_SAVE_SCOPE = 'full';", JSON.stringify(SCOPE_LINES));
 // ================= R17 不正な scope は trial に倒れる =================
 {
   const { w } = boot({ src: BOGUS });
