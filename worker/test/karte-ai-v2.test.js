@@ -346,6 +346,12 @@ setEnv(V2);
   ok('V2-19 ★日次点検：lost（usage − 終了処理まで届いた数）＝1・形式別の成功・形式と考える量の設定', h.table === 'ok' && h.lost === 1 && h.okByFmt.v2 === 1 && h.format === 'v2' && h.formatBad === false && h.effort === 'low' && h.effortBad === false, JSON.stringify(h));
   const hb = (await buildKarteAiHealth({ ...env, ...ON, KARTE_AI_FORMAT: 'v3', KARTE_AI_EFFORT: 'MEDIUM' }, Date.now() + 24 * 3600000)).karteAi;
   ok('V2-19 形式・考える量の打ち間違いは formatBad・effortBad', hb.formatBad === true && hb.format === 'bad' && hb.effortBad === true);
+  //   V2-19b 関門③：v2 の失敗を形式別に数える（別表の ok 以外の失敗の結果）。成功は数えない
+  const t0 = Date.now();
+  db.exec(`INSERT INTO karte_ai_log_v2 (at, result, effort) VALUES (${t0}, 'timeout', 'medium'), (${t0}, 'truncated', 'medium'), (${t0}, 'bad_output', 'medium')`);
+  const hf = (await buildKarteAiHealth({ ...env, ...V2 }, Date.now() + 24 * 3600000)).karteAi;
+  ok('V2-19b ★v2 の失敗は v2Fail に数える（3）・成功の数は変わらない（1）', hf.v2Fail === 3 && hf.okByFmt.v2 === 1, JSON.stringify([hf.v2Fail, hf.okByFmt]));
+  db.exec(`DELETE FROM karte_ai_log_v2 WHERE at = ${t0} AND result IN ('timeout','truncated','bad_output')`);
   //   v1 の呼び出しを1回足す（基本の記録だけ・別表は増えない）＝lost は2つの表を足さずに数える
   setEnv(ON); await call({}); setEnv(V2);
   const hv = (await buildKarteAiHealth({ ...env, ...V2 }, Date.now() + 24 * 3600000)).karteAi;

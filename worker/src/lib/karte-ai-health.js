@@ -7,6 +7,8 @@
 //   ★読めないときは table:'error'・数を出さない（0件と答えない＝MODEL §0）
 import { aiDailyMax, AI_BUILD, isKanaName } from '../routes/karte-ai.js';
 import { CONSENT_VALID_REC } from './consent-docs.js';
+//   失敗に数える結果（GAS の lbKarteAiDailyCheck の FAILS と同じ並び）
+const V2_FAILS = ['http_error', 'refused', 'timeout', 'truncated', 'bad_output', 'error', 'unavailable'];
 import { aiFormat } from '../routes/karte.js';
 import { aiEffort, aiEffortBad } from '../routes/karte-ai-v2.js';
 //   設計49 §5-6-3：回数を数えた後に終了処理まで届いた結果（usage との差＝届かなかった数 lost）
@@ -61,17 +63,22 @@ export async function buildKarteAiHealth(env, nowMs) {
     const usage = u ? Number(u.n || 0) : 0;
     //   設計49：形式別の成功・終了処理まで届かなかった数（強制終了など＝記録が残らない）。負は 0（回数を数える前の error がある）
     //   ★lost は基本の記録（karte_ai_log＝v1・v2 とも1回1行）だけで数える。v2 の別表は形式・考える量の内訳だけ（2つの表を足さない＝二重に数えない）
+    //   関門③（2026-11-21）：v2 の失敗も形式別に数える（v2 だけが全部失敗すると ok=0 で v2Zero が立たないため）
     const f = await env.DB.prepare(
-      `SELECT effort, COUNT(*) AS n FROM karte_ai_log_v2 WHERE at >= ? AND at < ? AND result = 'ok' GROUP BY effort`
+      `SELECT result, effort, COUNT(*) AS n FROM karte_ai_log_v2 WHERE at >= ? AND at < ? GROUP BY result, effort`
     ).bind(start, end).all();
     const okByEffort = {};
-    let v2ok = 0;
-    for (const x of (f.results || [])) { const n = Number(x.n || 0); v2ok += n; if (x.effort) okByEffort[String(x.effort)] = (okByEffort[String(x.effort)] || 0) + n; }
+    let v2ok = 0, v2fail = 0;
+    for (const x of (f.results || [])) {
+      const n = Number(x.n || 0);
+      if (x.result === 'ok') { v2ok += n; if (x.effort) okByEffort[String(x.effort)] = (okByEffort[String(x.effort)] || 0) + n; }
+      else if (V2_FAILS.indexOf(String(x.result)) >= 0) v2fail += n;
+    }
     const okByFmt = { v1: Math.max(0, (byResult.ok || 0) - v2ok), v2: v2ok };
     const reached = REACHED.reduce((a, k) => a + (byResult[k] || 0), 0);
     Object.assign(out, { table: 'ok', total, byResult, unverified, usage,
       limitHit: (byResult.daily_limit || 0) > 0 || usage >= out.dailyMax,
-      okByFmt, okByEffort, lost: Math.max(0, usage - reached),
+      okByFmt, okByEffort, v2Fail: v2fail, lost: Math.max(0, usage - reached),
       v2Zero: out.format === 'v2' && (okByFmt.v2 || 0) === 0 && (byResult.ok || 0) > 0 });
   } catch (_) {
     out.table = 'error';

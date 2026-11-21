@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-21a カルテのAIの日次点検に、記録まで届かなかった回・形式と考える量の打ち間違い・v2 なのに成功がすべて v1 を足す（設計49）';
+var LB_EDGE_BUILD = '2026-11-21b カルテのAIの日次点検に、記録まで届かなかった回・形式と考える量の打ち間違い・v2 なのに成功がすべて v1・v2 の失敗が続いた を足す（設計49）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -3471,7 +3471,7 @@ function lbKarteAiDailyCheck(st) {
   add('karte_ai_counts', 'info', total, 'カルテの AI 振り分け（昨日 ' + k.day + '・' + modeTxt + '）結果別: ' + parts.join(' / ')
       + '　確かめられない数字: ' + rate + (Number(u.runsNoSets || 0) ? '（古い版の成功 ' + u.runsNoSets + '回は除く）' : '')
       + '　API の回数: ' + Number(k.usage || 0) + '/' + Number(k.dailyMax || 0) + (k.limitHit ? '（上限到達）' : '') + '　' + kanaTxt
-      + (k.okByFmt ? '　成功の形式: v1:' + Number(k.okByFmt.v1 || 0) + ' / v2:' + Number(k.okByFmt.v2 || 0) + '（考える量 ' + (k.effort || '?') + '）' : ''));
+      + (k.okByFmt ? '　成功の形式: v1:' + Number(k.okByFmt.v1 || 0) + ' / v2:' + Number(k.okByFmt.v2 || 0) + '（考える量 ' + (k.effort || '?') + '）' + (typeof k.v2Fail === 'number' ? '・v2 の失敗 ' + k.v2Fail + '回' : '') : ''));
   var FAILS = ['http_error', 'refused', 'timeout', 'truncated', 'bad_output', 'error', 'unavailable'];
   var f = 0;
   for (var i = 0; i < FAILS.length; i++) f += Number(by[FAILS[i]] || 0);
@@ -3483,6 +3483,11 @@ function lbKarteAiDailyCheck(st) {
   //   設計49：回数を数えたのに終了処理まで届かなかった回（強制終了など＝記録が残らない）。1回でも出す（届くのが正常）
   if (Number(k.lost || 0) > 0) add('karte_ai_lost', 'warn', Number(k.lost), 'カルテの AI 振り分けで、API の回数を数えたのに結果の記録まで届かなかった回が昨日 ' + Number(k.lost) + '回ありました（処理が途中で止まった疑い・画面は「読み取る」へ戻る）');
   //   設計49：形式を v2 にしたのに成功がすべて v1＝画面が古い（client_ai_format:2 を送らない）
+  //   関門③：v2 の失敗が続いた（v2 の試行のうち失敗が3回以上かつ半分以上）。v2 だけが全部失敗しても気づける
+  if (k.okByFmt && typeof k.v2Fail === 'number') {
+    var v2f = Number(k.v2Fail || 0), v2a = v2f + Number(k.okByFmt.v2 || 0);
+    if (v2f >= 3 && v2f * 2 >= v2a) add('karte_ai_v2_fail', 'warn', v2f, '新しい形式（v2）の AI の下書きが昨日 ' + v2f + '/' + v2a + '回失敗しました（戻すときは wrangler.toml の KARTE_AI_FORMAT の行を消す）');
+  }
   if (k.v2Zero === true) add('karte_ai_v2_zero', 'warn', 1, 'KARTE_AI_FORMAT は v2 なのに、昨日の成功はすべて v1 の形でした（トレーナーの画面が古い版のまま）');
   if (k.limitHit) add('karte_ai_limit', 'warn', Number(by.daily_limit || 0) || 1, 'カルテの AI 振り分けが1日の上限（' + Number(k.dailyMax || 0) + '回）に当たりました（断った ' + Number(by.daily_limit || 0) + '回）');
   return out;

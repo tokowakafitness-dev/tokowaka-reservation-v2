@@ -318,7 +318,11 @@ function addLog(at, result, o = {}) {
   ok('G15b off なら打ち間違いは info', keys(g15b).indexOf('karte_ai_format_bad:info') >= 0 && keys(g15b).indexOf('karte_ai_format_bad:warn') < 0);
   const g16 = chk(base({ ...OPEN, total: 2, byResult: { ok: 2 }, usage: 2, lost: 0, v2Zero: true, okByFmt: { v1: 2, v2: 0 } }));
   ok('G16 ★形式 v2 なのに成功がすべて v1＝warn karte_ai_v2_zero・lost 0 は出さない', keys(g16).indexOf('karte_ai_v2_zero:warn') >= 0 && keys(g16).indexOf('karte_ai_lost:warn') < 0, JSON.stringify(g16));
-  ok('G17 古い Worker（新しい値が無い）では新しい注意を出さない', [g2, g7, g12].every((g) => !keys(g).some((k) => /lost|format_bad|effort_bad|v2_zero/.test(k))) && !/成功の形式/.test(g2[0].detail));
+  const g18 = chk(base({ ...OPEN, total: 4, byResult: { ok: 1, timeout: 3 }, usage: 4, lost: 0, okByFmt: { v1: 1, v2: 0 }, v2Fail: 3, effort: 'medium' }));
+  ok('G18 ★v2 だけが全部失敗（v2 の成功0・失敗3）＝warn karte_ai_v2_fail・件数の行に v2 の失敗回数', keys(g18).indexOf('karte_ai_v2_fail:warn') >= 0 && g18.find((x) => x.key === 'karte_ai_v2_fail').count === 3 && /v2 の失敗 3回/.test(g18.find((x) => x.key === 'karte_ai_counts').detail), JSON.stringify(g18));
+  const g18b = chk(base({ ...OPEN, total: 8, byResult: { ok: 6, timeout: 2 }, usage: 8, lost: 0, okByFmt: { v1: 0, v2: 6 }, v2Fail: 2 }));
+  ok('G18b v2 の失敗2回（成功6）は注意にしない', keys(g18b).indexOf('karte_ai_v2_fail:warn') < 0);
+  ok('G17 古い Worker（新しい値が無い）では新しい注意を出さない', [g2, g7, g12].every((g) => !keys(g).some((k) => /lost|format_bad|effort_bad|v2_zero|v2_fail/.test(k))) && !/成功の形式/.test(g2[0].detail));
 }
 
 // ================= G-wire dailyHealthCheck の配線 =================
