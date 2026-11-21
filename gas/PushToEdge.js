@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-20a 押し出しのロックを所有権方式に・握った時間を数える（例外の回も・放した後に書く）・残数の押し出しに名前 home（設計47）';
+var LB_EDGE_BUILD = '2026-11-21a カルテのAIの日次点検に、記録まで届かなかった回・形式と考える量の打ち間違い・v2 なのに成功がすべて v1 を足す（設計49）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -3444,6 +3444,10 @@ function lbKarteAiDailyCheck(st) {
     : '読みの登録数は読めません';
   var modeTxt = '切替 ' + (k.mode || '?') + (k.mode === 'allow' ? '（' + Number(k.allowCount || 0) + '名）' : '');
   if (open && k.keySet === false) add('karte_ai_no_key', 'warn', 1, '切替が開いているのに鍵（ANTHROPIC_API_KEY）が登録されていません（ボタンが出ない）');
+  //   設計49：形式・考える量の打ち間違い（Worker が formatBad／effortBad を返す版だけ。古い版は undefined＝何も出さない）
+  //   ★形式の打ち間違いは AI を閉じる（503 FORMAT）＝ボタンを押しても下書きが出ない。考える量の打ち間違いは黙って low に倒れる
+  if (k.formatBad === true) add('karte_ai_format_bad', open ? 'warn' : 'info', 1, 'KARTE_AI_FORMAT の値が "v1"／"v2" 以外です。AI の振り分けは閉じています（wrangler.toml を直す）');
+  if (k.effortBad === true) add('karte_ai_effort_bad', open ? 'warn' : 'info', 1, 'KARTE_AI_EFFORT の値が "low"／"medium" 以外です。考える量は low に倒れています（wrangler.toml を直す）');
   if (open && (kana.table !== 'ok' || Number(kana.missing || 0) > 0)) {
     add('karte_ai_kana_missing', 'warn', kana.table === 'ok' ? Number(kana.missing) : 1,
         '切替が開いているのに、' + kanaTxt + '。そのトレーナーの名前のかな書きは伏せられずに外部へ送られます（trainer_master の見出し kana の列に書く）');
@@ -3466,7 +3470,8 @@ function lbKarteAiDailyCheck(st) {
   var rate = den ? Math.round(Number(u.unv || 0) * 100 / den) + '%（' + Number(u.unv || 0) + '/' + den + 'セット・' + Number(u.runs || 0) + '回）' : '出せない（確かめたセットの記録が無い）';
   add('karte_ai_counts', 'info', total, 'カルテの AI 振り分け（昨日 ' + k.day + '・' + modeTxt + '）結果別: ' + parts.join(' / ')
       + '　確かめられない数字: ' + rate + (Number(u.runsNoSets || 0) ? '（古い版の成功 ' + u.runsNoSets + '回は除く）' : '')
-      + '　API の回数: ' + Number(k.usage || 0) + '/' + Number(k.dailyMax || 0) + (k.limitHit ? '（上限到達）' : '') + '　' + kanaTxt);
+      + '　API の回数: ' + Number(k.usage || 0) + '/' + Number(k.dailyMax || 0) + (k.limitHit ? '（上限到達）' : '') + '　' + kanaTxt
+      + (k.okByFmt ? '　成功の形式: v1:' + Number(k.okByFmt.v1 || 0) + ' / v2:' + Number(k.okByFmt.v2 || 0) + '（考える量 ' + (k.effort || '?') + '）' : ''));
   var FAILS = ['http_error', 'refused', 'timeout', 'truncated', 'bad_output', 'error', 'unavailable'];
   var f = 0;
   for (var i = 0; i < FAILS.length; i++) f += Number(by[FAILS[i]] || 0);
@@ -3475,6 +3480,10 @@ function lbKarteAiDailyCheck(st) {
     add('karte_ai_fail', 'warn', f, 'カルテの AI 振り分けが昨日 ' + f + '/' + attempts + '回失敗しました（画面は「読み取る」へ戻るので記録は止まりません）。'
         + 'http_error＝API の拒否・鍵・版／refused＝断られた／timeout＝60秒超／bad_output・truncated＝出力が壊れた／unavailable＝回数を数えられない');
   }
+  //   設計49：回数を数えたのに終了処理まで届かなかった回（強制終了など＝記録が残らない）。1回でも出す（届くのが正常）
+  if (Number(k.lost || 0) > 0) add('karte_ai_lost', 'warn', Number(k.lost), 'カルテの AI 振り分けで、API の回数を数えたのに結果の記録まで届かなかった回が昨日 ' + Number(k.lost) + '回ありました（処理が途中で止まった疑い・画面は「読み取る」へ戻る）');
+  //   設計49：形式を v2 にしたのに成功がすべて v1＝画面が古い（client_ai_format:2 を送らない）
+  if (k.v2Zero === true) add('karte_ai_v2_zero', 'warn', 1, 'KARTE_AI_FORMAT は v2 なのに、昨日の成功はすべて v1 の形でした（トレーナーの画面が古い版のまま）');
   if (k.limitHit) add('karte_ai_limit', 'warn', Number(by.daily_limit || 0) || 1, 'カルテの AI 振り分けが1日の上限（' + Number(k.dailyMax || 0) + '回）に当たりました（断った ' + Number(by.daily_limit || 0) + '回）');
   return out;
 }

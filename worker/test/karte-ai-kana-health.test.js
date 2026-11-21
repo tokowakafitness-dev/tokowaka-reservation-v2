@@ -306,6 +306,19 @@ function addLog(at, result, o = {}) {
   const g12 = chk(base({ mode: 'off', total: 2, byResult: { off: 2 } }));
   ok('G12 off でも記録があれば件数を info で出す（古い画面が押した）・注意なし', keys(g12).join() === 'karte_ai_counts:info');
   ok('G13 出力に trainer_id・氏名を入れない（返すのは key・severity・count・detail）', g5.every((x) => Object.keys(x).sort().join() === 'count,detail,key,severity'));
+  // G14〜 設計49：Worker が返す lost・formatBad・effortBad・v2Zero・okByFmt
+  const OPEN = { mode: 'allow', keySet: true, kana: { table: 'ok', active: 3, missing: 0 } };
+  const g14 = chk(base({ ...OPEN, total: 3, byResult: { ok: 3 }, usage: 4, lost: 1, okByFmt: { v1: 0, v2: 3 }, effort: 'medium' }));
+  ok('G14 ★記録まで届かなかった回（lost）＝warn karte_ai_lost・件数・成功の形式と考える量を件数の行に添える',
+     keys(g14).indexOf('karte_ai_lost:warn') >= 0 && g14.find((x) => x.key === 'karte_ai_lost').count === 1
+     && /v1:0 \/ v2:3（考える量 medium）/.test(g14.find((x) => x.key === 'karte_ai_counts').detail), JSON.stringify(g14));
+  const g15 = chk(base({ ...OPEN, total: 0, formatBad: true, effortBad: true }));
+  ok('G15 ★形式・考える量の打ち間違い＝切替が開いていれば warn（0回の日も出す）', keys(g15).indexOf('karte_ai_format_bad:warn') >= 0 && keys(g15).indexOf('karte_ai_effort_bad:warn') >= 0, JSON.stringify(g15));
+  const g15b = chk(base({ formatBad: true }));
+  ok('G15b off なら打ち間違いは info', keys(g15b).indexOf('karte_ai_format_bad:info') >= 0 && keys(g15b).indexOf('karte_ai_format_bad:warn') < 0);
+  const g16 = chk(base({ ...OPEN, total: 2, byResult: { ok: 2 }, usage: 2, lost: 0, v2Zero: true, okByFmt: { v1: 2, v2: 0 } }));
+  ok('G16 ★形式 v2 なのに成功がすべて v1＝warn karte_ai_v2_zero・lost 0 は出さない', keys(g16).indexOf('karte_ai_v2_zero:warn') >= 0 && keys(g16).indexOf('karte_ai_lost:warn') < 0, JSON.stringify(g16));
+  ok('G17 古い Worker（新しい値が無い）では新しい注意を出さない', [g2, g7, g12].every((g) => !keys(g).some((k) => /lost|format_bad|effort_bad|v2_zero/.test(k))) && !/成功の形式/.test(g2[0].detail));
 }
 
 // ================= G-wire dailyHealthCheck の配線 =================
