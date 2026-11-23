@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-10-24a 改行をLINEの幅に合わせる・固定枠の時刻が日付型でも崩れない';
+var LB_NUDGE_BUILD = '2026-11-23a 日次点検の見張りに「途中で落ちた」（LAST > DONE かつ2時間超・DONE 未設定の間は出さない）と壊れた印のメールを足す（自己修理 P1）';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -811,6 +811,7 @@ function _lbNudgeFirstOfMonth(logs, customerId, now) {
 //     止まっても沈黙が続くだけ。沈黙と正常を区別できない。
 //     毎日動く別の処理から「最後に走った時刻」を見るしかない。
 function _lbNudgeWatchHealthCheck(nowMs) {
+  try { _lbNudgeWatchLease(nowMs); } catch (eL) { Logger.log('印の見張りで例外: ' + (eL && eL.message)); }
   var last = Number(_lbProp('LB_HEALTH_LAST') || 0);
   var hours = last ? Math.floor((nowMs - last) / 3600000) : -1;
 
@@ -833,6 +834,10 @@ function _lbNudgeWatchHealthCheck(nowMs) {
     return;
   }
 
+  //   ★途中で落ちた（自己修理 P1 §4-2・I-H24）：LAST は点検の開始時、DONE は完走時に書く。
+  //     LAST > DONE かつ LAST から2時間超＝最新の点検が最後まで来ていない。
+  //     ★DONE が一度も書かれていない間は判定しない（反映直後に必ず1回誤って鳴るのを防ぐ移行の猶予）
+  if (_lbNudgeWatchHealthCrash(nowMs, last)) return;
   //   36時間＝1日分飛んでも許す（実行の揺れ・手動停止の猶予）。2日飛んだら知らせる
   if (last && hours < 36) return;
   //   1日1回までにする（毎日同じメールが来ると読まれなくなる）
@@ -869,6 +874,46 @@ function _lbNudgeWatchHealthCheck(nowMs) {
       PropertiesService.getScriptProperties().setProperty(notifiedKey, String(nowMs));
     }
   } catch (e) { Logger.log('[health] 通知に失敗: ' + (e && e.message)); }
+}
+
+// 最新の点検が途中で落ちていないかを見る（自己修理 P1 §4-2・I-H24）。知らせたら真（1日1回まで・止まっているときと同じ記録を使う）
+//   LAST は点検の開始時、DONE は完走時に書く。LAST > DONE かつ LAST から2時間超＝最新の点検が最後まで来ていない。
+//   ★DONE が一度も書かれていない間は判定しない（反映直後に必ず1回誤って鳴るのを防ぐ移行の猶予）
+//   ★LAST が36時間より古いときは今までの「止まっている」に任せる
+function _lbNudgeWatchHealthCrash(nowMs, last) {
+  var done = Number(_lbProp('LB_HEALTH_DONE') || 0);
+  if (!done || !last || !(last > done) || (nowMs - last) <= 2 * 3600000 || (nowMs - last) >= 36 * 3600000) return false;
+  var notifiedKey = 'LB_HEALTH_ALERT_AT';
+  var lastAlert = Number(_lbProp(notifiedKey) || 0);
+  if (lastAlert && (nowMs - lastAlert) < 20 * 3600000) return true;
+  var msg = '日次点検（dailyHealthCheck）が途中で落ちています（最後に始めたのは '
+    + Utilities.formatDate(new Date(last), SETTINGS.TIMEZONE, 'M/d HH:mm') + '・最後に完走したのは '
+    + Utilities.formatDate(new Date(done), SETTINGS.TIMEZONE, 'M/d HH:mm') + '）。';
+  Logger.log('[health] ' + msg);
+  var to = _lbAlertEmail();
+  if (to) {
+    GmailApp.sendEmail(to, '【要対処】日次点検が途中で落ちています',
+      msg + '\n\n点検は始めた時刻と最後まで来た時刻を別に残しています。始めたのに最後まで来ていません。\n'
+      + '確かめること：GAS の実行ログで dailyHealthCheck のエラーと、作業依頼 audit の「点検がどこまで進んだか」（最後に入った段が落ちた場所）。');
+    PropertiesService.getScriptProperties().setProperty(notifiedKey, String(nowMs));
+  }
+  return true;
+}
+
+// 点検・修理の「同時に1本だけ」の印（LB_HEALTH_LEASE）が壊れて見送られていないかを見る（自己修理 P1 §2-1・I-H22）。
+//   壊れた印は期限切れとみなさない（取らずに見送る）＝放っておくと点検も修理も止まったままになる。固定の文でメール（1日1回まで）
+function _lbNudgeWatchLease(nowMs) {
+  var o = null;
+  try { o = JSON.parse(_lbProp('LB_HEALTH_SKIP') || 'null'); } catch (e) { o = null; }
+  if (!o || o.why !== 'lease_broken' || !(Number(o.count) > 0)) return;
+  var key = 'LB_HEALTH_LEASE_ALERT_AT', at = Number(_lbProp(key) || 0);
+  if (at && (nowMs - at) < 20 * 3600000) return;
+  var to = _lbAlertEmail();
+  if (!to) return;
+  GmailApp.sendEmail(to, '【要対処】日次点検と自己修理が見送られています',
+    '日次点検と自己修理の「同時に1本だけ」の印（Script Properties の LB_HEALTH_LEASE）が壊れているため、点検・修理が見送られています。\n'
+    + 'GAS エディタのプロジェクトの設定 → スクリプト プロパティで LB_HEALTH_LEASE を削除してください（次の点検から元に戻ります）。');
+  PropertiesService.getScriptProperties().setProperty(key, String(nowMs));
 }
 
 // 共通して入れる事実（transfer を除く3種で使う）。

@@ -260,8 +260,9 @@ console.log('=== ⑦ トリガー ===');
   const handlers = (all.match(/ScriptApp\.newTrigger\(\s*([^)]+)\)/g) || []).map((x) => x.replace(/ScriptApp\.newTrigger\(\s*|\s*\)$/g, '')).sort();
   const uniq = Array.from(new Set(handlers));
   //   ★設計45 の前と同じ集合（増えたら落とす。新しい定期処理は既存に相乗りする・上限20本）
+  //   ★'lbSelfHeal' は自己修理 P1（設計 design-self-heal-P1 §1 ②・決定0201）で意図して1本足した。setupSelfHealTrigger は総数17本以下のときだけ作る
   const BEFORE = ["'_lbSyncAfterRegister'", "'_lbWarmContract'", "'autoBookRecurringPatterns'", "'checkLineQuota'", "'dailyHealthCheck'", "'dailySync'",
-    "'edgeJobPoll'", "'lbNudgeDaily'", "'pushToEdgeFullSync'", "'pushToEdgeHome'", "'pushToEdgeLight'", "'pushToEdgeSlots'", "'refreshPaceBoard'",
+    "'edgeJobPoll'", "'lbNudgeDaily'", "'lbSelfHeal'", "'pushToEdgeFullSync'", "'pushToEdgeHome'", "'pushToEdgeLight'", "'pushToEdgeSlots'", "'refreshPaceBoard'",
     "'sendLineReminders'", "'sendReminderMails'", "'sendShiftReminders'", "'syncContractStatus'", "'warmupCache'", "'weeklyPaceReport'",
     'LB_CALSYNC.AFTER_HANDLER', 'LB_CALSYNC.TICK_HANDLER'].sort();
   ok('⑦-1 ★トリガーを作る呼び出しの集合が設計45 の前と同じ（新しいトリガー0本）', JSON.stringify(uniq) === JSON.stringify(BEFORE), JSON.stringify(uniq));

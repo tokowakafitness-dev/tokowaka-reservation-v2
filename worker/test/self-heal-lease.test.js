@@ -1,0 +1,204 @@
+// 自己修理 P1：同時に1本だけ（借りる印）と見張り（2026-11-23）
+//   実行: node worker/test/self-heal-lease.test.js
+//   I-H20 点検・修理は同時に1本だけ。印は35分・段ごとに延長。ScriptLock は印を取る・放す瞬間だけ
+//   I-H21 副作用の直前に印の owner を確かめ、違えば止まる
+//   I-H22 壊れた印は期限切れとみなさず見送り、lease_broken を記録（lbNudgeDaily がメール）
+//   I-H26 印の owner は実行ごとに一意（check_id と別）
+//   I-H27 期限切れの印を持つ実行は、owner が一致しても副作用をしない
+//   I-H24 Nudge は DONE 未設定の間「途中で落ちた」を出さない・正常完走で誤報しない
+//   I-H16 lbSelfHeal の完走を翌日の点検が、点検の完走を lbNudgeDaily が確かめる
+//   ★値はすべて架空
+import vm from 'node:vm';
+import { makeWorld, run, status, incRows, incOf, removeTrigger, countTrigger, tally, lease, NUDGE } from './_self-heal-harness.js';
+import { pluckFnFrom as pluckFn } from './_gas-lock-src.js';
+
+const t = tally();
+const ok = t.ok;
+const H = 3600000, MIN = 60000;
+
+console.log('=== I-H20 同時に1本だけ・段ごとに延長 ===');
+{
+  const w = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
+  removeTrigger(w, 'dailySync');
+  const seen = [];
+  //   点検の段の途中で、30分ずつ時計を進めながら別の実行を起こす（延長が無ければ2回目で期限が切れる）
+  for (const fn of ['debugDataHealth', 'debugOrphanEvents', 'getBookingMetrics', '_lbQuotaFetch']) {
+    w.hooks[fn] = () => {
+      w.now += 30 * MIN;
+      seen.push(['heal', run(w, 'lbSelfHeal').gate]);
+      seen.push(['check', run(w, 'dailyHealthCheck').skipped]);
+    };
+  }
+  const r = run(w, 'dailyHealthCheck');
+  ok('I-H20-1 ★点検が段を進める間（合計2時間）、修理も別の点検も印を取れない', seen.length === 8 && seen.every((x) => x[1] === 'skip_held' || x[1] === 'held'), JSON.stringify(seen));
+  ok('I-H20-2 その間トリガーは足されていない', w.created.length === 0);
+  ok('I-H20-3 点検そのものは最後まで来て保存した', r.saved && r.saved.saved === true, JSON.stringify(r.saved));
+  ok('I-H20-4 終わったら印は消える', lease(w) === null);
+  ok('I-H20-5 見送りを数えた（8回）', JSON.parse(w.props.LB_HEALTH_SKIP).count === 8, w.props.LB_HEALTH_SKIP);
+  //   印の期限は 35 分
+  const w2 = makeWorld();
+  let L = null;
+  w2.hooks.debugDataHealth = () => { L = lease(w2); };
+  run(w2, 'dailyHealthCheck');
+  ok('I-H20-6 印の期限は「いま＋35分」', L && L.until === w2.now + 35 * MIN && L.entry === 'check', JSON.stringify(L));
+  //   ScriptLock が取れなければ見送り（lock_busy）・何も書かない
+  const w3 = makeWorld(); w3.lockBusy = true;
+  const r3 = run(w3, 'dailyHealthCheck');
+  ok('I-H20-7 ScriptLock が取れなければ点検は走らない（lock_busy）', r3.skipped === 'lock_busy' && !w3.props.LB_HEALTH_LAST && !w3.props.LB_HEALTH_STATUS);
+  //   ScriptLock を長く持たない：本物のソースで tryLock に渡すのは LOCK_MS（300ms）だけ・waitLock を使わない
+  const blk = (await import('./_self-heal-harness.js')).healBlock();
+  ok('I-H20-8 ScriptLock は tryLock(300ms) だけ（waitLock を使わない）', /LOCK_MS: 300,/.test(blk) && /tryLock\(LB_HEAL\.LOCK_MS\)/.test(blk) && !/waitLock/.test(blk));
+}
+
+console.log('=== I-H21 副作用の直前に owner を確かめる ===');
+{
+  const w = makeWorld({ data: { quota: { ok: true, limited: true, left: 0, pct: 100 } } });
+  //   最後の段（契約の入力）で、別の実行が印を奪った（期限内）
+  w.hooks.lbContractInputCheck = () => { w.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w.now + 30 * MIN, entry: 'heal' }); };
+  const r = run(w, 'dailyHealthCheck');
+  ok('I-H21-1 ★印を失った点検は要約・完走の印を書かない', !w.props.LB_HEALTH_STATUS && !w.props.LB_HEALTH_DONE && r.saved && r.saved.saved === false, JSON.stringify(r.saved));
+  ok('I-H21-2 台帳を作らない・オーナーへ送らない', !w.sheets.incidents && !w.mails.some((m) => /オーナーにしかできないこと/.test(m.subject)) && w.pushes.length === 0);
+  ok('I-H21-3 他人の印は消さない', lease(w) && lease(w).owner === 'other');
+  ok('I-H21-4 既存の health_status の記録は今どおり', w.sheets.health_status && w.sheets.health_status.data.length >= 2);
+  //   最後の段の後（悪化の記録 LB_HEALTH_PREV を書くとき）に奪われた → 保存の入口の確認で止まる
+  const w1 = makeWorld();
+  w1.hooks.setProperty = (k) => { if (k === 'LB_HEALTH_PREV' && w1.depth === 1) w1.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w1.now + 30 * MIN, entry: 'heal' }); };
+  const r1 = run(w1, 'dailyHealthCheck');
+  ok('I-H21-7 ★段を全部終えた後に奪われても、保存の直前の確認で止まる（要約・DONE・台帳なし）', !w1.props.LB_HEALTH_STATUS && !w1.props.LB_HEALTH_DONE && !w1.sheets.incidents && r1.saved.why === 'lease', JSON.stringify(r1.saved));
+  //   修理の途中で奪われた → 以降のトリガーを足さない
+  const w2 = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
+  removeTrigger(w2, 'dailySync'); removeTrigger(w2, 'syncContractStatus');
+  run(w2, 'dailyHealthCheck'); w2.now += H;
+  w2.hooks.create = () => { w2.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w2.now + 30 * MIN, entry: 'check' }); };
+  const h = run(w2, 'lbSelfHeal');
+  ok('I-H21-5 ★1本目を作った後に奪われたら、2本目を作らない', w2.created.length === 1, JSON.stringify(w2.created.map((c) => c.name)));
+  ok('I-H21-6 結果は lease_lost', JSON.stringify(h.actions).indexOf('lease_lost') >= 0, JSON.stringify(h.actions));
+}
+
+console.log('=== I-H22 壊れた印 ===');
+{
+  const now = makeWorld().now;
+  const cases = [['JSON が壊れている', '{owner:'], ['until が文字', JSON.stringify({ owner: 'x', until: 'abc' })], ['until が NaN（null）', JSON.stringify({ owner: 'x', until: null })],
+    ['owner が空', JSON.stringify({ owner: '', until: now + MIN })], ['遠い未来（3時間後）', JSON.stringify({ owner: 'x', until: now + 3 * H })], ['配列', '[1,2]']];
+  for (const [name, raw] of cases) {
+    const w = makeWorld({ props: { LB_HEALTH_LEASE: raw } });
+    const r = run(w, 'dailyHealthCheck');
+    const h = run(w, 'lbSelfHeal');
+    ok(`I-H22 ${name}：点検も修理も取らずに見送る・印はそのまま・lease_broken`,
+       r.skipped === 'lease_broken' && h.gate === 'skip_lease_broken' && w.props.LB_HEALTH_LEASE === raw && JSON.parse(w.props.LB_HEALTH_SKIP).why === 'lease_broken' && !w.props.LB_HEALTH_LAST,
+       JSON.stringify({ r: r.skipped, h: h.gate, s: w.props.LB_HEALTH_SKIP }));
+  }
+  const w = makeWorld({ props: { LB_HEALTH_LEASE: JSON.stringify({ owner: 'x', until: now - MIN }) } });
+  const r = run(w, 'dailyHealthCheck');
+  ok('I-H22-対照 期限を過ぎた（壊れていない）印は取れる', !r.skipped && r.saved.saved === true);
+}
+
+//   Nudge.js の見張り（本物）を動かす
+function nudgeCtx(props, now) {
+  const st = { props: Object.assign({}, props), mails: [] };
+  const ctx = {
+    String, Number, Math, JSON, Date, isFinite,
+    SETTINGS: { TIMEZONE: 'Asia/Tokyo' }, Logger: { log: () => {} },
+    Utilities: { formatDate: (d) => new Date(d).toISOString() },
+    _lbProp: (k) => (k in st.props ? st.props[k] : null),
+    PropertiesService: { getScriptProperties: () => ({ setProperty: (k, v) => { st.props[k] = String(v); } }) },
+    _lbAlertEmail: () => 'owner@example.invalid',
+    GmailApp: { sendEmail: (to, s, b) => st.mails.push({ s, b }) },
+  };
+  vm.createContext(ctx);
+  vm.runInContext([pluckFn(NUDGE, '_lbNudgeWatchHealthCheck'), pluckFn(NUDGE, '_lbNudgeWatchHealthCrash'), pluckFn(NUDGE, '_lbNudgeWatchLease')].join('\n'), ctx);
+  ctx._lbNudgeWatchHealthCheck(now);
+  return st;
+}
+console.log('=== I-H22 壊れた印は lbNudgeDaily がメール ===');
+{
+  const now = Date.UTC(2026, 10, 23, 1);
+  const base = { LB_HEALTH_LAST: String(now - 3 * H), LB_HEALTH_DONE: String(now - 3 * H), LB_HEALTH_WATCH_FROM: '1' };
+  const a = nudgeCtx(Object.assign({ LB_HEALTH_SKIP: JSON.stringify({ count: 2, why: 'lease_broken' }) }, base), now);
+  ok('I-H22-m1 lease_broken が数えられていれば固定の文でメール（LB_HEALTH_LEASE を消すよう案内）', a.mails.length === 1 && /LB_HEALTH_LEASE を削除/.test(a.mails[0].b), JSON.stringify(a.mails));
+  const b = nudgeCtx(Object.assign({ LB_HEALTH_SKIP: JSON.stringify({ count: 2, why: 'lease_broken' }), LB_HEALTH_LEASE_ALERT_AT: String(now - H) }, base), now);
+  ok('I-H22-m2 1日1回まで', b.mails.length === 0);
+  const c = nudgeCtx(Object.assign({ LB_HEALTH_SKIP: JSON.stringify({ count: 2, why: 'held' }) }, base), now);
+  ok('I-H22-m3 held の見送りではメールしない', c.mails.length === 0);
+}
+
+console.log('=== I-H24 Nudge：途中で落ちた・移行の猶予 ===');
+{
+  const now = Date.UTC(2026, 10, 23, 1);
+  const a = nudgeCtx({ LB_HEALTH_LAST: String(now - 3 * H), LB_HEALTH_DONE: String(now - 3 * H), LB_HEALTH_WATCH_FROM: '1' }, now);
+  ok('I-H24-n1 正常に完走（DONE >= LAST）なら誤報しない', a.mails.length === 0);
+  const b = nudgeCtx({ LB_HEALTH_LAST: String(now - 3 * H), LB_HEALTH_WATCH_FROM: '1' }, now);
+  ok('I-H24-n2 ★DONE が未設定の間（反映直後）は「途中で落ちた」を出さない', b.mails.length === 0);
+  const c = nudgeCtx({ LB_HEALTH_LAST: String(now - 3 * H), LB_HEALTH_DONE: String(now - 27 * H), LB_HEALTH_WATCH_FROM: '1' }, now);
+  ok('I-H24-n3 LAST > DONE かつ2時間超なら「途中で落ちています」', c.mails.length === 1 && /途中で落ちています/.test(c.mails[0].s), JSON.stringify(c.mails));
+  const d = nudgeCtx({ LB_HEALTH_LAST: String(now - 1 * H), LB_HEALTH_DONE: String(now - 25 * H), LB_HEALTH_WATCH_FROM: '1' }, now);
+  ok('I-H24-n4 2時間以内（まだ走っているかもしれない）は出さない', d.mails.length === 0);
+  const e = nudgeCtx({ LB_HEALTH_LAST: String(now - 40 * H), LB_HEALTH_DONE: String(now - 40 * H), LB_HEALTH_WATCH_FROM: '1' }, now);
+  ok('I-H16-n1 点検が36時間以上走っていなければ今までどおり「止まっています」', e.mails.length === 1 && /日次点検が止まっています/.test(e.mails[0].s), JSON.stringify(e.mails.map((m) => m.s)));
+}
+
+console.log('=== I-H26 印の owner は実行ごとに一意 ===');
+{
+  const w = makeWorld();
+  let L1 = null, inner = null, L1after = null;
+  //   同じミリ秒（時計を止めたまま）にもう1本起動する
+  w.hooks.debugDataHealth = () => { L1 = lease(w); inner = run(w, 'dailyHealthCheck'); L1after = lease(w); };
+  const r = run(w, 'dailyHealthCheck');
+  ok('I-H26-1 owner は check_id と別（実行ごとの乱数）', L1 && L1.owner !== String(r.checkId) && /^uuid-/.test(L1.owner), JSON.stringify(L1));
+  ok('I-H26-2 ★同じ時刻に起動した2本目は見送り、1本目の印を消さない', inner && inner.skipped === 'held' && L1after && L1after.owner === L1.owner);
+  ok('I-H26-3 1本目は最後まで来て保存した', r.saved && r.saved.saved === true);
+  //   check_id が同じでも owner は違う（2回の取得で別の値）
+  const w2 = makeWorld();
+  const c = (await import('./_self-heal-harness.js')).makeCtx(w2);
+  const a = c._lbLeaseAcquire('check'); c._lbLeaseRelease(a.owner);
+  const b = c._lbLeaseAcquire('check');
+  ok('I-H26-4 同じ時刻の2回の取得で owner が違う', a.ok && b.ok && a.owner !== b.owner);
+  ok('I-H26-5 他人の owner では放せない', (c._lbLeaseRelease(a.owner), lease(w2) && lease(w2).owner === b.owner));
+}
+
+console.log('=== I-H27 期限切れの印を持つ実行は副作用をしない ===');
+{
+  const w = makeWorld();
+  //   最後の段で 40 分止まった（延長されないまま期限を過ぎた・owner は自分のまま）
+  w.hooks.lbContractInputCheck = () => { w.now += 40 * MIN; };
+  const r = run(w, 'dailyHealthCheck');
+  ok('I-H27-1 ★owner が一致しても期限を過ぎていれば要約・台帳・完走の印を書かない', !w.props.LB_HEALTH_STATUS && !w.props.LB_HEALTH_DONE && !w.sheets.incidents && r.saved.saved === false, JSON.stringify(r.saved));
+  ok('I-H27-2 期限切れを見送りとして数える（why=expired）', JSON.parse(w.props.LB_HEALTH_SKIP || '{}').why === 'expired', w.props.LB_HEALTH_SKIP);
+  //   修理：作る直前に期限を過ぎていれば作らない
+  const w2 = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
+  removeTrigger(w2, 'dailySync');
+  run(w2, 'dailyHealthCheck'); w2.now += H;
+  let n = 0;
+  w2.hooks.getProjectTriggers = () => { if (++n === 1) w2.now += 40 * MIN; };   // 数えた直後に 40 分止まった
+  const h = run(w2, 'lbSelfHeal');
+  ok('I-H27-3 ★修理も期限を過ぎたらトリガーを作らない', w2.created.length === 0 && countTrigger(w2, 'dailySync') === 0, JSON.stringify(h));
+  //   副作用の直前に「その場で 35 分延長」している
+  const w3 = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
+  removeTrigger(w3, 'dailySync');
+  run(w3, 'dailyHealthCheck'); w3.now += H;
+  let Lc = null;
+  w3.hooks.create = () => { Lc = lease(w3); };
+  run(w3, 'lbSelfHeal');
+  ok('I-H27-4 作る直前に印を「いま＋35分」へ延ばしている', Lc && Lc.until === w3.now + 35 * MIN && Lc.entry === 'heal', JSON.stringify(Lc));
+}
+
+console.log('=== I-H16 lbSelfHeal の完走を翌日の点検が確かめる ===');
+{
+  const w = makeWorld({ props: { SELF_HEAL_MODE: 'practice' } });
+  run(w, 'dailyHealthCheck');
+  ok('I-H16-1 一度も完走していなくても、見張りを始めて26時間は鳴らさない', !status(w).items.some((x) => x.k === 'selfheal_stale'));
+  w.now += 27 * H; run(w, 'dailyHealthCheck');
+  ok('I-H16-2 26時間を過ぎても完走の記録が無ければ selfheal_stale（B）', (status(w).items.find((x) => x.k === 'selfheal_stale') || {}).cls === 'B');
+  w.now += H; run(w, 'lbSelfHeal'); w.now += H; run(w, 'dailyHealthCheck');
+  ok('I-H16-3 lbSelfHeal が完走すれば消え、台帳は閉じる', !status(w).items.some((x) => x.k === 'selfheal_stale') && incOf(w, 'selfheal_stale')[0].status === 'fixed');
+  w.now += 27 * H; run(w, 'dailyHealthCheck');
+  ok('I-H16-4 完走が26時間より古ければまた出る', status(w).items.some((x) => x.k === 'selfheal_stale'));
+  w.props.SELF_HEAL_MODE = 'off'; w.now += H; run(w, 'dailyHealthCheck');
+  ok('I-H16-5 off なら見張らない', !status(w).items.some((x) => x.k === 'selfheal_stale'));
+  //   練習が14日を超えたら info
+  const w2 = makeWorld({ props: { SELF_HEAL_MODE: 'practice' } });
+  run(w2, 'lbSelfHeal'); w2.now += 15 * 24 * H; run(w2, 'lbSelfHeal'); w2.now += H; run(w2, 'dailyHealthCheck');
+  ok('I-H16-6 練習が14日を超えたら selfheal_practice_long（info・案件にしない）', (status(w2).items.find((x) => x.k === 'selfheal_practice_long') || {}).cls === 'info' && incOf(w2, 'selfheal_practice_long').length === 0);
+}
+
+t.end('自己修理 P1 印と見張り');
