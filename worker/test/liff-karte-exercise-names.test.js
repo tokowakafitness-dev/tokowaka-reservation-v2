@@ -224,6 +224,30 @@ const one = (name, st = 'match') => ({ name, heard: name, note: '', sets: [{ sta
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   ok('N7 ★共有の一覧に別の部位で登録があればそちら（ナローベンチプレス＝胸）', w.KarteUI._t.partKeyOf('ナローベンチプレス') === 'chest');
 }
+// ---------- N12 関門②：AI の名前を切り詰めずに判定する（51字・51字目以降の体のことの言葉） ----------
+{
+  const L51 = 'あ'.repeat(51), LH = 'い'.repeat(50) + '痛';
+  const { w } = boot({ src: FULL, cfg: { draft: draftWith([one(L51), one('ベンチプレス')]) } });
+  await toReview(w);
+  ok('N12 ★51字の名前は切り詰めずに出し（51字のまま）、押せない（50字まで）', !!card(w, L51) && put(w).disabled && why(w).includes('長すぎます'), why(w));
+  const { w: w2 } = boot({ src: FULL, cfg: { draft: draftWith([one(LH), one('ベンチプレス')]) } });
+  await toReview(w2);
+  ok('N12 ★51字目に体のことの言葉がある名前は押せない（全体で見る）', !!card(w2, LH) && put(w2).disabled && why(w2).includes('体のこと'), why(w2));
+  //   一時保存（設計51）でも切らずに戻し、押せないまま
+  const { w: w3 } = boot({ src: FULL, cfg: { draft: draftWith([one(L51), one('ベンチプレス')]) } });
+  await toReview(w3);
+  const sv = JSON.parse(w3.localStorage.getItem('karte_ai_review_v1:T1:C1') || 'null');
+  ok('N12 一時保存にも51字のまま入る', !!sv && sv.rv.exercises[0].name === L51);
+  await openImport(w3);
+  const bd = R(w3).querySelector('.k-airresume');
+  if (bd) { bd.querySelector('.k-airgo').click(); await settle(); }
+  ok('N12 ★一時保存から戻しても51字のまま・押せない（保存ごと捨てない）', !!bd && !!card(w3, L51) && put(w3).disabled);
+  //   v1 のカード（KARTE_AI_FORMAT 未設定の戻り先）でも切り詰めた名前で種目にできない
+  const { w: w4 } = boot({ src: FULL, cfg: { draft: () => ({ v: 1, exercises: [{ name: LH, heard: LH, note: '', sets: [{ w: 20, r: 10, evidence: '20キロで10回', note: '' }] }], coaching: [], hearing: [], caution: [], member_message: '', member_todo: [] }) } });
+  await toReview(w4);
+  const short50 = [...R(w4).querySelectorAll('input[aria-label="種目名"]')].filter((i) => i.value.length === 50);
+  ok('N12 ★v1 のカードでも50字に切り詰めた名前の入力欄を作らない', short50.length === 0 && R(w4).textContent.includes(LH), String(short50.length));
+}
 // ---------- N9 手入力の種目選びの検索で別名から正式名が出る ----------
 {
   const { w } = boot({ src: FULL });

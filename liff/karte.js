@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23f 種目名で止めない・固定の種目の一覧を85種目に（設計52）';
+  var KARTE_BUILD = '2026-11-23g 種目名を切り詰めずに判定する（設計52 関門②）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2362,7 +2362,8 @@
       var name = exName(e && e.name), heard = rvStr(e && e.heard);
       //   設計52：別名の表に完全一致したら正式名へ（name0 も正式名＝S-H5 の明示の例外：AI がその名前で返したのと同じ扱い）。それ以外の似た名前はもしかしてだけ
       if (name && Object.prototype.hasOwnProperty.call(EX_ALIAS, name)) name = EX_ALIAS[name];
-      var n0 = ((name && isAuto(name)) ? name : (name || heard)).slice(0, EX_NAME_MAX);
+      //   ★切り詰めない（設計52 関門②：切ると51字目以降の体のことの言葉・50字超を rvNameState が見られない）。表示の幅は画面側で扱う
+      var n0 = (name && isAuto(name)) ? name : (name || heard);
       var orig = (Array.isArray(e && e.sets) ? e.sets : []).map(function (s) {
         var st = AI_STATUSES.indexOf(s && s.status) >= 0 ? s.status : 'nobasis', hid = st === 'healthHidden';
         return { status: st, w: hid || !(s && typeof s.w === 'number') ? null : s.w, r: hid || !(s && Number.isInteger(s.r)) ? null : s.r, bw: !hid && !!(s && s.bw === true),
@@ -2606,9 +2607,9 @@
     var exs = [];
     for (var i = 0; i < r.exercises.length; i++) {
       var e = r.exercises[i];
-      if (!e || typeof e !== 'object' || !str(e.id, 40) || !str(e.name, EX_NAME_MAX) || !str(e.name0, EX_NAME_MAX) || typeof e.off !== 'boolean' || !str(e.line, 500) || !str(e.note, 4000)) return { ok: false };
+      if (!e || typeof e !== 'object' || !str(e.id, 40) || !str(e.name, 200) || !str(e.name0, 200) || typeof e.off !== 'boolean' || !str(e.line, 500) || !str(e.note, 4000)) return { ok: false };
       if (e.part !== null && !PART_KEYS.some(function (pk) { return pk[0] === e.part; })) return { ok: false };
-      if (e.partFor !== null && !str(e.partFor, EX_NAME_MAX)) return { ok: false };
+      if (e.partFor !== null && !str(e.partFor, 200)) return { ok: false };   // 50字を超える名前も切らずに戻す（押せないまま＝rvNameState の long）
       if (!Array.isArray(e.orig) || e.orig.length > MEMO_LIMITS.setsPerOrd) return { ok: false };
       var orig = [];
       for (var j = 0; j < e.orig.length; j++) {
@@ -2805,7 +2806,7 @@
           var idx = items.push({ exercise: name, sets: [], doneOnly: true }) - 1;
           if (sets.length) P({ kind: 'rule', item: idx, text: name + '：' + evText, parsed: { exercise: name, sets: sets }, propose: 'addset' });
         } else if (name || heard) {
-          var nj = P({ kind: 'name', text: label + (heard && heard !== label ? '（聞こえた言葉：' + heard + '）' : ''), after: null, prevPend: null, candidates: [], parsed: { exercise: label.slice(0, EX_NAME_MAX), sets: [] } });
+          var nj = P({ kind: 'name', text: label + (heard && heard !== label ? '（聞こえた言葉：' + heard + '）' : ''), after: null, prevPend: null, candidates: [], parsed: { exercise: label, sets: [] } });   // ★切り詰めない（設計52 関門②）
           if (sets.length) P({ kind: 'rule', pendItem: nj, text: label + '：' + evText, parsed: { exercise: label, sets: sets }, propose: 'addset' });
         } else sets.forEach(function (o, i) { P({ kind: 'aiunv', text: '（種目名なし）' + wl(o.w === '' ? null : o.w) + '×' + o.r + ' ' + evs[i] }); });
         (Array.isArray(e.unverified) ? e.unverified : []).forEach(function (u) {
