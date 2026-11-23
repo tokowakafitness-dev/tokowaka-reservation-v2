@@ -442,3 +442,12 @@ rv = { v: 3, effort,
 | §4-1〜§4-5 Worker | `worker/src/routes/karte-ai-v2.js`（AI_SCHEMA_V2 に bodyweight・AI_SYSTEM_V2・makeLocator／windowOf／AI_REPEAT／EV_MIN／HEALTH_WINDOW・validateDraftV2 の分類）・`worker/src/routes/karte-ai.js`（makeMasker のお客様の退避・innerV2 の lineMarked・AI_BUILD 23a） | なし |
 | §5 画面 | `liff/karte.js`（reviewFromDraft・rvParseLine・rvTokens〔LCS〕・rvNameState・reviewTally・reviewBuild・rvExCard・rvField・rvFoot・drawReview・placeReview・記録の画面の srcRenamed の印・AI_SCOPE.full に next・KARTE_BUILD 23a）・`liff/index.html`（karte.js?v=2026-11-23a） | 確認画面の上の帯（要確認 あと N 件）・1件ずつの確定・reviewOpen・reviewCounts を消した（_t から外し reviewTally・rvParseLine・rvTokens を出した） |
 | §9 検査 | `worker/test/liff-karte-ai-review.test.js`（書き換え：T1〜T12＋R0・R2・R10・R16・63本）・`worker/test/karte-ai-v2.test.js`（V2-24〜V2-28）・`worker/test/karte-ai.test.js`（M） | 壊して確かめた19か所は全部該当の検査が落ちた（報告に一覧） |
+
+### 17-2 関門②（2026-11-23・CEO 経由の Codex 2本・指摘4件 → 全部受け入れ）
+| # | 指摘 | 裏を取った該当行 | 対処 |
+|---|---|---|---|
+| 1 High | 同じ根拠文が複数あると最初の1か所だけで位置を決め、後ろの健康の文脈を迂回できる | `makeLocator` が `h.indexOf(e)` の最初の位置だけを返し、健康語の窓もその位置だけ＝事実 | `makeLocator` が全部の位置（`all`）を返し、**全部の位置の前後で健康語を見る**（1つでも当たれば healthHidden）。返す切り出しは最初の位置。検査 V2-29（健康語なし→あり・逆順・両方なしは match） |
+| 2 High | inferred の bodyweight:true が根拠に「自重」等が無くても返る | inferred の `bw` は AI の申告のまま＝事実 | inferred の `bw` は、根拠に自重の言葉（karte-ai.js の `BODYWEIGHT` を export して verifySet と同じ一覧）があるか、繰り返しの言葉＋同じ種目の直前のセットが自重のときだけ。それ以外は bw 偽・重さ null（画面では `?×N`）。検査 V2-30 |
+| 3 Medium | 短い指示文で unclear の evidence の「文字のまま・80字まで」が抜けた | 第1版の指示文の 6. に evidence の書き方が無い＝事実 | 指示文に戻した（V2-27 に1項目足して27項目）。unclear の根拠は句読点を無視した探し方で文字起こしに見つかったときだけその切り出しを返し、無ければ空。検査 V2-31 |
+| 4 High | セットの1行で `?痛み 20×5` のように ? と同じ塊に健康語を入れると「入れない」で黙って落ち、健康語の検査を通る | `rvParseLine` は ? を含む塊を全部 skip、`reviewTally` は `ex.line` の健康語を見ていない＝事実 | ①`reviewTally` が `ex.line` も健康語で見る（当たれば押せない・「〇〇のセットの行」）②「入れない」は純粋な `?` の形（`RV_SKIP`：`?`・`N×?`・`×?`〔自重×?〕・`?×N`・`?×?`）だけ。それ以外は読めない（押せない）。検査 T4 の表に6行・T7 |
+- 版の印を 23b に上げた（KARTE_BUILD・karte.js?v=・AI_BUILD）。
