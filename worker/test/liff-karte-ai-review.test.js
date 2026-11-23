@@ -1,4 +1,4 @@
-// 設計49 AI の下書き v2 を1画面で確認する：本番の liff/karte.js を jsdom で動かし、入口から通す・2026-11-20
+// 設計50 AI の振り分けの確認（1種目＝1行の文字・欄の文章・お客様の欄は既定オフ）：本番の liff/karte.js を jsdom で動かし、入口から通す・2026-11-23（設計49 の R0・R2・R10・R16 を残す）
 //   実行: node worker/test/liff-karte-ai-review.test.js
 //
 //   ★カルテを開く → 今日の記録 → メモから取り込む → 貼る → 「AIで振り分ける」→ 1画面の確認 → 最後のボタン → 記録の画面 → ✓ → 保存、を click で通す
@@ -37,18 +37,21 @@ const SECRET = '架空の選挙の雑談がここにある';
 const TRANSCRIPT = 'ベンチプレス 50キロで10回\n同じ重さでもう1セット 8回\nスカルフラッシュ 10キロで12回\n' + SECRET;
 const EVID = '同じ重さでもう1セット 8回';
 const DRAFT = () => ({
-  v: 2, effort: 'low',
-  summary: ['ベンチプレスを50キロで2セット行った', '初回のスカルクラッシャーを試した'],
+  v: 2, effort: 'medium',
+  summary: ['ベンチプレスを50キロから始めた', 'スクワットを自重で行った'],
   exercises: [
     { name: 'ベンチプレス', heard: 'ベンチプレス', note: '肩甲骨を寄せる', sets: [
-      { status: 'match', w: 50, r: 10, evidence: 'ベンチプレス 50キロで10回', unsure: '', note: 'フォーム良い' },
-      { status: 'inferred', w: 50, r: 8, evidence: EVID, unsure: '予告かもしれない', note: '' },
-      { status: 'nobasis', w: 60, r: 5, evidence: '60キロで5回', unsure: '', note: '' },
-      { status: 'healthHidden', w: null, r: null, evidence: '', unsure: '', note: '' }] },
-    { name: 'スカルクラッシャー', heard: 'スカルフラッシュ', note: '', sets: [{ status: 'match', w: 10, r: 12, evidence: 'スカルフラッシュ 10キロで12回', unsure: '', note: '' }] }],
+      { status: 'match', w: 50, r: 10, bw: false, evidence: 'ベンチプレス 50キロで10回', unsure: '', note: 'フォーム良い' },
+      { status: 'inferred', w: 50, r: 8, bw: false, evidence: EVID, unsure: '予告かもしれない', note: '' },
+      { status: 'nobasis', w: 60, r: 5, bw: false, evidence: '60キロで5回', unsure: '', note: '' },
+      { status: 'healthHidden', w: null, r: null, bw: false, evidence: '', unsure: '', note: '' },
+      { status: 'inferred', w: 40, r: null, bw: false, evidence: '40キロいきましょう', unsure: '', note: '' }] },
+    { name: 'スカルクラッシャー', heard: 'スカルフラッシュ', note: '', sets: [{ status: 'match', w: 10, r: 12, bw: false, evidence: 'スカルフラッシュ 10キロで12回', unsure: '', note: '' }] },
+    { name: 'スクワット', heard: 'スクワット', note: '', sets: [{ status: 'match', w: null, r: 15, bw: true, evidence: 'スクワット 自重で15回', unsure: '', note: '' }] },
+    { name: 'レッグプレス', heard: 'レッグプレス', note: '', sets: [{ status: 'inferred', w: null, r: 8, bw: false, evidence: 'レッグプレス 8回', unsure: '', note: '' }] }],
   condition: ['睡眠不足で疲れ気味'],
   caution: ['膝が少し痛い'],
-  coaching: ['肘を張りすぎない', '〔人〕と一緒に来たいと話していた'],
+  coaching: ['お客様の肘を張りすぎない', '〔人〕と一緒に来たいと話していた'],
   hearing: ['睡眠は5時間くらい'],
   next_actions: ['次回はベンチプレスを52.5キロで'],
   member_message: 'フォームが安定してきました。',
@@ -94,10 +97,6 @@ const btns = (root, t) => [...root.querySelectorAll('button')].filter((x) => x.t
 const DKEY = 'karte_tr_draft_v1:T1:C1';
 const draftOf = (w) => JSON.parse(w.localStorage.getItem(DKEY) || 'null');
 const storeText = (s) => { let o = ''; for (let i = 0; i < s.length; i++) o += s.key(i) + '=' + s.getItem(s.key(i)) + '\n'; return o; };
-const sec = (w, cls) => R(w).querySelector('.' + cls);
-const rows = (w, kind) => [...R(w).querySelectorAll('.k-rvrow[data-kind="' + kind + '"]')];
-const setRows = (w) => [...R(w).querySelectorAll('.k-rvset')];
-const put = (w) => R(w).querySelector('button.k-rvput');
 async function openImport(w) {
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const b = btn(R(w), '＋ 今日の記録') || btn(R(w), '記録の入力（途中）を開く');
@@ -106,138 +105,180 @@ async function openImport(w) {
 }
 function paste(w, text) { const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text; ta.dispatchEvent(new w.Event('input', { bubbles: true })); return ta; }
 async function toReview(w) { await openImport(w); paste(w, TRANSCRIPT); btn(R(w), 'AIで振り分ける').click(); await settle(); }
-const exCard = (w, name) => [...R(w).querySelectorAll('.k-rvex')].find((c) => c.textContent.indexOf(name) === 0);
-async function nameSkull(w) {
-  const c = exCard(w, 'スカルクラッシャー');
-  btn(c, '種目にする').click(); await settle();
-  [...R(w).querySelectorAll('button.k-pill')].find((x) => x.textContent === '腕').click(); await settle();
-}
 async function saveAll(w) {
   for (let i = 0; i < 4; i++) { const b = R(w).querySelector('button.k-allchk'); if (!b) break; b.click(); await settle(); }
   btn(R(w), '保存する').click(); await settle();
 }
 
-// ================= R1・R2・R3・R7・R17・R9 試用（既定） =================
-{
-  const { w, sent } = await (async () => { const b = boot(); await toReview(b.w); return b; })();
-  const s1 = sent.filter((x) => x.body.action === 'k_aiDraft');
-  ok('R1 ★要求に client_ai_format:2（数値）と clientReqId（形が合う番号）', s1.length === 1 && s1[0].body.client_ai_format === 2 && /^[A-Za-z0-9_-]{1,36}$/.test(s1[0].body.clientReqId), JSON.stringify(s1.map((x) => x.body.client_ai_format)));
-  ok('R1 ★1画面に要約・種目・状態・次回・指導・ヒアリング・体のこと・お客様の欄・要確認の点・カードは出ない', !!sec(w, 'k-rvsum') && !!sec(w, 'k-rvexs') && rows(w, 'condition').length === 1 && rows(w, 'next').length === 1 && rows(w, 'coaching').length === 2 && rows(w, 'hearing').length === 1 && !!sec(w, 'k-rvcau') && !!sec(w, 'k-rvmem') && rows(w, 'unclear').length === 1 && R(w).querySelectorAll('.k-impcard').length === 0);
-  ok('R1 要約は畳まずに全文が出る', sec(w, 'k-rvsum').textContent.includes('ベンチプレスを50キロで2セット行った') && sec(w, 'k-rvsum').textContent.includes('初回のスカルクラッシャーを試した') && !sec(w, 'k-rvsum').querySelector('details'));
-  ok('R2 ★押すまで記録の下書き・保存領域に何も入らない・console に原文が無い', (!draftOf(w) || !(draftOf(w).items || []).length) && !storeText(w.localStorage).includes(SECRET) && !storeText(w.sessionStorage).includes(SECRET) && !storeText(w.localStorage).includes('予告かもしれない') && !w.logs.join('\n').includes(SECRET));
-  ok('R17 ★試用：要約・状態・次回・要確認の点は「見るだけ」（入れる操作が無い）', ['summary', 'condition', 'next', 'unclear'].every((k) => rows(w, k).every((r) => r.querySelector('.k-rvview') && !r.querySelector('button.k-rvtog'))));
-  const st = setRows(w);
-  ok('R17 ★試用：推論・根拠なし・健康の根拠のセットは見るだけ（確定・欄の編集・外すが無い）・印と根拠は出る', ['inferred', 'nobasis', 'healthHidden'].every((k) => { const r = st.find((x) => x.dataset.status === k); return r && r.querySelector('.k-rvview') && !r.querySelector('input') && !btn(r, 'この数字で確定') && !btn(r, '根拠なしのまま確定') && !btn(r, '外す'); }) && st.find((x) => x.dataset.status === 'inferred').textContent.includes('推 50kg') && st.find((x) => x.dataset.status === 'nobasis').textContent.includes('！ 60kg'));
-  const hh = st.find((x) => x.dataset.status === 'healthHidden');
-  ok('R18 ★健康の根拠のセットは固定文だけ（健康の語・数字を出さない）', hh.textContent.includes('健康の情報を含む根拠だったため、そのままは使えません') && !/痛|kg/.test(hh.textContent), hh.textContent);
-  ok('R7 体のことは入れる操作が無い・〔人〕を含む指導の文は入れられる（初期値で入る）', !sec(w, 'k-rvcau').querySelector('button') && rows(w, 'coaching')[1].querySelector('button.k-rvtog').getAttribute('aria-pressed') === 'true');
-  ok('R7 名前の印（初回）を含む要約の文は初期値で外れる（試用では見るだけ）', rows(w, 'summary')[1].textContent.includes('初回'));
-  ok('R6 お客様に見える欄は初期値で入らない（押せば入る）', rows(w, 'member')[0].querySelector('button.k-rvtog').getAttribute('aria-pressed') === 'false');
-  ok('R3 ★一覧に無い種目が未決＝要確認あと1件・最後のボタンは押せない', R(w).querySelector('.k-rvhead').textContent.includes('要確認 あと1件') && put(w).disabled, R(w).querySelector('.k-rvhead').textContent);
-  ok('R1 区分ごとの採用件数がボタンの直上に出る', R(w).querySelector('.k-rvcount').textContent.includes('採用：セット 1') && R(w).querySelector('.k-rvcount').nextElementSibling === put(w), R(w).querySelector('.k-rvcount').textContent);
-  await nameSkull(w);
-  ok('R8 種目名を決めると要確認なし・押せる・件数にスカルのセットが入る', !put(w).disabled && R(w).querySelector('.k-rvhead').textContent.includes('要確認なし') && R(w).querySelector('.k-rvcount').textContent.includes('採用：セット 2'));
-  btn(rows(w, 'member')[0], 'お客様へに入れない').click(); await settle();
-  put(w).click(); await nav();
-  const D = draftOf(w);
-  ok('R17 ★試用：下書きに入るのは match のセットだけ（ベンチ 50×10・スカル 10×12）・✓は全部 false（I57）・src は無い',
-     D && D.items.length === 2 && JSON.stringify(D.items[0].sets.map((s) => [s.w, s.r, s.done])) === '[["50","10",false]]' && D.items[0].sets[0].note === 'フォーム良い' && D.items[1].exercise === 'スカルクラッシャー' && D.items[1].regPart === 'arm' && !JSON.stringify(D.items).includes('"src"'), JSON.stringify(D && D.items));
-  ok('R17 ★試用：社内メモに指導・ヒアリング・種目のメモ・〔人〕の文／要約・状態・次回・要確認の点・体のことは無い', /肘を張りすぎない/.test(D.memo) && /ヒアリング：睡眠は5時間くらい/.test(D.memo) && /ベンチプレス：肩甲骨を寄せる/.test(D.memo) && /〔人〕と一緒/.test(D.memo) && !/今日の流れ/.test(D.memo) && !/状態：/.test(D.memo) && !/52\.5/.test(D.memo) && !/要確認：/.test(D.memo) && !/膝/.test(D.memo), D.memo);
-  ok('R6 お客様へは押したので入る・次回までには押していないので入らない', D.member && D.member.message === 'フォームが安定してきました。' && !(D.member.todo || []).some((t) => t));
-  ok('R13 ★下書きのどこにも根拠（evidence）の文字列が無い・保存領域に雑談が無い', !storeText(w.localStorage).includes(EVID) && !storeText(w.localStorage).includes('予告かもしれない') && !storeText(w.localStorage).includes(SECRET));
-  ok('R2 確かめのダイアログを増やしていない', w.confirms === 0 && w.alerts.length === 0, JSON.stringify(w.alerts));
-}
-// ================= R0 本番の値 =================
-ok('R0 ★liff/karte.js の AI_V2_SAVE_SCOPE は \'full\' が1行だけ（D8 の後・決定0195）', SCOPE_LINES.length === 1 && SCOPE_LINES[0].trim() === "var AI_V2_SAVE_SCOPE = 'full';", JSON.stringify(SCOPE_LINES));
-// ================= R17 不正な scope は trial に倒れる =================
-{
-  const { w } = boot({ src: BOGUS });
-  await toReview(w);
-  ok('R17 ★AI_V2_SAVE_SCOPE が不正な値（Full）なら trial（推論の確定ボタンが無い）', !btn(R(w), 'この数字で確定') && setRows(w).find((x) => x.dataset.status === 'inferred').querySelector('.k-rvview'));
-}
-// ================= R13 純粋データの表（4×4×scope） =================
-{
-  const { w } = boot();
-  const T = w.KarteUI._t;
-  const isAuto = (n) => n === 'ベンチプレス';
-  const one = (status) => ({ v: 2, summary: [], exercises: [{ name: 'ベンチプレス', heard: '', note: '', sets: [{ status, w: status === 'healthHidden' ? null : 50, r: status === 'healthHidden' ? null : 10, evidence: 'e', unsure: '', note: '' }] }], condition: [], caution: [], coaching: [], hearing: [], next_actions: [], member_message: '', member_todo: [], unclear: [] });
-  const WANT = { match: ['confirmed', 'edited'], inferred: ['confirmed', 'edited'], nobasis: ['confirmed', 'edited'], healthHidden: ['edited'] };
-  const bad = [];
-  for (const scope of ['trial', 'full']) for (const st of ['match', 'inferred', 'nobasis', 'healthHidden']) for (const res of ['unresolved', 'confirmed', 'edited', 'excluded']) {
-    const rv = T.reviewFromDraft(one(st), isAuto, scope);
-    const s = rv.exercises[0].sets[0];
-    s.resolution = res;
-    if (st === 'healthHidden') { s.w = '40'; s.r = '8'; }
-    let out, threw = false;
-    try { out = T.reviewBuild(rv, scope); } catch (e) { threw = String(e.message); }
-    const allowed = T.scopeAllows('set:' + st, scope);
-    const want = allowed ? WANT[st].indexOf(res) >= 0 : false;
-    //   要確認が残る（unresolved で移せる行）・scope の外の採用・healthHidden の confirmed は投げる
-    const wantThrow = (allowed && res === 'unresolved') || (!allowed && st !== 'match' && (res === 'confirmed' || res === 'edited')) || (st === 'healthHidden' && res === 'confirmed');
-    const got = !threw && out.items.length && out.items[0].sets.length === 1;
-    if (wantThrow ? !threw : (!!got !== want || threw)) bad.push([scope, st, res, threw, got]);
-    if (got && st !== 'match' && out.items[0].sets[0].src !== st) bad.push(['src', scope, st, res]);
-  }
-  ok('R13 ★sourceStatus×resolution×scope の全組み合わせが §7-4 の表どおり（投げるもの・入るもの・src）', bad.length === 0, JSON.stringify(bad));
-  //   種目名を選び直すと配下は match も含めて unresolved
-  const rv = T.reviewFromDraft(Object.assign(one('match'), { exercises: [{ name: '未知の種目', heard: '', note: '', sets: [{ status: 'match', w: 50, r: 10, evidence: 'e', unsure: '', note: '' }] }] }), isAuto);
-  ok('R13 一覧に無い種目は未決（要確認1）', rv.exercises[0].nameStatus === 'unresolved' && T.reviewOpen(rv, 'trial') === 1);
-  ok('R13 scope の判定は1か所（trial は match・種目・備考・指導・ヒアリング・お客様の欄だけ）', ['set:match', 'exercise', 'exnote', 'setnote', 'coaching', 'hearing', 'member', 'todo'].every((k) => T.scopeAllows(k, 'trial')) && !['set:inferred', 'set:nobasis', 'set:healthHidden', 'summary', 'condition', 'next', 'unclear'].some((k) => T.scopeAllows(k, 'trial')) && T.aiScope() === 'trial');
-  const rvT = T.reviewFromDraft(Object.assign(one('match'), { summary: ['架空の要約の文'] }), isAuto, 'trial');
-  ok('R17 試用では要約の include は初期値で立たない', rvT.summary[0].include === false);
-  rvT.summary[0].include = true;
-  let thT = ''; try { T.reviewBuild(rvT, 'trial'); } catch (e) { thT = e.message; }
-  ok('R17 ★試用で範囲外の項目（要約）の include を立てて渡すと投げる', thT === 'RV_SCOPE');
-  const rvH = T.reviewFromDraft(Object.assign(one('match'), { coaching: ['膝が痛い'] }), isAuto, 'full');
-  rvH.coaching[0].include = true;
-  let th = ''; try { T.reviewBuild(rvH, 'full'); } catch (e) { th = e.message; }
-  ok('R7 健康語の文を純粋データで入れようとすると投げる', th === 'RV_HEALTH');
-}
-// ================= full：確定・直す・出所の印・保存の payload =================
+const put = (w) => R(w).querySelector('button.k-rvput');
+const cards = (w) => [...R(w).querySelectorAll('.k-rvex')];
+const card = (w, name) => cards(w).find((c) => c.querySelector('.k-rvname') && c.querySelector('.k-rvname').value === name);
+const lineOf = (c) => c.querySelector('.k-rvline');
+const chipsOf = (c) => [...c.querySelectorAll('.k-rvchip')].map((x) => x.dataset.st);
+const foot = (w) => (R(w).querySelector('.k-rvcount') || {}).textContent || '';
+const why = (w) => (R(w).querySelector('.k-rvwhy') || {}).textContent || '';
+const field = (w, k) => R(w).querySelector('.k-rvfield[data-field="' + k + '"]');
+function type(w, elx, v) { elx.value = v; elx.dispatchEvent(new w.Event('input', { bubbles: true })); }
+async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('button.k-pill')].find((x) => x.textContent === part).click(); await settle(); }
+
+// ================= T1〜T11 full（本番の値） =================
 {
   const { w, sent } = boot({ src: FULL });
   await toReview(w);
-  ok('R17 full：要約は初期値で入る（名前の印の文は外れる）・状態は入る・次回やることはまだ見るだけ（next_plan の線は次の段）', rows(w, 'summary')[0].querySelector('button.k-rvtog').getAttribute('aria-pressed') === 'true' && rows(w, 'summary')[1].querySelector('button.k-rvtog').getAttribute('aria-pressed') === 'false' && rows(w, 'condition')[0].querySelector('button.k-rvtog').getAttribute('aria-pressed') === 'true' && rows(w, 'next')[0].querySelector('.k-rvview'));
-  const inf = () => setRows(w).find((x) => x.dataset.status === 'inferred');
-  const nob = () => setRows(w).find((x) => x.dataset.status === 'nobasis');
-  const hh = () => setRows(w).find((x) => x.dataset.status === 'healthHidden');
-  ok('R5 ★根拠なしは数字が欄に入り、推論と文言・印・確定ボタンの文言で見分けられる', nob().querySelector('input').value === '60' && nob().textContent.includes('根拠なし（文字起こしに見つかりません）') && !!btn(nob(), '根拠なしのまま確定') && !!btn(inf(), 'この数字で確定') && inf().textContent.includes('要確認：推論'));
-  ok('R18 healthHidden：欄が空・確定ボタンが無い', [...hh().querySelectorAll('input')].every((i) => i.value === '') && !btn(hh(), 'この数字で確定') && !btn(hh(), '根拠なしのまま確定'));
-  await nameSkull(w);
-  ok('R4 ★要確認が残る間は押せない（推論・根拠なし・健康の根拠の3件）', put(w).disabled && R(w).querySelector('.k-rvhead').textContent.includes('あと3件'), R(w).querySelector('.k-rvhead').textContent);
-  btn(inf(), 'この数字で確定').click(); await settle();
-  const ni = nob().querySelectorAll('input'); ni[1].value = '6'; ni[1].dispatchEvent(new w.Event('change')); await settle();
-  const hi = hh().querySelectorAll('input'); hi[0].value = '40'; hi[0].dispatchEvent(new w.Event('change')); await settle();
-  ok('R18 healthHidden は重さだけでは入らない（回数が要る）', put(w).disabled && hh().dataset.res === 'unresolved');
-  const hi2 = hh().querySelectorAll('input'); hi2[1].value = '8'; hi2[1].dispatchEvent(new w.Event('change')); await settle();
-  ok('R4 確定・直す・打つで要確認なし・押せる', !put(w).disabled && R(w).querySelector('.k-rvcount').textContent.includes('うち要確認から確定 3'), R(w).querySelector('.k-rvcount').textContent);
+  const s1 = sent.filter((x) => x.body.action === 'k_aiDraft');
+  ok('T1 ★要求に client_ai_format:2 と clientReqId', s1.length === 1 && s1[0].body.client_ai_format === 2 && /^[A-Za-z0-9_-]{1,36}$/.test(s1[0].body.clientReqId));
+  ok('T1 ★1種目＝1枚の1行・初期値が表どおり（一致・推測・根拠なし・健康は ?・回数不明は ×?・自重・重さ不明は ?×）', cards(w).length === 4 && lineOf(card(w, 'ベンチプレス')).value === '50×10  50×8  60×5  ?  40×?' && lineOf(card(w, 'スカルクラッシャー')).value === '10×12' && lineOf(card(w, 'スクワット')).value === '自重×15' && lineOf(card(w, 'レッグプレス')).value === '?×8', cards(w).map((c) => lineOf(c) && lineOf(c).value).join(' | '));
+  ok('T1 カード（.k-impcard）・上の帯（.k-rvhead）・1件ずつの確定ボタンが出ない', !R(w).querySelector('.k-impcard') && !R(w).querySelector('.k-rvhead') && !btn(R(w), 'この数字で確定') && !btn(R(w), '根拠なしのまま確定'));
+  const bc = card(w, 'ベンチプレス');
+  ok('T2 ★チップの色：一致・推測・根拠なし・入れない・入れない', JSON.stringify(chipsOf(bc)) === JSON.stringify(['match', 'inferred', 'nobasis', 'skip', 'skip']), JSON.stringify(chipsOf(bc)));
+  const hhChip = bc.querySelectorAll('.k-rvchip')[3];
+  ok('T2 ★健康の根拠のセットは「体の話を含むため数字を出していません」だけ（健康の語・数字を出さない）', hhChip.textContent.includes('体の話を含むため') && !/痛|kg|\d+×/.test(hhChip.textContent.replace(/^\d+\. /, '')), hhChip.textContent);
+  ok('T2 根拠を見る：根拠なしは「見つかりません」・回数不明の推測は「数字が読み取れません」・健康は固定文だけ', /根拠が文字起こしに見つかりません/.test(bc.querySelector('.k-rvev').textContent) && /数字が読み取れません/.test(bc.querySelector('.k-rvev').textContent) && bc.querySelector('.k-rvev').textContent.includes('健康の情報を含む根拠だったため'));
+  ok('T7 欄の初期値が AI の各リスト（1行1項目）・「お客様」を含む行も入っている', field(w, 'flow').value === 'ベンチプレスを50キロから始めた\nスクワットを自重で行った' && field(w, 'coaching').value.split('\n')[0] === 'お客様の肘を張りすぎない' && field(w, 'next').value === '次回はベンチプレスを52.5キロで' && !field(w, 'flow').hasAttribute('readonly'));
+  ok('T8 ★お客様の画面に出すチェックは既定オフ', R(w).querySelector('.k-rvmemon').checked === false);
+  ok('T9 体のこと・AI が分からなかった点は読むだけ（ボタン・入力が無い）', !!R(w).querySelector('.k-rvcau') && !R(w).querySelector('.k-rvcau').querySelector('button,input,textarea') && !!R(w).querySelector('.k-rvunclear') && !R(w).querySelector('.k-rvunclear').querySelector('button,input,textarea'));
+  ok('T4 ★一覧に無い種目（スカル）が残る間は押せず理由を出す', put(w).disabled && why(w).includes('一覧に無い種目名'), why(w));
+  ok('T5 下の帯の件数（推測・根拠なしを含むと出す）', foot(w).includes('セット 5') && foot(w).includes('推測 1・根拠なし 1 を含む') && foot(w).includes('「?」で入れない 3'), foot(w));
+  await pickPart(w, 'スカルクラッシャー', '腕');
+  ok('T6 部位を選ぶと押せる', !put(w).disabled, why(w));
+  //   T5 打つたびに描き直すのはチップと帯だけ（入力中の欄は同じ要素のまま・フォーカスが残る）
+  const li = lineOf(card(w, 'ベンチプレス'));
+  li.focus();
+  type(w, li, '50×10  50×8  60×  ?  40×?');
+  ok('T4 ★読めない書き方（60×）で押せない・場所を出す・チップが「書き方？」', put(w).disabled && why(w).includes('書き方が読めない所が1か所') && why(w).includes('ベンチプレス 3つ目') && chipsOf(card(w, 'ベンチプレス'))[2] === 'bad', why(w));
+  ok('T5 ★入力中の欄は作り直されない（同じ要素・フォーカスが残る）', li.isConnected && w.document.activeElement === li);
+  type(w, li, '50×10  50×8  60×6  20×10  40×?  45 kg×6');
+  ok('T3 ★値を直したセットは「直した」・照合が一意なセットは元の色', JSON.stringify(chipsOf(card(w, 'ベンチプレス'))) === JSON.stringify(['match', 'inferred', 'edited', 'edited', 'skip', 'edited']), JSON.stringify(chipsOf(card(w, 'ベンチプレス'))));
+  ok('T4 「45 kg×6」（空白と単位）も読める（memoSets）', !put(w).disabled && foot(w).includes('セット 7（推測 1・根拠なし 0 を含む）'), foot(w) + why(w));
+  //   欄・お客様の欄
+  type(w, field(w, 'hearing'), '睡眠は5時間くらい\n膝に痛みがある');
+  ok('T7 ★欄に体のことの言葉の行を打つと押せない（どの欄かを出す）', put(w).disabled && why(w).includes('体のことの言葉') && why(w).includes('ヒアリング'), why(w));
+  type(w, field(w, 'hearing'), '睡眠は5時間くらい\n');
+  type(w, R(w).querySelector('.k-rvmsg'), 'オフのまま直した文');
+  R(w).querySelector('.k-rvmemon').click(); await settle();
+  type(w, R(w).querySelector('.k-rvmsg'), 'あ'.repeat(401));
+  ok('T8 ★オンでお客様へ401字は押せない', put(w).disabled && why(w).includes('400字'), why(w));
+  type(w, R(w).querySelector('.k-rvmsg'), 'フォームが安定してきました。');
+  type(w, R(w).querySelector('.k-rvtodo'), 'a\nb\nc\nd');
+  ok('T8 次回までに4行は押せない', put(w).disabled);
+  type(w, R(w).querySelector('.k-rvtodo'), 'い'.repeat(61));
+  ok('T8 次回までに61字は押せない', put(w).disabled);
+  type(w, R(w).querySelector('.k-rvtodo'), 'ストレッチ 2分');
+  R(w).querySelector('.k-rvmemon').click(); await settle();
+  ok('T8 ★チェックを外すと押せる（中身は残るが入らない）', !put(w).disabled && R(w).querySelector('.k-rvmemon').checked === false);
+  ok('T11 確かめのダイアログ・alert が増えていない', w.confirms === 0 && w.alerts.length === 0, JSON.stringify(w.alerts));
+  ok('T11 押す所は44px以上（最後のボタン52・1行48・外す44）', /min-height:\s*52px/.test(put(w).style.cssText) && /min-height:\s*48px/.test(lineOf(card(w, 'ベンチプレス')).style.cssText) && /min-height:\s*44px/.test(card(w, 'ベンチプレス').querySelector('.k-rvoff').style.cssText));
+  ok('T2 ★押すまで記録の下書き・保存領域に何も入らない・console に原文が無い', (!draftOf(w) || !(draftOf(w).items || []).length) && !storeText(w.localStorage).includes(SECRET) && !storeText(w.sessionStorage).includes(SECRET) && !w.logs.join('\n').includes(SECRET));
   put(w).click(); await nav();
   const D = draftOf(w);
-  const b = D && D.items[0].sets;
-  ok('R13 ★commit の後も記録の下書きのセットに出所の印が残る（推論の確定・根拠なしを直した・健康の根拠を打った）',
-     b && JSON.stringify(b.map((s) => [s.w, s.r, s.src || null, !!s.srcEdited])) === '[["50","10",null,false],["50","8","inferred",false],["60","6","nobasis",true],["40","8","healthHidden",true]]', JSON.stringify(b));
-  ok('R9 full：社内メモに要約（名前の印の文は除く）・状態', /今日の流れ：ベンチプレスを50キロで2セット行った/.test(D.memo) && !/初回の/.test(D.memo) && /状態：睡眠不足で疲れ気味/.test(D.memo), D.memo);
-  ok('R19 ★記録の画面に保存する直前まで印が出る', R(w).querySelector('.k-aisrc-inferred') && R(w).querySelector('.k-aisrc-nobasis') && R(w).querySelector('.k-aisrc-healthHidden') && R(w).querySelector('.k-aisrc-nobasis').textContent.includes('根拠なしで確定（直した）'));
-  //   セットを足す（直前のセットを複製）は印を持ち越さない
-  const benchBlk = [...R(w).querySelectorAll('button.k-addset')][0];
-  benchBlk.click(); await settle();
-  const D2 = draftOf(w);
-  ok('R19 ★「＋ セット」で足したセットは src を持ち越さない', D2.items[0].sets.length === 5 && !('src' in D2.items[0].sets[4]) && !('srcEdited' in D2.items[0].sets[4]), JSON.stringify(D2.items[0].sets[4]));
-  ok('R19 buildPayload は src を送らない（純粋な部分）', JSON.stringify(w.KarteUI._t.buildPayload([{ exercise: 'ベンチプレス', sets: [{ w: '50', r: '8', done: true, src: 'inferred', srcEdited: true }] }])).indexOf('src') < 0);
+  const sets = (n) => { const it = D && D.items.find((x) => x.exercise === n); return it ? it.sets.map((s) => [s.w, s.r, s.src || null, !!s.srcEdited]) : null; };
+  ok('T3 ★記録の下書き：ベンチは直した値・元の色のセットは今と同じ出所・「直した」は根拠なしの警告（その種目の最も強い警告）を残す・? は入らない',
+     JSON.stringify(sets('ベンチプレス')) === JSON.stringify([['50', '10', null, false], ['50', '8', 'inferred', false], ['60', '6', 'nobasis', true], ['20', '10', 'nobasis', true], ['45', '6', 'nobasis', true]]), JSON.stringify(sets('ベンチプレス')));
+  ok('T3 自重は w が空（I61）・重さ不明だけの種目はセットなしで入る・部位を選んだ種目は regPart', JSON.stringify(sets('スクワット')) === JSON.stringify([['', '15', null, false]]) && JSON.stringify(sets('レッグプレス')) === '[]' && D.items.find((x) => x.exercise === 'スカルクラッシャー').regPart === 'arm', JSON.stringify(D.items));
+  ok('T10 ★下書きのセットの ✓ は全部 false（I57）', D.items.every((it) => it.sets.every((s) => s.done === false)));
+  ok('T7 ★社内メモ：今日の流れ・種目のメモ（セットのメモをまとめた行も）・状態・指導（お客様を含む）・ヒアリング・次回やること',
+     /今日の流れ：ベンチプレスを50キロから始めた スクワットを自重で行った/.test(D.memo) && /ベンチプレス：肩甲骨を寄せる/.test(D.memo) && /ベンチプレス：1セット目：フォーム良い/.test(D.memo) && /状態：睡眠不足で疲れ気味/.test(D.memo) && /\nお客様の肘を張りすぎない/.test(D.memo) && /ヒアリング：睡眠は5時間くらい/.test(D.memo) && /次回やること：次回はベンチプレスを52\.5キロで/.test(D.memo), D.memo);
+  ok('T8 ★チェックがオフ＝お客様の欄は下書きに入らない（直した文も）', !(D.member && (D.member.message || (D.member.todo || []).some((t) => t))) && !storeText(w.localStorage).includes('オフのまま直した文'), JSON.stringify(D.member));
+  ok('T9 ★下書き・保存領域に体のこと・分からなかった点・根拠・迷った理由が無い', !storeText(w.localStorage).includes('膝が少し痛い') && !storeText(w.localStorage).includes('予告か実施か') && !storeText(w.localStorage).includes(EVID) && !storeText(w.localStorage).includes('予告かもしれない') && !storeText(w.localStorage).includes('60キロで5回'));
+  ok('T10 ★記録の画面に保存する直前まで印（推・根拠なしで確定（直した））', !!R(w).querySelector('.k-aisrc-inferred') && [...R(w).querySelectorAll('.k-aisrc-nobasis')].some((x) => x.textContent.includes('根拠なしで確定（直した）')));
   await saveAll(w);
   const add = sent.filter((x) => x.body.action === 'k_addTraining');
-  ok('R19 ★保存の k_addTraining の payload に src・srcEdited が無い・数字は直した値', add.length === 1 && !JSON.stringify(add[0].body).includes('src') && JSON.stringify(add[0].body.items[0].sets.slice(0, 4).map((s) => [s.weight, s.reps])) === '[[50,10],[50,8],[60,6],[40,8]]', JSON.stringify(add.map((x) => x.body)).slice(0, 400));
+  ok('T10 ★保存の k_addTraining の payload に src・srcEdited・srcRenamed が無い・数字は直した値', add.length === 1 && !/src/.test(JSON.stringify(add[0].body)) && JSON.stringify(add[0].body.items.find((x) => x.exercise === 'ベンチプレス').sets.map((s) => [s.weight, s.reps])) === '[[50,10],[50,8],[60,6],[20,10],[45,6]]', JSON.stringify(add.map((x) => x.body)).slice(0, 500));
 }
-// ================= R13 選び直し（DOM） =================
+// ================= T8 オンにすれば入る =================
 {
   const { w } = boot({ src: FULL });
   await toReview(w);
-  await nameSkull(w);
-  const c = exCard(w, 'スカルクラッシャー');
-  btn(c, '種目名を選び直す').click(); await settle();
-  const sk = exCard(w, 'スカルクラッシャー').querySelector('.k-rvset');
-  ok('R13 ★種目名を選び直すと配下のセット（match も）が未確定に戻る', sk.dataset.res === 'unresolved' && put(w).disabled);
+  await pickPart(w, 'スカルクラッシャー', '腕');
+  R(w).querySelector('.k-rvmemon').click(); await settle();
+  put(w).click(); await nav();
+  const D = draftOf(w);
+  ok('T8 ★チェックをオンにしたときだけお客様へ・次回までにが入る', D.member && D.member.message === 'フォームが安定してきました。' && (D.member.todo || []).includes('ストレッチ 2分'), JSON.stringify(D.member));
 }
+// ================= T6 種目名（変えた・空・健康語・足した種目） =================
+{
+  const { w } = boot({ src: FULL });
+  await toReview(w);
+  await pickPart(w, 'スカルクラッシャー', '腕');
+  type(w, card(w, 'スカルクラッシャー').querySelector('.k-rvname'), 'スカル');
+  ok('T6 ★部位を選んだ後に名前を変えると、また押せない', put(w).disabled && why(w).includes('一覧に無い種目名'), why(w));
+  type(w, cards(w)[1].querySelector('.k-rvname'), 'アームカール');
+  ok('T6 ★一覧の名前に変えると押せる・その種目のセットは「直した（種目名を変更）」・帯に「種目名を変えた 1」', !put(w).disabled && JSON.stringify(chipsOf(cards(w)[1])) === '["renamed"]' && foot(w).includes('種目名を変えた 1'), foot(w) + JSON.stringify(chipsOf(cards(w)[1])));
+  btn(R(w), '＋ 種目を足す').click(); await settle();
+  ok('T6 足して何も書かない種目は無視（押せる）', !put(w).disabled, why(w));
+  type(w, lineOf(cards(w)[4]), '20×10');
+  ok('T6 ★名前が空でセットがある種目は押せない', put(w).disabled && why(w).includes('種目名が空'), why(w));
+  type(w, cards(w)[4].querySelector('.k-rvname'), '膝痛スクワット');
+  ok('T6 ★名前に体のことの言葉で押せない', put(w).disabled && why(w).includes('種目名'), why(w));
+  type(w, cards(w)[4].querySelector('.k-rvname'), 'チェストプレス');
+  card(w, 'ベンチプレス').querySelector('.k-rvoff').click(); await settle();
+  ok('T6 外した種目は薄く・1行が出ない・戻すボタン', !lineOf(card(w, 'ベンチプレス')) && card(w, 'ベンチプレス').querySelector('.k-rvoff').textContent === '戻す');
+  put(w).click(); await nav();
+  const D = draftOf(w);
+  const arm = D && D.items.find((x) => x.exercise === 'アームカール');
+  const chest = D && D.items.find((x) => x.exercise === 'チェストプレス');
+  ok('T6 ★種目名を変えた種目のセットに srcRenamed（記録の画面まで）・足した種目のセットは出所なし・外した種目は入らない', arm && arm.sets[0].srcRenamed === true && !arm.sets[0].src && chest && JSON.stringify(chest.sets.map((s) => [s.w, s.r, s.src || null])) === '[["20","10",null]]' && !D.items.some((x) => x.exercise === 'ベンチプレス'), JSON.stringify(D && D.items));
+  ok('T6 記録の画面に「種目名を変更」の印', [...R(w).querySelectorAll('.k-aisrc-renamed')].some((x) => x.textContent.includes('（種目名を変更）')));
+}
+// ================= T12 試用（trial）・不正な値 =================
+for (const [label, src] of [['trial', SRC], ['不正な値（Full）', BOGUS]]) {
+  const { w } = boot({ src });
+  await toReview(w);
+  ok('T12 ★' + label + '：推測・根拠なしの数字は初期値に入れない（?）・今日の流れ・状態・次回やることは readonly', lineOf(card(w, 'ベンチプレス')).value === '50×10  ?  ?  ?  ?' && ['flow', 'condition', 'next'].every((k) => field(w, k).hasAttribute('readonly')) && !field(w, 'coaching').hasAttribute('readonly'), lineOf(card(w, 'ベンチプレス')).value);
+  if (label !== 'trial') continue;
+  await pickPart(w, 'スカルクラッシャー', '腕');
+  put(w).click(); await nav();
+  const D = draftOf(w);
+  ok('T12 ★試用：社内メモに今日の流れ・状態・次回やることが入らない・指導とヒアリングは入る', D && !/今日の流れ|状態：|次回やること：/.test(D.memo) && /肘を張りすぎない/.test(D.memo) && /ヒアリング：/.test(D.memo), D && D.memo);
+}
+// ================= 純粋データ：1行の読み方・LCS の照合・reviewBuild の守り =================
+{
+  const { w } = boot({ src: FULL });
+  const T = w.KarteUI._t;
+  const P = (s) => T.rvParseLine(s).map((k) => k.kind === 'set' ? [k.kind, k.set.w, k.set.r, (k.set.drops || []).length, !!k.set.forced] : [k.kind]);
+  const table = [
+    ['20×5', [['set', '20', '5', 0, false]]], ['50x10', [['set', '50', '10', 0, false]]], ['自重×10', [['set', '', '10', 0, false]]], ['×10', [['set', '', '10', 0, false]]],
+    ['50 × 10', [['set', '50', '10', 0, false]]], ['50 kg×10', [['set', '50', '10', 0, false]]], ['50 かける 10', [['set', '50', '10', 0, false]]], ['2.5×12', [['set', '2.5', '12', 0, false]]],
+    ['55×5+40×8', [['set', '55', '5', 1, false]]], ['50×10(できない)', [['set', '50', '10', 0, true]]],
+    ['20×?  30×5', [['skip'], ['set', '30', '5', 0, false]]], ['? × 5  30×5', [['skip'], ['set', '30', '5', 0, false]]], ['60×  ?', [['bad'], ['skip']]], ['55 × 5 + 40 × 8', [['set', '55', '5', 1, false]]], ['?', [['skip']]], ['自重×?', [['skip']]],
+    ['50×10(左)', [['bad']]], ['600×5', [['bad']]], ['50×0', [['bad']]], ['50×', [['bad']]], ['abc 20×5', [['bad'], ['set', '20', '5', 0, false]]],
+    ['55×5、50×5', [['set', '55', '5', 0, false], ['set', '50', '5', 0, false]]], ['10+10+10+10+10×5', [['bad']]], ['', []],
+  ];
+  const badP = table.filter(([s, want]) => JSON.stringify(P(s)) !== JSON.stringify(want)).map(([s, want]) => s + ' → ' + JSON.stringify(P(s)) + '（期待 ' + JSON.stringify(want) + '）');
+  ok('T4 ★1行の読み方の表（memoSets・? は入れない・読めない）' + table.length + '行', badP.length === 0, badP.join('\n   '));
+  //   S-H3：値の並びの照合（消す・並べ替え・途中に足す）
+  const ex = (orig, line, extra) => Object.assign({ id: 'e0', name: 'ベンチプレス', name0: 'ベンチプレス', heard: '', off: false, part: null, partFor: null, orig: orig.map(([status, wv, r]) => ({ status, w: wv, r, bw: false, evidence: '', unsure: '', note: '' })), line, note: '' }, extra || {});
+  const C = (e) => T.rvTokens(e, 'full').filter((k) => k.kind === 'set').map((k) => [k.st, k.src || null, !!k.srcEdited]);
+  const J = JSON.stringify;
+  ok('T3 ★S-H3 消す：一致と根拠なしが同じ値で1つ消すと、どちらか決まらない＝「直した」・根拠なしの警告（一致に昇格しない）', J(C(ex([['match', 50, 10], ['nobasis', 50, 10]], '50×10'))) === J([['edited', 'nobasis', true]]), J(C(ex([['match', 50, 10], ['nobasis', 50, 10]], '50×10'))));
+  ok('T3 ★S-H3 並べ替え：対応が一意でない＝両方「直した」', J(C(ex([['match', 50, 10], ['nobasis', 60, 5]], '60×5  50×10'))) === J([['edited', 'nobasis', true], ['edited', 'nobasis', true]]), J(C(ex([['match', 50, 10], ['nobasis', 60, 5]], '60×5  50×10'))));
+  ok('T3 ★S-H3 途中に足す：前後は元の色・足した値は「直した」（推測の警告）', J(C(ex([['match', 50, 10], ['inferred', 55, 5]], '50×10  52×5  55×5'))) === J([['match', null, false], ['edited', 'inferred', true], ['inferred', 'inferred', false]]), J(C(ex([['match', 50, 10], ['inferred', 55, 5]], '50×10  52×5  55×5'))));
+  ok('T3 ★S-H3 一致を消しても根拠なしは根拠なしのまま（一意に対応）', J(C(ex([['match', 50, 10], ['nobasis', 60, 5]], '60×5'))) === J([['nobasis', 'nobasis', false]]));
+  ok('T3 同じ値の繰り返し（55×5 ×2）を全部残せば両方元の色', J(C(ex([['inferred', 55, 5], ['inferred', 55, 5]], '55×5  55×5'))) === J([['inferred', 'inferred', false], ['inferred', 'inferred', false]]));
+  ok('T3 ドロップを足したセットは元と照合しない＝「直した」', J(C(ex([['match', 50, 10]], '50×10+40×8'))) === J([['edited', null, false]]));
+  const rn = T.rvTokens(ex([['match', 50, 10]], '50×10', { name: 'チェストプレス' }), 'full').filter((k) => k.kind === 'set')[0];
+  ok('T6 ★S-H5 種目名を変えた種目は一致でも「直した（種目名を変更）」・srcRenamed', rn.st === 'renamed' && rn.srcRenamed === true && !rn.src);
+  //   reviewBuild の守り
+  const isAuto = (n) => ['ベンチプレス', 'チェストプレス', 'スクワット', 'レッグプレス'].indexOf(n) >= 0;
+  const D0 = () => T.reviewFromDraft(DRAFT(), isAuto, 'full');
+  const th = (rv) => { try { T.reviewBuild(rv, 'full', isAuto); return ''; } catch (e) { return e.message; } };
+  const rvA = D0(); rvA.exercises[1].off = true;
+  ok('T6 一覧に無い種目を外すと組み立てられる', th(rvA) === '', th(rvA));
+  const rvB = D0(); rvB.exercises[1].off = true; rvB.exercises[0].line = '50×';
+  ok('T4 ★読めない書き方を純粋データで渡すと投げる（RV_OPEN）', th(rvB) === 'RV_OPEN');
+  const rvC = D0(); rvC.exercises[1].off = true; rvC.fields.coaching = '膝が痛い';
+  ok('T7 ★体のことの言葉の行を純粋データで渡すと投げる（RV_HEALTH）', th(rvC) === 'RV_HEALTH');
+  const rvD = D0(); rvD.exercises[1].off = true; rvD.member.on = 'yes';
+  const bD = T.reviewBuild(rvD, 'full', isAuto);
+  ok('T8 ★member.on が厳密に true でなければお客様の欄は入らない', bD.members.length === 0 && bD.todos.length === 0);
+  const rvE = D0(); rvE.exercises[1].off = true;
+  const bE = T.reviewBuild(rvE, 'full', isAuto);
+  ok('T10 出力の形は設計49 と同じ（items・memos・nNote・nSet・blocked・members・todos・memoMax）', JSON.stringify(Object.keys(bE)) === JSON.stringify(['items', 'memos', 'nNote', 'nSet', 'blocked', 'members', 'todos', 'memoMax']) && bE.memoMax === 2000);
+  ok('T9 組み立てた中身に根拠・迷った理由・体のこと・分からなかった点・聞こえた言葉が無い', !/60キロで5回|予告かもしれない|膝が少し痛い|予告か実施か|スカルフラッシュ/.test(JSON.stringify(bE)), JSON.stringify(bE).slice(0, 300));
+  ok('T12 scope の判定は1か所：next は full だけ', T.scopeAllows('next', 'full') && !T.scopeAllows('next', 'trial'));
+}
+// ================= R0 本番の値 =================
+ok('R0 ★liff/karte.js の AI_V2_SAVE_SCOPE は \'full\' が1行だけ（D8 の後・決定0195）', SCOPE_LINES.length === 1 && SCOPE_LINES[0].trim() === "var AI_V2_SAVE_SCOPE = 'full';", JSON.stringify(SCOPE_LINES));
 // ================= R16 画面の締切 =================
 {
   const SHORT = SRC.replace('var AI_UI_TIMEOUT_MS = 110000;', 'var AI_UI_TIMEOUT_MS = 30;');
