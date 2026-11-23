@@ -386,5 +386,17 @@ capture(false);
   ok('A11 wrangler.toml：KARTE_AI_FORMAT は "v2" が1行だけ・そのとき担当は A だけ', fmt.length === 1 && fmt[0] === 'KARTE_AI_FORMAT = "v2"' && /^KARTE_AI_DRAFT_TRAINERS = "A"$/m.test(TOML), JSON.stringify(fmt));
 }
 
+// ================= M 設計50：「お客様」「お客さん」は伏せない（それ以外の伏せ方は変えない・関門① W-H4） =================
+{
+  const m = makeMasker([{ name: '甲野 一郎', tag: '〔会員〕' }]);
+  const cases = [
+    ['お客様が話した', 'お客様が話した'], ['お客さんの姿勢', 'お客さんの姿勢'], ['お客様と甲野さん', 'お客様と〔会員〕'],
+    ['皆様', '〔人〕'], ['トレーナーさん', '〔人〕'], ['奥様が来た', '〔人〕が来た'], ['乙川様が来た', '〔人〕が来た'], ['客様', '〔人〕'],
+    ['\uE000が来た', 'が来た'],
+  ];
+  const badM = cases.filter(([i, o]) => m(i) !== o).map(([i, o]) => i + '→' + m(i) + '（期待 ' + o + '）');
+  ok('M ★お客様・お客さんは残る／ほかの敬称つきの名前・呼び方は今どおり伏せる／私用の文字で迂回できない', badM.length === 0, badM.join(' / '));
+}
+
 console.log(`karte-ai: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

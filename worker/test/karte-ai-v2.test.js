@@ -380,6 +380,75 @@ setEnv(V2);
   ok('V2-23 ★0035 を2回（さらに）流してもエラーにならない（印を書けなかった次の実行と同じ）', twice);
 }
 
+// ================= 設計50 V2-24〜V2-28（分類・根拠の探し方・自重・指示文） =================
+{
+  setEnv(V2);
+  const TX = [
+    'ベンチプレス 50キロで10回。',
+    'もう1セット同じでいきます。',
+    'レッグプレス 80キロ やりましょう。',
+    'アームカール 600キロで3回。',
+    'ショルダープレス、20キロで 12回。',
+    'サイトレイズ 8キロで15回。',
+    'スクワットは膝が少し痛いので軽めに、30キロで10回。',
+    '肩が痛い日もある',
+    'ラットプル 40キロで10回',
+    'プッシュアップ 自重で15回。',
+  ].join('\n');
+  const S = (weight_kg, reps, basis, evidence, extra) => Object.assign({ weight_kg, bodyweight: false, reps, basis, evidence, unsure: '', note: '' }, extra || {});
+  reply = () => ({ draft: Object.assign(okDraft(), { exercises: [
+    { name: 'ベンチプレス', heard: '', note: '', sets: [S(50, 10, 'said', 'ベンチプレス 50キロで10回'), S(50, 10, 'inferred', 'もう1セット同じでいきます'), S(55, 10, 'inferred', 'もう1セット同じでいきます')] },
+    { name: 'レッグプレス', heard: '', note: '', sets: [S(80, null, 'inferred', 'レッグプレス 80キロ やりましょう'), S(80, 12, 'inferred', 'レッグプレス 80キロ やりましょう'), S(70, 10, 'said', '70キロで10回いきました')] },
+    { name: 'アームカール', heard: '', note: '', sets: [S(600, 3, 'said', 'アームカール 600キロで3回')] },
+    { name: 'ショルダープレス', heard: '', note: '', sets: [S(20, 12, 'said', 'ショルダープレス20キロで12回')] },
+    { name: 'サイドレイズ', heard: '', note: '', sets: [S(8, 15, 'said', 'サイドレイズ 8キロで15回'), S(8, 15, 'said', '15回')] },
+    { name: 'スクワット', heard: '', note: '', sets: [S(30, 10, 'said', '軽めに、30キロで10回')] },
+    { name: 'ラットプルダウン', heard: '', note: '', sets: [S(40, 10, 'said', 'ラットプル 40キロで10回')] },
+    { name: 'プッシュアップ', heard: '', note: '', sets: [S(null, 15, 'said', 'プッシュアップ 自重で15回', { bodyweight: true }), S(null, 15, 'said', 'プッシュアップ 自重で15回'), (() => { const x = S(null, 15, 'said', 'プッシュアップ 自重で15回'); delete x.bodyweight; return x; })(), S(30, 15, 'said', 'プッシュアップ 自重で15回', { bodyweight: true }), S(null, 15, 'said', 'プッシュアップ 自重で15回', { bodyweight: 'yes' })] },
+  ], caution: [] }) });
+  const r = await call({ client_ai_format: 2, text: TX, known: ['ベンチプレス', 'レッグプレス', 'アームカール', 'ショルダープレス', 'サイドレイズ', 'スクワット', 'ラットプルダウン', 'プッシュアップ'] });
+  const X = (i) => (r.draft && r.draft.exercises[i] ? r.draft.exercises[i].sets : []);
+  const t = (s) => s ? [s.status, s.w, s.r, s.bw] : null;
+  const J = (a) => JSON.stringify(a);
+  ok('V2-24 ★根拠が在り回数が null → inferred（r null）', J(t(X(1)[0])) === J(['inferred', 80, null, false]), J(X(1)));
+  ok('V2-24 ★根拠が無い → nobasis（範囲内の数字は返す）', J(t(X(1)[2])) === J(['nobasis', 70, 10, false]), J(X(1)[2]));
+  ok('V2-24 ★範囲外の重さ（600）→ w null・bw 偽（自重にしない）・回数は根拠に在るので返す', J(t(X(2)[0])) === J(['inferred', null, 3, false]), J(X(2)));
+  ok('V2-24 ★W-H1 inferred でも根拠に無い回数（12）は返さない', J(t(X(1)[1])) === J(['inferred', 80, null, false]), J(X(1)[1]));
+  ok('V2-24 ★W-H1 繰り返しの言葉＋直前のセットと同じ値なら返す（50×10）', J(t(X(0)[1])) === J(['inferred', 50, 10, false]), J(X(0)));
+  ok('V2-24 ★W-H1 繰り返しの言葉でも直前と違う重さ（55）は返さない・同じ回数は返す', J(t(X(0)[2])) === J(['inferred', null, 10, false]), J(X(0)[2]));
+  ok('V2-25 ★句読点・空白の違いだけなら見つかり match・返す根拠は文字起こし側の切り出し', J(t(X(3)[0])) === J(['match', 20, 12, false]) && X(3)[0].evidence === 'ショルダープレス、20キロで 12回', J(X(3)));
+  ok('V2-25 ★語の置き換え（サイトレイズ→サイドレイズ）は緩めない＝nobasis', X(4)[0] && X(4)[0].status === 'nobasis', J(X(4)[0]));
+  ok('V2-25 ★詰めて6字未満の根拠（15回）は根拠として認めない＝nobasis', X(4)[1] && X(4)[1].status === 'nobasis', J(X(4)[1]));
+  ok('V2-25 ★W-H2 根拠に健康語が無くても前後（同じ文）に健康語 → healthHidden（数字・根拠を返さない）', J(t(X(5)[0])) === J(['healthHidden', null, null, false]) && X(5)[0].evidence === '', J(X(5)));
+  ok('V2-25 ★窓は改行で止まる（前の行の「痛い」で隠さない）', X(6)[0] && X(6)[0].status === 'match', J(X(6)));
+  ok('V2-26 ★bodyweight 真 → 自重の match（w null・bw 真）', J(t(X(7)[0])) === J(['match', null, 15, true]), J(X(7)[0]));
+  ok('V2-26 ★bodyweight 偽で weight null → 重さが分からない（match にしない・bw 偽）', J(t(X(7)[1])) === J(['inferred', null, 15, false]), J(X(7)[1]));
+  ok('V2-26 bodyweight の鍵が無い → 偽として読む', J(t(X(7)[2])) === J(['inferred', null, 15, false]), J(X(7)[2]));
+  ok('V2-26 bodyweight 真で weight に数値 → 数値を使わず自重', J(t(X(7)[3])) === J(['match', null, 15, true]), J(X(7)[3]));
+  ok('V2-26 bodyweight が真偽値でない（"yes"）→ 偽として読む', J(t(X(7)[4])) === J(['inferred', null, 15, false]), J(X(7)[4]));
+  ok('V2-28 healthHidden も bw を返す（偽）', X(5)[0] && X(5)[0].bw === false);
+  reply = null;
+}
+{
+  //   V2-27 指示文の字数・件数を AI_V2_LIMITS の値と突き合わせる（語の有無でなく、指示文から数字を取り出して比べる）
+  const { AI_SYSTEM_V2 } = await import('../src/routes/karte-ai-v2.js');
+  const L = AI_V2_LIMITS;
+  const num = (re) => { const m = AI_SYSTEM_V2.match(re); return m ? Number(m[1]) : NaN; };
+  const rows = [
+    ['summary 件', /summary\.flow：[^（]*（(\d+)件まで/, L.SUMMARY], ['summary 各字', /summary\.flow：[^）]*・各(\d+)字/, L.SUMMARY_LEN], ['summary 合計', /summary\.flow：[^）]*合計(\d+)字/, L.SUMMARY_TOTAL],
+    ['exercises 件', /exercises（(\d+)件まで）/, L.EXERCISES], ['name 字', /name は[^（]*（無ければ聞こえたまま・(\d+)字まで）/, L.NAME], ['heard 字', /heard＝聞こえた言葉（(\d+)字まで）/, L.NAME], ['ex note 字', /左右差（(\d+)字まで）/, L.NOTE],
+    ['1種目セット', /1種目(\d+)セット/, L.SETS_PER_EXERCISE], ['全体セット', /全体(\d+)セット/, L.TOTAL_SETS], ['evidence 字', /evidence＝[^／]*?(\d+)字まで/, L.EVIDENCE], ['unsure 字', /unsure＝迷った理由（(\d+)字まで/, L.UNSURE], ['set note 字', /そのセットの備考（(\d+)字まで）/, L.NOTE],
+    ['caution 件', /caution（(\d+)件まで/, L.CAUTION_AI_MAX], ['caution 字', /caution（\d+件まで・各(\d+)字）/, L.TEXT], ['condition 件', /condition＝[^（]*（(\d+)件まで）/, L.CONDITION], ['coaching 件', /coaching＝[^（]*（(\d+)件まで）/, L.LIST], ['hearing 件', /hearing＝[^（]*（(\d+)件まで）/, L.LIST], ['3つの字', /この3つは各(\d+)字まで/, L.TEXT],
+    ['next 件', /next_actions＝[^（]*（(\d+)件まで/, L.NEXT], ['next 各字', /next_actions＝[^）]*・各(\d+)字/, L.NEXT_LEN], ['next 合計', /next_actions＝[^）]*合計(\d+)字/, L.NEXT_TOTAL],
+    ['message 字', /member_message＝[^（]*（(\d+)字まで）/, L.MEMBER_MESSAGE], ['todo 件', /member_todo＝[^（]*（(\d+)件まで/, L.TODO], ['todo 字', /member_todo＝[^）]*・各(\d+)字/, L.TODO_LEN],
+    ['unclear 件', /unclear（(\d+)件まで）/, L.UNCLEAR], ['unclear 字', /text (\d+)字まで/, L.UNCLEAR_LEN],
+  ];
+  const badRows = rows.filter(([, re, want]) => num(re) !== want).map(([k, re, want]) => k + '=' + num(re) + '≠' + want);
+  ok('V2-27 ★指示文の字数・件数が AI_V2_LIMITS と一致（' + rows.length + '項目）', badRows.length === 0, badRows.join(' / '));
+  const setSchema = AI_SCHEMA_V2.properties.exercises.items.properties.sets.items;
+  ok('V2-27 ★形のセットに bodyweight（真偽値）が required', setSchema.required.indexOf('bodyweight') >= 0 && setSchema.properties.bodyweight.type === 'boolean');
+}
+
 Object.assign(console, orig);
 console.log(`karte-ai-v2: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

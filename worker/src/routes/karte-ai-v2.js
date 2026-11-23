@@ -46,8 +46,8 @@ export const AI_SCHEMA_V2 = {
     summary: { type: 'object', additionalProperties: false, required: ['flow'], properties: { flow: { type: 'array', items: STR } } },
     exercises: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['name', 'heard', 'note', 'sets'], properties: {
       name: STR, heard: STR, note: STR,
-      sets: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['weight_kg', 'reps', 'basis', 'evidence', 'unsure', 'note'], properties: {
-        weight_kg: NUM_OR_NULL, reps: INT_OR_NULL, basis: { type: 'string', enum: ['said', 'inferred'] }, evidence: STR, unsure: STR, note: STR } } } } } },
+      sets: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['weight_kg', 'bodyweight', 'reps', 'basis', 'evidence', 'unsure', 'note'], properties: {
+        weight_kg: NUM_OR_NULL, bodyweight: { type: 'boolean' }, reps: INT_OR_NULL, basis: { type: 'string', enum: ['said', 'inferred'] }, evidence: STR, unsure: STR, note: STR } } } } } },
     condition: { type: 'array', items: STR },
     caution: { type: 'array', items: STR },
     coaching: { type: 'array', items: STR },
@@ -58,21 +58,17 @@ export const AI_SCHEMA_V2 = {
     unclear: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['text', 'evidence'], properties: { text: STR, evidence: STR } } },
   },
 };
+//   設計50：判断の規則だけに絞った（出力の形は JSON スキーマで固定）。★字数・件数は AI_V2_LIMITS と同じ値（超えると下書き全体が AI_BAD_OUTPUT＝検査 V2-27 で値を突き合わせる）
 export const AI_SYSTEM_V2 = [
-  'あなたはパーソナルトレーニングジムのカルテの下書きを作る係です。<transcript> はトレーナーとお客様のセッションの録音を文字に起こしたもの（話し言葉・聞き違い・言い直しを含む）です。アプリが付けた見出し・時刻・話者の行は内容として扱わないでください。',
-  'まず summary.flow に、文字起こし全体から「今日のセッションで実際に何があったか」を推論し、時系列の短い文（12件まで・各120字以内）で書いてください。言い直し・聞き違い・予告（いきます）と実施の区別は前後の流れから推論してかまいません。',
-  'その要約に沿って、次の項目に割り振ってください。',
-  '- exercises：行った種目。name は <exercises> の一覧の名前に寄せる（無い・自信が無いときは聞こえたままの名前）。heard は聞こえた言葉。note は種目ごとの備考。',
-  '  sets は1セットずつ。weight_kg（キロ。重りが無いと話したときだけ null）・reps（回数・分からなければ null）。basis は、数字が文字起こしにそのまま出ていれば "said"、流れからの推論（「同じ重さでもう1セット」等）なら "inferred"。',
-  '  evidence には、そのセットの根拠になった部分を文字起こしから**一字一句そのまま**80字以内で抜き出す。unsure には、予告か実施か・どの種目の数字か・聞き違いの疑いなど迷った理由を書く（無ければ空文字）。note はセットごとの備考。',
-  '  同じ重さ・同じ回数の繰り返しも、行ったセットは1セットずつすべて書く（まとめたり省いたりしない）。',
-  '  ある種目の最中に出た指導・フォームの癖・左右差は、その種目の note に書く。別の種目の指導を混ぜない。',
-  '- condition：お客様の状態のうち医療でないもの（疲れ・可動域・フォームの癖・意欲など）で、特定の種目に結びつかないもの。',
-  '- caution：痛み・違和感・怪我・診断・服薬・発熱など体の不調。体の不調は caution にだけ書き、要約・unsure を含む他の項目に書かない。睡眠の量・生活リズム・疲れは caution ではなく hearing か condition に書く。',
-  '- coaching：その日全体の指導の要点（種目ごとの指導は各種目の note）。hearing：生活・食事・睡眠・仕事・目標・運動歴のうち、指導に関係するもの（趣味・旅行などの雑談は書かない）。next_actions：次回やること（トレーナー向け・5件まで・各100字以内）。',
-  '- member_message：お客様に見せてよい今日の要点・励まし（400字以内・無ければ空文字）。member_todo：次回までにお客様にしてほしいこと（3件まで・各60字以内）。',
-  '- unclear：項目に結びつかない、文字起こしで不明確なところ（text に理由・evidence に根拠の抜き出し）。',
-  '雑談・政治・宗教・思想信条・性的指向・家族の事情・第三者の話は出力しないでください。お客様は「お客様」、トレーナーは「トレーナー」と書き、それ以外の人に触れる必要があるときは名前を書かずに「〔人〕」と書いてください。',
+  'あなたはパーソナルトレーニングのカルテ係。<transcript>（録音の文字起こし・聞き違いを含む）から、今日実際に行ったことを指定の形で返す。アプリが付けた見出し・時刻・話者の行は内容として扱わない。',
+  '1. summary.flow：実施した流れを時系列で（12件まで・各120字・合計1000字まで）。予告と実施・言い直しは前後から判断する。',
+  '2. exercises（20件まで）：name は <exercises> の名前に寄せる（無ければ聞こえたまま・50字まで）。heard＝聞こえた言葉（50字まで）。note＝その種目中の指導・フォーム・左右差（200字まで）。',
+  '   sets：行ったセットを1つずつ全部書く（1種目10セット・全体60セットまで。同じ重さの繰り返しも省かない）。weight_kg＝重さ（分からなければ null）／bodyweight＝重りを使わない種目なら true（このとき weight_kg は null）／reps＝回数（分からなければ null）／basis＝数字が文字起こしにあれば said、推論なら inferred／evidence＝根拠の部分を文字起こしの文字のまま80字まで（聞き違い・言い間違いも直さずに写す）／unsure＝迷った理由（120字まで・無ければ空）／note＝そのセットの備考（200字まで）。',
+  '3. caution（20件まで・各200字）：痛み・違和感・怪我・診断・服薬・発熱だけ。体の不調はここ以外に書かない。睡眠・生活リズム・疲れは caution に書かない。',
+  '4. condition＝種目に結びつかない状態（10件まで）／coaching＝全体の指導の要点（20件まで）／hearing＝指導に関係する生活・食事・睡眠・仕事・目標（20件まで）。この3つは各200字まで。next_actions＝次回やること（5件まで・各100字・合計500字まで）。',
+  '5. member_message＝お客様に見せてよい要点（400字まで）／member_todo＝次回までにしてほしいこと（3件まで・各60字）。',
+  '6. unclear（10件まで）：どこにも入らない不明点（text 120字まで）とその根拠（evidence）。',
+  '書かない：雑談（遊び・誘い・予定・趣味・旅行の話を含む）・政治・宗教・思想信条・性的指向・家族の事情・第三者の話。人名は書かず「お客様」「トレーナー」「〔人〕」と書く。',
 ].join('\n');
 
 // ---------------------------------------------------------------- SSE（設計49 §5-6-2）
@@ -199,9 +195,52 @@ const tenthOk = (w) => { const x = Number(w) * 10; return Number.isFinite(x) && 
 const wOk = (w) => typeof w === 'number' && w > 0 && w <= 500 && tenthOk(w);
 const rOk = (r) => Number.isInteger(r) && r >= 1 && r <= 100;
 
-/** AI の JSON → 検証した v2 の draft。壊れていれば BadOutput（黙って切らない） */
-export function validateDraftV2(raw, maskedSquashed, mask, effort) {
+// ---------------------------------------------------------------- 根拠の探し方（設計50 §4-4）
+//   空白と句読点の違いだけを無視して位置を探す。語の置き換え（聞き違いの語⇄正しい語）は緩めない。
+//   ★詰めた後 EV_MIN 字未満の根拠は数字の根拠として認めない（短い根拠が別の箇所に当たるのを防ぐ・関門① W-H2）
+//   返す text は maskedSquashed の上の切り出し（照合はこの切り出しの中の数字で行う）
+export const EV_MIN = 6;
+export const HEALTH_WINDOW = 40;
+const EV_IGNORE = /[\s、。・「」『』！？!?…]/;
+const EV_BOUND = /[。！？!?\n]/;
+//   繰り返しの言葉（設計50 §4-3・関門① W-H1）：根拠にこれがあれば、同じ種目の直前のセットと同じ値を根拠に在るとみなす
+export const AI_REPEAT = /同じ|もう1セット|もう一セット|もう1回|もう一回|もう1本|もう一本|同様/;
+export function makeLocator(hay) {
+  let h = '';
+  const idx = [];
+  for (let i = 0; i < hay.length; i++) { const c = hay[i]; if (!EV_IGNORE.test(c)) { h += c; idx.push(i); } }
+  return function locate(ev) {
+    let e = '';
+    for (const c of String(ev || '')) if (!EV_IGNORE.test(c)) e += c;
+    if (e.length < EV_MIN) return null;
+    const k = h.indexOf(e);
+    if (k < 0) return null;
+    const a = idx[k], b = idx[k + e.length - 1] + 1;
+    if (b - a > AI_V2_LIMITS.EVIDENCE) return null;
+    return { at: a, end: b, text: hay.slice(a, b) };
+  };
+}
+/** 見つかった位置の前後（±HEALTH_WINDOW・文の区切り〔。！？・改行〕で止める）。健康語を見直すために使う（W-H2） */
+export function windowOf(src, a, b) {
+  let s0 = Math.max(0, a - HEALTH_WINDOW), e0 = Math.min(src.length, b + HEALTH_WINDOW);
+  for (let i = a - 1; i >= s0; i--) if (EV_BOUND.test(src[i])) { s0 = i + 1; break; }
+  for (let i = b; i < e0; i++) if (EV_BOUND.test(src[i])) { e0 = i; break; }
+  return src.slice(s0, e0);
+}
+function numTokens(ev) {
+  const out = [];
+  for (const m of String(ev).matchAll(/(?<![0-9.])(\d+(?:\.\d+)?)(?![0-9.])/g)) out.push(m[1]);
+  return out;
+}
+
+/**
+ * AI の JSON → 検証した v2 の draft。壊れていれば BadOutput（黙って切らない）
+ *   lineMarked：maskedSquashed と同じ長さで、改行から来た空白だけを '\n' にしたもの（健康語を見直す窓を文の区切りで止めるため）。無ければ maskedSquashed
+ */
+export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
   const L = AI_V2_LIMITS;
+  const lines = typeof lineMarked === 'string' && lineMarked.length === maskedSquashed.length ? lineMarked : maskedSquashed;
+  const locate = makeLocator(maskedSquashed);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) bad();
   if (!raw.summary || typeof raw.summary !== 'object') bad();
   const flow = list(raw.summary.flow, L.SUMMARY, L.SUMMARY_LEN);
@@ -263,25 +302,41 @@ export function validateDraftV2(raw, maskedSquashed, mask, effort) {
   for (const t of moved) if (caution.indexOf(t) < 0) caution.push(t);
   if (caution.length > L.CAUTION_MAX) bad();
 
-  //   数字の4つの状態
+  //   数字の4つの状態（設計50 §4-3）
+  //     match＝根拠が在り・said・unsure なし・verifySet が通る／inferred＝根拠が在る（数字が欠けても inferred・返す数字は根拠の中に在るものだけ）
+  //     nobasis＝根拠が見つからない（数字は範囲内なら返す）／healthHidden＝根拠・unsure・根拠の前後に健康語
+  //     bw＝自重（形の bodyweight が true のときだけ）。w が null で bw が偽＝重さが分からない
   let nEx = 0, nSets = 0, nInf = 0, nNob = 0, nHid = 0;
+  const HID = (s) => ({ status: 'healthHidden', w: null, r: null, bw: false, evidence: '', unsure: '', note: mask(s.note) });
   const exercises = exs.map((e) => {
     if (e.name || e.heard) nEx++;
-    const sets = e.sets.map((s) => {
-      if (s.healthHidden) { nHid++; return { status: 'healthHidden', w: null, r: null, evidence: '', unsure: '', note: mask(s.note) }; }
-      const st = s.raw, w = st.weight_kg, r = st.reps;
-      const ev = s.evidence && s.evidence.length <= L.EVIDENCE ? s.evidence : '';
-      const at = ev ? maskedSquashed.indexOf(ev) : -1;
-      const evShown = at >= 0 ? maskedSquashed.slice(at, at + ev.length) : (s.evidence ? s.evidence.slice(0, L.EVIDENCE) : '');
-      const v = e.name && st.basis === 'said' && !s.unsure ? verifySet({ weight_kg: w, reps: r, evidence: ev }, maskedSquashed) : null;
-      if (v) { nSets++; return { status: 'match', w: v.w, r: v.r, evidence: mask(v.evidence), unsure: '', note: mask(s.note) }; }
-      const wv = w === null ? null : (wOk(w) ? w : null);
+    const sets = [];
+    for (const s of e.sets) {
+      if (s.healthHidden) { nHid++; sets.push(HID(s)); continue; }
+      const st = s.raw, r = st.reps;
+      const bw = st.bodyweight === true;
+      const w = bw ? null : st.weight_kg;
+      const loc = s.evidence && s.evidence.length <= L.EVIDENCE ? locate(s.evidence) : null;
+      //   ★根拠の前後に健康語＝healthHidden（短い根拠で健康の文脈を迂回しない・W-H2）
+      if (loc && H(windowOf(lines, loc.at, loc.end))) { nHid++; sets.push(HID(s)); continue; }
+      let v = null;
+      if (loc && e.name && st.basis === 'said' && !s.unsure && (bw || typeof w === 'number')) v = verifySet({ weight_kg: bw ? null : w, reps: r, evidence: loc.text }, maskedSquashed);
+      if (v) { nSets++; sets.push({ status: 'match', w: v.w, r: v.r, bw: v.w === null, evidence: mask(v.evidence), unsure: '', note: mask(s.note) }); continue; }
+      const wv = bw ? null : (wOk(w) ? w : null);
       const rv = rOk(r) ? r : null;
-      const inRange = rv !== null && (w === null || wv !== null);
-      if (at >= 0 && inRange) { nInf++; return { status: 'inferred', w: wv, r: rv, evidence: mask(evShown), unsure: mask(s.unsure), note: mask(s.note) }; }
+      if (loc) {
+        //   ★返す数字は根拠の中に数字として在るものだけ。例外：繰り返しの言葉があり、同じ種目の直前のセットと同じ値（W-H1）
+        const toks = numTokens(loc.text), rep = AI_REPEAT.test(loc.text);
+        const prev = sets.length ? sets[sets.length - 1] : null;
+        const wIn = wv !== null && (toks.some((t) => /^\d+(?:\.\d)?$/.test(t) && Math.round(Number(t) * 10) === Math.round(wv * 10)) || (rep && !!prev && prev.w === wv));
+        const rIn = rv !== null && (toks.some((t) => /^\d+$/.test(t) && Number(t) === rv) || (rep && !!prev && prev.r === rv));
+        nInf++;
+        sets.push({ status: 'inferred', w: wIn ? wv : null, r: rIn ? rv : null, bw, evidence: mask(loc.text), unsure: mask(s.unsure), note: mask(s.note) });
+        continue;
+      }
       nNob++;
-      return { status: 'nobasis', w: wv, r: rv, evidence: mask(evShown), unsure: mask(s.unsure), note: mask(s.note) };
-    });
+      sets.push({ status: 'nobasis', w: wv, r: rv, bw, evidence: mask(s.evidence ? s.evidence.slice(0, L.EVIDENCE) : ''), unsure: mask(s.unsure), note: mask(s.note) });
+    }
     return { name: mask(e.name), heard: mask(e.heard), note: mask(e.note), sets };
   });
   return {

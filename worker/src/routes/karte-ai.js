@@ -22,7 +22,7 @@ import { AI_V2_LIMITS, AI_SCHEMA_V2, AI_SYSTEM_V2, aiEffort, readSse, SseError, 
 import { normalizeExerciseName } from '../lib/karte-exercises.js';
 import { readRecRow, recConsentValid } from './member-consent.js';
 
-export const AI_BUILD = '2026-11-20a 設計39＋設計44 同意＋設計49 v2（推論・要約→カルテの形・数字4状態）';
+export const AI_BUILD = '2026-11-23a 設計39＋設計44 同意＋設計49 v2＋設計50（根拠の探し方・数字の分類・自重の区別・お客様を伏せない・指示文）';
 
 export const AI_LIMITS = {
   BODY_BYTES: 128 * 1024,   // このパス（/karte/ai-draft）だけ。3万字×3バイト＋余裕
@@ -104,6 +104,9 @@ export function makeMasker(people) {
     let t = nfkc(s);
     for (const x of long) t = t.split(x.v).join(x.tag);
     for (const x of one) t = t.replace(new RegExp(reEsc(x.v) + HONORIFIC, 'g'), x.tag);
+    //   設計50 §4-5：「お客様」「お客さん」（「お」が前に付く形だけ）は下の第三者名の式から外す（「客様」が漢字1字＋敬称に当たり「お〔人〕」になっていた）。
+    //     ほかの呼び方（皆様・トレーナーさん等）は今どおり伏せる（関門① W-H4：除外を広げると未知の実名が素通りする）
+    t = t.replace(/[\uE000\uE001]/g, '').replace(/お客(様|さん)/g, (m, h) => (h === '様' ? '\uE000' : '\uE001'));
     //   一般の「漢字・カタカナ1〜6字＋敬称」（店の外の人・家族）
     t = t.replace(new RegExp('[一-鿿々〆ヵヶァ-ヺー]{1,6}' + HONORIFIC, 'g'), '〔人〕');
     //   ひらがなの名前＋敬称（関門② 高2）。2〜6字。「ちゃんと」は名前でない（ちゃん＋と は外す）。伏せすぎる向きに倒す
@@ -114,7 +117,7 @@ export function makeMasker(people) {
     //   電話：3つの数字のまとまり（市外局番か +81・中・末尾）。間は空白（改行は含めない）・ハイフン・括弧だけ。数字が10〜12桁（関門② 高2）
     //   ★まとまりの数を固定する＝電話の後ろの改行・空白の先の数字（55キロ等）を飲み込まない（2周目の指摘）
     t = t.replace(PHONE_RE, (m) => { const n = m.replace(/\(0\)|（0）/g, '').replace(/\D/g, '').length; return n >= 10 && n <= 12 ? '〔番号〕' : m; });
-    return t;
+    return t.replace(/\uE000/g, 'お客様').replace(/\uE001/g, 'お客さん');
   };
 }
 
@@ -474,7 +477,9 @@ async function innerV2(env, st, masked, maskedSquashed, knownSafe, mask) {
   let parsed;
   try { parsed = JSON.parse(sse.text); } catch (_) { st.result = 'bad_output'; return fail('AI_BAD_OUTPUT', 502); }
   let v;
-  try { v = validateDraftV2(parsed, maskedSquashed, mask, st.effort); }
+  //   設計50：改行から来た空白だけを '\n' にした写し（maskedSquashed と同じ長さ）＝健康語を見直す窓を文の区切りで止める
+  const lineMarked = nfkc(masked).replace(/\s+/g, (m) => (/[\n\r]/.test(m) ? '\n' : ' ')).trim();
+  try { v = validateDraftV2(parsed, maskedSquashed, mask, st.effort, lineMarked); }
   catch (e) { if (e instanceof BadOutputV2) { st.result = 'bad_output'; return fail('AI_BAD_OUTPUT', 502); } throw e; }
   const k = v.counts;
   Object.assign(st, { result: 'ok', nEx: k.nEx, nSets: k.nSets, nUnv: k.nInf + k.nNob + k.nHid, nInf: k.nInf, nNob: k.nNob, nHid: k.nHid, nUnclear: k.nUnclear, nSummary: k.nSummary });
