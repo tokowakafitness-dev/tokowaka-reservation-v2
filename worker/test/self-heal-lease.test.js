@@ -289,6 +289,19 @@ console.log('=== I-H30 ロックが取れない（busy）と印を失った（lo
   ok('I-H30-8 修理の busy も lock_busy で数え、完走の印を書かない', JSON.parse(w4.props.LB_HEALTH_SKIP || '{}').why === 'lock_busy' && w4.props.LB_SELFHEAL_DONE === done0, w4.props.LB_HEALTH_SKIP);
 }
 
+{
+  //   ★修理の完走の印は、印を放す前に・延長できたときだけ書く（関門②4回目）。印を取った後のロックが全部 busy なら書かない
+  const w5 = makeWorld({ props: { SELF_HEAL_MODE: 'practice' } });
+  run(w5, 'dailyHealthCheck'); w5.now += H;
+  const done0 = w5.props.LB_SELFHEAL_DONE;
+  const n0 = w5.lockN; w5.lockBusyFn = (n) => n > n0 + 1;   // 印を取る1回目だけ通す
+  run(w5, 'lbSelfHeal');
+  w5.lockBusyFn = null; w5.lockBusy = false;
+  const w5c = makeWorld({ props: { SELF_HEAL_MODE: 'practice' } });
+  run(w5c, 'dailyHealthCheck'); w5c.now += H; run(w5c, 'lbSelfHeal');
+  ok('I-H21-16 ★修理の完走の印は延長できたときだけ（陽性の対照：通常は書く）', w5.props.LB_SELFHEAL_DONE === done0 && !!w5c.props.LB_SELFHEAL_DONE, JSON.stringify({ d: w5.props.LB_SELFHEAL_DONE, c: w5c.props.LB_SELFHEAL_DONE }));
+}
+
 console.log('=== I-H16 lbSelfHeal の完走を翌日の点検が確かめる ===');
 {
   const w = makeWorld({ props: { SELF_HEAL_MODE: 'practice' } });

@@ -2430,7 +2430,7 @@ function dailyHealthCheck(dryRunArg) {
       //   ★まだ一度も完走していない（反映直後・トリガー未設定）は、見張りを始めてから 26 時間は鳴らさない（Nudge と同じ猶予）
       if (!_sfWatch) {
         _sfWatch = _hcCheckId;
-        if (!dryRun) { try { PropertiesService.getScriptProperties().setProperty(LB_HEAL.WATCH_FROM_PROP, String(_hcCheckId)); } catch (eW) {} }
+        if (!dryRun) { _hcNeed(); try { PropertiesService.getScriptProperties().setProperty(LB_HEAL.WATCH_FROM_PROP, String(_hcCheckId)); } catch (eW) {} }   // 新しく足した書き込み＝延長できたときだけ（関門②4回目）
       }
       var _sfStale = _sfDone ? (_hcCheckId - _sfDone > LB_HEAL.FRESH_MS) : (_hcCheckId - _sfWatch > LB_HEAL.FRESH_MS);
       add('selfheal_stale', '定期処理', 'warn', _sfStale ? 1 : 0,
@@ -3859,16 +3859,15 @@ function lbSelfHeal(nudgeStartMs) {
   if (!lease.ok) { _lbHealthSkipNote('heal', lease.why); res.gate = 'skip_' + lease.why; Logger.log('lbSelfHeal: 見送り ' + lease.why); return res; }
   //   ★修理の副作用は全部 _lbLeaseOk（延長できたときだけ）。延長できなければ副作用をせず次回へ
   var g = _lbLeaseGuard(lease, 'heal');
-  var completed = false;
   try {
     var gate = _lbSelfHealGate(t0);
     res.gate = gate.why;
     if (gate.ok) { res.ran = true; _lbSelfHealRun(gate.sum, mode, g, t0, res, budget); }
-    completed = !g.dead;
+    //   ★完走の印は**印を放す前に**、延長できたときだけ書く（関門②4回目：放した後に書くと、別の実行が印を取った後の書き込みになる）
+    if (!g.dead && _lbLeaseOk(g)) { try { p.setProperty(LB_HEAL.HEAL_DONE_PROP, String(Date.now())); } catch (e2) {} }
   } finally {
     _lbLeaseRelease(lease.owner);
   }
-  if (completed) { try { p.setProperty(LB_HEAL.HEAL_DONE_PROP, String(Date.now())); } catch (e2) {} }
   Logger.log('lbSelfHeal: ' + JSON.stringify(res));
   return res;
 }
