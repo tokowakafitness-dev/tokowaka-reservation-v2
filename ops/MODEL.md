@@ -245,7 +245,7 @@ trg_alloc_return_pack       同
 | I-H2 | **fixed は「完走した点検で、その key の段が checked にあり、key が無い」ときだけ**。段が checked に無ければ unknown（閉じない）。修理の直後は fixing（閉じるのは次の点検） | `self-heal-check.test.js` I-H2 |
 | I-H3 | **修理（lbSelfHeal）は既存の setup* を呼ばない・トリガーを消さない**（既存の設定関数は「全部消してから作り直す」＝途中で落ちると悪化する） | `self-heal-repair.test.js` I-H3 |
 | I-H4 | **足すのは 0 本の処理名だけ。作る直前と直後に数える。直後に 2 本以上なら消さずに escalated** | `self-heal-repair.test.js` I-H4 |
-| I-H5 | **足した後のトリガーの総数は 18 本以下**（普段の本数を超えない＝元に戻すだけ・CEO 裁定 2026-11-23）。超えるなら足さずに escalated | `self-heal-repair.test.js` I-H5 |
+| I-H5 | **足した後のトリガーの総数は 18 本以下**（普段の本数を超えない＝元に戻すだけ・CEO 裁定 2026-11-23）。超えるなら足さずに escalated。**作った後に数えて18本を超えていれば（作っている間に別の処理が作った）消さずに escalated（over_limit_after）** | `self-heal-repair.test.js` I-H5 |
 | I-H6 | **修理の途中で落ちても、修理前にあったトリガーは残る**（消さないので悪化しない） | `self-heal-repair.test.js` I-H6 |
 | I-H7 | **SELF_HEAL_MODE が未設定・不正値・トリガーのイベント引数 → practice**（直さず would_attempts を数えるだけ）。`lbSelfHeal()` は引数を取らない（専用のトリガーは無く、lbNudgeDaily の最後から呼ぶ） | `self-heal-repair.test.js` I-H7 |
 | I-H8 | **`要約.check_id === LB_HEALTH_DONE`・`completed === true`・26時間以内でなければ修理しない**（要約だけ書いて落ちた点検の結果を使わない） | `self-heal-repair.test.js` I-H8 |
@@ -261,15 +261,17 @@ trg_alloc_return_pack       同
 | I-H18 | **`LB_HEAL_SCHEDULE` は既存の setup*（setupLineTriggers・setupNudgeTrigger・setupEdgeTrigger・setupEdgeJobTrigger）と同じ組み立て**（身代わりの ScriptApp で setup* を実際に動かして突き合わせる） | `self-heal-repair.test.js` I-H18 |
 | I-H19 | **オーナーへの通知は `_lbPushOnce` を直接使い、失敗を `_lbNqOnFail` に積まない**（`_lbPush` は未知の用途を alert として積む＝警告の未達が警告を呼ぶループになる） | `self-heal-notify.test.js` I-H19 |
 | I-H20 | **点検（dry-run を含む）と修理は同時に1本だけ（借りる印 LB_HEALTH_LEASE）。印の期限は35分・段ごとに延長。ScriptLock は印を取る・延ばす・放す瞬間だけ（tryLock 300ms）** | `self-heal-lease.test.js` I-H20 |
-| I-H21 | **副作用（トリガーを足す・シートを作る・LINE・メール・attempts・sending・台帳・要約）の直前に印の owner を確かめ、違えば止まる** | `self-heal-lease.test.js` I-H21 |
+| I-H21 | **副作用（トリガーを足す・シートを作る・LINE・メール・attempts・sending・台帳・要約・SINCE・DONE・見送りの数、点検の health_status 追記・LB_HEALTH_PREV・悪化メール・lbNotifyDeferDailyMaint）の直前に印を確かめ、失っていれば止まる。点検は印を失った時点で以降の副作用をせずに終える（他人の印は放さない）**。dry-run も同じ | `self-heal-lease.test.js` I-H21 |
 | I-H22 | **壊れた印（JSON 不正・owner/until が無い・数でない・2時間以上未来）は期限切れとみなさず見送り、lease_broken を記録**（lbNudgeDaily が固定の文でメール） | `self-heal-lease.test.js` I-H22 |
 | I-H23 | **checked は段の処理が例外なく終わった後（_done）にだけ付く**。*_fail を出した段・例外を黙って握りつぶした段・読めなかった段は付かない | `self-heal-check.test.js` I-H23 |
 | I-H24 | **check_id と LB_HEALTH_LAST は同じ数／Nudge は DONE が未設定の間「途中で落ちた」を出さない**（LAST > DONE かつ2時間超で知らせる） | `self-heal-check.test.js` I-H24・`self-heal-lease.test.js` I-H24 |
 | I-H25 | **見送りは LB_HEALTH_SKIP に連続回数を数え、完走した点検が health_skipped を要約・台帳に出して保存できた後に、読んだ分だけ引く**（走っている間に増えた分は残す・保存に失敗したら引かない） | `self-heal-check.test.js` I-H25 |
 | I-H26 | **印の owner は実行ごとの乱数（Utilities.getUuid）で check_id と別**。同じ時刻に2本起動しても互いの印を消さない | `self-heal-lease.test.js` I-H26 |
-| I-H27 | **期限切れの印を持つ実行は、owner が一致しても副作用をしない。副作用の直前に期限内を確かめてその場で35分延長** | `self-heal-lease.test.js` I-H27 |
+| I-H27 | **期限切れの印を持つ実行は、owner が一致しても副作用をしない（点検はその時点で終える）。副作用の直前に期限内を確かめてその場で35分延長** | `self-heal-lease.test.js` I-H27 |
 | I-H28 | **手動・dry-run の点検（runHealthCheckDryRun・作業依頼 health）も同じ印で排他する**（dry-run も refreshPaceBoard でシートを書く）。見送ったら「問題なし」と言わない | `self-heal-check.test.js` I-H28 |
 | I-H29 | **lbSelfHeal は専用のトリガーを持たず、lbNudgeDaily の最後（finally・うながしのロックを放した後）に `_lbNudgeThenSelfHeal` から1回呼ぶ**。うながしの戻り値・送信を変えない・自己修理の例外をうながし側に漏らさない・うながしの例外は今までどおり外へ出す（CEO 裁定 2026-11-23） | `self-heal-nudge.test.js` I-H29 |
+| I-H30 | **印の確認は ok／busy（ScriptLock が取れない＝予約などが持っている）／lost（他人の印・期限切れ）の3つに分ける**。点検は busy なら延ばさず、手元で覚えている期限の残りが5分以上なら続け、5分を切っても busy なら副作用をせずに終える。修理は busy なら副作用をせず次回へ（完走の印を書かない）。busy で終えた・見送った回は LB_HEALTH_SKIP に why=lock_busy。印を放すときはロックを3回まで試す | `self-heal-lease.test.js` I-H30 |
+| I-H31 | **修理の時間の予算＝min(4分, 5分 − lbNudgeDaily にかかった時間)**（lbNudgeDaily が開始時刻を渡す）。60秒未満なら始めず LB_HEALTH_SKIP に why=no_time（entry=heal）・完走の印を書かない。予算を超えたら残りの案件は次回へ | `self-heal-repair.test.js` I-H31・`self-heal-nudge.test.js` I-H29 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。

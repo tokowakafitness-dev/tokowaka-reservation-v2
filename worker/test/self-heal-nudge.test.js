@@ -25,6 +25,7 @@ function nudge(w, o = {}) {
     lbNudgePlanAll: () => { log.push('plan'); return { isOpenDay: false }; },
     _lbNudgeSend: (plan, ms, locked) => {
       log.push('send');
+      if (o.sendMs) w.now += o.sendMs;
       if (o.sendThrows) throw new Error('send');
       return { success: true, sent: 3, failed: 0, deferred: 0, marker: 'NUDGE' };
     },
@@ -41,7 +42,7 @@ function nudge(w, o = {}) {
   }) };
   vm.runInContext([pluckFn(NUDGE, 'lbNudgeDaily'), pluckFn(NUDGE, '_lbNudgeThenSelfHeal')].join('\n'), ctx);
   if (o.healThrows) ctx.lbSelfHeal = () => { log.push('heal'); throw new Error('自己修理が落ちた'); };
-  else { const real = ctx.lbSelfHeal; ctx.lbSelfHeal = () => { log.push('heal'); return real(); }; }
+  else { const real = ctx.lbSelfHeal; ctx.lbSelfHeal = (...a) => { log.push('heal'); return real(...a); }; }
   w.depth = (w.depth || 0) + 1;
   let res, err = null;
   try { res = ctx.lbNudgeDaily(o.arg); } catch (e) { err = e; } finally { w.depth--; }
@@ -70,10 +71,16 @@ console.log('=== I-H29 相乗り ===');
   const r4 = nudge(w4, { sendThrows: true });
   ok('I-H29-6 うながしの例外は今までどおり外へ出る（相乗りが握りつぶさない）', r4.err && r4.err.message === 'send' && r4.log.indexOf('unlock') >= 0, String(r4.err));
   ok('I-H29-7 自己修理がうながしのロックを持ったまま走らない', r.log.indexOf('healLockWhileHeld') < 0 && r3.log.indexOf('healLockWhileHeld') < 0);
+  //   うながしに4分30秒かかった → 修理は始めない（no_time）・うながしの戻り値はそのまま
+  const w5 = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
+  removeTrigger(w5, 'dailySync');
+  run(w5, 'dailyHealthCheck'); w5.now += 3 * H;
+  const r5 = nudge(w5, { sendMs: 4.5 * 60000 });
+  ok('I-H29-9（I-H31）★うながしの開始時刻を渡す：うながしが長ければ修理を始めない（no_time）', r5.res.marker === 'NUDGE' && w5.created.length === 0 && JSON.parse(w5.props.LB_HEALTH_SKIP || '{}').why === 'no_time', JSON.stringify({ r5, s: w5.props.LB_HEALTH_SKIP, c: w5.created.length }));
   //   本物のソース：finally で値を返さない（戻り値を書き換えない）
   const body = pluckFn(NUDGE, 'lbNudgeDaily');
   const fin = body.slice(body.lastIndexOf('} finally {'));
-  ok('I-H29-8 最後の finally は _lbNudgeThenSelfHeal() を呼ぶだけ（return を書かない）', /_lbNudgeThenSelfHeal\(\);/.test(fin) && !/return/.test(fin), fin);
+  ok('I-H29-8 最後の finally は _lbNudgeThenSelfHeal(_t0) を呼ぶだけ（return を書かない）', /_lbNudgeThenSelfHeal\(_t0\);/.test(fin) && !/return/.test(fin), fin);
 }
 
 t.end('自己修理 P1 うながしへの相乗り');

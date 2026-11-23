@@ -89,7 +89,7 @@ ok('I-H10-12 _done の段の名前は全部 _step にある（打ち間違いが
   const DOC = readFileSync(join(ROOT, 'ops/MODEL.md'), 'utf8');
   const have = new Set(readdirSync(join(ROOT, 'worker/test')));
   const bad = [];
-  for (let i = 1; i <= 29; i++) {
+  for (let i = 1; i <= 31; i++) {
     const ln = DOC.split('\n').find((l) => l.startsWith(`| I-H${i} |`));
     if (!ln) { bad.push(`I-H${i} が無い`); continue; }
     const cells = ln.split('|').map((x) => x.trim());
@@ -98,7 +98,7 @@ ok('I-H10-12 _done の段の名前は全部 _step にある（打ち間違いが
     //   紐付けた検査ファイルの中に、その番号の検査が実在する（飾りの紐付けにしない）
     for (const f of files) if (have.has(f) && readFileSync(join(ROOT, 'worker/test', f), 'utf8').indexOf(`I-H${i}`) < 0) bad.push(`I-H${i} が ${f} の中に無い`);
   }
-  ok('I-H 地図：I-H1〜I-H29 が MODEL.md §3 にあり、実在する検査ファイルの中にその番号がある', bad.length === 0, bad.join('\n   '));
+  ok('I-H 地図：I-H1〜I-H31 が MODEL.md §3 にあり、実在する検査ファイルの中にその番号がある', bad.length === 0, bad.join('\n   '));
 }
 
 t.end('自己修理 P1 振り分け表');

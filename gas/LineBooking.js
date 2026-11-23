@@ -2324,7 +2324,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-23a 自己修理 P1：点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-23b 自己修理 P1：印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2381,15 +2381,20 @@ function dailyHealthCheck(dryRunArg) {
   var _hcSteps = [];
   //   ★自己修理 P1（§4-2・I-H23）：checked＝**例外なく終わった段**の名前。_step（段の始め）とは共用しない。
   //     段の終わりに _done(名前) で足す。段の中で例外が起きた（*_fail を出した・黙って握りつぶした）段は _bad() で印を付け、足さない
-  var _hcChecked = [], _hcBad = {}, _hcCur = '', _hcLeaseLost = false;
+  var _hcChecked = [], _hcBad = {}, _hcCur = '';
+  //   ★印の見張り（I-H21・I-H27）。印を失った（他人の印・期限切れ・ロックが取れないまま期限が近い）と分かった時点で、
+  //     以降の副作用をせずに終える（_hcNeed が投げ、外側で受けて返す）。段の中では _hcAlive で止める
+  var _hcG = _lbLeaseGuard(_hcLease, _hcEntry, false);
+  function _hcAlive() { return _lbLeaseOk(_hcG); }
+  function _hcNeed() { if (!_lbLeaseOk(_hcG)) { var eL = new Error('lease'); eL.lbLeaseLost = true; throw eL; } }
   function _bad() { _hcBad[_hcCur] = true; }
   function _done(name) { if (name === _hcCur && !_hcBad[name] && _hcChecked.indexOf(name) < 0) _hcChecked.push(name); }
   function _step(name) {
     var ms = Date.now() - _hcT0;
     _hcSteps.push(name + '=' + ms);
     _hcCur = name;
-    //   ★印を段ごとに 35 分延ばす（§2-1）。延ばせない＝印を失った・期限切れ → 以降の新しい副作用（要約・台帳・通知）をしない
-    if (!_hcLeaseLost && !_lbLeaseCheck(_hcLease.owner, _hcEntry)) _hcLeaseLost = true;
+    //   ★印を段ごとに 35 分延ばす（§2-1）。印を失った → ここで投げて点検を終える（以降の段・記録・メール・要約をしない）
+    _hcNeed();
     if (dryRun) return;
     try {
       PropertiesService.getScriptProperties().setProperty('LB_HEALTH_STEP',
@@ -3048,7 +3053,7 @@ function dailyHealthCheck(dryRunArg) {
   }
   // ---- LINE 通知を応答の後ろへ（設計45b）：30分超の引き渡し（送る側が止まっていても待ちに残さない）→ 待ち・回数の点検 ----
   try {
-    if (!dryRun) lbNotifyDeferDailyMaint();   // 試し実行（dryRun）では書かない
+    if (!dryRun && _hcAlive()) lbNotifyDeferDailyMaint();   // 試し実行（dryRun）では書かない・★書く直前に印を確かめる
     var nd = lbNotifyDeferDailyCheck(Date.now(), function (k) { return _lbProp(k); });
     for (var ndi = 0; ndi < nd.length; ndi++) add(nd[ndi].key, '通知の後ろ回し', nd[ndi].severity, nd[ndi].count, nd[ndi].detail);
   } catch (e) {
@@ -3095,6 +3100,7 @@ function dailyHealthCheck(dryRunArg) {
 
   _step('記録');
   // ---- 記録（推移が見えるよう追記）----
+  if (!dryRun) _hcNeed();   // ★書く直前に印を確かめる（I-H21）
   if (!dryRun) {
     try {
       var ss2 = _lbSs(); var sh = ss2.getSheetByName(LB_HEALTH_SHEET);
@@ -3112,6 +3118,7 @@ function dailyHealthCheck(dryRunArg) {
   var prev = {}; try { prev = JSON.parse(_lbProp('LB_HEALTH_PREV') || '{}'); } catch (e) { prev = {}; }
   var worsened = issues.filter(function (x) { return x.severity !== 'info' && x.count > Number(prev[x.key] || 0); });
   var cur = {}; issues.forEach(function (x) { cur[x.key] = x.count; });
+  if (!dryRun) _hcNeed();
   if (!dryRun) { try { PropertiesService.getScriptProperties().setProperty('LB_HEALTH_PREV', JSON.stringify(cur)); } catch (e) {} }
 
   var report = ['【システム点検】' + stamp, ''];
@@ -3126,6 +3133,7 @@ function dailyHealthCheck(dryRunArg) {
   var txt = report.join('\n');
   Logger.log(txt);
 
+  if (!dryRun && worsened.length) _hcNeed();
   if (!dryRun && worsened.length) {
     var to = _lbAlertEmail();
     if (to) {
@@ -3141,15 +3149,18 @@ function dailyHealthCheck(dryRunArg) {
   //   dry-run では書かない。印を失った（期限切れ・奪われた）実行は書かない（I-H21・I-H27）
   var _hcSaved = null;
   if (!dryRun) {
-    if (_hcLeaseLost) _hcSaved = { saved: false, why: 'lease' };
-    else {
-      try { _hcSaved = _lbHealthSave(issues, _hcCheckId, _hcChecked, _hcLease.owner, _hcSkipPrev); }
-      catch (eHs) { _hcSaved = { saved: false, why: 'exception' }; Logger.log('要約の保存に失敗: ' + String((eHs && eHs.name) || 'Error')); }
-    }
+    _hcNeed();
+    try { _hcSaved = _lbHealthSave(issues, _hcCheckId, _hcChecked, _hcG, _hcSkipPrev); }
+    catch (eHs) { _hcSaved = { saved: false, why: 'exception' }; Logger.log('要約の保存に失敗: ' + String((eHs && eHs.name) || 'Error')); }
     Logger.log('自己修理 P1 の要約: ' + JSON.stringify(_hcSaved));
   }
   return { stamp: stamp, issues: issues, worsened: worsened.length, notified: (!dryRun && worsened.length > 0),
            checkId: _hcCheckId, checked: _hcChecked.slice(), saved: _hcSaved };
+  } catch (eLease) {
+    if (!(eLease && eLease.lbLeaseLost)) throw eLease;
+    //   ★印を失った点検は、ここで何もせずに終える（他人の印は放さない＝_lbLeaseRelease が owner を見る）
+    Logger.log('dailyHealthCheck: 印を失ったので以降の副作用をせずに終えます（' + _hcG.why + '）');
+    return { stamp: '', skipped: _hcG.why || 'lost', leaseLost: true, issues: [], worsened: 0, notified: false };
   } finally {
     _lbLeaseRelease(_hcLease.owner);
   }
@@ -3187,6 +3198,9 @@ var LB_HEAL = {
   LEASE_MS: 35 * 60000,                   // ★どの実行上限（30分）よりも長い。段ごと・副作用ごとに延ばす
   LEASE_FUTURE_MAX_MS: 2 * 3600000,       // これより先の期限は壊れた印
   LOCK_MS: 300,                           // ScriptLock は印を取る・延ばす・放す瞬間だけ
+  BUSY_MARGIN_MS: 5 * 60000,              // 点検：ロックが取れず延ばせなくても、手元の期限の残りがこれ以上なら続ける
+  NUDGE_TOTAL_MS: 5 * 60000,              // lbNudgeDaily の開始から修理の終わりまで（6分の上限に余白）
+  MIN_HEAL_MS: 60000,                     // 修理の予算がこれ未満なら始めない（no_time）
   TRIGGER_MAX: 18,                        // 足した後の総数の上限（普段の本数を超えない＝元に戻すだけ・CEO 裁定 2026-11-23）
   MAX_ATTEMPTS: 3,
   BUDGET_MS: 4 * 60000,
@@ -3265,7 +3279,7 @@ var LB_HEAL_NEEDS_EDGE = { edgeJobPoll: 1, pushToEdgeLight: 1, pushToEdgeFullSyn
 var LB_FACT_ENUM = {
   trigger_missing: LB_HEAL_TARGETS,
   cancel_notes_unready: ['missing', 'mismatch', 'unreadable'],
-  health_skipped: ['held', 'lock_busy', 'lease_broken', 'expired']
+  health_skipped: ['held', 'lock_busy', 'lease_broken', 'expired', 'no_time']
 };
 //   _lbCnReady の why → facts
 var LB_CN_WHY_FACT = { no_sheet: 'missing', header_mismatch: 'mismatch', read_failed: 'unreadable' };
@@ -3283,7 +3297,7 @@ var LB_ID_KEYS = ['member_broken'];   // P1 で ids を出すのは member_broke
 var LB_ACTION_ENUM = (function () {
   var a = ['add_trigger:multi', 'practice_add_trigger:multi', 'skip_no_config', 'skip_near_limit', 'skip_no_target',
            'practice_skip_no_config', 'practice_skip_near_limit', 'practice_skip_no_target', 'skip_attempts',
-           'dup_after', 'create_failed', 'heal_exception', 'lease_lost', 'practice_setup_cancel_notes',
+           'dup_after', 'over_limit_after', 'create_failed', 'heal_exception', 'lease_lost', 'practice_setup_cancel_notes',
            'setup_cancel_notes:created', 'setup_cancel_notes:ok', 'setup_cancel_notes:rewrote',
            'setup_cancel_notes:mismatch', 'setup_cancel_notes:exception'];
   for (var i = 0; i < LB_HEAL_TARGETS.length; i++) a.push('add_trigger:' + LB_HEAL_TARGETS[i], 'practice_add_trigger:' + LB_HEAL_TARGETS[i]);
@@ -3348,35 +3362,56 @@ function _lbLeaseAcquire(entry) {
     //   ★owner は実行ごとの乱数（check_id を使わない＝同じミリ秒に起動した2本が同じ owner にならない・I-H26）
     var owner = Utilities.getUuid();
     p.setProperty(LB_HEAL.LEASE_PROP, JSON.stringify({ owner: owner, until: now + LB_HEAL.LEASE_MS, entry: String(entry || '') }));
-    return { ok: true, owner: owner };
+    return { ok: true, owner: owner, until: now + LB_HEAL.LEASE_MS };
   } catch (e) {
     return { ok: false, why: 'lock_busy' };
   } finally { _lbLeaseUnlock(lock); }
 }
-//   確かめて延ばす（副作用の直前・段ごと）。★owner が自分 かつ 期限内 のときだけ真。期限を過ぎていれば owner が自分でも偽（I-H27）
-var _LB_LEASE_EXPIRED_NOTED = false;
-function _lbLeaseCheck(owner, entry) {
-  if (!owner) return false;
+//   印に触る（確かめて延ばす）。返り値（★「ロックが取れない」と「印を失った」を分ける）：
+//     'ok'      … 自分の印で期限内 → 35分延ばした
+//     'busy'    … ScriptLock が取れない（予約・振替などが持っている）＝印の状態は分からない・延ばしていない
+//     'lost'    … 印が無い・他人の印・壊れた
+//     'expired' … 自分の印だが期限を過ぎた（owner が一致しても副作用をしない・I-H27）
+function _lbLeaseTouch(owner, entry) {
+  if (!owner) return 'lost';
   var lock = _lbLeaseLock();
-  if (!lock) return false;   // ロックが取れない＝副作用をせず見送り
-  var expiredMine = false, ok = false;
+  if (!lock) return 'busy';
   try {
     var p = PropertiesService.getScriptProperties(), now = Date.now();
     var cur = _lbLeaseParse(p.getProperty(LB_HEAL.LEASE_PROP), now);
     if (cur.state === 'held' && cur.lease.owner === owner) {
       p.setProperty(LB_HEAL.LEASE_PROP, JSON.stringify({ owner: owner, until: now + LB_HEAL.LEASE_MS, entry: String(cur.lease.entry || entry || '') }));
-      ok = true;
-    } else if (cur.state === 'expired' && cur.lease.owner === owner) expiredMine = true;
-  } catch (e) { ok = false; }
+      return 'ok';
+    }
+    if (cur.state === 'expired' && cur.lease.owner === owner) return 'expired';
+    return 'lost';
+  } catch (e) { return 'busy'; }
   finally { _lbLeaseUnlock(lock); }
-  if (expiredMine && !_LB_LEASE_EXPIRED_NOTED) { _LB_LEASE_EXPIRED_NOTED = true; _lbHealthSkipNote(entry || '', 'expired'); }
-  return ok;
 }
-//   放す（まだ自分の印なら消す）
+//   1回の実行の見張り役。until＝最後に延ばせた期限（手元で覚える）。strict＝busy でも止める（修理）
+function _lbLeaseGuard(lease, entry, strict) {
+  return { owner: lease.owner, entry: String(entry || ''), until: Number(lease.until) || 0, strict: !!strict, dead: false, why: '' };
+}
+//   副作用の直前・段ごとに呼ぶ。真なら続けてよい。偽になったら以降はずっと偽（dead）
+//   ★busy のとき：点検（strict でない）は、手元の期限の残りが BUSY_MARGIN_MS 以上なら延ばさずに続ける
+//     （その期限までは誰も印を取れない＝自分の印のまま）。残りが少ないのに busy なら止める。修理（strict）は busy なら止める（次回へ）
+//   止めた理由は g.why（lock_busy・expired・lost）。lock_busy と expired は LB_HEALTH_SKIP に数える
+function _lbLeaseOk(g) {
+  if (!g || g.dead) return false;
+  var st = _lbLeaseTouch(g.owner, g.entry), now = Date.now();
+  if (st === 'ok') { g.until = now + LB_HEAL.LEASE_MS; return true; }
+  if (st === 'busy' && !g.strict && (g.until - now) >= LB_HEAL.BUSY_MARGIN_MS) return true;
+  g.dead = true;
+  g.why = (st === 'busy') ? 'lock_busy' : (st === 'expired' ? 'expired' : 'lost');
+  if (g.why !== 'lost') _lbHealthSkipNote(g.entry, g.why);
+  return false;
+}
+//   放す（まだ自分の印なら消す・他人の印は消さない）。ロックが取れなければ3回まで試し、だめなら期限で切れる
 function _lbLeaseRelease(owner) {
   if (!owner) return;
-  var lock = _lbLeaseLock();
-  if (!lock) return;   // 取れなければ放さない（期限で切れる）
+  var lock = null;
+  for (var t = 0; t < 3 && !lock; t++) lock = _lbLeaseLock();
+  if (!lock) return;
   try {
     var p = PropertiesService.getScriptProperties();
     var cur = _lbLeaseParse(p.getProperty(LB_HEAL.LEASE_PROP), Date.now());
@@ -3386,7 +3421,7 @@ function _lbLeaseRelease(owner) {
 }
 
 // ---------- 見送りの記録 ----------
-var LB_SKIP_WHY = ['held', 'lock_busy', 'lease_broken', 'expired'];
+var LB_SKIP_WHY = ['held', 'lock_busy', 'lease_broken', 'expired', 'no_time'];
 var LB_SKIP_ENTRY = ['check', 'check_dry', 'heal'];
 function _lbHealthSkipRead() {
   var raw = '';
@@ -3468,15 +3503,16 @@ function _lbHealthSummary(issues, checkId, checked) {
 }
 
 //   最後に1回で保存する（§4-2）：印 → 新しい要約があれば上書きしない → 要約 → SINCE → 台帳 → DONE → 見送りを引く → 通知
-function _lbHealthSave(issues, checkId, checked, owner, skipPrev) {
+function _lbHealthSave(issues, checkId, checked, g, skipPrev) {
   var p = PropertiesService.getScriptProperties();
-  if (!_lbLeaseCheck(owner, 'check')) return { saved: false, why: 'lease' };
-  var prev = null;
+  function lost() { return { saved: false, why: g.why || 'lease' }; }
+  var prev = null;   // （読むだけ。書き込みの直前ごとに印を確かめる）
   try { prev = JSON.parse(p.getProperty(LB_HEAL.STATUS_PROP) || 'null'); } catch (e) { prev = null; }
   if (prev && Number(prev.check_id) > checkId) return { saved: false, why: 'newer' };   // ★古い点検は新しい要約を上書きしない（I-H11）
   var done0 = Number(p.getProperty(LB_HEAL.DONE_PROP) || 0);
   if (done0 > checkId) return { saved: false, why: 'newer' };
   var sum = _lbHealthSummary(issues, checkId, checked);
+  if (!_lbLeaseOk(g)) return lost();   // ★各書き込みの直前に確かめる
   p.setProperty(LB_HEAL.STATUS_PROP, JSON.stringify(sum));
   //   SINCE：key ごとに「いつから出ているか」。前回から続く key は前の時刻を引き継ぐ
   var since0 = {}, since = {};
@@ -3485,25 +3521,29 @@ function _lbHealthSave(issues, checkId, checked, owner, skipPrev) {
     var k = sum.items[i].k, v = Number(since0[k]);
     since[k] = (isFinite(v) && v > 0 && v <= checkId) ? v : checkId;
   }
+  if (!_lbLeaseOk(g)) return lost();
   p.setProperty(LB_HEAL.SINCE_PROP, JSON.stringify(since));
-  var inc = _lbIncReflect(sum, owner);
+  var inc = _lbIncReflect(sum, g);
   if (!inc.ok) return { saved: false, why: inc.why || 'ledger' };
   //   DONE は完走した最大の check_id（小さい値で戻さない）
   var done = Number(p.getProperty(LB_HEAL.DONE_PROP) || 0);
+  if (!_lbLeaseOk(g)) return lost();
   if (!(done > checkId)) p.setProperty(LB_HEAL.DONE_PROP, String(checkId));
+  if (!_lbLeaseOk(g)) return lost();
   _lbHealthSkipConsume(skipPrev && skipPrev.count);
+  if (!_lbLeaseOk(g)) return lost();
   _lbHealWouldWake(inc);
   var notified = null;
-  try { notified = _lbHealNotify(sum, owner); } catch (eN) { notified = { error: String((eN && eN.name) || 'Error') }; }
+  try { notified = _lbHealNotify(sum, g); } catch (eN) { notified = { error: String((eN && eN.name) || 'Error') }; }
   return { saved: true, opened: inc.opened.length, fixed: inc.fixed.length, unknown: inc.unknown.length, notified: notified };
 }
 
 // ---------- 案件台帳（§5） ----------
 function _lbIncCol(name) { return LB_HEAL.COLS.indexOf(name); }
-function _lbIncSheet(owner, create) {
+function _lbIncSheet(g, create) {
   var ss = _lbSs(), sh = ss.getSheetByName(LB_HEAL.SHEET);
   if (sh || !create) return sh;
-  if (!_lbLeaseCheck(owner, 'check')) return null;
+  if (!_lbLeaseOk(g)) return null;
   sh = ss.insertSheet(LB_HEAL.SHEET);
   sh.getRange(1, 1, 1, LB_HEAL.COLS.length).setValues([LB_HEAL.COLS]);
   return sh;
@@ -3520,9 +3560,9 @@ function _lbIncRead(sh) {
 function _lbIncSetEnum(row, col, val, list) { row[_lbIncCol(col)] = (list.indexOf(val) >= 0) ? val : ''; }
 function _lbIncOpen(status) { return status !== 'fixed' && status !== ''; }
 //   要約を台帳へ反映する。★開く・更新・閉じるは印を持った1本だけ（§2-1）。同じ結果を2回反映しても同じになる
-function _lbIncReflect(sum, owner) {
+function _lbIncReflect(sum, g) {
   var out = { ok: false, opened: [], fixed: [], unknown: [], escalated: [] };
-  var sh = _lbIncSheet(owner, true);
+  var sh = _lbIncSheet(g, true);
   if (!sh) { out.why = 'lease'; return out; }
   var rd = _lbIncRead(sh);
   if (!rd.ok) { out.why = rd.why; return out; }
@@ -3576,11 +3616,11 @@ function _lbIncReflect(sum, owner) {
     add.push(nr); out.opened.push(x.k);
   }
   if (changed && rows.length) {
-    if (!_lbLeaseCheck(owner, 'check')) { out.why = 'lease'; return out; }
+    if (!_lbLeaseOk(g)) { out.why = 'lease'; return out; }
     sh.getRange(2, 1, rows.length, W).setValues(rows);
   }
   if (add.length) {
-    if (!_lbLeaseCheck(owner, 'check')) { out.why = 'lease'; return out; }
+    if (!_lbLeaseOk(g)) { out.why = 'lease'; return out; }
     sh.getRange(rows.length + 2, 1, add.length, W).setValues(add);
   }
   out.ok = true;
@@ -3637,10 +3677,10 @@ function _lbHealMail(subject, body) {
   try { GmailApp.sendEmail(to, subject, body); return true; } catch (e) { return false; }
 }
 //   ★モードが off なら送らない（戻すときは SELF_HEAL_MODE=off で即時に止まる）
-function _lbHealNotify(sum, owner) {
+function _lbHealNotify(sum, g) {
   var out = { line: 0, mail: 0, digest: false };
   if (_lbSelfHealMode() === 'off') return out;
-  var sh = _lbIncSheet(owner, false);
+  var sh = _lbIncSheet(g, false);
   if (!sh) return out;
   var rd = _lbIncRead(sh);
   if (!rd.ok) return out;
@@ -3648,7 +3688,7 @@ function _lbHealNotify(sum, owner) {
   var items = {}; for (var i = 0; i < sum.items.length; i++) items[sum.items[i].k] = sum.items[i];
   var now = Date.now(), today = _lbHealDay(now);
   function writeRow(r) {
-    if (!_lbLeaseCheck(owner, 'check')) return false;
+    if (!_lbLeaseOk(g)) return false;
     sh.getRange(r + 2, 1, 1, W).setValues([rows[r]]);
     return true;
   }
@@ -3699,7 +3739,7 @@ function _lbHealNotify(sum, owner) {
     }
   }
   if (lines.length && String(_lbProp(LB_HEAL.DIGEST_DATE_PROP) || '') !== today) {
-    if (!_lbLeaseCheck(owner, 'check')) return out;
+    if (!_lbLeaseOk(g)) return out;
     var body = '予約システムの点検で、オーナーにしかできないこと・自動では直せなかったことがあります（' + lines.length + '件）。\n\n'
              + lines.join('\n') + '\n\n（このメールは開いている間、1日1通です。版 ' + String(LB_HEALTH_BUILD).slice(0, 11) + '）';
     if (_lbHealMail('【オーナーにしかできないこと】予約システムの点検（' + lines.length + '件）', body)) {
@@ -3720,7 +3760,7 @@ function _lbHealCountTriggers() {
 //   足りない処理名のトリガーを1本ずつ足す（★消さない・既存の setup* を呼ばない。I-H3〜I-H6）
 //   planOnly=true は数えるだけ（練習モード）
 //   返り値 { result: 固定のコード, added: [...], plan: [...] }
-function lbHealAddMissingTriggers(names, owner, planOnly) {
+function lbHealAddMissingTriggers(names, g, planOnly) {
   var out = { result: '', added: [], plan: [] };
   var want = [];
   for (var i = 0; i < (names || []).length; i++) {
@@ -3743,7 +3783,7 @@ function lbHealAddMissingTriggers(names, owner, planOnly) {
   if (planOnly) { out.result = noConfig.length ? 'skip_no_config' : ''; return out; }
   var stop = '';
   for (var k = 0; k < cand.length; k++) {
-    if (!_lbLeaseCheck(owner, 'heal')) { stop = 'lease_lost'; break; }
+    if (!_lbLeaseOk(g)) { stop = 'lease_lost'; break; }
     var c2 = _lbHealCountTriggers();   // ★作る直前に数え直す（別の処理が作っていれば作らない）
     if (c2.by[cand[k]] > 0) continue;
     if (c2.total + 1 > LB_HEAL.TRIGGER_MAX) { stop = 'skip_near_limit'; break; }
@@ -3757,6 +3797,7 @@ function lbHealAddMissingTriggers(names, owner, planOnly) {
     else if (!(c3.by[out.added[a]] >= 1)) miss = true;
   }
   if (dup) out.result = 'dup_after';
+  else if (out.added.length && c3.total > LB_HEAL.TRIGGER_MAX) out.result = 'over_limit_after';   // ★作った後に上限を超えた（消さない）
   else if (miss) out.result = 'create_failed';
   else if (stop) out.result = stop;
   else if (noConfig.length) out.result = 'skip_no_config';
@@ -3764,13 +3805,17 @@ function lbHealAddMissingTriggers(names, owner, planOnly) {
   return out;
 }
 
-//   修理の入口（lbNudgeDaily の最後から毎日1回・専用のトリガーは無い）。★引数は取らない・見ない
-function lbSelfHeal() {
+//   修理の入口（lbNudgeDaily の最後から毎日1回・専用のトリガーは無い）。
+//   nudgeStartMs … lbNudgeDaily が始まった時刻（数のときだけ使う。それ以外＝イベント・true・未指定は「いま」）。
+//     ★修理の予算＝min(4分, 5分 − うながしにかかった時間)。60秒未満なら始めず no_time を数える（GAS の6分の上限に当てない）
+function lbSelfHeal(nudgeStartMs) {
   var p = PropertiesService.getScriptProperties();
   var t0 = Date.now();
+  var startMs = (typeof nudgeStartMs === 'number' && isFinite(nudgeStartMs) && nudgeStartMs <= t0) ? nudgeStartMs : t0;
+  var budget = Math.min(LB_HEAL.BUDGET_MS, LB_HEAL.NUDGE_TOTAL_MS - (t0 - startMs));
   try { p.setProperty(LB_HEAL.HEAL_LAST_PROP, String(t0)); } catch (e) {}
   var mode = _lbSelfHealMode();
-  var res = { mode: mode, ran: false, gate: '', actions: [] };
+  var res = { mode: mode, ran: false, gate: '', actions: [], budgetMs: budget };
   try {
     if (mode === 'practice') { if (!_lbProp(LB_HEAL.PRACTICE_FROM_PROP)) p.setProperty(LB_HEAL.PRACTICE_FROM_PROP, String(t0)); }
     else p.deleteProperty(LB_HEAL.PRACTICE_FROM_PROP);
@@ -3780,14 +3825,19 @@ function lbSelfHeal() {
     Logger.log('lbSelfHeal: off');
     return res;
   }
+  if (budget < LB_HEAL.MIN_HEAL_MS) {   // ★うながしが長かった日は修理を始めない（完走の印も書かない＝続けば selfheal_stale）
+    _lbHealthSkipNote('heal', 'no_time'); res.gate = 'skip_no_time'; Logger.log('lbSelfHeal: 見送り no_time'); return res;
+  }
   var lease = _lbLeaseAcquire('heal');
   if (!lease.ok) { _lbHealthSkipNote('heal', lease.why); res.gate = 'skip_' + lease.why; Logger.log('lbSelfHeal: 見送り ' + lease.why); return res; }
+  //   ★修理は strict：ロックが取れない（busy）・印を失った・期限切れ なら副作用をせず次回へ
+  var g = _lbLeaseGuard(lease, 'heal', true);
   var completed = false;
   try {
     var gate = _lbSelfHealGate(t0);
     res.gate = gate.why;
-    if (gate.ok) { res.ran = true; _lbSelfHealRun(gate.sum, mode, lease.owner, t0, res); }
-    completed = true;
+    if (gate.ok) { res.ran = true; _lbSelfHealRun(gate.sum, mode, g, t0, res, budget); }
+    completed = !g.dead;
   } finally {
     _lbLeaseRelease(lease.owner);
   }
@@ -3808,22 +3858,22 @@ function _lbSelfHealGate(nowMs) {
   return { ok: true, why: 'ok', sum: sum };
 }
 var LB_HEAL_KEYS = ['trigger_missing', 'cancel_notes_unready'];
-function _lbSelfHealRun(sum, mode, owner, t0, res) {
-  var sh = _lbIncSheet(owner, false);
+function _lbSelfHealRun(sum, mode, g, t0, res, budget) {
+  var sh = _lbIncSheet(g, false);
   if (!sh) { res.gate = 'no_ledger'; return; }
   var rd = _lbIncRead(sh);
   if (!rd.ok) { res.gate = rd.why; return; }
   var rows = rd.rows, W = LB_HEAL.COLS.length, C = function (n) { return _lbIncCol(n); };
   var items = {}; for (var i = 0; i < sum.items.length; i++) items[sum.items[i].k] = sum.items[i];
   function writeRow(r) {
-    if (!_lbLeaseCheck(owner, 'heal')) return false;
+    if (!_lbLeaseOk(g)) return false;
     sh.getRange(r + 2, 1, 1, W).setValues([rows[r]]);
     return true;
   }
   for (var r = 0; r < rows.length; r++) {
     var row = rows[r], key = String(row[C('key')]), st = String(row[C('status')]);
     if (String(row[C('cls')]) !== 'A' || LB_HEAL_KEYS.indexOf(key) < 0 || (st !== 'open' && st !== 'fixing')) continue;
-    if (Date.now() - t0 > LB_HEAL.BUDGET_MS) { res.budget = true; break; }   // 全体4分で打ち切り
+    if (Date.now() - t0 > budget) { res.budget = true; break; }   // 予算（最大4分・うながしの残り）で打ち切り
     var item = items[key];
     if (!item) continue;   // 最新の要約に無い＝次の点検が閉じる
     var practice = (mode !== 'on');
@@ -3839,7 +3889,7 @@ function _lbSelfHealRun(sum, mode, owner, t0, res) {
     if (practice) {
       //   ★練習：status を fixing にしない・attempts を使わない。would_attempts だけ増やす
       if (key === 'trigger_missing') {
-        var pl = lbHealAddMissingTriggers(item.f || [], owner, true);
+        var pl = lbHealAddMissingTriggers(item.f || [], g, true);
         code = pl.result ? 'practice_' + pl.result
              : ('practice_add_trigger:' + (pl.plan.length === 1 ? pl.plan[0] : 'multi'));
       } else code = 'practice_setup_cancel_notes';
@@ -3856,11 +3906,11 @@ function _lbSelfHealRun(sum, mode, owner, t0, res) {
     var escalate = false;
     try {
       if (key === 'trigger_missing') {
-        var hr = lbHealAddMissingTriggers(item.f || [], owner, false);
+        var hr = lbHealAddMissingTriggers(item.f || [], g, false);
         code = hr.result;
-        escalate = (code === 'skip_no_config' || code === 'skip_near_limit' || code === 'skip_no_target' || code === 'dup_after');
+        escalate = (code === 'skip_no_config' || code === 'skip_near_limit' || code === 'skip_no_target' || code === 'dup_after' || code === 'over_limit_after');
       } else {
-        if (!_lbLeaseCheck(owner, 'heal')) code = 'lease_lost';
+        if (!_lbLeaseOk(g)) code = 'lease_lost';
         else {
           var cr = String(setupCancelNotesSheet());
           code = 'setup_cancel_notes:' + (/^(created|ok|rewrote|mismatch)$/.test(cr) ? cr : 'exception');

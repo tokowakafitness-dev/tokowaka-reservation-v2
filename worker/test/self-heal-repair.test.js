@@ -83,6 +83,42 @@ console.log('=== I-H5 足した後の総数は18本以下 ===');
   }
 }
 
+console.log('=== I-H5 作った後の総数が18本を超えたら消さずに escalated ===');
+{
+  const w = on();
+  removeTrigger(w, 'dailySync');
+  for (let i = 0; i < 4; i++) w.triggers.push({ h: '_lbWarmContract' });   // 17本 → 足すと18本（足してよい）
+  run(w, 'dailyHealthCheck'); w.now += H;
+  w.hooks.create = () => { w.triggers.push({ h: '_lbWarmContract' }); };   // 作っている間に別の処理が一回限りを1本作った
+  run(w, 'lbSelfHeal');
+  const row = incOf(w, 'trigger_missing')[0];
+  ok('I-H5-a ★作った後の総数が18本を超えたら escalated（over_limit_after）・消さない', row.status === 'escalated' && row.last_action === 'over_limit_after' && countTrigger(w, 'dailySync') === 1 && w.forbidden.length === 0, JSON.stringify(row));
+}
+
+console.log('=== I-H31 修理の時間の予算（min(4分, 5分 − うながしにかかった時間)） ===');
+{
+  const w = on();
+  removeTrigger(w, 'dailySync');
+  run(w, 'dailyHealthCheck'); w.now += H;
+  const done0 = w.props.LB_SELFHEAL_DONE;
+  const r = run(w, 'lbSelfHeal', w.now - 4.5 * 60000);   // うながしに4分30秒＝残り30秒
+  ok('I-H31-1 ★予算が60秒未満なら修理を始めない（作らない・台帳を触らない・完走の印なし）', r.gate === 'skip_no_time' && w.created.length === 0 && incOf(w, 'trigger_missing')[0].attempts === 0 && w.props.LB_SELFHEAL_DONE === done0, JSON.stringify(r));
+  const sk = JSON.parse(w.props.LB_HEALTH_SKIP || '{}');
+  ok('I-H31-2 no_time を数える（entry=heal）', sk.why === 'no_time' && sk.entry === 'heal', w.props.LB_HEALTH_SKIP);
+  const r2 = run(w, 'lbSelfHeal', w.now - 2 * 60000);
+  ok('I-H31-3 うながしに2分なら予算は3分で修理する', r2.budgetMs === 3 * 60000 && w.created.length === 1, JSON.stringify(r2));
+  const w2 = on();
+  ok('I-H31-4 開始時刻が無い（直接・イベント）なら予算は4分', run(w2, 'lbSelfHeal').budgetMs === 4 * 60000 && run(w2, 'lbSelfHeal', { triggerUid: 'x' }).budgetMs === 4 * 60000);
+  //   予算を使い切ったら次の案件へ進まない
+  const w3 = on();
+  removeTrigger(w3, 'dailySync');
+  w3.sheets.cancel_notes = (await import('./_self-heal-harness.js')).makeSheet('cancel_notes', []);
+  run(w3, 'dailyHealthCheck'); w3.now += H;
+  w3.hooks.setProperty = (k) => { if (k === 'LB_HEALTH_LEASE') w3.now += 50000; };   // 印に触るたびに50秒かかる（遅い日）
+  const r3 = run(w3, 'lbSelfHeal', w3.now - 3 * 60000);   // 予算2分
+  ok('I-H31-5 予算を超えたら残りの案件は次回へ', r3.budget === true && r3.actions.length < 2, JSON.stringify(r3));
+}
+
 console.log('=== I-H6 修理の途中で落ちても前からあったトリガーは残る ===');
 {
   const w = on();
@@ -114,7 +150,7 @@ console.log('=== I-H7 モード ===');
   run(w, 'dailyHealthCheck'); w.now += H;
   const r = run(w, 'lbSelfHeal');
   ok('I-H7-off 何もしない（台帳も触らない）・心拍は残す', r.mode === 'off' && w.created.length === 0 && incOf(w, 'trigger_missing')[0].would_attempts === 0 && !!w.props.LB_SELFHEAL_DONE);
-  ok('I-H7-src トリガーの入口は第1引数を取らない', /\nfunction lbSelfHeal\(\) \{/.test(LB));
+  ok('I-H7-src 第1引数は数（うながしの開始時刻）のときだけ使う', /\nfunction lbSelfHeal\(nudgeStartMs\) \{/.test(LB) && /typeof nudgeStartMs === 'number' && isFinite\(nudgeStartMs\)/.test(LB));
 }
 
 console.log('=== I-H8 完走した最新の点検の結果だけを使う ===');

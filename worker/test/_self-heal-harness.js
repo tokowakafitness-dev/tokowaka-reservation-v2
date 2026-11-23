@@ -51,6 +51,7 @@ export function makeSheet(name, rows = []) {
       if (s.failNext) { s.failNext = false; throw new Error('実行が落ちた（書き込みの途中）'); }
       s.writes++;
       for (let i = 0; i < nr; i++) { while (s.data.length < r + i) s.data.push([]); for (let j = 0; j < nc; j++) s.data[r - 1 + i][c - 1 + j] = v[i][j]; }
+      if (s.onWrite) s.onWrite();
       return this;
     },
     setValue(x) { return this.setValues([[x]]); },
@@ -148,7 +149,8 @@ export function makeCtx(w) {
       setProperty: (k, v) => { if (w.hooks.setProperty) w.hooks.setProperty(k, v); w.props[k] = String(v); },
       deleteProperty: (k) => { delete w.props[k]; },
     }) },
-    LockService: { getScriptLock: () => ({ tryLock: () => !w.lockBusy, releaseLock: () => {} }) },
+    //   lockBusyFn(n)：n 回目の tryLock を混んでいる（予約などが持っている）ことにする
+    LockService: { getScriptLock: () => ({ tryLock: () => { w.lockN = (w.lockN || 0) + 1; return !(w.lockBusy || (w.lockBusyFn && w.lockBusyFn(w.lockN))); }, releaseLock: () => {} }) },
     ScriptApp: {
       getProjectTriggers: hook('getProjectTriggers', () => w.triggers.map(trig)),
       newTrigger: (name) => builder(name),
@@ -175,7 +177,7 @@ export function makeCtx(w) {
     _edgeQuotaStatus: hook('_edgeQuotaStatus', () => ({ syncVersion: { table: 'ok', stale: 0 }, remainRead: null, preflight: { mode: 'off' } })),
     lbWriteCoversDailyCheck: () => [],
     lbDwDailyCheck: hook('lbDwDailyCheck', () => w.data.dw || []),
-    lbCalSlotsDailyCheck: () => [], lbEdgeDeferDailyCheck: () => [], lbNotifyDeferDailyMaint: () => {}, lbNotifyDeferDailyCheck: () => [],
+    lbCalSlotsDailyCheck: hook('lbCalSlotsDailyCheck', () => []), lbEdgeDeferDailyCheck: () => [], lbNotifyDeferDailyMaint: hook('lbNotifyDeferDailyMaint', () => {}), lbNotifyDeferDailyCheck: () => [],
     lbAutoBookHeldDailyCheck: () => [], lbLockCountDailyCheck: () => [], lbKarteAiDailyCheck: () => [],
     lbContractInputCheck: hook('lbContractInputCheck', () => []),
     //   ---- 通知 ----
