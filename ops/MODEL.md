@@ -247,7 +247,7 @@ trg_alloc_return_pack       同
 | I-H4 | **足すのは 0 本の処理名だけ。作る直前と直後に数える。直後に 2 本以上なら消さずに escalated** | `self-heal-repair.test.js` I-H4 |
 | I-H5 | **足した後のトリガーの総数は 18 本以下**（普段の本数を超えない＝元に戻すだけ・CEO 裁定 2026-11-23）。超えるなら足さずに escalated。**作った後に数えて18本を超えていれば（作っている間に別の処理が作った）消さずに escalated（over_limit_after）** | `self-heal-repair.test.js` I-H5 |
 | I-H6 | **修理の途中で落ちても、修理前にあったトリガーは残る**（消さないので悪化しない） | `self-heal-repair.test.js` I-H6 |
-| I-H7 | **SELF_HEAL_MODE が未設定・不正値・トリガーのイベント引数 → practice**（直さず would_attempts を数えるだけ）。`lbSelfHeal()` は引数を取らない（専用のトリガーは無く、lbNudgeDaily の最後から呼ぶ） | `self-heal-repair.test.js` I-H7 |
+| I-H7 | **SELF_HEAL_MODE が未設定・不正値・トリガーのイベント引数 → practice**（直さず would_attempts を数えるだけ）。`lbSelfHeal(nudgeStartMs)` の引数は**予算の計算にだけ**使い（I-H31）、mode には一切効かない（専用のトリガーは無く、lbNudgeDaily の最後から呼ぶ） | `self-heal-repair.test.js` I-H7 |
 | I-H8 | **`要約.check_id === LB_HEALTH_DONE`・`completed === true`・26時間以内でなければ修理しない**（要約だけ書いて落ちた点検の結果を使わない） | `self-heal-repair.test.js` I-H8 |
 | I-H9 | **同じ案件の修理は3回まで。attempts は呼ぶ前に +1**（途中で落ちても数える）。練習は attempts を使わず would_attempts（これも3回まで） | `self-heal-repair.test.js` I-H9 |
 | I-H10 | **振り分け表 `ops/booking-health-triage.md` と `LB_TRIAGE` が一致（79 key）・表に無い key は B**。LB_TRIAGE の段は add している段と一致 | `self-heal-triage.test.js` I-H10 |

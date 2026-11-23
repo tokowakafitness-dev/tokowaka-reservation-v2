@@ -3529,9 +3529,10 @@ function _lbHealthSave(issues, checkId, checked, g, skipPrev) {
   var done = Number(p.getProperty(LB_HEAL.DONE_PROP) || 0);
   if (!_lbLeaseOk(g)) return lost();
   if (!(done > checkId)) p.setProperty(LB_HEAL.DONE_PROP, String(checkId));
-  if (!_lbLeaseOk(g)) return lost();
+  //   ★DONE を書いた＝この点検は完走として確定した。ここから後で印を確かめ直さない（関門②2回目・CEO 裁定）。
+  //     確かめ直して busy/expired になると _lbLeaseOk が SKIP を数え、「DONE は完走・SKIP は見送り・戻り値は saved:false」が
+  //     同時に成り立って矛盾する。直前の確認（ok なら期限を 35 分先へ延ばす）から数ミリ秒の自分の数え直しだけなので安全。
   _lbHealthSkipConsume(skipPrev && skipPrev.count);
-  if (!_lbLeaseOk(g)) return lost();
   _lbHealWouldWake(inc);
   var notified = null;
   try { notified = _lbHealNotify(sum, g); } catch (eN) { notified = { error: String((eN && eN.name) || 'Error') }; }

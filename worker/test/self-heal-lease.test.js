@@ -102,6 +102,11 @@ console.log('=== I-H21 副作用の直前に owner を確かめる ===');
   w5.hooks.setProperty = (k) => { if (k === 'LB_HEALTH_STATUS' && w5.depth === 1) w5.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w5.now + 30 * MIN, entry: 'heal' }); };
   const r5 = run(w5, 'dailyHealthCheck');
   ok('I-H21-9 ★_lbHealthSave の各書き込みの直前に確かめる（要約の後に奪われたら SINCE・台帳・DONE なし）', !w5.props.LB_HEALTH_SINCE && !w5.sheets.incidents && !w5.props.LB_HEALTH_DONE && r5.saved && r5.saved.saved === false, JSON.stringify(r5.saved));
+  //   ★DONE を書いた直後に奪われた → 完走は確定済み。確かめ直さない（SKIP を数えない・saved:true）＝関門②2回目 CEO 裁定
+  const w5d = makeWorld();
+  w5d.hooks.setProperty = (k) => { if (k === 'LB_HEALTH_DONE' && w5d.depth === 1) w5d.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w5d.now - 1, entry: 'heal' }); };
+  const r5d = run(w5d, 'dailyHealthCheck');
+  ok('I-H21-14 ★DONE の後は確かめ直さない（DONE・SKIP・戻り値が矛盾しない）', !!w5d.props.LB_HEALTH_DONE && !w5d.props.LB_HEALTH_SKIP && r5d.saved && r5d.saved.saved === true, JSON.stringify({ s: r5d.saved, k: w5d.props.LB_HEALTH_SKIP }));
   //   修理の途中で奪われた → 以降のトリガーを足さない
   const w2 = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
   removeTrigger(w2, 'dailySync'); removeTrigger(w2, 'syncContractStatus');
