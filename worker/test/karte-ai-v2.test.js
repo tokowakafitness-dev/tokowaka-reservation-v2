@@ -441,12 +441,44 @@ setEnv(V2);
     ['caution 件', /caution（(\d+)件まで/, L.CAUTION_AI_MAX], ['caution 字', /caution（\d+件まで・各(\d+)字）/, L.TEXT], ['condition 件', /condition＝[^（]*（(\d+)件まで）/, L.CONDITION], ['coaching 件', /coaching＝[^（]*（(\d+)件まで）/, L.LIST], ['hearing 件', /hearing＝[^（]*（(\d+)件まで）/, L.LIST], ['3つの字', /この3つは各(\d+)字まで/, L.TEXT],
     ['next 件', /next_actions＝[^（]*（(\d+)件まで/, L.NEXT], ['next 各字', /next_actions＝[^）]*・各(\d+)字/, L.NEXT_LEN], ['next 合計', /next_actions＝[^）]*合計(\d+)字/, L.NEXT_TOTAL],
     ['message 字', /member_message＝[^（]*（(\d+)字まで）/, L.MEMBER_MESSAGE], ['todo 件', /member_todo＝[^（]*（(\d+)件まで/, L.TODO], ['todo 字', /member_todo＝[^）]*・各(\d+)字/, L.TODO_LEN],
-    ['unclear 件', /unclear（(\d+)件まで）/, L.UNCLEAR], ['unclear 字', /text (\d+)字まで/, L.UNCLEAR_LEN],
+    ['unclear 件', /unclear（(\d+)件まで）/, L.UNCLEAR], ['unclear 字', /text (\d+)字まで/, L.UNCLEAR_LEN], ['unclear 根拠 字', /unclear[^\n]*evidence＝文字起こしの文字のまま(\d+)字まで/, L.EVIDENCE],
   ];
   const badRows = rows.filter(([, re, want]) => num(re) !== want).map(([k, re, want]) => k + '=' + num(re) + '≠' + want);
   ok('V2-27 ★指示文の字数・件数が AI_V2_LIMITS と一致（' + rows.length + '項目）', badRows.length === 0, badRows.join(' / '));
   const setSchema = AI_SCHEMA_V2.properties.exercises.items.properties.sets.items;
   ok('V2-27 ★形のセットに bodyweight（真偽値）が required', setSchema.required.indexOf('bodyweight') >= 0 && setSchema.properties.bodyweight.type === 'boolean');
+}
+
+{
+  //   関門② 1・2・3：同じ根拠が何か所にもある／inferred の自重／unclear の根拠
+  setEnv(V2);
+  const S = (weight_kg, reps, basis, evidence, extra) => Object.assign({ weight_kg, bodyweight: false, reps, basis, evidence, unsure: '', note: '' }, extra || {});
+  const known = ['ベンチプレス', 'スクワット', 'プランク', 'ヒップスラスト'];
+  const run = async (tx, exercises, unclear) => {
+    reply = () => ({ draft: Object.assign(okDraft(), { exercises, caution: [], unclear: unclear || [] }) });
+    const r = await call({ client_ai_format: 2, text: tx, known });
+    reply = null;
+    return r.draft || {};
+  };
+  const ex1 = [{ name: 'スクワット', heard: '', note: '', sets: [S(30, 10, 'said', '30キロで10回')] }];
+  const a = await run('スクワット。\n30キロで10回。\nここは膝が痛いと言いながら30キロで10回。', ex1);
+  ok('V2-29 ★同じ根拠が2か所（健康語なし→健康語あり）→ 後ろの文脈も見て healthHidden', a.exercises && a.exercises[0].sets[0].status === 'healthHidden', JSON.stringify(a.exercises));
+  const b = await run('ここは膝が痛いと言いながら30キロで10回。\nスクワット。\n30キロで10回。', ex1);
+  ok('V2-29 ★逆順（健康語あり→なし）も healthHidden', b.exercises && b.exercises[0].sets[0].status === 'healthHidden', JSON.stringify(b.exercises));
+  const c = await run('スクワット。\n30キロで10回。\nもう一度30キロで10回。', ex1);
+  ok('V2-29 2か所とも健康語なしなら match（返す根拠は最初の位置）', c.exercises && c.exercises[0].sets[0].status === 'match' && c.exercises[0].sets[0].evidence === '30キロで10回', JSON.stringify(c.exercises));
+  const d = await run('プランクを20回やりましょう。\nヒップスラスト 自重で12回いきます。\nもう1セット同じでいきます。', [
+    { name: 'プランク', heard: '', note: '', sets: [S(null, 20, 'inferred', 'プランクを20回やりましょう', { bodyweight: true })] },
+    { name: 'ヒップスラスト', heard: '', note: '', sets: [S(null, 12, 'inferred', 'ヒップスラスト 自重で12回いきます', { bodyweight: true }), S(null, 12, 'inferred', 'もう1セット同じでいきます', { bodyweight: true })] },
+    { name: 'ベンチプレス', heard: '', note: '', sets: [S(40, 12, 'inferred', 'ヒップスラスト 自重で12回いきます'), S(null, 12, 'inferred', 'もう1セット同じでいきます', { bodyweight: true })] },
+  ]);
+  const st = (i, j) => { const x = d.exercises && d.exercises[i].sets[j]; return x ? JSON.stringify([x.status, x.w, x.r, x.bw]) : 'null'; };
+  ok('V2-30 ★inferred の自重は根拠に自重の言葉が無ければ返さない（bw 偽・w null）', st(0, 0) === JSON.stringify(['inferred', null, 20, false]), st(0, 0));
+  ok('V2-30 ★根拠に「自重」があれば bw 真', st(1, 0) === JSON.stringify(['inferred', null, 12, true]), st(1, 0));
+  ok('V2-30 ★繰り返し＋直前のセットが自重なら bw 真', st(1, 1) === JSON.stringify(['inferred', null, 12, true]), st(1, 1));
+  ok('V2-30 ★繰り返しでも直前のセットが自重でなければ bw 偽', st(2, 1) === JSON.stringify(['inferred', null, 12, false]), st(2, 1));
+  const e = await run('スクワット。\n30キロで10回。\n3セット目は予告だけでした。', ex1, [{ text: '3セット目が不明', evidence: '3セット目は予告だけでした' }, { text: '回数が不明', evidence: '文字起こしに無い架空の根拠の文' }, { text: '句読点違い', evidence: 'スクワット30キロで10回' }]);
+  ok('V2-31 ★unclear の根拠：見つかればその切り出し・見つからなければ空・句読点の違いは見つかる', e.unclear && e.unclear[0].evidence === '3セット目は予告だけでした' && e.unclear[1].evidence === '' && e.unclear[2].evidence === 'スクワット。 30キロで10回', JSON.stringify(e.unclear));
 }
 
 Object.assign(console, orig);

@@ -7,7 +7,7 @@
 //     ⑤ 健康語の文は元の場所から消して caution へ。根拠か unsure に健康語のセットは healthHidden（数字・根拠・理由を返さない）
 //   ★人名で採用は止めない（オーナーの判断 2026-11-20）。伏せるのは今の makeMasker（登録済みの氏名・敬称つき・電話・メール）と再マスクだけ
 
-import { AI_HEALTH, verifySet } from './karte-ai.js';
+import { AI_HEALTH, BODYWEIGHT, verifySet } from './karte-ai.js';
 import { normalizeExerciseName } from '../lib/karte-exercises.js';
 
 export const AI_V2_LIMITS = {
@@ -67,7 +67,7 @@ export const AI_SYSTEM_V2 = [
   '3. caution（20件まで・各200字）：痛み・違和感・怪我・診断・服薬・発熱だけ。体の不調はここ以外に書かない。睡眠・生活リズム・疲れは caution に書かない。',
   '4. condition＝種目に結びつかない状態（10件まで）／coaching＝全体の指導の要点（20件まで）／hearing＝指導に関係する生活・食事・睡眠・仕事・目標（20件まで）。この3つは各200字まで。next_actions＝次回やること（5件まで・各100字・合計500字まで）。',
   '5. member_message＝お客様に見せてよい要点（400字まで）／member_todo＝次回までにしてほしいこと（3件まで・各60字）。',
-  '6. unclear（10件まで）：どこにも入らない不明点（text 120字まで）とその根拠（evidence）。',
+  '6. unclear（10件まで）：どこにも入らない不明点（text 120字まで）とその根拠（evidence＝文字起こしの文字のまま80字まで）。',
   '書かない：雑談（遊び・誘い・予定・趣味・旅行の話を含む）・政治・宗教・思想信条・性的指向・家族の事情・第三者の話。人名は書かず「お客様」「トレーナー」「〔人〕」と書く。',
 ].join('\n');
 
@@ -213,11 +213,14 @@ export function makeLocator(hay) {
     let e = '';
     for (const c of String(ev || '')) if (!EV_IGNORE.test(c)) e += c;
     if (e.length < EV_MIN) return null;
-    const k = h.indexOf(e);
-    if (k < 0) return null;
-    const a = idx[k], b = idx[k + e.length - 1] + 1;
-    if (b - a > AI_V2_LIMITS.EVIDENCE) return null;
-    return { at: a, end: b, text: hay.slice(a, b) };
+    //   ★同じ根拠が何か所にもあれば全部の位置を返す（健康語の見直しを全部の位置で行う・関門② 1）。返す切り出しは最初の位置
+    const all = [];
+    for (let k = h.indexOf(e); k >= 0; k = h.indexOf(e, k + 1)) {
+      const a = idx[k], b = idx[k + e.length - 1] + 1;
+      if (b - a <= AI_V2_LIMITS.EVIDENCE) all.push({ at: a, end: b });
+    }
+    if (!all.length) return null;
+    return { at: all[0].at, end: all[0].end, text: hay.slice(all[0].at, all[0].end), all };
   };
 }
 /** 見つかった位置の前後（±HEALTH_WINDOW・文の区切り〔。！？・改行〕で止める）。健康語を見直すために使う（W-H2） */
@@ -273,7 +276,9 @@ export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
   if (!Array.isArray(raw.unclear) || raw.unclear.length > L.UNCLEAR) bad();
   const unclear = raw.unclear.map((u) => {
     if (!u || typeof u !== 'object') bad();
-    return { text: one(u.text, L.UNCLEAR_LEN), evidence: typeof u.evidence === 'string' ? squash(u.evidence).slice(0, L.EVIDENCE) : '' };
+    //   ★根拠は文字起こしに（句読点を無視した探し方で）見つかったときだけ、その切り出しを返す。無ければ空（関門② 3）
+    const uloc = typeof u.evidence === 'string' && squash(u.evidence).length <= L.EVIDENCE ? locate(squash(u.evidence)) : null;
+    return { text: one(u.text, L.UNCLEAR_LEN), evidence: uloc ? uloc.text : '' };
   }).filter((u) => u.text);
 
   //   健康語：元の場所から消して caution へ（同じ文は1つ）
@@ -318,7 +323,7 @@ export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
       const w = bw ? null : st.weight_kg;
       const loc = s.evidence && s.evidence.length <= L.EVIDENCE ? locate(s.evidence) : null;
       //   ★根拠の前後に健康語＝healthHidden（短い根拠で健康の文脈を迂回しない・W-H2）
-      if (loc && H(windowOf(lines, loc.at, loc.end))) { nHid++; sets.push(HID(s)); continue; }
+      if (loc && loc.all.some((p) => H(windowOf(lines, p.at, p.end)))) { nHid++; sets.push(HID(s)); continue; }
       let v = null;
       if (loc && e.name && st.basis === 'said' && !s.unsure && (bw || typeof w === 'number')) v = verifySet({ weight_kg: bw ? null : w, reps: r, evidence: loc.text }, maskedSquashed);
       if (v) { nSets++; sets.push({ status: 'match', w: v.w, r: v.r, bw: v.w === null, evidence: mask(v.evidence), unsure: '', note: mask(s.note) }); continue; }
@@ -330,8 +335,10 @@ export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
         const prev = sets.length ? sets[sets.length - 1] : null;
         const wIn = wv !== null && (toks.some((t) => /^\d+(?:\.\d)?$/.test(t) && Math.round(Number(t) * 10) === Math.round(wv * 10)) || (rep && !!prev && prev.w === wv));
         const rIn = rv !== null && (toks.some((t) => /^\d+$/.test(t) && Number(t) === rv) || (rep && !!prev && prev.r === rv));
+        //   ★自重も、根拠に自重の言葉（verifySet と同じ BODYWEIGHT）があるか、繰り返し＋直前のセットが自重のときだけ（関門② 2）
+        const bwIn = bw && (BODYWEIGHT.test(loc.text) || (rep && !!prev && prev.bw === true));
         nInf++;
-        sets.push({ status: 'inferred', w: wIn ? wv : null, r: rIn ? rv : null, bw, evidence: mask(loc.text), unsure: mask(s.unsure), note: mask(s.note) });
+        sets.push({ status: 'inferred', w: wIn ? wv : null, r: rIn ? rv : null, bw: bwIn, evidence: mask(loc.text), unsure: mask(s.unsure), note: mask(s.note) });
         continue;
       }
       nNob++;

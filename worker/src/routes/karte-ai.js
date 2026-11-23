@@ -22,7 +22,7 @@ import { AI_V2_LIMITS, AI_SCHEMA_V2, AI_SYSTEM_V2, aiEffort, readSse, SseError, 
 import { normalizeExerciseName } from '../lib/karte-exercises.js';
 import { readRecRow, recConsentValid } from './member-consent.js';
 
-export const AI_BUILD = '2026-11-23a 設計39＋設計44 同意＋設計49 v2＋設計50（根拠の探し方・数字の分類・自重の区別・お客様を伏せない・指示文）';
+export const AI_BUILD = '2026-11-23b 設計39＋設計44 同意＋設計49 v2＋設計50（根拠の探し方・数字の分類・自重の区別・お客様を伏せない・指示文）';
 
 export const AI_LIMITS = {
   BODY_BYTES: 128 * 1024,   // このパス（/karte/ai-draft）だけ。3万字×3バイト＋余裕
@@ -47,7 +47,8 @@ const MODELS = ['claude-sonnet-5-5', 'claude-haiku-5-5'];
 export const AI_HEALTH = /痛|痺|しびれ|怪我|ケガ|けが|診断|薬|手術|違和感|腫|骨折|捻|ヘルニア|病院|通院|体調|血圧|めまい|熱|妊娠|アレルギー|生理|持病|リハビリ|吐き気|頭痛|不調|医師|医者|治療|炎症|つった|つる/;
 const PII_WEAK = /様|さん|氏|くん|君|ちゃん|回目|初回|体験/;
 const HONORIFIC = '(?:さん|様|くん|ちゃん|氏|君)';
-const BODYWEIGHT = /自重|じじゅう|重りなし|ウェイトなし/;
+//   ★設計50：karte-ai-v2.js の inferred の自重（bw）も同じ一覧で判定する（関門② 2）
+export const BODYWEIGHT = /自重|じじゅう|重りなし|ウェイトなし/;
 //   区切りは空白（改行を含めない）・ハイフン・括弧を3文字まで（「090 - 1234」）。+81 の後の (0) も読む（関門② 3周目）
 const PHONE_SEP = '[ \\t\\u3000\\-‐－()（）]{0,3}';
 const PHONE_SP = '[ \\t\\u3000\\-]{0,2}';
