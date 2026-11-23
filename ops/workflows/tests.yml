@@ -1,0 +1,53 @@
+name: テスト
+
+# PR ごとに、push の前に手元で走らせているのと同じテスト（worker/test/run-all.sh）をサーバー側でも走らせる（2026-11-23・決定0202 の2段目）。
+#
+# ★なぜ要るのか
+#   pre-push は `git push --no-verify` で飛ばせる。別の端末・クラウドのセッションでは入っていないこともある。
+#   ここは必ず走る後ろの網。main のルールセットで「必須の検査」にする（通らなければマージできない）。
+#
+# ★手元に頼るのは jsdom だけ（テストは ~/.cache/claude-node から読む）。ここで同じ版を同じ場所に入れる。
+#   2026-11-23 に空のホームで走らせ、それ以外に手元の依存が無いこと（148本すべて通過）を確かめた。
+#   jsdom の版を上げたら、ここの版も同時に上げる。
+#
+# ★Secrets を使わない・書き込み権限を持たない。pull_request（pull_request_target ではない）。
+#   PR のコードを走らせるが、鍵も書き込みも無いので外へは何もできない。
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # SHAで固定する
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: jsdom を手元と同じ場所・同じ版で入れる
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/claude-node"
+          cd "$HOME/.cache/claude-node"
+          echo '{"private":true}' > package.json
+          npm install --ignore-scripts --no-fund --no-audit --save-exact jsdom@29.1.1
+
+      - name: sqlite3 があるか
+        run: sqlite3 --version
+
+      - name: テストを全部走らせる
+        run: bash worker/test/run-all.sh
