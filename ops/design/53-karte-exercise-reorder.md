@@ -157,3 +157,11 @@ jsdom は pointer events の型（PointerEvent）と位置（getBoundingClientRe
 | 版の印 | KARTE_BUILD・karte.js?v= を 2026-11-23h |
 | 検査 | `worker/test/liff-karte-reorder.test.js`（S1〜S4・S6〜S11・28本）・`worker/test/karte-training-ext.test.js` S5。壊して確かめた9か所は全部落ちた |
 - 未確認：LINE の中の画面での pointer events・setPointerCapture・自動スクロールの速さ（実機）。jsdom は MouseEvent で 'pointerdown' 等を送れ、行の位置は getBoundingClientRect を身代わりにして確かめた。
+
+### 11-2 関門②（2026-11-23・関門①の対処は塞がった・新しい指摘2件 → 受け入れ）
+| # | 指摘 | 裏を取った該当行 | 対処 |
+|---|---|---|---|
+| 1 高 | ドラッグ中に画面を離れると後始末がされず、離れた後の pointerup で古い画面の並べ替えが確定して save まで走りうる | document のリスナーは end() でしか外れない・goBack／exitKarte／onPopState／open で gripCancel を呼んでいない・setPointerCapture に対する releasePointerCapture が無い＝事実 | ①画面を離れる全経路で `gripCancel()`：navPush（どの画面へ移るときも通る）・goBack・exitKarte・onPopState・close・open（別のお客様・タブの切り替え）・記録の画面と取り込み画面の draw の先頭（描き直しで行が消える前） ②end() で `releasePointerCapture` ③**二重の守り**：end() の確定は、つまみがまだ画面にあり（`isConnected`）、始めたときの配列（D.items／rv.exercises の同一性）とお客様が今と同じときだけ。違えば何もしない。検査 S12（戻る→リスナーが残らない・捕捉を外す・後の pointerup で配列も下書きも変わらない／つまみが消えた後の pointerup では確定しない／別のお客様を開いた時点でリスナーが残らない） |
+| 2 低 | 上へ／下へを出している種目の付け替えが、別の種目を動かしたときも動かした先になる | reorderItems の `udFor = udFor >= 0 ? to : -1`＝事実 | `movedIndex(udFor, from, to)` にした。検査 S13 |
+- 壊して確かめた：捕捉を外さない → S12・つまみが消えた後でも確定する → S12・上へ／下への付け替えを戻す → S13・**後始末の呼び出しを全部外す → S12（2本）**。後始末の呼び出しを1か所ずつ外したときは落ちない（goBack を外しても popstate → open → navPush が捨てる、open を外しても navPush が捨てる＝経路ごとに重ねてあるため）。全部外したときに落ちることで、どこかで必ず捨てていることを確かめた。
+- 版の印を 2026-11-23i に上げた。
