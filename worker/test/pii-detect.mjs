@@ -26,10 +26,46 @@ export const ALLOW_NAMES = new Set((
   // トレーナーの姓（LP で公開している業務上の名前。フルネームは書かない）
   '中野 鈴木 沖'
 ).split(/\s+/).filter(Boolean));
-// 「仕様」「模様」「お客様」「同様」… の「様」は名前ではない（直前の1文字で判定）
+// 「仕様」「模様」「お客様」「同様」…の「様」は名前ではない（直前の1文字で判定）
 const GEN_TAIL = new Set([...'仕模客同多異王神皆奥貴外両各左有今斯如']);
+// ★1文字だけのとき（姓が前に付かないとき）に限って許す一般語（2026-11-18・会社リポジトリで実測）。
+//   「3名様」＝人数の単位（366か所／190ファイル・全検出の約半分）・「次の方様」・「一様に」。
+//   GEN_TAIL（最後の1文字で判定）に足すと、名が「一」で終わる実名（〇〇＋一＋様）まで漏れるので枠を分ける。
+const ALLOW_SOLO = new Set([...'名方一']);
 const RUN = '[一-龥々〆ァ-ヴー]';
 const NAME_RE = new RegExp(`(?:(${RUN}+)([ 　・]))?(${RUN}+)[ 　]?様(?![式子相態])`, 'g');
+
+// ★一般語・当社が自ら公開した文書に載る名前を、値を書かずにハッシュで許す（2026-11-18・#14 の2回目）。
+//   選び方：会社リポジトリ 1621 ファイルで「LP・公開ブログ・経営文書に広く出る」もの＝顧客名ではありえない語。
+//   顧客名は業務のコード・記録にしか出ない。ここに足すのは「20 ファイル超に出て、かつ公開物にも出る」語だけ。
+const ALLOW_NAME_HASH = new Set([
+  '8fd9da72', '8a535a3f', 'fd6b6462', '905c11ac', 'bd5a8814', '56a98bd5',   // 2〜3文字の一般語
+  '8e7307d1', 'a1060199', '8b0f4235', 'c51a09cb', '4ed2a470',               // 同（カナ・4文字を含む）
+  '685c8ab9',                                                               // 当社が公開したブログ記事に載る名前
+  '2989e1c5',                                                               // 業務用語（空欄を指す語。会社リポジトリ 14 ファイルに出る）
+  'a2d4a00e', '1806496b',                                                   // 業務用語（別事業のテストや LP にも出る語。連名の片側として引っかかっていた）
+  'b9a00b8b',                                                               // オーナーの氏名（業務上の名前。契約・採算・報酬の記録に頻出するため残す）
+  // 顧客分析の検査が自前で持っている架空の名前（ファイル冒頭で MEMBER_NAMES / AREA_NAME として定義されている）
+  '4df514d1', '0dba122e', 'f91b0cf8',
+  '066a672c',   // 業務用語（報酬の入れ方を指す3文字の語。本番コードの診断メッセージにも出る。2026-11-18）
+  '3980673f',   // 一般語（予約した人を指す3文字の語。LUXE の設計・記録に出る。2026-11-23 オーナー承認）
+  '320cc865', '96522e84',   // 一般語（「〜様」で終わる言い回し。LUXE の設計・動画の設計に出る。2026-11-23 オーナー承認）
+  'ea1e1dc4', '3446ac15',   // 法人・施設の名前（広告コンサルの競合調査。個人ではない。2026-11-23 オーナー承認）
+  'a2d4a00e', '1806496b',                                                   // 業務用語（別事業のテストや LP にも出る語。連名の片側として引っかかっていた）
+]);
+
+// ★架空名の形は許す（2026-11-18・#14 の2回目）。実名を機械で置き換えた跡なので、検査で止めない。
+//   漢字：十干十二支の20文字だけで作る（この20文字だけで出来た氏名は実在しない）
+//   カナ：先頭を「ヰ」にする（「アオイ」等の実在する名前と重ならないため）
+const FAKE_KJ = new Set([...'甲乙丙丁戊己庚辛壬癸寅卯辰巳午未申酉戌亥']);
+export const isFakeName = (s) => {
+  const segs = String(s).split(/[ 　・]/).filter(Boolean);
+  if (!segs.length) return false;
+  // 姓と名で漢字・カナが混ざることがある（置き換えの跡）ので、区切りごとに判定する
+  // 顧客名そのものに「様」が入っている場合（敬称が二重になる実データ）があるので、末尾の「様」は外して見る
+  return segs.map((t) => t.replace(/様$/, '')).filter(Boolean)
+    .every((t) => [...t].every((c) => FAKE_KJ.has(c)) || /^ヰ[ァ-ヴー]*$/.test(t));
+};
 
 export function flaggedNames(line) {
   const out = [];
@@ -37,14 +73,21 @@ export function flaggedNames(line) {
     const r0 = m[1], r1 = m[3];
     const full = r0 ? r0 + m[2] + r1 : r1;
     if (ALLOW_NAMES.has(r1) && (!r0 || ALLOW_NAMES.has(r0))) continue;
+    if (ALLOW_NAME_HASH.has(hash(full)) || ALLOW_NAME_HASH.has(hash(r1)) ||
+        ALLOW_NAME_HASH.has(hash(full.replace(/[ 　・]/g, '')))) continue;
+    if (isFakeName(full)) continue;
     if (GEN_TAIL.has(r1[r1.length - 1])) continue;
+    if (!r0 && [...r1].length === 1 && ALLOW_SOLO.has(r1)) continue;
     out.push(full);
   }
   return out;
 }
 
 // ---- 2. 携帯・IP電話の番号 -------------------------------------------------
-const PHONE_ALLOW_HASH = new Set(['f9d1a4ba']);   // 店の公開番号（LP に掲載）
+const PHONE_ALLOW_HASH = new Set([
+  'f9d1a4ba',                 // 店の公開番号（LP に掲載）
+  'f519f6ba', 'bdfed4ee',     // 同じ番号の別の書き方（LP・広告LP／NAP の引用ブロック・entity-facts）2026-11-18
+]);
 const PHONE_RE = /(?<![\d.])0[5789]0-?\d{4}-?\d{4}(?!\d)/g;
 const PHONE_INTL_RE = /\+81[- ]?[5789]0[- ]?\d{4}[- ]?\d{4}(?!\d)/g;
 function isDummyPhone(p) {
@@ -74,6 +117,12 @@ const PERSONAL_MAIL_DOMAINS = new Set([
 const MAIL_ALLOW_HASH = new Set([
   'a3f8a803',   // 店の GAS を動かす業務アカウント（予約システムのデプロイ主）
   'd9e4a2d2',   // 提携先の業務カレンダーの ID（gmail 形式のカレンダー ID）
+  // ↓ 2026-11-18・会社リポジトリの洗い出し（#14）で確認した業務用のアカウント。顧客のものは1つも無かった
+  '5255941f',   // マーケ自動化の持ち主（GCP・Meta・Cloudflare・リポジトリを作るアカウント）
+  'e031cb14',   // 動画編集の自動化が使う Drive の同期先
+  '4ab9b2cb',   // 上の +claude エイリアス（Claude 専用のマシンアカウント）
+  'b7ddeb5d',   // 入金突合の GAS が使う業務アカウント
+  '7748f664',   // オーナー本人のアカウント（決定の記録に1か所）
 ]);
 const MAIL_RE = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
 export function flaggedEmails(line) {
