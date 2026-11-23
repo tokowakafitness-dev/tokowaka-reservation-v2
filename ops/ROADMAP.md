@@ -6,14 +6,14 @@
 
 ## ■ いまどこ（自己修理 P1・2026-11-23）
 ```
-予約システムが自分で直す（AI なし）・氏名を外した要約・案件台帳・練習モード
-  設計（design-self-heal-P1.md 第5版・関門① Codex 4回で条件付き実装可・決定0201）   ✅ 11/23
-  実装（claude/self-heal-p1・GAS 版 2026-11-23a・検査 self-heal-*.test.js 5本）     ✅ 11/23（未 push）
+予約システムが自分で直す（AI なし）・氏名を外した要約・案件台帳・練習モード（設計 ops/design/self-heal-p1.md）
+  設計（第5版・関門① Codex 4回で条件付き実装可・決定0201）                         ✅ 11/23
+  実装（claude/self-heal-p1・GAS 版 2026-11-23a・検査 self-heal-*.test.js 6本）     ✅ 11/23（未 push）
     借りる印 LB_HEALTH_LEASE（点検・dry-run・修理は同時に1本）／要約 LB_HEALTH_STATUS／
     完走の印 LB_HEALTH_DONE／台帳 incidents／lbSelfHeal（A は trigger_missing・cancel_notes_unready だけ）
+  CEO 裁定の反映：専用トリガーなし＝lbNudgeDaily（10時）の最後に相乗り・足した後18本以下・宛先は owner かつ active ✅ 11/23
   └ 関門②（Codex）                                                               🔄 ■ いまここ ■
-  └ ★トリガーの本数：本番18本（設計15・10/09）だと setupSelfHealTrigger は作らない（17本以下の条件） ⬜ CEO 判断
-  └ GAS 反映1回 → GAS エディタで setupSelfHealTrigger()（オーナー）               ⬜ ★オーナー
+  └ GAS 反映1回（オーナー）。トリガーの設定は要らない                              ⬜ ★オーナー
   └ practice を1週間：incidents の would_attempts・last_action を読む              ⬜
   └ 作業依頼で SELF_HEAL_MODE=on（CEO）・関門③                                     ⬜
   戻し方：SELF_HEAL_MODE=off（即時・反映不要。修理も通知も止まる。要約・台帳は書き続ける）

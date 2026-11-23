@@ -210,8 +210,7 @@ console.log('=== ⑩ トリガー ===');
       names.add(SRC[f].slice(m.index + m[0].length, close).trim().replace(/^'|'$/g, ''));
     }
   }
-  //   ★'lbSelfHeal' は自己修理 P1（決定0201）で意図して1本足した（setupSelfHealTrigger は総数17本以下のときだけ作る）
-  const want = ['_lbSyncAfterRegister', '_lbWarmContract', 'autoBookRecurringPatterns', 'checkLineQuota', 'dailyHealthCheck', 'dailySync', 'edgeJobPoll', 'lbNudgeDaily', 'lbSelfHeal',
+  const want = ['_lbSyncAfterRegister', '_lbWarmContract', 'autoBookRecurringPatterns', 'checkLineQuota', 'dailyHealthCheck', 'dailySync', 'edgeJobPoll', 'lbNudgeDaily',
     'pushToEdgeFullSync', 'pushToEdgeHome', 'pushToEdgeLight', 'pushToEdgeSlots', 'refreshPaceBoard', 'sendLineReminders', 'sendReminderMails', 'sendShiftReminders',
     'syncContractStatus', 'warmupCache', 'weeklyPaceReport', 'LB_CALSYNC.AFTER_HANDLER', 'LB_CALSYNC.TICK_HANDLER'].sort();
   ok('⑩-1 newTrigger のハンドラの集合が変わらない（新しいトリガー0本）', JSON.stringify([...names].sort()) === JSON.stringify(want), JSON.stringify([...names].sort()));

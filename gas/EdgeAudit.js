@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-11-23a 日次点検が最後に完走した時刻を並べる・点検が見送られたら「問題なし」と言わない・lbSelfHeal を期待の一覧へ（自己修理 P1）';
+var LB_AUDIT_BUILD = '2026-11-23a 日次点検が最後に完走した時刻を並べる・点検が見送られたら「問題なし」と言わない（自己修理 P1）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2630,7 +2630,6 @@ function triggerListText() {
     ['refreshPaceBoard', '6時・ペース表'],
     ['autoBookRecurringPatterns', '★毎月25日6時・固定枠の翌月自動予約'],
     ['dailyHealthCheck', '7時・この点検そのもの'],
-    ['lbSelfHeal', '8時台・自己修理（setupSelfHealTrigger・自己修理 P1）'],
     ['checkLineQuota', '8時・LINEの残量'],
     ['sendReminderMails', '9時・メールのリマインド'],
     ['lbNudgeDaily', '10時・予約のうながし'],

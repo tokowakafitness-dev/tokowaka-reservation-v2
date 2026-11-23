@@ -29,6 +29,13 @@ console.log('=== I-H14 宛先 ===');
   run(w2, 'dailyHealthCheck');
   ok('I-H14-5 owner 2人（同じ ID は1回）→ LINE 2通', w2.pushes.length === 2 && new Set(w2.pushes.map((p) => p.to)).size === 2, JSON.stringify(w2.pushes.map((p) => p.to)));
 
+  const wa = unsent({ trainers: [[FAKE.lineId, 'T1', 'テスト', 'owner', false, ''], ['U00000000000000000000000000000004', 'T4', 'テスト', 'owner', '', '']] });
+  run(wa, 'dailyHealthCheck');
+  ok('I-H14-5b ★active が真でない owner には送らない（_lbOwnerLineIds と同じ _lbTruthy）→ 0人ならメール', wa.pushes.length === 0 && incOf(wa, 'notify_alert_unsent')[0].notify_code === 'no_recipient_mail_ok');
+  const wb = unsent({ trainers: [['U00000000000000000000000000000005', 'T5', 'テスト', 'owner', '有効', '']] });
+  run(wb, 'dailyHealthCheck');
+  ok('I-H14-5c active の表記（有効）も既存と同じく真', wb.pushes.length === 1);
+
   const w3 = unsent({ noTrainerSheet: true });
   run(w3, 'dailyHealthCheck');
   ok('I-H14-6 表が読めない → メール（no_recipient）', w3.pushes.length === 0 && incOf(w3, 'notify_alert_unsent')[0].notify_code === 'no_recipient_mail_ok');

@@ -2324,7 +2324,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-23a 自己修理 P1：点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（練習が既定・トリガーを足すだけ／cancel_notes の見出し）';
+var LB_HEALTH_BUILD = '2026-11-23a 自己修理 P1：点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2427,7 +2427,7 @@ function dailyHealthCheck(dryRunArg) {
       }
       var _sfStale = _sfDone ? (_hcCheckId - _sfDone > LB_HEAL.FRESH_MS) : (_hcCheckId - _sfWatch > LB_HEAL.FRESH_MS);
       add('selfheal_stale', '定期処理', 'warn', _sfStale ? 1 : 0,
-          '自己修理（lbSelfHeal）が26時間以上完走していません（モード ' + _sfMode + '）。トリガーが無ければ GAS エディタで setupSelfHealTrigger を実行してください');
+          '自己修理（lbSelfHeal）が26時間以上完走していません（モード ' + _sfMode + '）。lbSelfHeal は lbNudgeDaily（10時）の最後で動きます。lbNudgeDaily のトリガーと実行ログを確かめてください');
       if (_sfMode === 'practice') {
         var _sfPf = Number(_lbProp(LB_HEAL.PRACTICE_FROM_PROP) || 0);
         add('selfheal_practice_long', '定期処理', 'info', (_sfPf && _hcCheckId - _sfPf > LB_HEAL.PRACTICE_LONG_MS) ? 1 : 0,
@@ -3163,8 +3163,9 @@ function runHealthCheckDryRun() { return dailyHealthCheck(true); }
 //   振り分け＝ops/booking-health-triage.md。不変条件＝ops/MODEL.md I-H1〜I-H28
 //
 //   ★何をするか
-//     点検（dailyHealthCheck）の後に、別のトリガー lbSelfHeal が**本当に安全な2つだけ**を直す：
-//       trigger_missing      … 足りない処理名のトリガーを1本ずつ足す（消さない・17本以下）
+//     点検（dailyHealthCheck・7時）の後、lbNudgeDaily（10時）の最後に相乗りした lbSelfHeal が**本当に安全な2つだけ**を直す
+//     （専用のトリガーは作らない＝本番のトリガーは18本で上限20に近い・CEO 裁定 2026-11-23）：
+//       trigger_missing      … 足りない処理名のトリガーを1本ずつ足す（消さない・足した後18本以下）
 //       cancel_notes_unready … setupCancelNotesSheet（空のシートの見出しだけを書き直す・データ行があれば触らない）
 //     直ったかは**次の点検が完走して、その段が例外なく終わり、key が無い**ことでだけ決める（I-H2）。
 //   ★倒れる向き：判定できないときは直さない・閉じない（unknown）。
@@ -3186,7 +3187,7 @@ var LB_HEAL = {
   LEASE_MS: 35 * 60000,                   // ★どの実行上限（30分）よりも長い。段ごと・副作用ごとに延ばす
   LEASE_FUTURE_MAX_MS: 2 * 3600000,       // これより先の期限は壊れた印
   LOCK_MS: 300,                           // ScriptLock は印を取る・延ばす・放す瞬間だけ
-  TRIGGER_MAX: 17,                        // 足した後の総数の上限（一回限りの用に3本残す）
+  TRIGGER_MAX: 18,                        // 足した後の総数の上限（普段の本数を超えない＝元に戻すだけ・CEO 裁定 2026-11-23）
   MAX_ATTEMPTS: 3,
   BUDGET_MS: 4 * 60000,
   FRESH_MS: 26 * 3600000,
@@ -3305,7 +3306,7 @@ var LB_OWNER_MSG = {
   pending_payment_overage_urgent: '枠を超えて押さえた予約（支払い待ち）が残ったまま、月末まで3日以内です。支払いを確かめてチケットを付与してください。',
   pending_payment_overage: '枠を超えて押さえた予約（支払い待ち）が残っています（月末まで7日以内）。支払いを確かめてチケットを付与してください。',
   pending_payment_unknown: '支払い待ちの件数が分かりません（消化ペースの集計が走っていません）。',
-  selfheal_stale: '自己修理（lbSelfHeal）が26時間以上完走していません。トリガーが無ければ GAS エディタで setupSelfHealTrigger を実行してください。',
+  selfheal_stale: '自己修理（lbSelfHeal）が26時間以上完走していません。lbNudgeDaily（10時）のトリガーと実行ログを確かめてください。',
   health_skipped: '日次点検・自己修理が重なって見送られました。続くなら Script Properties の LB_HEALTH_LEASE を確かめてください。',
   _escalated: '自己修理で直せませんでした（3回試した・上限に近い・設定が無い のいずれか）。CEO が確かめます。',
   _unknown: '点検の段が途中で失敗したため、直ったかどうか判定できていません。',
@@ -3603,15 +3604,16 @@ function _lbHealWouldWake(inc) {
 }
 
 // ---------- 通知（§7） ----------
-//   宛先：trainer_master の role=owner で line_user_id が空でない人（同じ ID は1回・admin には送らない）
+//   宛先：trainer_master の role=owner・active が真（既存 _lbOwnerLineIds と同じ _lbTruthy）・line_user_id が空でない人（同じ ID は1回）。
+//     ★_lbOwnerLineIds をそのまま使わない：admin も返す（設計は admin に送らない）・重複を除かない・表が読めないと例外
 function _lbHealOwnerIds() {
   try {
     var sh = _lbSheet(LINE_BOOKING.TRAINER_SHEET);
     if (!sh) return { ok: false, ids: [] };
     if (sh.getLastRow() < 2) return { ok: true, ids: [] };
-    var v = sh.getRange(2, 1, sh.getLastRow() - 1, TR_COL.ROLE).getValues(), ids = [];
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, TR_COL.ACTIVE).getValues(), ids = [];
     for (var i = 0; i < v.length; i++) {
-      if (String(v[i][TR_COL.ROLE - 1] || '').trim() !== 'owner') continue;
+      if (String(v[i][TR_COL.ROLE - 1] || '').trim() !== 'owner' || !_lbTruthy(v[i][TR_COL.ACTIVE - 1])) continue;
       var lid = String(v[i][TR_COL.LINE_USER_ID - 1] || '').trim();
       if (lid && ids.indexOf(lid) < 0) ids.push(lid);
     }
@@ -3762,7 +3764,7 @@ function lbHealAddMissingTriggers(names, owner, planOnly) {
   return out;
 }
 
-//   修理の入口（時間主導トリガー・点検の後に毎日1回）。★第1引数（イベント）は見ない
+//   修理の入口（lbNudgeDaily の最後から毎日1回・専用のトリガーは無い）。★引数は取らない・見ない
 function lbSelfHeal() {
   var p = PropertiesService.getScriptProperties();
   var t0 = Date.now();
@@ -3876,20 +3878,6 @@ function _lbSelfHealRun(sum, mode, owner, t0, res) {
   }
 }
 
-//   トリガーを1本だけ作る（オーナーが GAS エディタで1回実行する）。★他のトリガーは消さない・既にあれば何もしない
-function setupSelfHealTrigger() {
-  var all = ScriptApp.getProjectTriggers(), mine = 0;
-  for (var i = 0; i < all.length; i++) if (all[i].getHandlerFunction() === 'lbSelfHeal') mine++;
-  if (mine >= 1) { Logger.log('lbSelfHeal のトリガーは既にあります（' + mine + '本）。何も変えません'); return 'exists'; }
-  if (all.length + 1 > LB_HEAL.TRIGGER_MAX) {
-    Logger.log('❌ トリガーが ' + all.length + '本あります。足すと ' + LB_HEAL.TRIGGER_MAX + '本を超えるので作りません（一回限りの用に3本残す）');
-    return 'near_limit';
-  }
-  //   点検（7時台）の後。GAS の時刻は1時間の幅で揺れるので 8時台にする
-  ScriptApp.newTrigger('lbSelfHeal').timeBased().everyDays(1).atHour(8).inTimezone(SETTINGS.TIMEZONE).create();
-  Logger.log('✅ 自己修理（lbSelfHeal）を毎日8時台に設定しました。モード=' + _lbSelfHealMode() + '（未設定は practice＝直さず数えるだけ）');
-  return 'created';
-}
 
 // ============================================================
 // 消化ペースの週次レポート（トレーナーへLINE／オーナーへメール）

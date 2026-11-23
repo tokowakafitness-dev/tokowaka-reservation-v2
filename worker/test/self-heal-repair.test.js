@@ -2,7 +2,7 @@
 //   実行: node worker/test/self-heal-repair.test.js
 //   I-H3  修理は既存の setup* を呼ばない・トリガーを消さない
 //   I-H4  足すのは 0 本の処理名だけ。作る直前と直後に数える。直後に 2 本以上なら消さずに escalated
-//   I-H5  足した後の総数は 17 本以下。超えるなら足さずに escalated
+//   I-H5  足した後の総数は 18 本以下（普段の本数を超えない）。超えるなら足さずに escalated
 //   I-H6  修理の途中で落ちても、修理前にあったトリガーは残る
 //   I-H7  mode 未設定・不正値・イベントの引数 → practice
 //   I-H8  要約.check_id === LB_HEALTH_DONE・completed・26 時間以内でなければ修理しない
@@ -68,9 +68,9 @@ console.log('=== I-H4 0本の処理名だけ・直前と直後に数える ===')
      && incOf(w3, 'trigger_dup')[0].cls === 'B');
 }
 
-console.log('=== I-H5 足した後の総数は17本以下 ===');
+console.log('=== I-H5 足した後の総数は18本以下 ===');
 {
-  for (const [extra, want] of [[2, true], [3, true], [4, false]]) {
+  for (const [extra, want] of [[3, true], [4, true], [5, false]]) {
     //   既定14本から dailySync を抜いて13本。extra 本の一回限りを足す → 足した後 = 14 + extra
     const w = on();
     removeTrigger(w, 'dailySync');
@@ -263,14 +263,9 @@ console.log('=== 設定が無い・作業依頼を止めている ===');
   ok('設定-2 作業依頼の見回りを止めている（EDGE_JOB_ON≠1）なら足さない', countTrigger(w2, 'edgeJobPoll') === 0 && incOf(w2, 'trigger_missing')[0].last_action === 'skip_no_config');
 }
 
-console.log('=== setupSelfHealTrigger ===');
+console.log('=== 専用のトリガーを作らない（lbNudgeDaily に相乗り・CEO 裁定 2026-11-23） ===');
 {
-  const w = makeWorld();
-  ok('作る-1 無ければ1本作る（毎日8時台）', run(w, 'setupSelfHealTrigger') === 'created' && countTrigger(w, 'lbSelfHeal') === 1
-     && JSON.stringify(w.created[0].calls) === JSON.stringify([['timeBased'], ['everyDays', 1], ['atHour', 8], ['inTimezone', 'Asia/Tokyo']]));
-  ok('作る-2 既にあれば何もしない（消さない）', run(w, 'setupSelfHealTrigger') === 'exists' && countTrigger(w, 'lbSelfHeal') === 1 && w.forbidden.length === 0);
-  const w2 = makeWorld(); for (let i = 0; i < 3; i++) w2.triggers.push({ h: '_lbWarmContract' });   // 17本
-  ok('作る-3 足すと17本を超えるなら作らない', run(w2, 'setupSelfHealTrigger') === 'near_limit' && countTrigger(w2, 'lbSelfHeal') === 0);
+  ok('相乗り-1 setupSelfHealTrigger は無い・lbSelfHeal のトリガーを作る呼び出しが無い', !/function setupSelfHealTrigger/.test(LB) && !/newTrigger\('lbSelfHeal'\)/.test(LB));
 }
 
 t.end('自己修理 P1 修理の側');

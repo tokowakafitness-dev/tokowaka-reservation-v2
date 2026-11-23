@@ -111,7 +111,7 @@ D1                      その写し ＋ D1で作った枠・引当
 | シート `incidents`（自己修理 P1・案件台帳） | id＝`key@check_id` | `_lbIncReflect`（点検の最後・借りる印を持った1本だけ）／`_lbSelfHealRun`（attempts・would_attempts・last_action・status）／`_lbHealNotify`（notify_*） | `lbSelfHeal`・CEO（部隊） | 消さない（fixed で閉じる） |
 | Script Property `LB_HEALTH_LEASE`／`LB_HEALTH_SKIP`（自己修理 P1 §2-1） | — | `_lbLeaseAcquire`／`_lbLeaseCheck`／`_lbLeaseRelease`（ScriptLock 300ms の中だけ）／`_lbHealthSkipNote` | 点検・修理・lbNudgeDaily（壊れた印のメール） | 放す・期限35分 |
 | Script Property `LB_HEALTH_STATUS`／`LB_HEALTH_SINCE`／`LB_HEALTH_DONE`（自己修理 P1 §4） | — | `_lbHealthSave`（点検の最後に1回） | `lbSelfHeal`（`check_id === DONE` のときだけ）・Nudge・監査 | 次の点検が上書き（古い check_id では上書きしない） |
-| Script Property `SELF_HEAL_MODE`／`LB_SELFHEAL_LAST`／`LB_SELFHEAL_DONE` ほか | — | 人（モード・既定 practice）／`lbSelfHeal` | 点検（selfheal_stale） | — |
+| Script Property `SELF_HEAL_MODE`／`LB_SELFHEAL_LAST`／`LB_SELFHEAL_DONE` ほか | — | 人（モード・既定 practice）／`lbSelfHeal`（lbNudgeDaily の最後から） | 点検（selfheal_stale） | — |
 
 - ★`cancel_notes.note_purged_at` は「ひとことが残っていない」印を兼ねる（ひとことが無い行は書いた時点で `-`）。だから点検と作業依頼は **note 列を一度も読まずに**「残っている行」を数えられる（I-C6）。
 - ★**キャンセルした時刻は cancel_notes の `cancelled_at` にしか無い**（台帳にキャンセルの時刻の列は無い。当日消化のときだけ transfer_credits の付与時刻が実質の時刻）。設計37 の計測の土台。
@@ -245,18 +245,18 @@ trg_alloc_return_pack       同
 | I-H2 | **fixed は「完走した点検で、その key の段が checked にあり、key が無い」ときだけ**。段が checked に無ければ unknown（閉じない）。修理の直後は fixing（閉じるのは次の点検） | `self-heal-check.test.js` I-H2 |
 | I-H3 | **修理（lbSelfHeal）は既存の setup* を呼ばない・トリガーを消さない**（既存の設定関数は「全部消してから作り直す」＝途中で落ちると悪化する） | `self-heal-repair.test.js` I-H3 |
 | I-H4 | **足すのは 0 本の処理名だけ。作る直前と直後に数える。直後に 2 本以上なら消さずに escalated** | `self-heal-repair.test.js` I-H4 |
-| I-H5 | **足した後のトリガーの総数は 17 本以下**（一回限りの用に3本残す）。超えるなら足さずに escalated。`setupSelfHealTrigger` も同じ条件 | `self-heal-repair.test.js` I-H5 |
+| I-H5 | **足した後のトリガーの総数は 18 本以下**（普段の本数を超えない＝元に戻すだけ・CEO 裁定 2026-11-23）。超えるなら足さずに escalated | `self-heal-repair.test.js` I-H5 |
 | I-H6 | **修理の途中で落ちても、修理前にあったトリガーは残る**（消さないので悪化しない） | `self-heal-repair.test.js` I-H6 |
-| I-H7 | **SELF_HEAL_MODE が未設定・不正値・トリガーのイベント引数 → practice**（直さず would_attempts を数えるだけ）。`lbSelfHeal()` は引数を取らない | `self-heal-repair.test.js` I-H7 |
+| I-H7 | **SELF_HEAL_MODE が未設定・不正値・トリガーのイベント引数 → practice**（直さず would_attempts を数えるだけ）。`lbSelfHeal()` は引数を取らない（専用のトリガーは無く、lbNudgeDaily の最後から呼ぶ） | `self-heal-repair.test.js` I-H7 |
 | I-H8 | **`要約.check_id === LB_HEALTH_DONE`・`completed === true`・26時間以内でなければ修理しない**（要約だけ書いて落ちた点検の結果を使わない） | `self-heal-repair.test.js` I-H8 |
 | I-H9 | **同じ案件の修理は3回まで。attempts は呼ぶ前に +1**（途中で落ちても数える）。練習は attempts を使わず would_attempts（これも3回まで） | `self-heal-repair.test.js` I-H9 |
 | I-H10 | **振り分け表 `ops/booking-health-triage.md` と `LB_TRIAGE` が一致（79 key）・表に無い key は B**。LB_TRIAGE の段は add している段と一致 | `self-heal-triage.test.js` I-H10 |
 | I-H11 | **古い点検（check_id が小さい）は新しい要約・台帳を上書きしない／DONE は小さい値で戻らない** | `self-heal-check.test.js` I-H11 |
 | I-H12 | **予約の行・残数の材料・顧客に届くものを書く処理（dailySync・syncExistingReservations・lbDwEnsureQueued・_lbPush 等）を修理から呼ばない**。P1 の A は trigger_missing と cancel_notes_unready の2つだけ | `self-heal-repair.test.js` I-H12 |
 | I-H13 | **facts・ids・last_action・notify_code・notify_state・status は列挙だけ**（facts は key ごとの一覧 `LB_FACT_ENUM`・ids は `^C\d{14}$` で member_broken だけ）。一覧に無い値は捨てて `facts_rejected` に数える | `self-heal-check.test.js` I-H13 |
-| I-H14 | **即時（LINE）の宛先は trainer_master の role=owner・LINE ID あり（同じ ID は1回・admin に送らない）。0人・表が読めないならメール。quota_exhausted は LINE を試さない** | `self-heal-notify.test.js` I-H14 |
+| I-H14 | **即時（LINE）の宛先は trainer_master の role=owner・active が真（_lbTruthy）・LINE ID あり（同じ ID は1回・admin に送らない）。0人・表が読めないならメール。quota_exhausted は LINE を試さない** | `self-heal-notify.test.js` I-H14 |
 | I-H15 | **通知は送る前に sending と時刻を書き（tries +1）、届いたら delivered。届いた後は送らない。sending のまま残っていたら LINE で送り直さずメール**。1日1回・最大3日 | `self-heal-notify.test.js` I-H15 |
-| I-H16 | **lbSelfHeal の完走（LB_SELFHEAL_DONE）を翌日の点検が（selfheal_stale・26時間・反映直後は猶予）、点検の完走（LB_HEALTH_DONE）を lbNudgeDaily が確かめる** | `self-heal-lease.test.js` I-H16 |
+| I-H16 | **lbSelfHeal（lbNudgeDaily 10時の最後）の完走（LB_SELFHEAL_DONE）を翌日の点検が（selfheal_stale・26時間・反映直後は猶予）、点検の完走（LB_HEALTH_DONE）を lbNudgeDaily が確かめる** | `self-heal-lease.test.js` I-H16 |
 | I-H17 | **cancel_notes の回復は `_lbCnHealth().ready` でだけ判定**。データ行があって見出しが違えば setupCancelNotesSheet は触らない（mismatch）→ escalated・閉じない | `self-heal-repair.test.js` I-H17 |
 | I-H18 | **`LB_HEAL_SCHEDULE` は既存の setup*（setupLineTriggers・setupNudgeTrigger・setupEdgeTrigger・setupEdgeJobTrigger）と同じ組み立て**（身代わりの ScriptApp で setup* を実際に動かして突き合わせる） | `self-heal-repair.test.js` I-H18 |
 | I-H19 | **オーナーへの通知は `_lbPushOnce` を直接使い、失敗を `_lbNqOnFail` に積まない**（`_lbPush` は未知の用途を alert として積む＝警告の未達が警告を呼ぶループになる） | `self-heal-notify.test.js` I-H19 |
@@ -269,6 +269,7 @@ trg_alloc_return_pack       同
 | I-H26 | **印の owner は実行ごとの乱数（Utilities.getUuid）で check_id と別**。同じ時刻に2本起動しても互いの印を消さない | `self-heal-lease.test.js` I-H26 |
 | I-H27 | **期限切れの印を持つ実行は、owner が一致しても副作用をしない。副作用の直前に期限内を確かめてその場で35分延長** | `self-heal-lease.test.js` I-H27 |
 | I-H28 | **手動・dry-run の点検（runHealthCheckDryRun・作業依頼 health）も同じ印で排他する**（dry-run も refreshPaceBoard でシートを書く）。見送ったら「問題なし」と言わない | `self-heal-check.test.js` I-H28 |
+| I-H29 | **lbSelfHeal は専用のトリガーを持たず、lbNudgeDaily の最後（finally・うながしのロックを放した後）に `_lbNudgeThenSelfHeal` から1回呼ぶ**。うながしの戻り値・送信を変えない・自己修理の例外をうながし側に漏らさない・うながしの例外は今までどおり外へ出す（CEO 裁定 2026-11-23） | `self-heal-nudge.test.js` I-H29 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。
@@ -497,7 +498,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 |---|---|---|---|
 | GASのトリガー | 20本 | コード上21ハンドラ分。既存に相乗りで回避（設計45 の写しの後ろ回しも既存の一回限りトリガーと5分ごとの同期に相乗り・`gas-edge-defer.test.js` ⑦ が集合を固定。設計45b の LINE 通知の後ろ回しも同じ2つと `warmupCache` に相乗り・`gas-notify-defer.test.js` ⑥） | 新しい定期処理を作れない |
 | Script Property の数 | 画面から追加できるのは50個まで（2026-11-17 に超えた） | ★設計47 でコードが書く記録を3つ足した（`LB_WRITE_LOCK_COUNT`・`LB_EDGE_PUSH_COUNT`・`LB_LOCK_COUNT_BAD`）。スイッチは画面で足さず、エディタで押す関数で切り替える（`lbEdgeDeferSetOn/Off`・`lbNotifyDeferSetOn/Off`・`lbConsecSetOn` 等）。★エディタでコードを一時的に書き換えて実行しない（11/17 に HEAD を古い版で上書きした）。Off は値を消す（`'0'` を置かない） | 画面から新しいスイッチを足せない |
-| 自己修理 P1 が足すトリガー | `lbSelfHeal` 1本（`setupSelfHealTrigger`・総数17本以下のときだけ作る）／修理で足すのも総数17本以下まで | ★本番は 2026-10-09 時点で18本（設計15）＝**このままでは作れない・修理も足せない**（減らすのが先） | `near_limit`／`skip_near_limit`（escalated） |
+| 自己修理 P1 | **専用のトリガーは作らない**（lbNudgeDaily に相乗り）。修理で足すのは足した後 18本以下まで（普段の本数を超えない） | 本番は 2026-10-09 時点で18本（設計15） | `skip_near_limit`（escalated） |
 | Script Property 1つの値 | 9KB | 通知の待ち `LB_NOTIFY_PENDING` は 16件・8,000バイト（UTF-8）まで | 超えたら今の経路（応答の前に送る） |
 | LINE通知の送り直し | 1回8件・90秒 | `warmupCache`（10分ごと）の末尾に相乗り。開始3分超なら見送り | 次の10分へ回る |
 | GASのバージョン | 200・削除不可（上限は「本数」＝`clasp versions` の件数。GASエディタの「番号」ではない） | 2026-10-06 の確認で 109本（以前ここにあった「188」は番号を本数と読み違えた値）。いまの本数は**未確認**（唯一の出所は GitHub Actions「GASを反映する」のログ）。床だけは分かる：反映ワークフローは残り5本以下で止まる＝直前の反映が成功していれば残り6本以上 | プロジェクト作り直し＝**LIFFのURLが変わる** |

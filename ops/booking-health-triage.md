@@ -1,7 +1,7 @@
 # 予約システム 点検項目の振り分け（保全部隊の手当表の元）
 最終更新：2026-11-23（第3版：P1 の実装で足した見張り3つ・このリポジトリへ写した。第2版：A を 15→2 に絞った・P1 設計 関門①2回目。初版は`gas/LineBooking.js` の `dailyHealthCheck` の `add()` 76個を機械で抜き出して振り分け）
 
-> ★この表は `gas/LineBooking.js` の `LB_TRIAGE` と1対1（`worker/test/self-heal-triage.test.js` が機械で突き合わせる・I-H10）。
+> ★**この表が正本**（会社側の同名の文書は案内だけ・CEO 裁定 2026-11-23）。`gas/LineBooking.js` の `LB_TRIAGE` と1対1（`worker/test/self-heal-triage.test.js` が機械で突き合わせる・I-H10）。
 > 　どちらかを変えたら両方を同じ変更で直す。表に無い key は B として扱う（段は add した時の段）。
 > 　P1 では A→B も B と同じく直さない（「1回だけ点検をやり直す」は P1 の範囲外）。
 
@@ -14,7 +14,7 @@
 P1 設計（`design-self-heal-P1.md` 第5版・関門①4回目で条件付き実装可）で、本当に安全なものだけに絞った（2026-11-23）。
 | key | 手当て | 備考 |
 |---|---|---|
-| trigger_missing | 足りない処理名のトリガーを**1本だけ足す**専用関数（消さない・17本以下） | 既存の setup* は消してから作る＝途中で落ちると悪化するので使わない |
+| trigger_missing | 足りない処理名のトリガーを**1本だけ足す**専用関数（消さない・足した後18本以下） | 既存の setup* は消してから作る＝途中で落ちると悪化するので使わない |
 | cancel_notes_unready | `setupCancelNotesSheet`（冪等・空のシートなら見出しを書き直す・データ行があれば触らず mismatch） | 回復は `_lbCnHealth().ready` で判定 |
 
 ## B へ移したもの（第1版では A だった13）

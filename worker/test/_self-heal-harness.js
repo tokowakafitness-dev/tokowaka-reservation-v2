@@ -109,7 +109,7 @@ export function defaultTriggers() {
 }
 
 // ---------- 1回の実行 ----------
-//   fn: 'dailyHealthCheck' | 'lbSelfHeal' | 'setupSelfHealTrigger' | 'lbHealAddMissingTriggers' など
+//   fn: 'dailyHealthCheck' | 'lbSelfHeal' | 'lbHealAddMissingTriggers' など
 //   ★途中の処理（hooks）は一番外側の実行でだけ起こす（内側の実行がまた hooks を呼んで再帰しないため）
 export function run(w, fn, ...args) {
   const ctx = makeCtx(w);
@@ -191,7 +191,7 @@ export function makeCtx(w) {
   };
   vm.createContext(ctx);
   const src = [
-    pluckFn(LB, '_lbProp'), pluckFn(ALLOC, '_lbIsFiniteNum'),
+    pluckFn(LB, '_lbProp'), pluckFn(ALLOC, '_lbIsFiniteNum'), pluckFn(LB, '_lbTruthy'),
     pluckVar(LB, 'LB_HEALTH_BUILD'), pluckVar(LB, 'LB_HEALTH_SHEET'), pluckVar(LB, 'LB_HEALTH_COLS'),
     LB.slice(LB.indexOf('\nvar LB_CN = {'), LB.indexOf('\n//   見出しの確認。', LB.indexOf('\nvar LB_CN = {'))),
     pluckFn(LB, '_lbCnReady'), pluckFn(LB, '_lbCnHealth'), pluckFn(LB, 'setupCancelNotesSheet'),
