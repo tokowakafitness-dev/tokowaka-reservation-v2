@@ -178,7 +178,7 @@ export function makeCtx(w) {
     lbWriteCoversDailyCheck: () => [],
     lbDwDailyCheck: hook('lbDwDailyCheck', () => w.data.dw || []),
     lbCalSlotsDailyCheck: hook('lbCalSlotsDailyCheck', () => []), lbEdgeDeferDailyCheck: () => [], lbNotifyDeferDailyMaint: hook('lbNotifyDeferDailyMaint', () => {}), lbNotifyDeferDailyCheck: () => [],
-    lbAutoBookHeldDailyCheck: () => [], lbLockCountDailyCheck: () => [], lbKarteAiDailyCheck: () => [],
+    lbAutoBookHeldDailyCheck: () => [], lbLockCountDailyCheck: () => [], lbKarteAiDailyCheck: hook('lbKarteAiDailyCheck', () => []),
     lbContractInputCheck: hook('lbContractInputCheck', () => []),
     //   ---- 通知 ----
     _lbPushOnce: (to, text, opts) => { w.pushes.push({ to, text, opts }); if (w.hooks.push && top()) w.hooks.push(to, text); return w.pushOk ? { ok: true, code: 200 } : { ok: false, code: 500 }; },

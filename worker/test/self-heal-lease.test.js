@@ -107,6 +107,19 @@ console.log('=== I-H21 副作用の直前に owner を確かめる ===');
   w5d.hooks.setProperty = (k) => { if (k === 'LB_HEALTH_DONE' && w5d.depth === 1) w5d.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w5d.now - 1, entry: 'heal' }); };
   const r5d = run(w5d, 'dailyHealthCheck');
   ok('I-H21-14 ★DONE の後は確かめ直さない（DONE・SKIP・戻り値が矛盾しない）', !!w5d.props.LB_HEALTH_DONE && !w5d.props.LB_HEALTH_SKIP && r5d.saved && r5d.saved.saved === true, JSON.stringify({ s: r5d.saved, k: w5d.props.LB_HEALTH_SKIP }));
+  //   ★通知の対象がある world で、DONE の直後に印が期限切れ（または奪われた）→ SKIP を数えない・通知は deferred_lease・saved:true（関門②3回目）
+  for (const [label, steal] of [['期限切れ', (w) => { w.now += 40 * MIN; }], ['奪われた', (w) => { w.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w.now + 30 * MIN, entry: 'heal' }); }]]) {
+    const setTimeout0 = (f) => f();
+    const wn = makeWorld({ data: { emailFailing: 1, quota: { ok: true, limited: true, left: 0, pct: 100 } } });   // 即時 LINE ＋ まとめメールの対象
+    wn.hooks.setProperty = (k) => { if (k === 'LB_HEALTH_DONE' && wn.depth === 1) setTimeout0(() => steal(wn)); };
+    const rn = run(wn, 'dailyHealthCheck');
+    const owner = wn.mails.filter((m) => /予約システムの点検/.test(m.subject));
+    const row = incOf(wn, 'notify_alert_unsent')[0];
+    ok(`I-H21-14b（${label}）★DONE の後に印を失っても SKIP は増えず・通知は送らず deferred_lease・saved:true`,
+       !!wn.props.LB_HEALTH_DONE && !wn.props.LB_HEALTH_SKIP && rn.saved.saved === true && rn.saved.notified.code === 'deferred_lease' && rn.saved.notified.deferred >= 1
+       && wn.pushes.length === 0 && owner.length === 0 && row.notify_state === '' && row.notify_tries === 0,
+       JSON.stringify({ s: rn.saved, k: wn.props.LB_HEALTH_SKIP, p: wn.pushes.length, m: owner.length, row }));
+  }
   //   修理の途中で奪われた → 以降のトリガーを足さない
   const w2 = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
   removeTrigger(w2, 'dailySync'); removeTrigger(w2, 'syncContractStatus');
@@ -243,11 +256,28 @@ console.log('=== I-H30 ロックが取れない（busy）と印を失った（lo
   ok('I-H30-5 busy で終えた回は why=lock_busy で数える', JSON.parse(w2.props.LB_HEALTH_SKIP || '{}').why === 'lock_busy', w2.props.LB_HEALTH_SKIP);
   //   busy が続いても期限まで余裕があるうちは続ける（30分経過＝残り5分ちょうどまでは続く）
   const w3 = makeWorld();
-  w3.hooks.debugDataHealth = () => { w3.lockBusy = true; };
+  w3.hooks.lbKarteAiDailyCheck = () => { w3.lockBusy = true; };   // 通知の後ろ回しの引き渡し（副作用）より後の段から busy
   w3.hooks.lbContractInputCheck = () => { w3.now += 29 * MIN; };
-  w3.hooks.lbDwDailyCheck = () => {};
   const r3 = run(w3, 'dailyHealthCheck');
-  ok('I-H30-6 busy が続いても残り5分以上なら続けて保存する', r3.saved && r3.saved.saved === true, JSON.stringify(r3.saved || r3));
+  //   ★LINE は1通ごとに直前に確かめる：1通目を送った直後に印を奪われたら2通目を送らない
+  const wq = makeWorld({ data: { emailFailing: 1 }, trainers: [['U0000000000000000000000000000000b', 'T1', 'テスト', 'owner', true, ''], ['U0000000000000000000000000000000c', 'T2', 'テスト', 'owner', true, '']] });
+  wq.hooks.push = () => { wq.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: wq.now + 30 * MIN, entry: 'heal' }); };
+  const rq = run(wq, 'dailyHealthCheck');
+  ok('I-H21-15 ★LINE の各送信の直前に確かめる（1通目の後に奪われたら2通目を送らない・SKIP に数えない）', wq.pushes.length === 1 && rq.saved.saved === true && !wq.props.LB_HEALTH_SKIP, JSON.stringify({ p: wq.pushes.length, s: rq.saved, k: wq.props.LB_HEALTH_SKIP }));
+  ok('I-H30-6 ★busy が続くと：段の進行（読み取り）は続く（契約の入力まで呼ぶ）が、副作用は延長できないのでしない（期限の残りが十分でも health_status・要約なし）',
+     w3.calls.lbContractInputCheck === 1 && !w3.sheets.health_status && !w3.props.LB_HEALTH_STATUS && r3.leaseLost === true && r3.skipped === 'lock_busy', JSON.stringify({ r3, c: w3.calls.lbContractInputCheck }));
+  //   busy で段を進めた後、副作用の直前にはロックが空いた → 延長できたので書く
+  const w3b = makeWorld();
+  w3b.hooks.lbKarteAiDailyCheck = () => { w3b.lockBusy = true; };   // 通知の後ろ回しの引き渡し（副作用）より後の段から busy
+  w3b.hooks.lbContractInputCheck = () => { w3b.now += 29 * MIN; w3b.lockBusy = false; };
+  const r3b = run(w3b, 'dailyHealthCheck');
+  ok('I-H30-6b busy で段を進めた後、副作用の直前に延長できれば書く（完走）', r3b.saved && r3b.saved.saved === true && !!w3b.sheets.health_status, JSON.stringify(r3b.saved || r3b));
+  //   ★busy で続けた後、5分を切った状態で副作用の直前に来て、1回目は busy・2回目で空いた → 延長できたので書く（3回まで試す）
+  const w3c = makeWorld();
+  w3c.hooks.lbKarteAiDailyCheck = () => { w3c.lockBusy = true; };   // 通知の後ろ回しの引き渡し（副作用）より後の段から busy
+  w3c.hooks.lbContractInputCheck = () => { w3c.now += 31 * MIN; w3c.lockBusy = false; const n0 = w3c.lockN; w3c.lockBusyFn = (n) => n === n0 + 1; };
+  const r3c = run(w3c, 'dailyHealthCheck');
+  ok('I-H30-6c 副作用の直前は tryLock を3回まで試す（1回 busy でも延長できれば書く）', r3c.saved && r3c.saved.saved === true, JSON.stringify(r3c.saved || r3c));
   //   修理は strict：作る直前に busy なら作らない・次回へ・lock_busy を数える・完走の印を書かない
   const w4 = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
   removeTrigger(w4, 'dailySync');

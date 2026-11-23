@@ -267,10 +267,10 @@ trg_alloc_return_pack       同
 | I-H24 | **check_id と LB_HEALTH_LAST は同じ数／Nudge は DONE が未設定の間「途中で落ちた」を出さない**（LAST > DONE かつ2時間超で知らせる） | `self-heal-check.test.js` I-H24・`self-heal-lease.test.js` I-H24 |
 | I-H25 | **見送りは LB_HEALTH_SKIP に連続回数を数え、完走した点検が health_skipped を要約・台帳に出して保存できた後に、読んだ分だけ引く**（走っている間に増えた分は残す・保存に失敗したら引かない） | `self-heal-check.test.js` I-H25 |
 | I-H26 | **印の owner は実行ごとの乱数（Utilities.getUuid）で check_id と別**。同じ時刻に2本起動しても互いの印を消さない | `self-heal-lease.test.js` I-H26 |
-| I-H27 | **期限切れの印を持つ実行は、owner が一致しても副作用をしない（点検はその時点で終える）。副作用の直前に期限内を確かめてその場で35分延長** | `self-heal-lease.test.js` I-H27 |
+| I-H27 | **期限切れの印を持つ実行は、owner が一致しても副作用をしない（点検はその時点で終える）。副作用（点検の lbNotifyDeferDailyMaint・health_status・LB_HEALTH_PREV・悪化メール・_lbHealthSave の各書き込み・DONE、修理の各書き込み、通知の LINE とメールの1通ごと）の直前は、延長できたときだけ通す（`_lbLeaseOk`）**。DONE の後の見送りの引き算・起こすはずだった回数は、DONE の直前の延長から35分の中なので確かめない。完走した点検の後の通知は、延長できなければ送らずに次回へ（notify_code 相当の `deferred_lease`・LB_HEALTH_SKIP に数えない） | `self-heal-lease.test.js` I-H27・I-H21 |
 | I-H28 | **手動・dry-run の点検（runHealthCheckDryRun・作業依頼 health）も同じ印で排他する**（dry-run も refreshPaceBoard でシートを書く）。見送ったら「問題なし」と言わない | `self-heal-check.test.js` I-H28 |
 | I-H29 | **lbSelfHeal は専用のトリガーを持たず、lbNudgeDaily の最後（finally・うながしのロックを放した後）に `_lbNudgeThenSelfHeal` から1回呼ぶ**。うながしの戻り値・送信を変えない・自己修理の例外をうながし側に漏らさない・うながしの例外は今までどおり外へ出す（CEO 裁定 2026-11-23） | `self-heal-nudge.test.js` I-H29 |
-| I-H30 | **印の確認は ok／busy（ScriptLock が取れない＝予約などが持っている）／lost（他人の印・期限切れ）の3つに分ける**。点検は busy なら延ばさず、手元で覚えている期限の残りが5分以上なら続け、5分を切っても busy なら副作用をせずに終える。修理は busy なら副作用をせず次回へ（完走の印を書かない）。busy で終えた・見送った回は LB_HEALTH_SKIP に why=lock_busy。印を放すときはロックを3回まで試す | `self-heal-lease.test.js` I-H30 |
+| I-H30 | **印の確認は ok／busy（ScriptLock が取れない＝予約などが持っている）／lost（他人の印・期限切れ）の3つに分ける**。副作用の直前は busy なら tryLock(300ms) を3回まで試し、延長できなければその副作用をしない（点検は終える・修理は次回へ・完走の印を書かない）。**延長しないまま続けてよいのは点検の段の進行（読み取り）だけ**で、手元で覚えている期限の残りが5分以上のとき（切ったら延長を試し、だめなら終える）。busy で終えた・見送った回は LB_HEALTH_SKIP に why=lock_busy。印を放すときはロックを3回まで試す | `self-heal-lease.test.js` I-H30 |
 | I-H31 | **修理の時間の予算＝min(4分, 5分 − lbNudgeDaily にかかった時間)**（lbNudgeDaily が開始時刻を渡す）。60秒未満なら始めず LB_HEALTH_SKIP に why=no_time（entry=heal）・完走の印を書かない。予算を超えたら残りの案件は次回へ | `self-heal-repair.test.js` I-H31・`self-heal-nudge.test.js` I-H29 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**

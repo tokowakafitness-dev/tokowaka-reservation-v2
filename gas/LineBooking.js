@@ -2324,7 +2324,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-23b 自己修理 P1：印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-23c 自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2386,7 +2386,8 @@ function dailyHealthCheck(dryRunArg) {
   //     以降の副作用をせずに終える（_hcNeed が投げ、外側で受けて返す）。段の中では _hcAlive で止める
   var _hcG = _lbLeaseGuard(_hcLease, _hcEntry, false);
   function _hcAlive() { return _lbLeaseOk(_hcG); }
-  function _hcNeed() { if (!_lbLeaseOk(_hcG)) { var eL = new Error('lease'); eL.lbLeaseLost = true; throw eL; } }
+  function _hcNeed() { if (!_lbLeaseOk(_hcG)) { var eL = new Error('lease'); eL.lbLeaseLost = true; throw eL; } }   // 副作用の直前（延長できたときだけ通す）
+  function _hcStepNeed() { if (!_lbLeaseStep(_hcG)) { var eS = new Error('lease'); eS.lbLeaseLost = true; throw eS; } }   // 段の進行（読み取り）
   function _bad() { _hcBad[_hcCur] = true; }
   function _done(name) { if (name === _hcCur && !_hcBad[name] && _hcChecked.indexOf(name) < 0) _hcChecked.push(name); }
   function _step(name) {
@@ -2394,7 +2395,8 @@ function dailyHealthCheck(dryRunArg) {
     _hcSteps.push(name + '=' + ms);
     _hcCur = name;
     //   ★印を段ごとに 35 分延ばす（§2-1）。印を失った → ここで投げて点検を終える（以降の段・記録・メール・要約をしない）
-    _hcNeed();
+    //     段の進行は読み取りだけなので、busy でも期限の残りが5分以上なら続ける（副作用の直前は _hcNeed で延長できたときだけ）
+    _hcStepNeed();
     if (dryRun) return;
     try {
       PropertiesService.getScriptProperties().setProperty('LB_HEALTH_STEP',
@@ -3198,7 +3200,8 @@ var LB_HEAL = {
   LEASE_MS: 35 * 60000,                   // ★どの実行上限（30分）よりも長い。段ごと・副作用ごとに延ばす
   LEASE_FUTURE_MAX_MS: 2 * 3600000,       // これより先の期限は壊れた印
   LOCK_MS: 300,                           // ScriptLock は印を取る・延ばす・放す瞬間だけ
-  BUSY_MARGIN_MS: 5 * 60000,              // 点検：ロックが取れず延ばせなくても、手元の期限の残りがこれ以上なら続ける
+  BUSY_MARGIN_MS: 5 * 60000,              // 点検の段の進行（読み取り）だけ：ロックが取れず延ばせなくても、手元の期限の残りがこれ以上なら続ける
+  SURE_TRIES: 3,                          // 副作用の直前：延長できるまで tryLock(300ms) を試す回数
   NUDGE_TOTAL_MS: 5 * 60000,              // lbNudgeDaily の開始から修理の終わりまで（6分の上限に余白）
   MIN_HEAL_MS: 60000,                     // 修理の予算がこれ未満なら始めない（no_time）
   TRIGGER_MAX: 18,                        // 足した後の総数の上限（普段の本数を超えない＝元に戻すだけ・CEO 裁定 2026-11-23）
@@ -3306,7 +3309,7 @@ var LB_ACTION_ENUM = (function () {
 var LB_NOTIFY_ENUM = {
   state: ['sending', 'delivered', 'failed'],
   code: ['line_ok', 'line_fail_mail_ok', 'line_fail_mail_fail', 'no_recipient_mail_ok', 'no_recipient_mail_fail',
-         'resend_by_mail_ok', 'resend_by_mail_fail']
+         'resend_by_mail_ok', 'resend_by_mail_fail', 'deferred_lease']
 };
 var LB_STATUS_ENUM = ['open', 'fixing', 'fixed', 'escalated', 'owner', 'unknown'];
 //   即時に LINE で知らせる key（失敗ならメール）。quota_exhausted は LINE を試さない（通数が尽きている）
@@ -3388,21 +3391,33 @@ function _lbLeaseTouch(owner, entry) {
   } catch (e) { return 'busy'; }
   finally { _lbLeaseUnlock(lock); }
 }
-//   1回の実行の見張り役。until＝最後に延ばせた期限（手元で覚える）。strict＝busy でも止める（修理）
-function _lbLeaseGuard(lease, entry, strict) {
-  return { owner: lease.owner, entry: String(entry || ''), until: Number(lease.until) || 0, strict: !!strict, dead: false, why: '' };
+//   1回の実行の見張り役。until＝最後に延ばせた期限（手元で覚える）
+function _lbLeaseGuard(lease, entry) {
+  return { owner: lease.owner, entry: String(entry || ''), until: Number(lease.until) || 0, dead: false, why: '' };
 }
-//   副作用の直前・段ごとに呼ぶ。真なら続けてよい。偽になったら以降はずっと偽（dead）
-//   ★busy のとき：点検（strict でない）は、手元の期限の残りが BUSY_MARGIN_MS 以上なら延ばさずに続ける
-//     （その期限までは誰も印を取れない＝自分の印のまま）。残りが少ないのに busy なら止める。修理（strict）は busy なら止める（次回へ）
-//   止めた理由は g.why（lock_busy・expired・lost）。lock_busy と expired は LB_HEALTH_SKIP に数える
-function _lbLeaseOk(g) {
+//   ★副作用の直前に呼ぶ：**延長できたときだけ**真（関門②3回目・CEO 裁定）。真の後は35分、誰も印を取れない＝その間の書き込み・送信は自分の印の下。
+//     busy（ScriptLock が取れない）なら SURE_TRIES 回まで試す（tryLock は1回 300ms 待つ）。それでも延長できなければ偽。
+//     偽になったら以降はずっと偽（dead）。理由は g.why（lock_busy・expired・lost）。
+//     noSkip＝完走した点検の後の通知の見送り（「見送り」ではないので LB_HEALTH_SKIP に数えない）
+function _lbLeaseOk(g, noSkip) {
   if (!g || g.dead) return false;
-  var st = _lbLeaseTouch(g.owner, g.entry), now = Date.now();
-  if (st === 'ok') { g.until = now + LB_HEAL.LEASE_MS; return true; }
-  if (st === 'busy' && !g.strict && (g.until - now) >= LB_HEAL.BUSY_MARGIN_MS) return true;
+  var st = 'busy';
+  for (var i = 0; i < LB_HEAL.SURE_TRIES && st === 'busy'; i++) st = _lbLeaseTouch(g.owner, g.entry);
+  if (st === 'ok') { g.until = Date.now() + LB_HEAL.LEASE_MS; return true; }
   g.dead = true;
   g.why = (st === 'busy') ? 'lock_busy' : (st === 'expired' ? 'expired' : 'lost');
+  if (g.why !== 'lost' && !noSkip) _lbHealthSkipNote(g.entry, g.why);
+  return false;
+}
+//   ★段の進行（副作用の無い読み取り）にだけ使う：busy でも手元の期限の残りが BUSY_MARGIN_MS 以上なら延ばさずに続ける
+//     （その期限までは誰も印を取れない）。残りが少なければ延長を試し（_lbLeaseOk）、だめなら偽
+function _lbLeaseStep(g) {
+  if (!g || g.dead) return false;
+  var st = _lbLeaseTouch(g.owner, g.entry);
+  if (st === 'ok') { g.until = Date.now() + LB_HEAL.LEASE_MS; return true; }
+  if (st === 'busy') return ((g.until - Date.now()) >= LB_HEAL.BUSY_MARGIN_MS) ? true : _lbLeaseOk(g);
+  g.dead = true;
+  g.why = (st === 'expired') ? 'expired' : 'lost';
   if (g.why !== 'lost') _lbHealthSkipNote(g.entry, g.why);
   return false;
 }
@@ -3531,7 +3546,9 @@ function _lbHealthSave(issues, checkId, checked, g, skipPrev) {
   if (!(done > checkId)) p.setProperty(LB_HEAL.DONE_PROP, String(checkId));
   //   ★DONE を書いた＝この点検は完走として確定した。ここから後で印を確かめ直さない（関門②2回目・CEO 裁定）。
   //     確かめ直して busy/expired になると _lbLeaseOk が SKIP を数え、「DONE は完走・SKIP は見送り・戻り値は saved:false」が
-  //     同時に成り立って矛盾する。直前の確認（ok なら期限を 35 分先へ延ばす）から数ミリ秒の自分の数え直しだけなので安全。
+  //     同時に成り立って矛盾する。★DONE の直前の確認は延長つきで通っている（_lbLeaseOk は延長できたときだけ真）＝そこから35分は
+  //     誰も印を取れない。下の SKIP の引き算・起こすはずだった回数は、その35分の中の数ミリ秒の自分の書き込みなので確認しない（関門②3回目）。
+  //     通知（_lbHealNotify）は送るたびに確かめるが、延長できなくても SKIP に数えない（deferred_lease）
   _lbHealthSkipConsume(skipPrev && skipPrev.count);
   _lbHealWouldWake(inc);
   var notified = null;
@@ -3688,11 +3705,16 @@ function _lbHealNotify(sum, g) {
   var rows = rd.rows, W = LB_HEAL.COLS.length, C = function (n) { return _lbIncCol(n); };
   var items = {}; for (var i = 0; i < sum.items.length; i++) items[sum.items[i].k] = sum.items[i];
   var now = Date.now(), today = _lbHealDay(now);
+  //   ★書く・送るたびに延長つきで確かめる。延長できなければ送らずに次回へ（deferred_lease・SKIP に数えない＝完走した点検の後なので見送りではない）
+  out.deferred = 0;
+  function sure() { if (_lbLeaseOk(g, true)) return true; out.deferred++; out.code = 'deferred_lease'; return false; }
   function writeRow(r) {
-    if (!_lbLeaseOk(g)) return false;
+    if (!sure()) return false;
     sh.getRange(r + 2, 1, 1, W).setValues([rows[r]]);
     return true;
   }
+  //   メールを1通送る（直前に確かめる）。null＝確かめられず送っていない
+  function mail(subject, text) { if (!sure()) return null; return _lbHealMail(subject, text); }
   //   即時（LINE＋失敗ならメール）。案件ごとに届くまで・1日1回・最大3日
   for (var r = 0; r < rows.length; r++) {
     var row = rows[r], key = String(row[C('key')]), st = String(row[C('status')]);
@@ -3707,22 +3729,26 @@ function _lbHealNotify(sum, g) {
     _lbIncSetEnum(row, 'notify_state', 'sending', LB_NOTIFY_ENUM.state);
     row[C('notify_tries')] = tries + 1; row[C('notified_at')] = now;
     if (!writeRow(r)) return out;
-    var code = '';
+    var code = '', m = null;
     if (crashed) {
-      code = _lbHealMail('【要対処】予約システムの点検', text) ? 'resend_by_mail_ok' : 'resend_by_mail_fail';
+      m = mail('【要対処】予約システムの点検', text); if (m === null) return out;
+      code = m ? 'resend_by_mail_ok' : 'resend_by_mail_fail';
     } else {
       var rc = _lbHealOwnerIds();
       if (!rc.ok || !rc.ids.length) {
-        code = _lbHealMail('【要対処】予約システムの点検', text) ? 'no_recipient_mail_ok' : 'no_recipient_mail_fail';
+        m = mail('【要対処】予約システムの点検', text); if (m === null) return out;
+        code = m ? 'no_recipient_mail_ok' : 'no_recipient_mail_fail';
       } else {
         var any = false;
         for (var k = 0; k < rc.ids.length; k++) {
+          if (!sure()) { if (!any) return out; break; }   // ★1通ごとに直前に確かめる（届いた分があれば結果を書きに行く）
           //   ★_lbPush を使わない：失敗が _lbNqOnFail に積まれ、警告の未達が警告を呼ぶループになる（I-H19）
           var res = null;
           try { res = _lbPushOnce(rc.ids[k], text, { purpose: 'owner_heal', noInlineRetry: true }); } catch (eP) { res = null; }
           if (res && res.ok) { any = true; out.line++; }
         }
-        code = any ? 'line_ok' : (_lbHealMail('【要対処】予約システムの点検', text) ? 'line_fail_mail_ok' : 'line_fail_mail_fail');
+        if (any) code = 'line_ok';
+        else { m = mail('【要対処】予約システムの点検', text); if (m === null) return out; code = m ? 'line_fail_mail_ok' : 'line_fail_mail_fail'; }
       }
     }
     if (/mail_ok$/.test(code)) out.mail++;
@@ -3740,7 +3766,7 @@ function _lbHealNotify(sum, g) {
     }
   }
   if (lines.length && String(_lbProp(LB_HEAL.DIGEST_DATE_PROP) || '') !== today) {
-    if (!_lbLeaseOk(g)) return out;
+    if (!sure()) return out;
     var body = '予約システムの点検で、オーナーにしかできないこと・自動では直せなかったことがあります（' + lines.length + '件）。\n\n'
              + lines.join('\n') + '\n\n（このメールは開いている間、1日1通です。版 ' + String(LB_HEALTH_BUILD).slice(0, 11) + '）';
     if (_lbHealMail('【オーナーにしかできないこと】予約システムの点検（' + lines.length + '件）', body)) {
@@ -3831,8 +3857,8 @@ function lbSelfHeal(nudgeStartMs) {
   }
   var lease = _lbLeaseAcquire('heal');
   if (!lease.ok) { _lbHealthSkipNote('heal', lease.why); res.gate = 'skip_' + lease.why; Logger.log('lbSelfHeal: 見送り ' + lease.why); return res; }
-  //   ★修理は strict：ロックが取れない（busy）・印を失った・期限切れ なら副作用をせず次回へ
-  var g = _lbLeaseGuard(lease, 'heal', true);
+  //   ★修理の副作用は全部 _lbLeaseOk（延長できたときだけ）。延長できなければ副作用をせず次回へ
+  var g = _lbLeaseGuard(lease, 'heal');
   var completed = false;
   try {
     var gate = _lbSelfHealGate(t0);
