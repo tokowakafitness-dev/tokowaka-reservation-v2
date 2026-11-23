@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23d AI の振り分けの途中を当日中だけ端末に残して続きから（設計51）';
+  var KARTE_BUILD = '2026-11-23e AI の振り分けの途中を当日中だけ端末に残して続きから（設計51）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2409,6 +2409,8 @@
   var AIR_PREFIX = 'karte_ai_review_v1:';
   var AIR_TTL = 24 * 3600 * 1000;
   var AIR_HASH_MIN = 200;   // これより短い文字起こしは照合しない（短い原文はしるしから辞書で当てられる＝関門① 2）
+  //   取り込み画面の説明（設計51 関門② 2：「保存はしません」は一時保存と逆になった）
+  var AI_KEEP_NOTE = '送った文字起こしは保存しません。振り分けた内容は、この端末に当日中だけ残ります（記録の画面に入れると消えます。根拠・体のことは残しません。同じ端末を使う人は読めます）。';
   var AIR_KEEP_TEXT = '根拠・体のこと・分からなかった点など、保存しない項目があります';
   function airKey(tid, cid) { return AIR_PREFIX + String(tid || '') + ':' + String(cid || ''); }
   /** 読む（無い／壊れている／読めた を区別する＝lsGet は区別できない） */
@@ -2587,7 +2589,9 @@
     var airK = airKey(tid, cid), rvHash = '', airUndo = null, airNote = '', airReused = false;
     var resumeBox = el('div', { class: 'k-airband', style: 'display:flex;flex-direction:column;gap:6px;' });
     wrap.insertBefore(resumeBox, wrap.firstChild);
+    function sameTr() { return String((window.state && state.trainerId) || '') === tid; }   // 設計51 関門②：送ったときのトレーナーのままか
     function airLoad() {
+      if (!sameTr()) return null;
       var x = lsRead(airK);
       if (x.st === 'none') { if (airBadSeen[airK]) { delete airBadSeen[airK]; airNote = '前回の途中の内容は読めなかったため捨てました。'; } return null; }
       var r = x.st === 'ok' ? rvRestore(x.v, { tid: tid, cid: cid, scope: aiScope(), now: Date.now() }) : { ok: false };
@@ -2595,7 +2599,7 @@
       return r;
     }
     function airSave() {
-      if (!rv) return true;
+      if (!rv || !sameTr()) return true;   // ★トレーナーが替わった画面からは前の人の鍵へ書かない
       purgeAiReviews();
       var now = Date.now();
       return lsSet(airK, { v: 1, tid: tid, cid: cid, day: today(), at: now, scope: aiScope(), hash: rvHash || '', rv: rvForSave(rv, aiScope()) });
@@ -2712,7 +2716,7 @@
       var gen = ++aiGen; aiBusy = true; res = null; rv = null; pendingB = null; airReused = false; draw();
       //   設計51：同じ文字起こし（しるしが一致）の一時保存があれば送らずに出す（回数・料金を使わない）。短い・しるしを作れない・振り分け直す＝今どおり送る
       airHashOf(tid, cid, text).then(function (h) {
-        if (gen !== aiGen || !out.isConnected || cur.customerId !== cid) return;
+        if (gen !== aiGen || !out.isConnected || cur.customerId !== cid || !sameTr()) return;   // ★トレーナーが替わった＝捨てる（関門② 1）
         if (h && !force) {
           var L = airLoad();
           if (L && L.hash === h) { aiBusy = false; rv = L.rv; rvHash = h; airReused = true; airNote = ''; draw(); try { out.scrollIntoView({ block: 'start' }); } catch (e) {} return; }
@@ -2732,7 +2736,7 @@
         .then(function (r) { return r.json().catch(function () { return { success: false, code: 'BAD_RESPONSE' }; }); }, function (e) { return { success: false, code: e && e.name === 'AbortError' ? 'AI_UI_TIMEOUT' : 'NETWORK' }; })
         .then(function (r) {
           clearTimeout(tmo);
-          if (gen !== aiGen || !out.isConnected || cur.customerId !== cid) return;   // 文字を変えた・画面を離れた・別の顧客＝捨てる
+          if (gen !== aiGen || !out.isConnected || cur.customerId !== cid || !sameTr()) return;   // 文字を変えた・画面を離れた・別の顧客・別のトレーナー＝捨てる（保存もしない）
           aiBusy = false;
           if (!r || !r.success || !r.draft || typeof r.draft !== 'object') { err = aiErr(r) + '（番号 ' + reqNo.slice(-4) + '）'; draw(); return; }
           if (r.draft.v === 2) {
@@ -3291,7 +3295,7 @@
       var ab = el('button', { type: 'button', class: 'k-btn out k-impai', style: 'margin-top:8px;', text: aiBusy ? '振り分けています（1分ほど）' : 'AIで振り分ける（録音の文字起こし）', onclick: aiSend });
       if (aiBusy) { ab.disabled = true; ab.setAttribute('aria-disabled', 'true'); }
       bar.appendChild(ab);
-      bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。保存はしません。' }));
+      bar.appendChild(el('div', { class: 'k-sub k-aiexplain', style: 'text-align:center;margin-top:6px;', text: '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。' + AI_KEEP_NOTE }));
     }
     draw();
   }

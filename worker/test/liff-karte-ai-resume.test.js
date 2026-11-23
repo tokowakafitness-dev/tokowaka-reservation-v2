@@ -281,6 +281,45 @@ for (const [label, mut] of [['24時間を超えた', (v) => { v.at = now0 - 25 *
   paste(w, TRANSCRIPT + '\n追記'); await settle();
   ok('U11 ★貼り付け欄を変えると確認は閉じるが保存は残り、帯が出る', !card(w, 'ベンチプレス') && saved(w) !== null && !!band(w));
 }
+// ---------- U14 関門② 1：処理中にトレーナーが替わったら捨てる（保存もしない） ----------
+{
+  //   しるしの計算の後の復帰点（長い文字起こし）
+  const { w, sent } = boot({ src: FULL });
+  await openImport(w);
+  paste(w, LONG); btn(R(w), 'AIで振り分ける').click();
+  w.state.trainerId = 'T2';
+  await nav(); await settle();
+  ok('U14 ★しるしの計算中にトレーナーが替わった → 送らない・画面に出さない・どちらの鍵にも保存しない', aiCalls(sent) === 0 && !card(w, 'ベンチプレス') && saved(w) === null && w.localStorage.getItem('karte_ai_review_v1:T2:C1') === null, String(aiCalls(sent)));
+}
+{
+  //   AI の応答の後の復帰点（短い文字起こし＝しるしを作らずすぐ送る）
+  const { w, sent } = boot({ src: FULL });
+  const f0 = w.fetch;
+  w.fetch = async (u, o) => { if (JSON.parse(o.body).action === 'k_aiDraft') await new Promise((r) => setTimeout(r, 30)); return f0(u, o); };
+  await openImport(w);
+  paste(w, TRANSCRIPT); btn(R(w), 'AIで振り分ける').click();
+  await settle();
+  w.state.trainerId = 'T2';
+  await nav(); await nav(); await settle();
+  ok('U14 ★AI の応答を待つ間にトレーナーが替わった → 応答を捨てる・前の人の鍵にも今の人の鍵にも保存しない', aiCalls(sent) === 1 && !card(w, 'ベンチプレス') && saved(w) === null && w.localStorage.getItem('karte_ai_review_v1:T2:C1') === null, String(aiCalls(sent)));
+}
+{
+  //   確認の途中でトレーナーが替わったら、前の人の鍵へ書かない
+  const { w } = boot({ src: FULL });
+  await toReviewWith(w, TRANSCRIPT);
+  const before = w.localStorage.getItem(AKEY);
+  w.state.trainerId = 'T2';
+  type(w, lineOf(card(w, 'ベンチプレス')), '50×10');
+  ok('U14 ★確認の途中でトレーナーが替わった画面の編集は、前の人の鍵へ書かない', w.localStorage.getItem(AKEY) === before && w.localStorage.getItem('karte_ai_review_v1:T2:C1') === null);
+}
+// ---------- U15 関門② 2：取り込み画面の説明が実装と合う ----------
+{
+  const { w } = boot({ src: FULL });
+  await openImport(w);
+  const tx = (R(w).querySelector('.k-aiexplain') || {}).textContent || '';
+  ok('U15 ★取り込み画面の説明の文（画面に出る文で固定）', tx === '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。送った文字起こしは保存しません。振り分けた内容は、この端末に当日中だけ残ります（記録の画面に入れると消えます。根拠・体のことは残しません。同じ端末を使う人は読めます）。', tx);
+  ok('U15 ★「保存はしません」（一時保存と逆の説明）が画面に無い', !R(w).textContent.includes('保存はしません。'));
+}
 // ---------- 純粋データ ----------
 {
   const { w } = boot({ src: FULL });
