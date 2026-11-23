@@ -1,9 +1,19 @@
-# 設計53 種目の順番を「≡ つまみ」で入れ替える（記録の画面・AI の確認画面）（2026-11-23・第1版）
+# 設計53 種目の順番を「≡ つまみ」で入れ替える（記録の画面・AI の確認画面）（2026-11-23・改訂1）
 
-> 状態：**設計（未実装）・関門① 前**。CTO が書いた。関門①②③は CEO が回す。
+> 状態：**CEO 裁定（§10 の3点は全部推奨どおり）＋関門①（修正後に通過）の4点を反映＝改訂1 → 実装・検査済み（§11）→ 関門② は CEO**。CTO が書いた。関門①②③は CEO が回す。
 > 前に読んだもの：ops/MODEL.md（I57・I63・I71）・設計38（ord・exOrder）・設計50（rv.exercises・rvTokens）・設計51（rvForSave／rvRestore）・設計52・
 > `liff/karte.js`（#karteRoot が `position:fixed;overflow:auto`＝画面全体の縦スクロールの箱 203行・buildPayload 1396行〜・restShift 2026〜2031行・exOrder 2119〜2130行・trainingSub 2105行〜・記録の画面の draw 3579行〜〔openEi 3582行・畳んだ種目 3584〜3595行・外す 3606行・✓ と rest.pos 3617行・休憩の帯 3655行〕・D.pending の画面 3471〜3483行・send 3895行〜・reviewBuild・rvExCard・rvForSave）・
 > `worker/src/routes/karte.js`（normalizeTraining 687行〜・k_addTraining の `ord = i + 1` 786〜787行・k_training の読み 1345〜1369行〔`ORDER BY session_id, ord`〕）・`worker/src/lib/member-karte.js`（会員のカルテのセット 138〜142行〔`ORDER BY t.session_id, e.ord, t.set_id`〕）・`worker/migrations/0029_karte_tr_ext.sql`（karte_tr_exercises の ord 1〜20）・`liff/index.html`（外から読む台本は LINE の SDK だけ 403行）。
+
+## 改訂1：CEO 裁定と関門①の指摘（2026-11-23）
+- 裁定：≡ つまみ＋軽く押すと出る「上へ／下へ」＋矢印キー／対象は記録の画面と AI の確認画面／自前で作る。
+
+| # | 指摘 | 対処 |
+|---|---|---|
+| 1 重大（記述の誤り） | 古い回は「入力の順」ではない | トレーナー側の読みは `ORDER BY t.session_id, e.ord, t.exercise, t.set_no`（karte.js 1345行）＝ord が NULL の古い回は**種目名 → set_no の順**、会員のカルテは `e.ord, t.set_id`（member-karte.js 142行）＝**set_id の順**。§1-4・§4・S5 を「古い回は ord が無いので並べ替えの順を保てず今回の保証の外。既存のトレーナー側と会員側で異なる並びのまま」に直した（コードは変えない） |
+| 2 高 | ドラッグ中に保存を押すと、送る中身は古い順・指を離すと下書きは新しい順、の食い違い | ①保存の入口（「保存する」の最初）で、動かしている途中のドラッグを `gripCancel()` で捨ててから送る中身を作る ②送信中（`sending`）・結果待ち（`D.pending`）の間は、ドラッグの完了・矢印キー・「上へ／下へ」のどれも配列を変えない（`canReorder`）。検査 S11（pointerdown の後・pointerup の前に保存） |
+| 3 中 | AI の確認画面で並べ替えた直後に一時保存が必ず走ること | 並べ替えは draw → drawReview → rvFoot → airSave の順で必ず保存する。S6 で localStorage の配列の順を直接確かめる |
+| 4 中 | 保存済みの記録を編集する経路は無い | §3 に「保存済みの記録の並べ替えは対象外（k_editTraining は無く、追加と削除だけ）」と明記 |
 
 ## 0. 目的（1行）
 
@@ -16,7 +26,7 @@
 | 1 | オーナー：「使い勝手をあげていきたい。種目の順番を変えるために、種目を長押しして上にずらすことなどできない？」 | オーナーの言葉（CEO 経由） |
 | 2 | 記録の画面の種目は `D.items`（記録の下書き karte_tr_draft_v1）の配列の順に並ぶ。開いている種目は**添字**（`D.openEi`・3582行）で持ち、休憩の帯の位置も**添字**（`rest.pos = { ei, si }`・3617行）で持つ。種目を消すときは restShift（2026行）で添字を詰めている＝**並べ替えでも添字の付け替えが要る** | コードで確認 |
 | 3 | 保存（k_addTraining）は、送られた items の配列の順に `ord = i + 1` で karte_tr_exercises に入れる（786〜787行）。buildPayload（1396行〜）は D.items の順のまま送る（空の種目を除くだけ） | コードで確認 |
-| 4 | 読み（k_training）は `ORDER BY session_id, ord`（1345〜1348行）、過去の回の表示は exOrder が ord の順に並べる（2119〜2130行）、会員のカルテ（C2）も `ORDER BY ..., e.ord, t.set_id`（member-karte.js 138〜142行）＝**ord の列は既にあり、全部その順で読む**。古い回（設計38 より前・ord なし）は入力の順（set_id）のまま | コードで確認 |
+| 4 | 読み（k_training）は `ORDER BY session_id, ord`（1345〜1348行）、過去の回の表示は exOrder が ord の順に並べる（2119〜2130行）、会員のカルテ（C2）も `ORDER BY ..., e.ord, t.set_id`（member-karte.js 138〜142行）＝**ord の列は既にあり、全部その順で読む**。古い回（設計38 より前・ord なし）は ord が NULL で、トレーナー側は種目名 → set_no の順（1345行）、会員のカルテは set_id の順（142行）＝**既存の読みで両側の並びが異なる。今回の保証の外**（改訂1） | コードで確認 |
 | 5 | したがって**下書きの配列の順を入れ替えれば、保存・過去の回・お客様の画面まで同じ順番になる。Worker・D1 の変更は要らない**（「保存すると並びが戻る」は起きない） | コードからの推論。検査で固定する（§8 S4） |
 | 6 | 送った結果が分からない間（D.pending）は、記録の画面は「同じ内容で送り直す」の画面になり種目の一覧を出さない（3471〜3483行）＝並べ替えの操作も出ない | コードで確認 |
 | 7 | AI の確認画面は `rv.exercises` の配列の順に並ぶ。色（出所）を決める rvTokens は**種目の中**（その種目の orig と line）だけを見る＝種目の順番に依らない。reviewBuild は rv.exercises の順に items を作る。一時保存（設計51）の rvForSave も配列の順に保存する＝復元しても順番が残る | コードで確認 |
@@ -41,6 +51,7 @@
 | 記録の画面（trainingSub の種目の並び） | **する** | オーナーの要望の中心。保存の順番（ord）に直結 |
 | AI の確認画面（設計50 の rv.exercises） | **する** | 取り込む前に順番を整えれば、記録の画面で並べ直さなくてよい。順番は reviewBuild → commit で記録の下書きの末尾に同じ順で入る |
 | 手入力の種目選び（exercisePicker の picked） | **しない** | 選んだ順に記録の下書きの末尾へ足すだけで、足した後に記録の画面で並べ替えられる＝二重に作らない |
+| 保存済みの記録 | **対象外（機能が無い）** | 保存済みの回を編集する経路は無い（k_editTraining は無く、追加と削除だけ）（改訂1） |
 
 ## 4. 並べた順番がどこまで残るか
 
@@ -51,7 +62,7 @@
 | 過去の回の表示・写す・前回の値 | 残る（ord の順に読む・exOrder） | §1-4 |
 | お客様の画面（会員のカルテ C2） | 残る（ord の順） | §1-4 |
 | AI の確認画面の一時保存（設計51） | 残る（rvForSave は配列の順） | §1-7 |
-| 古い回（ord なし） | 対象外（もう編集しない・今どおり入力の順） | §1-4 |
+| 古い回（ord なし） | **保証の外**（ord が無いので並べ替えの順を保てない。トレーナー側は種目名 → set_no、会員側は set_id の順のまま・コードは変えない） | §1-4（改訂1） |
 - **Worker・D1・GAS の変更は無い**。順番の列（ord）は既にある。
 
 ## 5. 実装方式
@@ -115,7 +126,7 @@ jsdom は pointer events の型（PointerEvent）と位置（getBoundingClientRe
 - S2 ★記録の画面：3種目で2番目のつまみを軽く押す →「上へ」→ 下書きの D.items の順が入れ替わる・開いていた種目が同じ種目のまま開いている（openEi の付け替え）・セット・✓・メモ・src はその種目に付いたまま
 - S3 ★休憩の帯：✓を押して休憩中の種目を動かしても、帯は同じ種目のセットの下に出る（rest.pos の付け替え）
 - S4 ★保存：並べ替えてから「保存する」→ k_addTraining の payload の items が並べ替えた順（＝Worker が ord＝1〜N を付ける順）
-- S5 Worker：本物の SQLite で、items の順に karte_tr_exercises.ord が入り、k_training の読みと会員のカルテ（buildMemberKarte）が同じ順で返す（既存の karte.test.js／member-karte.test.js の作りで1本）
+- S5 Worker：本物の SQLite で、items の順に karte_tr_exercises.ord が入り、k_training の読み（exercises・sets）が同じ順で返す（karte-training-ext.test.js に1本。会員のカルテが新しい回を ord の順で読むことは member-karte.js 142行の ORDER BY で確認・既存の検査の範囲）。**古い回（ord なし）は保証の外**（改訂1）
 - S6 ★AI の確認画面：つまみの「下へ」で rv の順が入れ替わる・色（チップ）は種目ごとに同じ・「記録の画面に入れる」の下書きが並べ替えた順・一時保存（設計51）を戻しても同じ順
 - S7 矢印キー（ArrowUp／ArrowDown）で1つ動く・フォーカスが動いた先のつまみにある・一番上で上へは押せない
 - S8 D.pending の画面につまみが無い・種目が1つならつまみが無い
@@ -135,3 +146,14 @@ jsdom は pointer events の型（PointerEvent）と位置（getBoundingClientRe
 1. **長押しではなく「≡ つまみ」で動かす（＋軽く押すと出る「上へ／下へ」・矢印キー）でよいか**。推奨：はい（長押しは LINE の中の画面で文字選択・メニュー・スクロールとぶつかり、畳んだ種目を開く短い押しと取り違える）。オーナーの言葉（長押し）と違う形になるので、オーナーへの一言の説明が要る。
 2. **対象を記録の画面と AI の確認画面にし、手入力の種目選び（選ぶ順）は対象にしない**でよいか。推奨：はい（足した後に記録の画面で並べ替えられる）。
 3. 外部の部品（ライブラリ）を使わず自前で作る、でよいか。推奨：はい（§5-2）。
+
+## 11. 実装の記録（2026-11-23・改訂1 のとおり）
+| 設計 | 実装 |
+|---|---|
+| §5-1 データ | `liff/karte.js`：moveIndex・movedIndex（純粋）・記録の画面の reorderItems（openEi・rest.pos の付け替え・save に失敗したら元へ戻す）・canReorder（送信中・結果待ち・種目1つは動かさない） |
+| §5-2 つまみ | makeGrip（pointer events・つまみだけ touch-action:none・6px でドラッグ・落とす位置は行の縦の真ん中と比べる・#karteRoot の端 56px で自動スクロール・ドラッグ中は描き直さない・pointercancel は元のまま）・gripDrag と gripCancel（保存の入口で捨てる＝関門① 2） |
+| §6 代わりの操作 | 矢印キー（動いた先のつまみにフォーカス）・軽く押すと出る「上へ／下へ」（端は押せない・動かした後も出たまま）・動かした結果の1行（role=status・aria-live） |
+| AI の確認画面 | rvReorder（draw → rvFoot → 一時保存）・rvGrip・「上へ／下へ」 |
+| 版の印 | KARTE_BUILD・karte.js?v= を 2026-11-23h |
+| 検査 | `worker/test/liff-karte-reorder.test.js`（S1〜S4・S6〜S11・28本）・`worker/test/karte-training-ext.test.js` S5。壊して確かめた9か所は全部落ちた |
+- 未確認：LINE の中の画面での pointer events・setPointerCapture・自動スクロールの速さ（実機）。jsdom は MouseEvent で 'pointerdown' 等を送れ、行の位置は getBoundingClientRect を身代わりにして確かめた。
