@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23c AI の振り分けの確認を1行の文字と欄の文章に（設計50）';
+  var KARTE_BUILD = '2026-11-23d AI の振り分けの途中を当日中だけ端末に残して続きから（設計51）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -1254,6 +1254,7 @@
       }
       dead.forEach(lsDel);
     } catch (e) {}
+    purgeAiReviews();   // 設計51
   }
   function dayDiff(a, b) {   // 日本の暦日の差（YYYY-MM-DD どうし）
     var pa = String(a).split('-').map(Number), pb = String(b).split('-').map(Number);
@@ -2401,6 +2402,102 @@
     }
     return { items: items, memos: memos, nNote: 0, nSet: 0, blocked: {}, members: members, todos: todos, memoMax: 2000 };
   }
+  //   ---- 設計51：確認の途中を端末に一時保存して続きから（当日中かつ24時間以内）・同じ文字起こしは送り直さない
+  //     ★保存するのは記録の下書き（karte_tr_draft_v1・24時間）がすでに端末に置いている種類の情報だけ（種目名・1行・AI の判定の状態と数字・欄の文章・お客様の欄）
+  //       根拠・迷った理由・聞こえた言葉・体のこと・分からなかった点・原文・健康由来のセットの状態・体のことの言葉を含む行（種目は名前・1行に当たれば種目ごと）は保存しない
+  //     ★復元に使えるのは当日かつ24時間以内。物理削除は次回の起動（カルテの読み込み・トレーニングを開く）か保存の時（同じ接頭辞を全部見る）
+  var AIR_PREFIX = 'karte_ai_review_v1:';
+  var AIR_TTL = 24 * 3600 * 1000;
+  var AIR_HASH_MIN = 200;   // これより短い文字起こしは照合しない（短い原文はしるしから辞書で当てられる＝関門① 2）
+  var AIR_KEEP_TEXT = '根拠・体のこと・分からなかった点など、保存しない項目があります';
+  function airKey(tid, cid) { return AIR_PREFIX + String(tid || '') + ':' + String(cid || ''); }
+  /** 読む（無い／壊れている／読めた を区別する＝lsGet は区別できない） */
+  function lsRead(k) {
+    var raw;
+    try { raw = localStorage.getItem(k); } catch (e) { return { st: 'none' }; }
+    if (raw == null) return { st: 'none' };
+    try { return { st: 'ok', v: JSON.parse(raw) }; } catch (e) { return { st: 'bad' }; }
+  }
+  function airFresh(v, now) {
+    var at = v ? Number(v.at) : NaN;
+    if (!isFinite(at) || at <= 0 || now - at < 0 || now - at > AIR_TTL) return false;
+    return !!v && v.day === new Date(now + 9 * 3600000).toISOString().slice(0, 10);
+  }
+  var airBadSeen = {};   // 起動・保存の時の物理削除で、壊れていた（JSON でない）一時保存の鍵＝取り込み画面で1行知らせる（関門① 6）
+  function purgeAiReviews() {
+    try {
+      var now = Date.now(), dead = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(AIR_PREFIX) === 0) { var x = lsRead(k); if (x.st === 'bad') airBadSeen[k] = true; if (x.st !== 'ok' || !airFresh(x.v, now)) dead.push(k); }
+      }
+      dead.forEach(lsDel);
+    } catch (e) {}
+  }
+  function airHealth(t) { return MEMO_HEALTH.test(String(t == null ? '' : t)); }
+  function airKeepLines(t) { return rvLines(t).filter(function (x) { return !airHealth(x); }).join('\n'); }
+  /** 確認の状態 → 保存する形（設計51 §5）。scope の外の欄は保存しない */
+  function rvForSave(rv, scope) {
+    var exs = [];
+    rv.exercises.forEach(function (ex) {
+      if (airHealth(ex.name) || airHealth(ex.name0) || airHealth(ex.line)) return;   // ★名前・1行に体のことの言葉＝種目ごと保存しない
+      exs.push({ id: String(ex.id || ''), name: String(ex.name || ''), name0: String(ex.name0 || ''), off: ex.off === true, part: ex.part || null, partFor: ex.partFor == null ? null : String(ex.partFor),
+        line: String(ex.line || ''), note: airKeepLines(ex.note),
+        orig: ex.orig.filter(function (o) { return o.status !== 'healthHidden'; }).map(function (o) { return { status: o.status, w: o.w, r: o.r, bw: o.bw === true }; }) });   // ★健康由来のセットは状態も保存しない
+    });
+    var fields = {};
+    RV_FIELDS.forEach(function (f) { fields[f[0]] = scopeAllows(f[1], scope) ? airKeepLines(rv.fields[f[0]]) : ''; });
+    var m = String(rv.member.message || '');
+    return { v: 3, effort: rvStr(rv.effort), exercises: exs, fields: fields, member: { on: rv.member.on === true, message: airHealth(m) ? '' : m, todo: airKeepLines(rv.member.todo) } };
+  }
+  /**
+   * 保存 → 確認の状態（設計51 §7）。{ ok:true, rv, hash, at } ／ { ok:false, stale:true }（期限切れ）／ { ok:false }（壊れている・版や持ち主や範囲が違う）
+   *   ★復元した rv は restored＝根拠を見せない。根拠・体のこと・分からなかった点は空
+   */
+  function rvRestore(sv, ctx) {
+    var str = function (x, max) { return typeof x === 'string' && x.length <= max && !airHealth(x); };
+    if (!sv || typeof sv !== 'object' || sv.v !== 1 || sv.tid !== ctx.tid || sv.cid !== ctx.cid) return { ok: false };
+    if (!airFresh(sv, ctx.now)) return { ok: false, stale: true };
+    if (sv.scope !== ctx.scope || typeof sv.hash !== 'string' || !/^(?:[0-9a-f]{64})?$/.test(sv.hash)) return { ok: false };
+    var r = sv.rv;
+    if (!r || typeof r !== 'object' || r.v !== 3 || !Array.isArray(r.exercises) || r.exercises.length > 40 || !r.fields || typeof r.fields !== 'object' || !r.member || typeof r.member !== 'object') return { ok: false };
+    var exs = [];
+    for (var i = 0; i < r.exercises.length; i++) {
+      var e = r.exercises[i];
+      if (!e || typeof e !== 'object' || !str(e.id, 40) || !str(e.name, EX_NAME_MAX) || !str(e.name0, EX_NAME_MAX) || typeof e.off !== 'boolean' || !str(e.line, 500) || !str(e.note, 4000)) return { ok: false };
+      if (e.part !== null && !PART_KEYS.some(function (pk) { return pk[0] === e.part; })) return { ok: false };
+      if (e.partFor !== null && !str(e.partFor, EX_NAME_MAX)) return { ok: false };
+      if (!Array.isArray(e.orig) || e.orig.length > MEMO_LIMITS.setsPerOrd) return { ok: false };
+      var orig = [];
+      for (var j = 0; j < e.orig.length; j++) {
+        var o = e.orig[j];
+        if (!o || ['match', 'inferred', 'nobasis'].indexOf(o.status) < 0 || typeof o.bw !== 'boolean') return { ok: false };
+        if (!(o.w === null || (typeof o.w === 'number' && o.w > 0 && o.w <= 500)) || !(o.r === null || (Number.isInteger(o.r) && o.r >= 1 && o.r <= 100))) return { ok: false };
+        orig.push({ status: o.status, w: o.w, r: o.r, bw: o.bw, evidence: '', unsure: '', note: '' });
+      }
+      exs.push({ id: e.id, name: e.name, name0: e.name0, heard: '', off: e.off, part: e.part, partFor: e.partFor, orig: orig, line: e.line, note: e.note });
+    }
+    var fields = {};
+    for (var k = 0; k < RV_FIELDS.length; k++) {
+      var f = RV_FIELDS[k], v = r.fields[f[0]];
+      if (!str(v, 4000)) return { ok: false };
+      if (v && !scopeAllows(f[1], ctx.scope)) return { ok: false };   // ★範囲の外の欄に文があれば捨てる（関門① 4）
+      fields[f[0]] = v;
+    }
+    var mb = r.member;
+    if (typeof mb.on !== 'boolean' || !str(mb.message, 2000) || !str(mb.todo, 1000)) return { ok: false };
+    return { ok: true, hash: sv.hash, at: Number(sv.at),
+      rv: { v: 3, effort: typeof r.effort === 'string' ? r.effort.slice(0, 20) : '', restored: true, exercises: exs, fields: fields, member: { on: mb.on, message: mb.message, todo: mb.todo }, caution: [], unclear: [] } };
+  }
+  /** 文字起こしのしるし（SHA-256・トレーナーとお客様を前置き）。短い・作れない＝''（照合しない＝今どおり送る） */
+  function airHashOf(tid, cid, text) {
+    try {
+      if (String(text).length < AIR_HASH_MIN || !window.crypto || !crypto.subtle || !window.TextEncoder) return Promise.resolve('');
+      return crypto.subtle.digest('SHA-256', new TextEncoder().encode('karte-ai-v1:' + tid + ':' + cid + ':' + text)).then(function (b) {
+        return Array.prototype.map.call(new Uint8Array(b), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('');
+      }, function () { return ''; });
+    } catch (e) { return Promise.resolve(''); }
+  }
   //   設計49 段階0：「読み取る」の結果が文字起こしらしいか（件数だけで決めない＝全部満たすとき）。案内を出すだけで何も止めない
   //     ①3,000字以上 ②構造になった行（種目・セット）が空でない行の1割未満 ③決定待ちが40件を超える
   function memoLooksTranscript(text, r) {
@@ -2485,8 +2582,46 @@
     box.appendChild(wrap); box.appendChild(bar);
     var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [], planOpen = false, tlike = false;   // tlike：設計49 段階0（文字起こしらしい＝カードの前に案内）
     var aiBusy = false, aiGen = 0;   // 設計39：送信中・応答の世代（文字を変えたら古い応答を捨てる）
-    var rv = null, pendingB = null;   // 設計49：v2 の確認の状態（端末のメモリだけ）・最後のボタンで組み立てた中身
+    var rv = null, pendingB = null;   // 設計49：v2 の確認の状態・最後のボタンで組み立てた中身
+    //   設計51：一時保存（鍵はトレーナー×お客様）。rvHash＝この rv の元の文字起こしのしるし（無ければ ''）・airUndo＝捨てた直後の中身（メモリだけ）
+    var airK = airKey(tid, cid), rvHash = '', airUndo = null, airNote = '', airReused = false;
+    var resumeBox = el('div', { class: 'k-airband', style: 'display:flex;flex-direction:column;gap:6px;' });
+    wrap.insertBefore(resumeBox, wrap.firstChild);
+    function airLoad() {
+      var x = lsRead(airK);
+      if (x.st === 'none') { if (airBadSeen[airK]) { delete airBadSeen[airK]; airNote = '前回の途中の内容は読めなかったため捨てました。'; } return null; }
+      var r = x.st === 'ok' ? rvRestore(x.v, { tid: tid, cid: cid, scope: aiScope(), now: Date.now() }) : { ok: false };
+      if (!r.ok) { lsDel(airK); if (!r.stale) airNote = '前回の途中の内容は読めなかったため捨てました。'; return null; }
+      return r;
+    }
+    function airSave() {
+      if (!rv) return true;
+      purgeAiReviews();
+      var now = Date.now();
+      return lsSet(airK, { v: 1, tid: tid, cid: cid, day: today(), at: now, scope: aiScope(), hash: rvHash || '', rv: rvForSave(rv, aiScope()) });
+    }
+    function hhmm(at) { var d = new Date(at + 9 * 3600000); return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0'); }
+    function drawResume() {
+      resumeBox.innerHTML = '';
+      if (airNote) resumeBox.appendChild(el('div', { class: 'k-sub k-airnote', text: airNote }));
+      if (rv || aiBusy) return;
+      if (airUndo) {
+        resumeBox.appendChild(el('div', { class: 'k-card k-airundo', style: 'display:flex;gap:8px;align-items:center;justify-content:space-between;' }, [el('div', { text: '前回の振り分けを捨てました' }),
+          el('button', { type: 'button', class: 'k-btn out small k-airback', style: 'min-height:44px;margin:0;', text: '元に戻す', onclick: function () { lsSet(airK, airUndo); airUndo = null; drawResume(); } })]));
+        return;
+      }
+      var L = airLoad();
+      if (!L) { if (airNote && !resumeBox.firstChild) resumeBox.appendChild(el('div', { class: 'k-sub k-airnote', text: airNote })); return; }
+      var t = reviewTally(L.rv, aiScope(), isAuto);
+      resumeBox.appendChild(el('div', { class: 'k-card k-airresume', style: 'display:flex;flex-direction:column;gap:6px;' }, [
+        el('div', { style: 'font-weight:700;', text: '前回の振り分けが途中です（' + hhmm(L.at) + '・種目' + t.ex + '・セット' + t.sets + '）' }),
+        el('div', { style: 'display:flex;gap:16px;' }, [
+          el('button', { type: 'button', class: 'k-btn k-airgo', style: 'min-height:44px;margin:0;flex:1;', text: '続ける', onclick: function () { rv = L.rv; rvHash = L.hash; airNote = ''; airReused = false; res = null; err = ''; draw(); try { out.scrollIntoView({ block: 'start' }); } catch (e) {} } }),
+          el('button', { type: 'button', class: 'k-btn out k-airdrop', style: 'min-height:44px;margin:0;flex:1;', text: '捨てて最初から', onclick: function () { var x = lsRead(airK); airUndo = x.st === 'ok' ? x.v : null; lsDel(airK); drawResume(); } })]),
+        el('div', { class: 'k-sub', text: AIR_KEEP_TEXT })]));
+    }
     ta.oninput = function () {
+      if (airUndo || airNote) { airUndo = null; airNote = ''; drawResume(); }
       var was = aiBusy; aiGen++; aiBusy = false;
       if (res || rv || err || ask || was) { res = null; rv = null; pendingB = null; dec = []; ui = []; ask = false; err = ''; planOpen = false; tlike = false; draw(); }
     };
@@ -2563,8 +2698,9 @@
       return true;
     }
     //   設計39：文字起こしを Worker へ送り、AI の下書きを受け取る（I76）。★送るのはこの1回だけ・kWrite（読み直して退避）は使わない
-    function aiSend() {
+    function aiSend(force) {
       if (aiBusy) return;
+      force = force === true;   // ★ボタンの onclick はイベントを渡す＝true のときだけ「振り分け直す」
       var text = String(ta.value || '').trim();
       err = ''; ask = false; planOpen = false;
       if (!text) { err = '文字起こしを貼ってください。'; draw(); return; }
@@ -2573,7 +2709,18 @@
       if (tokenNeedsRefresh()) { err = AI_STALE; draw(); return; }   // ★送らない・読み直さない（原文を保存領域へ退避できない＝I63）
       var known = [];
       autoKnown.forEach(function (n) { var x = exName(n); if (x && x.length <= EX_NAME_MAX && known.indexOf(x) < 0) known.push(x); });
-      var gen = ++aiGen; aiBusy = true; res = null; rv = null; pendingB = null; draw();
+      var gen = ++aiGen; aiBusy = true; res = null; rv = null; pendingB = null; airReused = false; draw();
+      //   設計51：同じ文字起こし（しるしが一致）の一時保存があれば送らずに出す（回数・料金を使わない）。短い・しるしを作れない・振り分け直す＝今どおり送る
+      airHashOf(tid, cid, text).then(function (h) {
+        if (gen !== aiGen || !out.isConnected || cur.customerId !== cid) return;
+        if (h && !force) {
+          var L = airLoad();
+          if (L && L.hash === h) { aiBusy = false; rv = L.rv; rvHash = h; airReused = true; airNote = ''; draw(); try { out.scrollIntoView({ block: 'start' }); } catch (e) {} return; }
+        }
+        aiPost(text, known, gen, h);
+      });
+    }
+    function aiPost(text, known, gen, hash) {
       //   設計49：client_ai_format:2＝この画面は v2 を扱える（Worker は設定が v2 のときだけ v2 を返す）。clientReqId＝記録と失敗の1行を突き合わせる番号
       //     画面の締切 110秒（Worker の 90秒より長く）。超えたら応答を捨てて1行で知らせる
       var reqNo = newReqId(), ac = window.AbortController ? new AbortController() : null;
@@ -2590,6 +2737,7 @@
           if (!r || !r.success || !r.draft || typeof r.draft !== 'object') { err = aiErr(r) + '（番号 ' + reqNo.slice(-4) + '）'; draw(); return; }
           if (r.draft.v === 2) {
             try { rv = reviewFromDraft(r.draft, isAuto, aiScope()); } catch (e) { rv = null; err = aiErr({ code: 'AI_BAD_OUTPUT' }); draw(); return; }
+            rvHash = hash || '';   // 設計51：新しい結果で一時保存を上書き（drawReview の rvFoot が保存する）
             lines0 = []; res = null;
             draw();
             try { out.scrollIntoView({ block: 'start' }); } catch (e) {}
@@ -2747,6 +2895,7 @@
       T.openEi = first;
       T.at = Date.now();
       if (!lsSet(key, T)) { err = 'この端末に下書きを残せないため、入れられませんでした。'; ask = false; draw(); return; }
+      if (rv) { lsDel(airK); rvHash = ''; }   // 設計51：記録の画面に入れたら一時保存を消す（続きから出すと二重に入る）
       var ns = 0, nd = 0; b.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
       trImportMsg = { cid: cid, text: 'メモから ' + b.items.length + '種目・' + ns + 'セット' + (nd ? '（ドロップ' + nd + '）' : '') + 'を入れました。✓を付けて保存してください（✓の無いセットは保存されません）。'
         + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
@@ -2965,7 +3114,7 @@
       box.innerHTML = '';
       rvTokens(ex, aiScope()).forEach(function (k, i) {
         var key = k.kind === 'set' ? k.st : k.kind, c = RV_CHIP[key];
-        var txt = (i + 1) + '. ' + (k.hidden ? '?（体の話を含むため数字を出していません）' : k.text) + '　' + c[0];
+        var txt = (i + 1) + '. ' + (k.hidden ? '?（体の話を含むため数字を出していません）' : k.text) + '　' + c[0] + (rv.restored && (key === 'match' || key === 'inferred' || key === 'nobasis') ? '（前回の判定）' : '');
         box.appendChild(el('span', { class: 'k-rvchip', 'data-st': key, style: 'display:inline-block;font-size:13px;padding:3px 8px;border-radius:999px;margin:0 6px 6px 0;background:' + c[1] + ';color:' + c[2] + ';' + (key === 'skip' ? 'text-decoration:line-through;' : '') + (key === 'bad' ? 'font-weight:700;' : ''), text: txt }));
       });
     }
@@ -3004,7 +3153,7 @@
       li.oninput = function () { ex.line = li.value; rvChips(ex, chips); rvFoot(); };
       c.appendChild(li);
       c.appendChild(chips); rvChips(ex, chips);
-      if (ex.orig.length) {
+      if (ex.orig.length && !rv.restored) {   // 設計51：復元した状態では根拠を見せない（保存していない）
         var ol = el('ol', { style: 'margin:4px 0 0;padding-left:20px;font-size:13px;' });
         ex.orig.forEach(function (o) { ol.appendChild(el('li', { text: rvEvText(o) })); });
         c.appendChild(el('details', { class: 'k-rvev' }, [el('summary', { style: 'min-height:44px;display:flex;align-items:center;font-size:13px;', text: '根拠を見る（' + ex.orig.length + '）' }), ol]));
@@ -3027,12 +3176,14 @@
     }
     function rvFoot() {
       bar.innerHTML = '';
+      var kept = airSave();   // 設計51：編集のたびに一時保存
       var t = reviewTally(rv, aiScope(), isAuto);
       var none = !t.ex && !rvAnyText();
       bar.appendChild(el('div', { class: 'k-sub k-rvcount', style: 'text-align:center;margin-bottom:6px;', text: '種目 ' + t.ex + '・セット ' + t.sets + ((t.inf || t.nob) ? '（推測 ' + t.inf + '・根拠なし ' + t.nob + ' を含む）' : '') + '／「?」で入れない ' + t.skip + '／書き方が読めない ' + t.bad + (t.renamed ? '／種目名を変えた ' + t.renamed : '') }));
       var go = el('button', { type: 'button', class: 'k-btn k-rvput', style: 'min-height:52px;', text: '記録の画面に入れる（まだ保存しません）', onclick: function () { placeReview(); } });
       if (t.reasons.length || none) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
       bar.appendChild(go);
+      if (!kept) bar.appendChild(el('div', { class: 'k-sub k-airfail', style: 'text-align:center;', text: 'この端末には途中の内容を残せません（画面を離れると最初からになります）' }));
       bar.appendChild(el('div', { class: 'k-sub k-rvwhy', style: 'text-align:center;margin-top:6px;' + (t.reasons.length ? 'color:var(--k-warn);' : ''), text: t.reasons.length ? t.reasons.join('') : none ? '入れる項目がありません。' : '押すと、上の内容を記録の画面に入れます（まだ保存はしません。✓を付けて保存したものだけが記録になります）' }));
     }
     function rvAnyText() {
@@ -3041,6 +3192,9 @@
     }
     function drawReview() {
       var sc = aiScope();
+      if (airReused) out.appendChild(el('div', { class: 'k-card k-airreused', style: 'display:flex;flex-direction:column;gap:6px;' }, [el('div', { text: '同じ文字起こしの振り分けを、続きから出しました（回数は使っていません）' }),
+        el('button', { type: 'button', class: 'k-btn out k-airredo', style: 'min-height:44px;margin:0;', text: '振り分け直す（1日の回数を1回使います）', onclick: function () { aiSend(true); } })]));
+      if (rv.restored) out.appendChild(el('div', { class: 'k-note-hint k-airrestored', style: 'margin:0;', text: '前回確認したときの判定です（根拠は保存していません）。' + AIR_KEEP_TEXT + '。' }));
       if (sc === 'trial') out.appendChild(el('div', { class: 'k-note-hint k-rvtrial', style: 'margin:0;', text: '試用中：AI の推測の数字・今日の流れ・状態・次回やることは入れません（見るだけ）。' }));
       var exs = el('div', { class: 'k-card k-rvexs', style: 'display:flex;flex-direction:column;gap:8px;' }, [
         el('div', { style: 'font-weight:700;', text: 'トレーニング　' }, [el('span', { class: 'k-sub', text: '書き方：50×10　自重×10　?＝入れない（× は x でも可）' })])]);
@@ -3081,6 +3235,7 @@
     }
     function draw() {
       out.innerHTML = ''; bar.innerHTML = '';
+      drawResume();   // 設計51
       if (err) out.appendChild(msg(err, true));
       if (rv && !ask) { drawReview(); return; }   // 設計49：AI の下書き v2
       if (res) {
@@ -3211,7 +3366,9 @@
     //   過去の記録から写す（専用の画面・モック K3b）
     if ((sessions || []).length) c.appendChild(el('button', { type: 'button', class: 'k-btn k-btn-line', text: '過去の記録から写す', onclick: function () { trPickSub(sessions); } }));
     //   メモから取り込む（設計38 §5-1）：Worker が新しい鍵を受け付けるとき（karteSchema 33）だけ。送信中・結果待ちの間はここまで来ない（上で return）
-    if (extOk()) c.appendChild(el('button', { type: 'button', class: 'k-btn k-btn-line k-impgo', text: 'メモから取り込む', onclick: function () { trImportSub(sessions); } }));
+    var airT = String((window.state && state.trainerId) || ''), airX = lsRead(airKey(airT, cur.customerId));
+    var airHas = airX.st === 'ok' && rvRestore(airX.v, { tid: airT, cid: cur.customerId, scope: aiScope(), now: Date.now() }).ok;   // 設計51：振り分けの途中があれば気づけるように
+    if (extOk()) c.appendChild(el('button', { type: 'button', class: 'k-btn k-btn-line k-impgo', text: airHas ? 'メモから取り込む（振り分けの途中あり）' : 'メモから取り込む', onclick: function () { trImportSub(sessions); } }));
     //   休憩タイマーの切り替え（端末に覚える・2026-11-06 オーナー）。なし＝✓で数えない・帯と秒数・終了音の行を出さない
     var restTg = el('button', { type: 'button', class: 'k-rtg', 'data-nodirty': '1', onclick: function () {
       setRestOn(!restOn()); drawRestTg(); draw();   // ★なしにした瞬間に動いているタイマーは止める（setRestOn の中）
@@ -4288,8 +4445,9 @@
     })();
   }
 
+  purgeAiReviews();   // 設計51：起動のたびに期限切れ・壊れた一時保存を物理削除する
   window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
     //   検査用（純粋な部分だけ）
-    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewTally: reviewTally, rvParseLine: rvParseLine, rvTokens: rvTokens, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
+    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewTally: reviewTally, rvParseLine: rvParseLine, rvTokens: rvTokens, rvForSave: rvForSave, rvRestore: rvRestore, AIR_HASH_MIN: AIR_HASH_MIN, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
 })();
