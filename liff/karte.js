@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23g 種目名を切り詰めずに判定する（設計52 関門②）';
+  var KARTE_BUILD = '2026-11-23i 種目の並べ替え：画面を離れたらつまみを捨てる（設計53 関門②）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -574,6 +574,7 @@
   var nav = { i: 0, restoring: false, canceling: false };
   function navState() { return (window.history && history.state && history.state.karte) ? history.state : null; }
   function navPush(st, mode) {
+    gripCancel();   // 設計53 関門②：画面を移るときは動かしている途中のつまみを捨てる
     if (mode === 'none' || nav.restoring || !window.history || !history.pushState) return;
     var curSt = navState();
     try {
@@ -584,8 +585,9 @@
       nav.i = st.i;
     } catch (e) {}
   }
-  function goBack() { if (navState()) history.back(); else close(); }
+  function goBack() { gripCancel(); if (navState()) history.back(); else close(); }
   function exitKarte() {
+    gripCancel();
     if (cur.dirty && !window.confirm('入力中の内容は保存されていません。カルテを閉じますか？')) return;
     cur.dirty = false;
     var st = navState();
@@ -593,6 +595,7 @@
     close();
   }
   function onPopState(e) {
+    gripCancel();   // 設計53 関門②：戻る・進むでも捨てる
     if (nav.canceling) { nav.canceling = false; return; }   // 取り消しで元の位置へ戻ったときの1回は描かない
     var st = e.state && e.state.karte ? e.state : null;
     //   入力中なら確かめる。やめたら、来た向きの逆へ1つ動いて元の位置に戻る（積み直さない＝履歴の数え方を崩さない）
@@ -690,6 +693,7 @@
     return root;
   }
   function close() {
+    gripCancel();
     restStop();
     if (window.visualViewport) { window.visualViewport.removeEventListener('resize', fitViewport); window.visualViewport.removeEventListener('scroll', fitViewport); }
     window.removeEventListener('resize', fitViewport);
@@ -702,6 +706,7 @@
   }
 
   function open(customerId, name, tab, draft, mode) {
+    gripCancel();   // 設計53 関門②：別のお客様・タブの切り替え
     restStop();   // ★画面を移ったら休憩タイマーは消す（設計33 §9-7）
     navPush({ cid: String(customerId || ''), tab: tab || 'summary' }, mode);
     cur.dirty = false;
@@ -2022,6 +2027,98 @@
     if (rest.iv) clearInterval(rest.iv);
     rest.iv = setInterval(restTick, 500); restTick();
   }
+  // ---------------------------------------------------------------- 設計53：種目の順番を「≡ つまみ」で入れ替える
+  //   ★長押しは使わない（LINE の中の画面で文字選択・スクロールとぶつかる）。スクロールを止めるのはつまみの上だけ（touch-action:none）
+  //   ★軽く押す（6px 未満）と「上へ／下へ」が出る・矢印キーでも動く＝支援技術・ドラッグが動かない端末の代わり
+  function moveIndex(arr, from, to) {
+    var a = (arr || []).slice();
+    if (!(from >= 0 && from < a.length && to >= 0 && to < a.length) || from === to) return a;
+    var x = a.splice(from, 1)[0];
+    a.splice(to, 0, x);
+    return a;
+  }
+  //   添字の付け替え（並べ替えの前の添字 i → 後の添字）
+  function movedIndex(i, from, to) {
+    if (i === from) return to;
+    if (from < to && i > from && i <= to) return i - 1;
+    if (from > to && i >= to && i < from) return i + 1;
+    return i;
+  }
+  var GRIP_MOVE_PX = 6, GRIP_EDGE_PX = 56;
+  var gripDrag = null;   // 動かしている途中のつまみ（同時に1つ）。保存の入口で捨てる（関門① 2）
+  function gripCancel() { if (gripDrag) { var g = gripDrag; gripDrag = null; g.end(false); } }
+  /**
+   * つまみ（≡）を作る。o = { label, index, count, rows()（並びの行の要素・同じ順）, canMove()（偽なら動かさない）, onMove(from, to), onTap(), scroller }
+   *   ドラッグの間は描き直さない（入力欄を作り直さない）。落としたときだけ onMove を呼ぶ
+   */
+  function makeGrip(o) {
+    var b = el('button', { type: 'button', class: 'k-grip', 'data-idx': String(o.index), 'aria-label': o.label + 'の順番を変える（上下の矢印キーでも動かせます）', 'data-nodirty': '1',
+      style: 'min-width:44px;min-height:44px;flex:none;border:1px solid #c9ced8;border-radius:10px;background:#fff;color:#5b6577;font-size:20px;line-height:1;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;', text: '≡' });
+    b.onkeydown = function (e) {
+      var k = e.key, to = k === 'ArrowUp' ? o.index - 1 : k === 'ArrowDown' ? o.index + 1 : null;
+      if (to == null) return;
+      e.preventDefault();
+      if (to < 0 || to >= o.count || !o.canMove()) return;
+      o.onMove(o.index, to, true);
+    };
+    b.addEventListener('pointerdown', function (e) {
+      if (e.button != null && e.button > 0) return;
+      if (!o.canMove() || gripDrag) return;
+      try { e.preventDefault(); } catch (x) {}
+      var rows = o.rows(), row = rows[o.index], y0 = e.clientY, moved = false, to = o.index, raf = 0, lastY = e.clientY, pid = e.pointerId;
+      var ctx0 = o.ctx ? o.ctx() : null;   // ★始めたときの画面・配列（落とすときに同じかを確かめる＝関門② 1 の二重の守り）
+      if (!row) return;
+      var sc = o.scroller, scroll0 = sc ? sc.scrollTop : 0;
+      function place(y) {
+        var dy = y - y0 + ((sc ? sc.scrollTop : 0) - scroll0);
+        row.style.transform = 'translateY(' + dy + 'px)';
+        var n = 0;
+        rows.forEach(function (r, i) { if (i === o.index) return; var rc = r.getBoundingClientRect(); if (y > rc.top + rc.height / 2) n++; r.style.outline = ''; });
+        to = n;
+        var tgt = rows.filter(function (r, i) { return i !== o.index; })[Math.min(n, rows.length - 2)];
+        if (tgt) tgt.style.outline = '2px dashed var(--k-acc)';
+      }
+      function edge() {
+        raf = 0;
+        if (!gripDrag || !moved || !sc) return;
+        var rc = sc.getBoundingClientRect(), d = lastY < rc.top + GRIP_EDGE_PX ? -8 : lastY > rc.bottom - GRIP_EDGE_PX ? 8 : 0;
+        if (d) { sc.scrollTop += d; place(lastY); raf = (window.requestAnimationFrame || setTimeout)(edge); }
+      }
+      function mv(ev) {
+        if (!gripDrag || gripDrag.btn !== b) return;
+        lastY = ev.clientY;
+        if (!moved && Math.abs(ev.clientY - y0) < GRIP_MOVE_PX) return;
+        if (!moved) { moved = true; try { if (document.activeElement && document.activeElement !== b) document.activeElement.blur(); } catch (x) {} row.style.position = 'relative'; row.style.zIndex = '5'; row.style.boxShadow = '0 6px 18px rgba(0,0,0,.18)'; }
+        place(ev.clientY);
+        if (!raf) raf = (window.requestAnimationFrame || setTimeout)(edge);
+      }
+      function up() { if (gripDrag && gripDrag.btn === b) { gripDrag = null; end(true); } }
+      function cancel() { if (gripDrag && gripDrag.btn === b) { gripDrag = null; end(false); } }
+      function end(apply) {
+        b.removeEventListener('pointermove', mv); b.removeEventListener('pointerup', up); b.removeEventListener('pointercancel', cancel);
+        document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel);
+        try { if (pid != null && b.releasePointerCapture) b.releasePointerCapture(pid); } catch (x) {}
+        rows.forEach(function (r) { r.style.outline = ''; });
+        row.style.transform = ''; row.style.zIndex = ''; row.style.boxShadow = ''; row.style.position = '';
+        if (!apply) return;
+        //   ★画面を離れた・描き直した・配列が替わった・別のお客様＝何もしない
+        if (!b.isConnected) return;
+        if (ctx0) { var c1 = o.ctx(); if (!c1 || c1.items !== ctx0.items || c1.cid !== ctx0.cid) return; }
+        if (!moved) { o.onTap(); return; }
+        if (to !== o.index && o.canMove()) o.onMove(o.index, to, false);   // ★保存の送信中などは配列を変えない
+      }
+      gripDrag = { btn: b, end: end };
+      try { b.setPointerCapture(e.pointerId); } catch (x) {}
+      b.addEventListener('pointermove', mv); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', cancel);
+      document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', cancel);
+    });
+    return b;
+  }
+  //   軽く押したときに出す「上へ／下へ」（各 44px）
+  function gripUpDown(label, index, count, onMove) {
+    function bt(t, to, cls) { var x = el('button', { type: 'button', class: 'k-btn out small ' + cls, style: 'min-height:44px;margin:0;flex:1;', text: t, onclick: function () { onMove(index, to, true); } }); if (to < 0 || to >= count) { x.disabled = true; x.setAttribute('aria-disabled', 'true'); } return x; }
+    return el('div', { class: 'k-gripud', style: 'display:flex;gap:12px;margin:4px 0 8px;' }, [bt('上へ', index - 1, 'k-gripup'), bt('下へ', index + 1, 'k-gripdown')]);
+  }
   //   種目・セットを消したとき、帯の位置（何番目の種目の何セット目）を詰める。休憩中のそれ自体を消したら止める（関門②）
   function restShift(ei, si) {
     var p = rest.pos; if (!p) return;
@@ -3294,6 +3391,23 @@
       }
       if (ex.orig.length && exName(ex.name) !== exName(ex.name0)) box.appendChild(el('div', { class: 'k-sub k-rvrenamed', text: '種目名を変えたため、数字は全部「直した」として入れます' }));
     }
+    //   設計53：AI の確認画面の種目の並べ替え（色は種目の中で決まる＝順番に依らない）。並べ替えたら draw → rvFoot が一時保存する（設計51）
+    var rvUd = null, rvMoveMsg = '';
+    function rvReorder(from, to, keepFocus) {
+      if (!rv || from === to || from < 0 || to < 0 || from >= rv.exercises.length || to >= rv.exercises.length) return;
+      rv.exercises = moveIndex(rv.exercises, from, to);
+      var mv = rv.exercises[to];
+      rvMoveMsg = (exName(mv.name) || '種目') + 'を' + (to + 1) + '番目に動かしました';
+      draw();
+      if (keepFocus) { var g = out.querySelector('.k-rvex[data-id="' + mv.id + '"] .k-grip'); if (g) { try { g.focus(); } catch (e) {} } }
+    }
+    function rvGrip(ex) {
+      var i = rv.exercises.indexOf(ex);
+      return makeGrip({ label: exName(ex.name) || '種目', index: i, count: rv.exercises.length, scroller: cur.root,
+        rows: function () { return Array.prototype.slice.call(out.querySelectorAll('.k-rvex')); },
+        canMove: function () { return !!rv; }, onMove: rvReorder, onTap: function () { rvUd = rvUd === ex.id ? null : ex.id; draw(); },
+        ctx: function () { return { items: rv ? rv.exercises : null, cid: cur.customerId === cid ? cid : null }; } });
+    }
     function rvExCard(ex) {
       var c = el('div', { class: 'k-card k-rvex', 'data-id': ex.id, style: 'display:flex;flex-direction:column;gap:8px;' + (ex.off ? 'opacity:.45;' : '') });
       var ni = el('input', { type: 'text', class: 'k-rvname', maxlength: String(EX_NAME_MAX), 'aria-label': '種目名', 'data-nodirty': '1', autocomplete: 'off', style: 'flex:1;min-width:0;min-height:44px;font-size:16px;font-weight:700;' });
@@ -3301,7 +3415,9 @@
       var chips = el('div', { class: 'k-rvchips' }), nbox = el('div', { class: 'k-rvnamest' });
       ni.oninput = function () { ex.name = ni.value; rvNameBox(ex, nbox); rvChips(ex, chips); rvFoot(); };
       c.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [ni,
-        el('button', { type: 'button', class: 'k-btn small out k-rvoff', style: 'min-height:44px;margin:0;flex:none;', text: ex.off ? '戻す' : '外す', onclick: function () { ex.off = !ex.off; draw(); } })]));
+        el('button', { type: 'button', class: 'k-btn small out k-rvoff', style: 'min-height:44px;margin:0;flex:none;', text: ex.off ? '戻す' : '外す', onclick: function () { ex.off = !ex.off; draw(); } }),
+        rv.exercises.length > 1 ? rvGrip(ex) : null]));   // 設計53：つまみは右端
+      if (rvUd === ex.id) c.appendChild(gripUpDown(exName(ex.name) || '種目', rv.exercises.indexOf(ex), rv.exercises.length, rvReorder));
       if (ex.off) return c;
       c.appendChild(nbox); rvNameBox(ex, nbox);
       if (ex.heard) c.appendChild(el('div', { class: 'k-sub k-rvheard', text: '聞こえた言葉：' + ex.heard }));
@@ -3355,6 +3471,7 @@
       if (sc === 'trial') out.appendChild(el('div', { class: 'k-note-hint k-rvtrial', style: 'margin:0;', text: '試用中：AI の推測の数字・今日の流れ・状態・次回やることは入れません（見るだけ）。' }));
       var exs = el('div', { class: 'k-card k-rvexs', style: 'display:flex;flex-direction:column;gap:8px;' }, [
         el('div', { style: 'font-weight:700;', text: 'トレーニング　' }, [el('span', { class: 'k-sub', text: '書き方：50×10　自重×10　?＝入れない（× は x でも可）' })])]);
+      if (rvMoveMsg) { exs.appendChild(el('div', { class: 'k-sub k-movemsg', role: 'status', 'aria-live': 'polite', text: rvMoveMsg })); rvMoveMsg = ''; }
       rv.exercises.forEach(function (ex) { exs.appendChild(rvExCard(ex)); });
       exs.appendChild(el('button', { type: 'button', class: 'k-btn out k-rvadd', style: 'min-height:44px;', text: '＋ 種目を足す', onclick: function () {
         rv.exercises.push({ id: 'e' + rv.exercises.length + 'x', name: '', name0: '', heard: '', off: false, part: null, partFor: null, orig: [], line: '', note: '' }); draw(); } }));
@@ -3391,6 +3508,7 @@
       place();
     }
     function draw() {
+      gripCancel();   // 設計53 関門②：描き直しで行が消える前に捨てる
       out.innerHTML = ''; bar.innerHTML = '';
       drawResume();   // 設計51
       if (err) out.appendChild(msg(err, true));
@@ -3464,6 +3582,27 @@
     var restored = !!D;
     if (!D) D = { v: 1, tid: tid, cid: cid, sessionDate: today(), items: [], reqId: newReqId(), pending: null, at: Date.now() };
     function save() { D.at = Date.now(); var ok = lsSet(draftKey, D); if (!ok && note) note.textContent = 'この端末に下書きを残せません（保存するまで画面を閉じないでください）。'; return ok; }
+    //   設計53：種目の並べ替え。開いている種目・休憩の帯は同じ種目に付いたまま（添字を付け替える）。送信中・送った結果待ちは動かさない
+    var udFor = -1, moveMsg = '';
+    function canReorder() { return !sending && !D.pending && D.items.length > 1; }
+    function reorderItems(from, to, keepFocus) {
+      if (!canReorder() || from === to || from < 0 || to < 0 || from >= D.items.length || to >= D.items.length) return;
+      var prev = D.items, prevOpen = D.openEi, prevRest = rest.pos ? { ei: rest.pos.ei, si: rest.pos.si } : null;
+      D.items = moveIndex(D.items, from, to);
+      if (D.openEi != null) D.openEi = movedIndex(D.openEi, from, to);
+      if (rest.pos) rest.pos.ei = movedIndex(rest.pos.ei, from, to);
+      if (!save()) { D.items = prev; D.openEi = prevOpen; if (prevRest) { rest.pos.ei = prevRest.ei; } window.alert('この端末に下書きを残せないため、順番を変えられませんでした。'); draw(); return; }
+      udFor = udFor >= 0 ? movedIndex(udFor, from, to) : -1;   // 設計53 関門② 2：上へ／下へを出している種目に付いたまま
+      moveMsg = D.items[to].exercise + 'を' + (to + 1) + '番目に動かしました';
+      draw();
+      if (keepFocus) { var g = list.querySelector('.k-grip[data-idx="' + to + '"]'); if (g) { try { g.focus(); } catch (e) {} } }
+    }
+    function trGrip(it, ei) {
+      return makeGrip({ label: it.exercise, index: ei, count: D.items.length, scroller: cur.root,
+        rows: function () { return Array.prototype.filter.call(list.children, function (x) { return x.hasAttribute && x.hasAttribute('data-ei'); }); },
+        canMove: canReorder, onMove: reorderItems, onTap: function () { udFor = udFor === ei ? -1 : ei; draw(); },
+        ctx: function () { return { items: D.items, cid: cur.customerId === cid ? cid : null }; } });
+    }
     var note = el('div', { class: 'k-sub', style: 'margin-bottom:8px;' });
     c.appendChild(note);
 
@@ -3577,8 +3716,11 @@
       return i;
     }
     function draw() {
+      gripCancel();   // 設計53 関門②：描き直しで行が消える前に捨てる
       list.innerHTML = '';
       var placed = false;
+      if (udFor >= D.items.length) udFor = -1;
+      if (moveMsg) { list.appendChild(el('div', { class: 'k-sub k-movemsg', role: 'status', 'aria-live': 'polite', text: moveMsg })); moveMsg = ''; }   // 設計53：動かした結果を読み上げる1行
       if (D.openEi == null || D.openEi >= D.items.length || D.openEi < 0) D.openEi = D.items.length - 1;
       D.items.forEach(function (it, ei) {
         if (ei !== D.openEi) {   // 畳んだ種目：押すと広げる（入力済み・✓の数を出す）
@@ -3590,8 +3732,11 @@
             el('span', { class: 'k-sub', text: (it.sets.length ? it.sets.length + 'セット' + (nd ? '（✓' + nd + '）' : '') : (it.doneOnly === true ? '実施（✓）' : '数字なし')) + ' ›' })]);
           //   ★畳んだままでも1タップで確かめられる（設計38 §5-5：例のメモが11操作）。印の無い今までの下書きでは何も足さない
           var side = allChkBtn(it) || doneBtn(it);
-          if (!side) { list.appendChild(colBtn); return; }
-          list.appendChild(el('div', { class: 'k-exline' }, [colBtn, side]));
+          var gp = D.items.length > 1 ? trGrip(it, ei) : null;   // 設計53
+          var rowC = (!side && !gp) ? colBtn : el('div', { class: 'k-exline' }, [colBtn, side, gp]);
+          rowC.setAttribute('data-ei', String(ei));
+          list.appendChild(rowC);
+          if (udFor === ei) list.appendChild(gripUpDown(it.exercise, ei, D.items.length, reorderItems));
           return;
         }
         var hasVal = it.sets.some(function (s) { return s.r !== '' && s.r != null; });   // 重量の空は自重
@@ -3603,7 +3748,10 @@
           el('div', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
           it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
-          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { restShift(ei); D.items.splice(ei, 1); save(); draw(); } })]));
+          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { restShift(ei); D.items.splice(ei, 1); save(); draw(); } }),
+          D.items.length > 1 ? trGrip(it, ei) : null]));   // 設計53：つまみは右端
+        blk.setAttribute('data-ei', String(ei));
+        if (udFor === ei) blk.appendChild(gripUpDown(it.exercise, ei, D.items.length, reorderItems));
         //   「全部✓」は見出しの「外す」から離し、前回の行の右に置く（押し間違えて種目を消さない・設計38 §5-4）
         var ac = allChkBtn(it);
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:2px 0 8px;' }, [el('div', { class: 'k-sub', style: 'flex:1;min-width:0;', text: prevLabel(it.exercise) }), ac]));
@@ -3973,6 +4121,7 @@
     var saveBar = el('div', { class: 'k-savebar' });
     c.appendChild(saveBar);
     saveBar.appendChild(saveBtn = el('button', { class: 'k-btn', text: '保存する', onclick: function () {
+      gripCancel();   // 設計53 関門① 2：動かしている途中の並べ替えは捨ててから送る中身を作る（送る中身と下書きの順を食い違わせない）
       var items = buildPayload(D.items);
       var memo = String(D.memo || '').trim();
       var mem = memberOf(D.member);
@@ -4605,6 +4754,6 @@
   purgeAiReviews();   // 設計51：起動のたびに期限切れ・壊れた一時保存を物理削除する
   window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
     //   検査用（純粋な部分だけ）
-    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewTally: reviewTally, rvParseLine: rvParseLine, rvTokens: rvTokens, rvForSave: rvForSave, rvRestore: rvRestore, exSuggest: exSuggest, EXERCISE_TABLE: EXERCISE_TABLE, EX_ALIAS: EX_ALIAS, EX_HINTS: EX_HINTS, guessPart: guessPart, partsOf: partsOf, AIR_HASH_MIN: AIR_HASH_MIN, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
+    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewTally: reviewTally, rvParseLine: rvParseLine, rvTokens: rvTokens, rvForSave: rvForSave, rvRestore: rvRestore, exSuggest: exSuggest, moveIndex: moveIndex, movedIndex: movedIndex, EXERCISE_TABLE: EXERCISE_TABLE, EX_ALIAS: EX_ALIAS, EX_HINTS: EX_HINTS, guessPart: guessPart, partsOf: partsOf, AIR_HASH_MIN: AIR_HASH_MIN, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
 })();

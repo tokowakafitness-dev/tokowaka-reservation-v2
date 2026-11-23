@@ -558,5 +558,16 @@ async function schemas(as) {
   ok('T35 409 のとき行は増えない', same(counts(), before35));
 }
 
+// ================= S5 設計53：画面で並べ替えた順（送った items の順）が ord になり、読みも同じ順 =================
+{
+  clearRate();
+  const order = ['デッドリフト', 'ベンチプレス', 'スクワット'];
+  const r = await add('U_t1', 'C1', dayOffset(-40), order.map((n, i) => ({ exercise: n, sets: [{ weight: 40 + i, reps: 10 }] })));
+  const ex = qa(env, `SELECT ord, exercise FROM karte_tr_exercises WHERE session_id = ? ORDER BY ord`, r.sessionId);
+  const tr = await call('U_t1', 'k_training', { customerId: 'C1' });
+  const sx = tr.sessions && tr.sessions.find((x) => x.session_id === r.sessionId);
+  ok('S5 ★送った items の順が ord（1〜3）になり、k_training の exercises と sets も同じ順', r.status === 200 && same(ex.map((x) => x.exercise), order) && sx && same(sx.exercises.map((x) => x.exercise), order) && same(sx.sets.map((x) => x.exercise), order), JSON.stringify([ex, sx && sx.exercises]));
+}
+
 console.log(`\n${fail ? '❌' : '✅'} トレーニングの新しい項目（設計38・入口から） 検証: ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);
