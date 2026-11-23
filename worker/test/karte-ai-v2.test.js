@@ -481,6 +481,41 @@ setEnv(V2);
   ok('V2-31 ★unclear の根拠：見つかればその切り出し・見つからなければ空・句読点の違いは見つかる', e.unclear && e.unclear[0].evidence === '3セット目は予告だけでした' && e.unclear[1].evidence === '' && e.unclear[2].evidence === 'スクワット。 30キロで10回', JSON.stringify(e.unclear));
 }
 
+{
+  //   V2-32 関門② 2回目：同じ文字が3万字続く文字起こし＋60セットが同じ根拠 → 1秒以内（全位置を配列に積み、セットごとに窓を切り出す実装では数秒かかる）
+  setEnv(V2);
+  const tx = 'あ'.repeat(30000);
+  const S6 = () => ({ weight_kg: 50, bodyweight: false, reps: 10, basis: 'said', evidence: 'ああああああああ', unsure: '', note: '' });
+  const exs = [];
+  for (let i = 0; i < 6; i++) exs.push({ name: 'ベンチプレス', heard: '', note: '', sets: Array.from({ length: 10 }, S6) });
+  reply = () => ({ draft: Object.assign(okDraft(), { exercises: exs, caution: [], unclear: [] }) });
+  const { validateDraftV2 } = await import('../src/routes/karte-ai-v2.js');
+  const raw = Object.assign(okDraft(), { exercises: exs, caution: [], unclear: [] });
+  const t0 = performance.now();
+  const v = validateDraftV2(raw, tx, (x) => x, 'low', tx);
+  const ms = performance.now() - t0;
+  const all = v.draft.exercises.flatMap((e) => e.sets);
+  ok('V2-32 ★3万字の同じ文字＋60セットが同じ根拠でも1秒以内（' + Math.round(ms) + 'ms）・全部 inferred（数字は根拠に無いので null）', ms < 1000 && all.length === 60 && all.every((x) => x.status === 'inferred' && x.w === null && x.r === null), Math.round(ms) + 'ms ' + JSON.stringify(all[0]));
+  //   同じ形で最後の1か所だけ健康語の文脈 → 安全側は弱めない（どれか1つでも当たれば healthHidden）
+  const tx2 = 'あ'.repeat(29980) + '。膝が痛い' + 'あ'.repeat(10);   // 最後の文の中だけ健康語＝前の2万9千か所は当たらない
+  const t1 = performance.now();
+  const v2 = validateDraftV2(Object.assign(okDraft(), { exercises: exs, caution: [], unclear: [] }), tx2, (x) => x, 'low', tx2);
+  const ms2 = performance.now() - t1;
+  ok('V2-32 ★末尾の1か所だけ健康語の文脈でも全セット healthHidden・1秒以内（' + Math.round(ms2) + 'ms）', ms2 < 1000 && v2.draft.exercises.flatMap((e) => e.sets).every((x) => x.status === 'healthHidden'), Math.round(ms2) + 'ms');
+  //   近道の答えが元の判定（AI_HEALTH.test(windowOf(...))）と同じか：区切り・窓の端・選択肢の長さの境目を含む架空の文で全位置を比べる
+  const { makeHealthIndex, windowOf, aiHealthAlts } = await import('../src/routes/karte-ai-v2.js');
+  const { AI_HEALTH } = await import('../src/routes/karte-ai.js');
+  const samp = 'ベンチ50キロ10回。膝が痛い\nヘルニアの話 アレルギーあり！ああ 頭痛がする？しびれ 30キロで8回。'.repeat(3) + 'ベンチ 熱。50キロ10回 薬\n30キロ8回！' + 'あ'.repeat(50) + '腰痛';   // 1字の健康語が区切りの直前にある形も入れる
+  const hx = makeHealthIndex(samp);
+  let diff = 0;
+  for (let a0 = 0; a0 < samp.length; a0++) for (let b0 = a0 + 1; b0 <= Math.min(samp.length, a0 + 12); b0++) if (hx.near(a0, b0) !== AI_HEALTH.test(windowOf(samp, a0, b0))) diff++;
+  ok('V2-32 ★近道（二分探索）の答えが元の判定と全位置で同じ', diff === 0, String(diff));
+  ok('V2-32 健康語の選択肢は素の文字列だけ（最短の当たりを数えられる前提）', aiHealthAlts().every((x) => x && !/[\\()[\]{}.*+?^$]/.test(x)));
+  const r = await call({ client_ai_format: 2, text: tx, known: ['ベンチプレス'] });
+  ok('V2-32 入口から通しても応答が返る（3万字・60セット）', r.status === 200 && r.draft && r.draft.exercises.length === 6, String(r.status) + ' ' + String(r.code || ''));
+  reply = null;
+}
+
 Object.assign(console, orig);
 console.log(`karte-ai-v2: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

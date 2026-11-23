@@ -205,25 +205,79 @@ const EV_IGNORE = /[\s、。・「」『』！？!?…]/;
 const EV_BOUND = /[。！？!?\n]/;
 //   繰り返しの言葉（設計50 §4-3・関門① W-H1）：根拠にこれがあれば、同じ種目の直前のセットと同じ値を根拠に在るとみなす
 export const AI_REPEAT = /同じ|もう1セット|もう一セット|もう1回|もう一回|もう1本|もう一本|同様/;
-export function makeLocator(hay) {
+//   健康語（AI_HEALTH）の選択肢。素の文字列だけでできている（検査 V2-32 で確かめる）＝位置ごとに「そこから始まる最短の当たり」を数えられる
+//   ★karte-ai.js と互いに import している＝読み込みの時点では AI_HEALTH がまだ無い。使うときに作る
+export function aiHealthAlts() { return AI_HEALTH.source.split('|'); }
+const lowerBound = (arr, x) => { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; } return lo; };
+/**
+ * 健康語を見直す下ごしらえ（関門② 2回目：1回の要求につき1回だけ）。src は lineMarked（maskedSquashed と同じ長さ）
+ *   starts／ends：健康語が当たる位置（昇順）と、そこから始まる最短の当たりの終わり。bounds：文の区切り（。！？・改行）の位置（昇順）
+ *   near(a, b)：windowOf(src, a, b) の中に健康語が丸ごと入るか（= AI_HEALTH.test(windowOf(...)) と同じ答え）を二分探索で返す
+ */
+export function makeHealthIndex(src) {
+  const starts = [], ends = [], bounds = [];
+  const ALTS = aiHealthAlts();
+  const first = new Set(ALTS.map((x) => x[0]));
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (EV_BOUND.test(c)) bounds.push(i);
+    if (!first.has(c)) continue;
+    let best = 0;
+    for (const alt of ALTS) if (src.startsWith(alt, i) && (!best || alt.length < best)) best = alt.length;
+    if (best) { starts.push(i); ends.push(i + best); }
+  }
+  function range(a, b) {
+    let s0 = Math.max(0, a - HEALTH_WINDOW), e0 = Math.min(src.length, b + HEALTH_WINDOW);
+    const k = lowerBound(bounds, a) - 1;                 // a より前で一番近い区切り
+    if (k >= 0 && bounds[k] >= s0) s0 = bounds[k] + 1;
+    const m = lowerBound(bounds, b);                     // b 以後で一番近い区切り
+    if (m < bounds.length && bounds[m] < e0) e0 = bounds[m];
+    return [s0, e0];
+  }
+  return {
+    range,
+    near(a, b) {
+      const [s0, e0] = range(a, b);
+      //   最短の当たりが窓に収まる始まりがあるか。収まらないのは窓の終わりの直前（選択肢の長さ未満）だけ＝数回で終わる
+      for (let t = lowerBound(starts, s0); t < starts.length && starts[t] < e0; t++) if (ends[t] <= e0) return true;
+      return false;
+    },
+  };
+}
+/**
+ * 根拠を探す（設計50 §4-4）。返すのは最初の位置の切り出しと、healthNear()＝どれか1つの位置の前後に健康語があるか（関門② 1）
+ *   ★出現位置は配列に積まず indexOf で順にたどり、当たったら打ち切る。同じ根拠の答えは要求の中で使い回す（関門② 2回目：CPU の上限）
+ *   ★上限で打ち切って安全側を外すことはしない（全部の位置を見るか、当たって止まるか）
+ */
+export function makeLocator(hay, lines) {
   let h = '';
   const idx = [];
   for (let i = 0; i < hay.length; i++) { const c = hay[i]; if (!EV_IGNORE.test(c)) { h += c; idx.push(i); } }
+  let hx = null;
+  const memo = new Map();
+  const span = (k, n) => { const a = idx[k], b = idx[k + n - 1] + 1; return b - a <= AI_V2_LIMITS.EVIDENCE ? [a, b] : null; };
   return function locate(ev) {
     let e = '';
     for (const c of String(ev || '')) if (!EV_IGNORE.test(c)) e += c;
     if (e.length < EV_MIN) return null;
-    //   ★同じ根拠が何か所にもあれば全部の位置を返す（健康語の見直しを全部の位置で行う・関門② 1）。返す切り出しは最初の位置
-    const all = [];
-    for (let k = h.indexOf(e); k >= 0; k = h.indexOf(e, k + 1)) {
-      const a = idx[k], b = idx[k + e.length - 1] + 1;
-      if (b - a <= AI_V2_LIMITS.EVIDENCE) all.push({ at: a, end: b });
-    }
-    if (!all.length) return null;
-    return { at: all[0].at, end: all[0].end, text: hay.slice(all[0].at, all[0].end), all };
+    let k = h.indexOf(e), sp = null;
+    for (; k >= 0; k = h.indexOf(e, k + 1)) { sp = span(k, e.length); if (sp) break; }
+    if (!sp) return null;
+    const k0 = k;
+    return {
+      at: sp[0], end: sp[1], text: hay.slice(sp[0], sp[1]),
+      healthNear() {
+        if (memo.has(e)) return memo.get(e);
+        if (!hx) hx = makeHealthIndex(typeof lines === 'string' && lines.length === hay.length ? lines : hay);
+        let hit = false;
+        for (let q = k0; q >= 0 && !hit; q = h.indexOf(e, q + 1)) { const p = span(q, e.length); if (p && hx.near(p[0], p[1])) hit = true; }
+        memo.set(e, hit);
+        return hit;
+      },
+    };
   };
 }
-/** 見つかった位置の前後（±HEALTH_WINDOW・文の区切り〔。！？・改行〕で止める）。健康語を見直すために使う（W-H2） */
+/** 見つかった位置の前後（±HEALTH_WINDOW・文の区切り〔。！？・改行〕で止める）。健康語を見直すために使う（W-H2）。★判定は makeHealthIndex の near（同じ窓） */
 export function windowOf(src, a, b) {
   let s0 = Math.max(0, a - HEALTH_WINDOW), e0 = Math.min(src.length, b + HEALTH_WINDOW);
   for (let i = a - 1; i >= s0; i--) if (EV_BOUND.test(src[i])) { s0 = i + 1; break; }
@@ -243,7 +297,7 @@ function numTokens(ev) {
 export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
   const L = AI_V2_LIMITS;
   const lines = typeof lineMarked === 'string' && lineMarked.length === maskedSquashed.length ? lineMarked : maskedSquashed;
-  const locate = makeLocator(maskedSquashed);
+  const locate = makeLocator(maskedSquashed, lines);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) bad();
   if (!raw.summary || typeof raw.summary !== 'object') bad();
   const flow = list(raw.summary.flow, L.SUMMARY, L.SUMMARY_LEN);
@@ -323,7 +377,7 @@ export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
       const w = bw ? null : st.weight_kg;
       const loc = s.evidence && s.evidence.length <= L.EVIDENCE ? locate(s.evidence) : null;
       //   ★根拠の前後に健康語＝healthHidden（短い根拠で健康の文脈を迂回しない・W-H2）
-      if (loc && loc.all.some((p) => H(windowOf(lines, p.at, p.end)))) { nHid++; sets.push(HID(s)); continue; }
+      if (loc && loc.healthNear()) { nHid++; sets.push(HID(s)); continue; }
       let v = null;
       if (loc && e.name && st.basis === 'said' && !s.unsure && (bw || typeof w === 'number')) v = verifySet({ weight_kg: bw ? null : w, reps: r, evidence: loc.text }, maskedSquashed);
       if (v) { nSets++; sets.push({ status: 'match', w: v.w, r: v.r, bw: v.w === null, evidence: mask(v.evidence), unsure: '', note: mask(s.note) }); continue; }
