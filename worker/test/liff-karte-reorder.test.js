@@ -225,6 +225,69 @@ const ITEMS = () => [
   await settle();
   ok('S11 ★送信中は矢印キーでも動かない', JSON.stringify(draftOf(w).items.map((x) => x.exercise)) === '["ベンチプレス","スクワット","レッグプレス"]');
 }
+// ---------- S12 関門② 1：ドラッグ中に画面を離れたら捨てる（リスナーも捕捉も残さない） ----------
+function spyDoc(w) {
+  //   document に付いているポインタのリスナーの数を数える（付けたら足し、外したら引く）
+  const a0 = w.document.addEventListener.bind(w.document), r0 = w.document.removeEventListener.bind(w.document);
+  const keys = new Map();
+  w.document.addEventListener = (t, f, o) => { if (/^pointer/.test(t)) keys.set(t + '#' + (keys.size), f); return a0(t, f, o); };
+  w.document.removeEventListener = (t, f, o) => { for (const [k, v] of keys) if (v === f && k.startsWith(t + '#')) { keys.delete(k); break; } return r0(t, f, o); };
+  return () => keys.size;
+}
+function peId(w, el0, type, y) { const ev = new w.MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 }); Object.defineProperty(ev, 'pointerId', { value: 7 }); el0.dispatchEvent(ev); }
+{
+  const { w } = boot({ src: FULL });
+  seed(w, ITEMS());
+  await openRecord(w);
+  const live = spyDoc(w);
+  stubRows(w);
+  const g = grip(w, 0);
+  let released = 0; g.setPointerCapture = () => {}; g.releasePointerCapture = (id) => { if (id === 7) released++; };
+  peId(w, g, 'pointerdown', 10); peId(w, g, 'pointermove', 150);
+  ok('S12 前提：ドラッグ中は document にポインタのリスナーがある', live() > 0, String(live()));
+  R(w).querySelector('.k-back').click(); await nav();
+  ok('S12 ★戻ると document のポインタのリスナーが残らない・捕捉を外す', live() === 0 && released === 1, String([live(), released]));
+  peId(w, g, 'pointerup', 150); await settle();
+  ok('S12 ★戻った後の pointerup で配列も下書きも変わらない', JSON.stringify(names(w)) === '["ベンチプレス","スクワット","レッグプレス"]', JSON.stringify(names(w)));
+}
+{
+  //   二重の守り：行が消えた（描き直し・画面を離れた）後の pointerup では確定しない
+  const { w } = boot({ src: FULL });
+  seed(w, ITEMS());
+  await openRecord(w);
+  stubRows(w);
+  const g = grip(w, 0);
+  pe(w, g, 'pointerdown', 10); pe(w, g, 'pointermove', 150);
+  const row = R(w).querySelector('[data-ei="0"]'); row.parentNode.removeChild(row);
+  pe(w, g, 'pointerup', 150); await settle();
+  ok('S12 ★つまみが画面から消えた後の pointerup では並べ替えを確定しない', JSON.stringify(names(w)) === '["ベンチプレス","スクワット","レッグプレス"]', JSON.stringify(names(w)));
+}
+{
+  //   別のお客様を開く（open）でも捨てる
+  const { w } = boot({ src: FULL });
+  seed(w, ITEMS());
+  await openRecord(w);
+  const live = spyDoc(w);
+  stubRows(w);
+  const g = grip(w, 0);
+  pe(w, g, 'pointerdown', 10); pe(w, g, 'pointermove', 150);
+  w.KarteUI.open('C2', '別の会員', 'summary'); await settle();
+  const n1 = live();
+  pe(w, g, 'pointerup', 150); await settle();
+  ok('S12 ★別のお客様を開いた時点でリスナーが残らず、後の pointerup でも前のお客様の下書きの順が変わらない', n1 === 0 && JSON.stringify(names(w)) === '["ベンチプレス","スクワット","レッグプレス"]', String(n1));
+}
+// ---------- S13 関門② 2：上へ／下へを出している種目は、別の種目を動かしても付いたまま ----------
+{
+  const { w } = boot({ src: FULL });
+  seed(w, ITEMS());
+  await openRecord(w);
+  await tap(w, grip(w, 2));
+  ok('S13 前提：レッグプレス（3番目）に上へ／下へ', !!R(w).querySelector('.k-gripud'));
+  grip(w, 0).dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })); await settle();
+  const ud = R(w).querySelector('.k-gripud');
+  const owner = ud && (ud.closest('[data-ei]') || ud.previousElementSibling);
+  ok('S13 ★別の種目（ベンチプレス）を動かしても、上へ／下へはレッグプレスに付いたまま', !!owner && owner.getAttribute('data-ei') === '2' && owner.textContent.includes('レッグプレス'), owner && owner.getAttribute('data-ei'));
+}
 // ---------- S10 ドラッグ（行の位置を身代わり） ----------
 {
   const { w } = boot({ src: FULL });

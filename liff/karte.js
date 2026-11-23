@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23h 種目の順番を ≡ つまみで入れ替える（設計53）';
+  var KARTE_BUILD = '2026-11-23i 種目の並べ替え：画面を離れたらつまみを捨てる（設計53 関門②）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -574,6 +574,7 @@
   var nav = { i: 0, restoring: false, canceling: false };
   function navState() { return (window.history && history.state && history.state.karte) ? history.state : null; }
   function navPush(st, mode) {
+    gripCancel();   // 設計53 関門②：画面を移るときは動かしている途中のつまみを捨てる
     if (mode === 'none' || nav.restoring || !window.history || !history.pushState) return;
     var curSt = navState();
     try {
@@ -584,8 +585,9 @@
       nav.i = st.i;
     } catch (e) {}
   }
-  function goBack() { if (navState()) history.back(); else close(); }
+  function goBack() { gripCancel(); if (navState()) history.back(); else close(); }
   function exitKarte() {
+    gripCancel();
     if (cur.dirty && !window.confirm('入力中の内容は保存されていません。カルテを閉じますか？')) return;
     cur.dirty = false;
     var st = navState();
@@ -593,6 +595,7 @@
     close();
   }
   function onPopState(e) {
+    gripCancel();   // 設計53 関門②：戻る・進むでも捨てる
     if (nav.canceling) { nav.canceling = false; return; }   // 取り消しで元の位置へ戻ったときの1回は描かない
     var st = e.state && e.state.karte ? e.state : null;
     //   入力中なら確かめる。やめたら、来た向きの逆へ1つ動いて元の位置に戻る（積み直さない＝履歴の数え方を崩さない）
@@ -690,6 +693,7 @@
     return root;
   }
   function close() {
+    gripCancel();
     restStop();
     if (window.visualViewport) { window.visualViewport.removeEventListener('resize', fitViewport); window.visualViewport.removeEventListener('scroll', fitViewport); }
     window.removeEventListener('resize', fitViewport);
@@ -702,6 +706,7 @@
   }
 
   function open(customerId, name, tab, draft, mode) {
+    gripCancel();   // 設計53 関門②：別のお客様・タブの切り替え
     restStop();   // ★画面を移ったら休憩タイマーは消す（設計33 §9-7）
     navPush({ cid: String(customerId || ''), tab: tab || 'summary' }, mode);
     cur.dirty = false;
@@ -2060,7 +2065,9 @@
       if (e.button != null && e.button > 0) return;
       if (!o.canMove() || gripDrag) return;
       try { e.preventDefault(); } catch (x) {}
-      var rows = o.rows(), row = rows[o.index], y0 = e.clientY, moved = false, to = o.index, raf = 0, lastY = e.clientY;
+      var rows = o.rows(), row = rows[o.index], y0 = e.clientY, moved = false, to = o.index, raf = 0, lastY = e.clientY, pid = e.pointerId;
+      var ctx0 = o.ctx ? o.ctx() : null;   // ★始めたときの画面・配列（落とすときに同じかを確かめる＝関門② 1 の二重の守り）
+      if (!row) return;
       var sc = o.scroller, scroll0 = sc ? sc.scrollTop : 0;
       function place(y) {
         var dy = y - y0 + ((sc ? sc.scrollTop : 0) - scroll0);
@@ -2090,9 +2097,13 @@
       function end(apply) {
         b.removeEventListener('pointermove', mv); b.removeEventListener('pointerup', up); b.removeEventListener('pointercancel', cancel);
         document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel);
+        try { if (pid != null && b.releasePointerCapture) b.releasePointerCapture(pid); } catch (x) {}
         rows.forEach(function (r) { r.style.outline = ''; });
         row.style.transform = ''; row.style.zIndex = ''; row.style.boxShadow = ''; row.style.position = '';
         if (!apply) return;
+        //   ★画面を離れた・描き直した・配列が替わった・別のお客様＝何もしない
+        if (!b.isConnected) return;
+        if (ctx0) { var c1 = o.ctx(); if (!c1 || c1.items !== ctx0.items || c1.cid !== ctx0.cid) return; }
         if (!moved) { o.onTap(); return; }
         if (to !== o.index && o.canMove()) o.onMove(o.index, to, false);   // ★保存の送信中などは配列を変えない
       }
@@ -3394,7 +3405,8 @@
       var i = rv.exercises.indexOf(ex);
       return makeGrip({ label: exName(ex.name) || '種目', index: i, count: rv.exercises.length, scroller: cur.root,
         rows: function () { return Array.prototype.slice.call(out.querySelectorAll('.k-rvex')); },
-        canMove: function () { return !!rv; }, onMove: rvReorder, onTap: function () { rvUd = rvUd === ex.id ? null : ex.id; draw(); } });
+        canMove: function () { return !!rv; }, onMove: rvReorder, onTap: function () { rvUd = rvUd === ex.id ? null : ex.id; draw(); },
+        ctx: function () { return { items: rv ? rv.exercises : null, cid: cur.customerId === cid ? cid : null }; } });
     }
     function rvExCard(ex) {
       var c = el('div', { class: 'k-card k-rvex', 'data-id': ex.id, style: 'display:flex;flex-direction:column;gap:8px;' + (ex.off ? 'opacity:.45;' : '') });
@@ -3496,6 +3508,7 @@
       place();
     }
     function draw() {
+      gripCancel();   // 設計53 関門②：描き直しで行が消える前に捨てる
       out.innerHTML = ''; bar.innerHTML = '';
       drawResume();   // 設計51
       if (err) out.appendChild(msg(err, true));
@@ -3579,7 +3592,7 @@
       if (D.openEi != null) D.openEi = movedIndex(D.openEi, from, to);
       if (rest.pos) rest.pos.ei = movedIndex(rest.pos.ei, from, to);
       if (!save()) { D.items = prev; D.openEi = prevOpen; if (prevRest) { rest.pos.ei = prevRest.ei; } window.alert('この端末に下書きを残せないため、順番を変えられませんでした。'); draw(); return; }
-      udFor = udFor >= 0 ? to : -1;
+      udFor = udFor >= 0 ? movedIndex(udFor, from, to) : -1;   // 設計53 関門② 2：上へ／下へを出している種目に付いたまま
       moveMsg = D.items[to].exercise + 'を' + (to + 1) + '番目に動かしました';
       draw();
       if (keepFocus) { var g = list.querySelector('.k-grip[data-idx="' + to + '"]'); if (g) { try { g.focus(); } catch (e) {} } }
@@ -3587,7 +3600,8 @@
     function trGrip(it, ei) {
       return makeGrip({ label: it.exercise, index: ei, count: D.items.length, scroller: cur.root,
         rows: function () { return Array.prototype.filter.call(list.children, function (x) { return x.hasAttribute && x.hasAttribute('data-ei'); }); },
-        canMove: canReorder, onMove: reorderItems, onTap: function () { udFor = udFor === ei ? -1 : ei; draw(); } });
+        canMove: canReorder, onMove: reorderItems, onTap: function () { udFor = udFor === ei ? -1 : ei; draw(); },
+        ctx: function () { return { items: D.items, cid: cur.customerId === cid ? cid : null }; } });
     }
     var note = el('div', { class: 'k-sub', style: 'margin-bottom:8px;' });
     c.appendChild(note);
@@ -3702,6 +3716,7 @@
       return i;
     }
     function draw() {
+      gripCancel();   // 設計53 関門②：描き直しで行が消える前に捨てる
       list.innerHTML = '';
       var placed = false;
       if (udFor >= D.items.length) udFor = -1;
