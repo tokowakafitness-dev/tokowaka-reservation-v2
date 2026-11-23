@@ -11,7 +11,7 @@
 //   「直したのに出力が変わらない」とき、GASへの反映漏れなのか不具合なのかを
 //   切り分けられず何往復も使った（2026-10-01／10-02）。印があれば一目で分かる。
 //   Nudge.js の LB_NUDGE_BUILD と同じ仕掛け。
-var LB_AUDIT_BUILD = '2026-11-13a 出勤枠の新しさに、すぐ押し出しの最後の失敗の理由を出す（設計42）';
+var LB_AUDIT_BUILD = '2026-11-23a 日次点検が最後に完走した時刻を並べる・点検が見送られたら「問題なし」と言わない（自己修理 P1）';
 
 // 文字列を返す版（作業の受け渡しで使う）。ログに出す版は下にある。
 // 会員名簿を読む幅。
@@ -2660,6 +2660,12 @@ function triggerListText() {
   out.push('日次点検が最後に走った時刻: '
            + (hl ? Utilities.formatDate(new Date(hl), SETTINGS.TIMEZONE, 'M/d HH:mm')
                  : '★記録なし（一度も走っていないか、記録の仕組みを入れた直後）'));
+  //   ★最後に完走した時刻（自己修理 P1 §4-2）。開始時刻だけ見て正常と思い込まないため
+  var hd = Number(_lbProp('LB_HEALTH_DONE') || 0);
+  out.push('日次点検が最後に完走した時刻: '
+           + (hd ? Utilities.formatDate(new Date(hd), SETTINGS.TIMEZONE, 'M/d HH:mm')
+                 : '★記録なし（自己修理 P1 の反映前か、まだ一度も完走していない）')
+           + ((hl && hd && hl > hd) ? '　★最新の点検は最後まで来ていません（走っている最中か、途中で落ちた）' : ''));
 
   //   ★点検がどこまで進んだか（2026-10-10）。
   //     6分の制限で落ちると、**どこが重いのか分からない**。
@@ -2815,6 +2821,8 @@ function healthCheckText() {
   var r = null;
   try { r = dailyHealthCheck(true); }
   catch (e) { out.push('⛔ 点検が落ちました: ' + (e && e.message)); var t0 = out.join('\n'); Logger.log(t0); return t0; }
+  //   ★見送られた（点検か自己修理が走っている）なら「問題なし」と言わない（自己修理 P1 I-H28）
+  if (r && r.skipped) { out.push('⏸ 点検は走りませんでした（' + r.skipped + '）。点検か自己修理が走っています。少し後にもう一度'); var t1 = out.join('\n'); Logger.log(t1); return t1; }
   out.push('点検時刻: ' + ((r && r.stamp) || '?'));
   var iss = (r && r.issues) || [];
   if (!iss.length) {
