@@ -154,6 +154,10 @@ async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('but
   type(w, field(w, 'hearing'), '睡眠は5時間くらい\n膝に痛みがある');
   ok('T7 ★欄に体のことの言葉の行を打つと押せない（どの欄かを出す）', put(w).disabled && why(w).includes('体のことの言葉') && why(w).includes('ヒアリング'), why(w));
   type(w, field(w, 'hearing'), '睡眠は5時間くらい\n');
+  const li2 = lineOf(card(w, 'ベンチプレス')), keep = li2.value;
+  type(w, li2, keep + '  ?痛み');
+  ok('T7 ★セットの行に ? と一緒に体のことの言葉を書くと「読めない」・体のことの言葉として押せない（関門② 4）', put(w).disabled && why(w).includes('書き方が読めない') && why(w).includes('ベンチプレスのセットの行'), why(w));
+  type(w, li2, keep);
   type(w, R(w).querySelector('.k-rvmsg'), 'オフのまま直した文');
   R(w).querySelector('.k-rvmemon').click(); await settle();
   type(w, R(w).querySelector('.k-rvmsg'), 'あ'.repeat(401));
@@ -241,7 +245,7 @@ for (const [label, src] of [['trial', SRC], ['不正な値（Full）', BOGUS]]) 
     ['50 × 10', [['set', '50', '10', 0, false]]], ['50 kg×10', [['set', '50', '10', 0, false]]], ['50 かける 10', [['set', '50', '10', 0, false]]], ['2.5×12', [['set', '2.5', '12', 0, false]]],
     ['55×5+40×8', [['set', '55', '5', 1, false]]], ['50×10(できない)', [['set', '50', '10', 0, true]]],
     ['20×?  30×5', [['skip'], ['set', '30', '5', 0, false]]], ['? × 5  30×5', [['skip'], ['set', '30', '5', 0, false]]], ['60×  ?', [['bad'], ['skip']]], ['55 × 5 + 40 × 8', [['set', '55', '5', 1, false]]], ['?', [['skip']]], ['自重×?', [['skip']]],
-    ['50×10(左)', [['bad']]], ['600×5', [['bad']]], ['50×0', [['bad']]], ['50×', [['bad']]], ['abc 20×5', [['bad'], ['set', '20', '5', 0, false]]],
+    ['50×10(左)', [['bad']]], ['?痛み 20×5', [['bad'], ['set', '20', '5', 0, false]]], ['?abc', [['bad']]], ['?×?', [['skip']]], ['20kg×?', [['skip']]], ['?×8', [['skip']]], ['?? 20×5', [['bad'], ['set', '20', '5', 0, false]]], ['600×5', [['bad']]], ['50×0', [['bad']]], ['50×', [['bad']]], ['abc 20×5', [['bad'], ['set', '20', '5', 0, false]]],
     ['55×5、50×5', [['set', '55', '5', 0, false], ['set', '50', '5', 0, false]]], ['10+10+10+10+10×5', [['bad']]], ['', []],
   ];
   const badP = table.filter(([s, want]) => JSON.stringify(P(s)) !== JSON.stringify(want)).map(([s, want]) => s + ' → ' + JSON.stringify(P(s)) + '（期待 ' + JSON.stringify(want) + '）');

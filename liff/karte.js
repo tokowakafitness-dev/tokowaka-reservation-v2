@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23a AI の振り分けの確認を1行の文字と欄の文章に（設計50）';
+  var KARTE_BUILD = '2026-11-23b AI の振り分けの確認を1行の文字と欄の文章に（設計50）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2254,6 +2254,7 @@
     var f = function (x) { return (x.w === '' ? '自重' : x.w) + '×' + x.r + (x.assist != null ? '+' + x.assist : ''); };
     return f(st) + (st.drops || []).map(function (d) { return '+' + f(d); }).join('') + (st.forced ? '(できない)' : '');
   }
+  var RV_SKIP = /^(?:\?|(?:\d+(?:\.\d+)?(?:kg)?)?[×x*✕✖]\?|\?[×x*✕✖](?:\d+|\?))$/i;   // ?・N×?・×?（自重×?）・?×N・?×?
   function rvParseLine(line) {
     var s = String(line == null ? '' : line).normalize('NFKC').replace(/\s+(?=[×x*✕✖+])/gi, '').replace(/([×x*✕✖+])\s+(?=\d)/gi, '$1').replace(/自重(?=[×x*✕✖])/gi, '');
     var out = [], p = memoWs(s, 0);
@@ -2267,7 +2268,7 @@
       });
       if (r.tailAt < 0) break;
       var q = p + r.tailAt, run = (/^[^\s、,]+/.exec(s.slice(q)) || [s.charAt(q)])[0];
-      out.push({ kind: run.indexOf('?') >= 0 ? 'skip' : 'bad', text: run });
+      out.push({ kind: RV_SKIP.test(run) ? 'skip' : 'bad', text: run });   // ★「入れない」は純粋な ? の形だけ（? と一緒に文字を書いた塊は読めない＝関門② 4）
       p = memoWs(s, q + run.length);
     }
     return out;
@@ -2342,6 +2343,7 @@
         else { t.sets++; if (k.st === 'inferred') t.inf++; if (k.st === 'nobasis') t.nob++; }
       });
       if (rvLines(ex.note).some(function (x) { return MEMO_HEALTH.test(x); })) health.push(exName(ex.name) + 'のメモ');
+      if (MEMO_HEALTH.test(String(ex.line || ''))) health.push(exName(ex.name) + 'のセットの行');   // 関門② 4
     });
     RV_FIELDS.forEach(function (f) { if (scopeAllows(f[1], scope) && rvLines(rv.fields[f[0]]).some(function (x) { return MEMO_HEALTH.test(x); })) health.push(RV_FIELD_LABEL[f[0]]); });
     if (rv.member.on === true) {
