@@ -31,7 +31,7 @@ const DRAFT = () => ({
   exercises: [
     { name: 'ベンチプレス', heard: 'ベンチプレス', note: '', sets: [{ w: 20, r: 10, evidence: '20キロで10回', note: '' }, { w: 30, r: 5, evidence: '次30キロで5回', note: 'フォーム良い' }],
       unverified: [{ w: 60, r: 5, evidence: '次60キロ', note: '' }] },
-    { name: 'スカルクラッシャー', heard: 'スカルフラッシュ', note: '', sets: [{ w: 10, r: 12, evidence: 'スカルフラッシュ 10キロで12回', note: '' }], unverified: [] }],
+    { name: 'スカルクラッシュ改', heard: 'スカルフラッシュ', note: '', sets: [{ w: 10, r: 12, evidence: 'スカルフラッシュ 10キロで12回', note: '' }], unverified: [] }],
   coaching: ['肘を張りすぎない', '初回より安定'],
   hearing: ['睡眠は5時間くらい'],
   caution: ['腰が少し痛い'],
@@ -133,21 +133,21 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   ok('L2-5 ★体の状態のカードは「捨てる」だけ（社内メモにも入れない）', cc && JSON.stringify(btnsIn(cc)) === JSON.stringify(['捨てる']) && cc.textContent.includes('「注意すること」の画面で入れてください'), cc && JSON.stringify(btnsIn(cc)));
   btn(cc, '捨てる').click(); await settle();
   //   一覧に無い種目：先に名前 → セットの足すボタンはまだ出ない
-  const rc0 = cardBy(w, /スカルクラッシャー：「/);
-  ok('L2-6 ★一覧に無い種目のセットは、名前を決める前は「足す」が出ない', rc0 && !btnsIn(rc0).some((t) => t.includes('を足す')) && rc0.textContent.includes('先に「スカルクラッシャー」の種目名を決めてください'), rc0 && rc0.textContent);
+  const rc0 = cardBy(w, /スカルクラッシュ改：「/);
+  ok('L2-6 ★一覧に無い種目のセットは、名前を決める前は「足す」が出ない', rc0 && !btnsIn(rc0).some((t) => t.includes('を足す')) && rc0.textContent.includes('先に「スカルクラッシュ改」の種目名を決めてください'), rc0 && rc0.textContent);
   const nc = cardBy(w, /聞こえた言葉：スカルフラッシュ/);
   btn(nc, '種目にする').click(); await settle();
   pill(R(w), '腕').click(); await settle();
-  const rc = cardBy(w, /スカルクラッシャー：「/);
-  ok('L2-7 名前を種目にした後は「スカルクラッシャー」に足すボタン', rc && btnsIn(rc).some((t) => t.indexOf('「スカルクラッシャー」に 10kg×12 を足す') === 0), rc && JSON.stringify(btnsIn(rc)));
-  btn(rc, '「スカルクラッシャー」に').click(); await settle();
+  const rc = cardBy(w, /スカルクラッシュ改：「/);
+  ok('L2-7 名前を種目にした後は「スカルクラッシュ改」に足すボタン', rc && btnsIn(rc).some((t) => t.indexOf('「スカルクラッシュ改」に 10kg×12 を足す') === 0), rc && JSON.stringify(btnsIn(rc)));
+  btn(rc, '「スカルクラッシュ改」に').click(); await settle();
   //   選び直し：名前を選び直すとセットの決定も外れる
   btn(cardBy(w, /聞こえた言葉：スカルフラッシュ/), '選び直す').click(); await settle();
-  const rc2 = cardBy(w, /スカルクラッシャー：「/);
+  const rc2 = cardBy(w, /スカルクラッシュ改：「/);
   ok('L2-8 ★名前を選び直すと、その下のセットの「足す」も外れる', rc2 && !rc2.querySelector('.k-impdone') && !btnsIn(rc2).some((t) => t.includes('を足す')));
   btn(cardBy(w, /聞こえた言葉：スカルフラッシュ/), '種目にする').click(); await settle();
   pill(R(w), '腕').click(); await settle();
-  btn(cardBy(w, /スカルクラッシャー：「/), '「スカルクラッシャー」に').click(); await settle();
+  btn(cardBy(w, /スカルクラッシュ改：「/), '「スカルクラッシュ改」に').click(); await settle();
   //   確かめられない数字・名前の印のある指導のメモ
   btn(cardBy(w, /数字を確かめられません/), '捨てる').click(); await settle();
   btn(cardBy(w, /初回より安定/), '社内メモに足す').click(); await settle();
@@ -160,9 +160,9 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   ok('L2-10 全部決めると押せる', put && !put.disabled, R(w).textContent.slice(-200));
   put.click(); await nav();
   const D = draftOf(w);
-  ok('L2-11 ★下書き：ベンチ 20×10・30×5（メモ「フォーム良い」）・スカルクラッシャー 10×12（部位 arm）・✓は全部 false',
+  ok('L2-11 ★下書き：ベンチ 20×10・30×5（メモ「フォーム良い」）・スカルクラッシュ改 10×12（部位 arm）・✓は全部 false',
      D && D.items.length === 2 && D.items[0].exercise === 'ベンチプレス' && JSON.stringify(D.items[0].sets.map((s) => [s.w, s.r, s.done])) === '[["20","10",false],["30","5",false]]' && D.items[0].sets[1].note === 'フォーム良い'
-     && D.items[1].exercise === 'スカルクラッシャー' && D.items[1].regPart === 'arm' && D.items[1].sets[0].done === false, JSON.stringify(D && D.items));
+     && D.items[1].exercise === 'スカルクラッシュ改' && D.items[1].regPart === 'arm' && D.items[1].sets[0].done === false, JSON.stringify(D && D.items));
   ok('L2-12 ★お客様へ・次回までには下書きの member に入る（保存するまでお客様には出ない）', D.member && D.member.message === 'フォームが安定してきました。' && D.member.todo[0] === 'ストレッチ 2分');
   ok('L2-13 社内メモに指導のメモとヒアリング（体の状態・雑談は無い）', /肘を張りすぎない/.test(D.memo) && /ヒアリング：睡眠は5時間くらい/.test(D.memo) && /初回より安定/.test(D.memo) && !/腰が少し痛い/.test(D.memo));
   const st = storeText(w.localStorage) + storeText(w.sessionStorage), logT = w.logs.join('\n');
@@ -260,7 +260,7 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   btn(R(w), 'AIで振り分ける').click(); await settle();
   btn(cardBy(w, /聞こえた言葉：スカルフラッシュ/), '種目にする').click(); await settle();
   pill(R(w), '腕').click(); await settle();
-  btn(cardBy(w, /スカルクラッシャー：「/), '「スカルクラッシャー」に').click(); await settle();
+  btn(cardBy(w, /スカルクラッシュ改：「/), '「スカルクラッシュ改」に').click(); await settle();
   btn(cardBy(w, /聞こえた言葉：スカルフラッシュ/), '選び直す').click(); await settle();
   btn(cardBy(w, /聞こえた言葉：スカルフラッシュ/), '捨てる').click(); await settle();
   for (const c of cards(w)) { if (!c.querySelector('.k-impdone')) { const b = btn(c, '捨てる'); if (b) { b.click(); await settle(); } } }
