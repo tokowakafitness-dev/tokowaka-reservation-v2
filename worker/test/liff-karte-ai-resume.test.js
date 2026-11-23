@@ -46,7 +46,7 @@ const DRAFT = () => ({
       { status: 'nobasis', w: 60, r: 5, bw: false, evidence: '60キロで5回', unsure: '', note: '' },
       { status: 'healthHidden', w: null, r: null, bw: false, evidence: '', unsure: '', note: '' },
       { status: 'inferred', w: 40, r: null, bw: false, evidence: '40キロいきましょう', unsure: '', note: '' }] },
-    { name: 'スカルクラッシャー', heard: 'スカルフラッシュ', note: '', sets: [{ status: 'match', w: 10, r: 12, bw: false, evidence: 'スカルフラッシュ 10キロで12回', unsure: '', note: '' }] },
+    { name: 'スカルクラッシュ改', heard: 'スカルフラッシュ', note: '', sets: [{ status: 'match', w: 10, r: 12, bw: false, evidence: 'スカルフラッシュ 10キロで12回', unsure: '', note: '' }] },
     { name: 'スクワット', heard: 'スクワット', note: '', sets: [{ status: 'match', w: null, r: 15, bw: true, evidence: 'スクワット 自重で15回', unsure: '', note: '' }] },
     { name: 'レッグプレス', heard: 'レッグプレス', note: '', sets: [{ status: 'inferred', w: null, r: 8, bw: false, evidence: 'レッグプレス 8回', unsure: '', note: '' }] }],
   condition: ['睡眠不足で疲れ気味'],
@@ -121,7 +121,11 @@ const foot = (w) => (R(w).querySelector('.k-rvcount') || {}).textContent || '';
 const why = (w) => (R(w).querySelector('.k-rvwhy') || {}).textContent || '';
 const field = (w, k) => R(w).querySelector('.k-rvfield[data-field="' + k + '"]');
 function type(w, elx, v) { elx.value = v; elx.dispatchEvent(new w.Event('input', { bubbles: true })); }
-async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('button.k-pill')].find((x) => x.textContent === part).click(); await settle(); }
+async function pickPart(w, name, part) {   // 設計52：部位はチップ（推定）を開いてから選ぶ
+  const find = () => [...card(w, name).querySelectorAll('button.k-pill')].find((x) => x.textContent === part);
+  if (!find()) { card(w, name).querySelector('.k-rvpart').click(); await settle(); }
+  find().click(); await settle();
+}
 
 // ================= 設計51 の検査 =================
 const AKEY = 'karte_ai_review_v1:T1:C1';
@@ -159,7 +163,7 @@ const now0 = Date.now();
   ok('U1 ★続ける：同じ1行・同じ欄・同じチェック・AI は1回だけ', lineOf(card(w, 'ベンチプレス')).value === '50×10  50×8  60×6  ?  40×?' && field(w, 'coaching').value === 'お客様の肘を張りすぎない\n架空の追加の指導' && R(w).querySelector('.k-rvmemon').checked === true && aiCalls(sent) === 1);
   ok('U1 ★続けた後も色（出所）は同じ（一致・推測・直した・入れない・入れない）', JSON.stringify(chipsOf(card(w, 'ベンチプレス'))) === JSON.stringify(['match', 'inferred', 'edited', 'skip', 'skip']), JSON.stringify(chipsOf(card(w, 'ベンチプレス'))));
   ok('U12 ★復元した状態では根拠を見る自体を出さない・前回の判定と出す（関門① 5）', !R(w).querySelector('.k-rvev') && !!R(w).querySelector('.k-airrestored') && card(w, 'ベンチプレス').querySelector('.k-rvchip').textContent.includes('（前回の判定）') && !R(w).querySelector('.k-rvcau') && !R(w).querySelector('.k-rvunclear'));
-  await pickPart(w, 'スカルクラッシャー', '腕');
+  await pickPart(w, 'スカルクラッシュ改', '腕');
   put(w).click(); await nav();
   const D = draftOf(w);
   const bs = D && D.items.find((x) => x.exercise === 'ベンチプレス').sets.map((s) => [s.w, s.r, s.src || null, !!s.srcEdited]);

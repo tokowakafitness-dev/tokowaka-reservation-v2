@@ -215,7 +215,7 @@ const baseResp = (extra) => async (b) => {
   return { success: true };
 };
 const TR_HIST2 = [{ session_id: 'S5', session_date: '2026-11-01', created_at: 300, author_trainer_id: 'T1', rev: 1, sets: [
-  { exercise: 'ブルガリアンスクワット', set_no: 1, weight_kg: 10, reps: 10, e1rm: 13.3 }, { exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10, e1rm: 53.3 }] }];
+  { exercise: 'ピストルスクワット', set_no: 1, weight_kg: 10, reps: 10, e1rm: 13.3 }, { exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10, e1rm: 53.3 }] }];
 const stashOf = (w) => ({ ls: storeOf(w.localStorage), ss: storeOf(w.sessionStorage) });
 async function afterReload(st, resp) { const e = boot(resp || baseResp(), { token: jwt(5), ls: st.ls, ss: st.ss }); for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5)); await settle(); return e; }
 {
@@ -390,13 +390,13 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
   ok('P7-0 選ぶ前は登録の欄を出さない', !R(w).querySelector('.k-exunreg'));
   pill(R(w), 'スクワット').click(); await settle();
   ok('P7-1 固定の種目（スクワット）を選んでも登録の欄は出ない', !R(w).querySelector('.k-exunreg'));
-  pill(R(w), 'ブルガリアンスクワット').click(); await settle();
+  pill(R(w), 'ピストルスクワット').click(); await settle();
   const card = R(w).querySelector('.k-exunreg');
-  ok('P7-2 ★最近の種目で共有の一覧に無い名前を選ぶと、その下に部位（推定＝脚・尻）と登録のボタン・健康の言葉の注記', !!card && card.dataset.name === 'ブルガリアンスクワット' && card.querySelector('button[data-part="legs"]').getAttribute('aria-checked') === 'true' && card.textContent.includes('痛み・診断・服薬') && w.confirms === 0);
+  ok('P7-2 ★最近の種目で共有の一覧に無い名前を選ぶと、その下に部位（推定＝脚・尻）と登録のボタン・健康の言葉の注記', !!card && card.dataset.name === 'ピストルスクワット' && card.querySelector('button[data-part="legs"]').getAttribute('aria-checked') === 'true' && card.textContent.includes('痛み・診断・服薬') && w.confirms === 0);
   card.querySelector('button[data-part="core"]').click(); await settle();
   btn(R(w).querySelector('.k-exunreg'), '体幹で登録する').click(); await settle();
   const sv = sent.filter((x) => x.action === 'k_saveExercise');
-  ok('P7-3 ★登録すると名前と部位を送り、欄が消え、部位が効く・選んだまま', sv.length === 1 && sv[0].name === 'ブルガリアンスクワット' && sv[0].part === 'core' && !R(w).querySelector('.k-exunreg') && w.KarteUI._t.partOf('ブルガリアンスクワット') === '体幹' && pill(R(w), 'ブルガリアンスクワット').getAttribute('aria-pressed') === 'true');
+  ok('P7-3 ★登録すると名前と部位を送り、欄が消え、部位が効く・選んだまま', sv.length === 1 && sv[0].name === 'ピストルスクワット' && sv[0].part === 'core' && !R(w).querySelector('.k-exunreg') && w.KarteUI._t.partOf('ピストルスクワット') === '体幹' && pill(R(w), 'ピストルスクワット').getAttribute('aria-pressed') === 'true');
 }
 {
   //   中5：一覧が上限で切れていたら、一部だけ表示している旨と「見つからなければ名前を入力」

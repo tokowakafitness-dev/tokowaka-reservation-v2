@@ -46,7 +46,7 @@ const DRAFT = () => ({
       { status: 'nobasis', w: 60, r: 5, bw: false, evidence: '60キロで5回', unsure: '', note: '' },
       { status: 'healthHidden', w: null, r: null, bw: false, evidence: '', unsure: '', note: '' },
       { status: 'inferred', w: 40, r: null, bw: false, evidence: '40キロいきましょう', unsure: '', note: '' }] },
-    { name: 'スカルクラッシャー', heard: 'スカルフラッシュ', note: '', sets: [{ status: 'match', w: 10, r: 12, bw: false, evidence: 'スカルフラッシュ 10キロで12回', unsure: '', note: '' }] },
+    { name: 'スカルクラッシュ改', heard: 'スカルフラッシュ', note: '', sets: [{ status: 'match', w: 10, r: 12, bw: false, evidence: 'スカルフラッシュ 10キロで12回', unsure: '', note: '' }] },
     { name: 'スクワット', heard: 'スクワット', note: '', sets: [{ status: 'match', w: null, r: 15, bw: true, evidence: 'スクワット 自重で15回', unsure: '', note: '' }] },
     { name: 'レッグプレス', heard: 'レッグプレス', note: '', sets: [{ status: 'inferred', w: null, r: 8, bw: false, evidence: 'レッグプレス 8回', unsure: '', note: '' }] }],
   condition: ['睡眠不足で疲れ気味'],
@@ -119,7 +119,11 @@ const foot = (w) => (R(w).querySelector('.k-rvcount') || {}).textContent || '';
 const why = (w) => (R(w).querySelector('.k-rvwhy') || {}).textContent || '';
 const field = (w, k) => R(w).querySelector('.k-rvfield[data-field="' + k + '"]');
 function type(w, elx, v) { elx.value = v; elx.dispatchEvent(new w.Event('input', { bubbles: true })); }
-async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('button.k-pill')].find((x) => x.textContent === part).click(); await settle(); }
+async function pickPart(w, name, part) {   // 設計52：部位はチップ（推定）を開いてから選ぶ
+  const find = () => [...card(w, name).querySelectorAll('button.k-pill')].find((x) => x.textContent === part);
+  if (!find()) { card(w, name).querySelector('.k-rvpart').click(); await settle(); }
+  find().click(); await settle();
+}
 
 // ================= T1〜T11 full（本番の値） =================
 {
@@ -127,7 +131,7 @@ async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('but
   await toReview(w);
   const s1 = sent.filter((x) => x.body.action === 'k_aiDraft');
   ok('T1 ★要求に client_ai_format:2 と clientReqId', s1.length === 1 && s1[0].body.client_ai_format === 2 && /^[A-Za-z0-9_-]{1,36}$/.test(s1[0].body.clientReqId));
-  ok('T1 ★1種目＝1枚の1行・初期値が表どおり（一致・推測・根拠なし・健康は ?・回数不明は ×?・自重・重さ不明は ?×）', cards(w).length === 4 && lineOf(card(w, 'ベンチプレス')).value === '50×10  50×8  60×5  ?  40×?' && lineOf(card(w, 'スカルクラッシャー')).value === '10×12' && lineOf(card(w, 'スクワット')).value === '自重×15' && lineOf(card(w, 'レッグプレス')).value === '?×8', cards(w).map((c) => lineOf(c) && lineOf(c).value).join(' | '));
+  ok('T1 ★1種目＝1枚の1行・初期値が表どおり（一致・推測・根拠なし・健康は ?・回数不明は ×?・自重・重さ不明は ?×）', cards(w).length === 4 && lineOf(card(w, 'ベンチプレス')).value === '50×10  50×8  60×5  ?  40×?' && lineOf(card(w, 'スカルクラッシュ改')).value === '10×12' && lineOf(card(w, 'スクワット')).value === '自重×15' && lineOf(card(w, 'レッグプレス')).value === '?×8', cards(w).map((c) => lineOf(c) && lineOf(c).value).join(' | '));
   ok('T1 カード（.k-impcard）・上の帯（.k-rvhead）・1件ずつの確定ボタンが出ない', !R(w).querySelector('.k-impcard') && !R(w).querySelector('.k-rvhead') && !btn(R(w), 'この数字で確定') && !btn(R(w), '根拠なしのまま確定'));
   const bc = card(w, 'ベンチプレス');
   ok('T2 ★チップの色：一致・推測・根拠なし・入れない・入れない', JSON.stringify(chipsOf(bc)) === JSON.stringify(['match', 'inferred', 'nobasis', 'skip', 'skip']), JSON.stringify(chipsOf(bc)));
@@ -137,9 +141,9 @@ async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('but
   ok('T7 欄の初期値が AI の各リスト（1行1項目）・「お客様」を含む行も入っている', field(w, 'flow').value === 'ベンチプレスを50キロから始めた\nスクワットを自重で行った' && field(w, 'coaching').value.split('\n')[0] === 'お客様の肘を張りすぎない' && field(w, 'next').value === '次回はベンチプレスを52.5キロで' && !field(w, 'flow').hasAttribute('readonly'));
   ok('T8 ★お客様の画面に出すチェックは既定オフ', R(w).querySelector('.k-rvmemon').checked === false);
   ok('T9 体のこと・AI が分からなかった点は読むだけ（ボタン・入力が無い）', !!R(w).querySelector('.k-rvcau') && !R(w).querySelector('.k-rvcau').querySelector('button,input,textarea') && !!R(w).querySelector('.k-rvunclear') && !R(w).querySelector('.k-rvunclear').querySelector('button,input,textarea'));
-  ok('T4 ★一覧に無い種目（スカル）が残る間は押せず理由を出す', put(w).disabled && why(w).includes('一覧に無い種目名'), why(w));
+  ok('N1 ★一覧に無い種目（架空のスカルクラッシュ改）があっても押せる（設計52：止めない）・部位は推定のチップ・帯に理由が出ない', !put(w).disabled && card(w, 'スカルクラッシュ改').querySelector('.k-rvpart').textContent.includes('（推定）') && !why(w).includes('一覧に無い'), why(w));
   ok('T5 下の帯の件数（推測・根拠なしを含むと出す）', foot(w).includes('セット 5') && foot(w).includes('推測 1・根拠なし 1 を含む') && foot(w).includes('「?」で入れない 3'), foot(w));
-  await pickPart(w, 'スカルクラッシャー', '腕');
+  await pickPart(w, 'スカルクラッシュ改', '腕');
   ok('T6 部位を選ぶと押せる', !put(w).disabled, why(w));
   //   T5 打つたびに描き直すのはチップと帯だけ（入力中の欄は同じ要素のまま・フォーカスが残る）
   const li = lineOf(card(w, 'ベンチプレス'));
@@ -178,7 +182,7 @@ async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('but
   const sets = (n) => { const it = D && D.items.find((x) => x.exercise === n); return it ? it.sets.map((s) => [s.w, s.r, s.src || null, !!s.srcEdited]) : null; };
   ok('T3 ★記録の下書き：ベンチは直した値・元の色のセットは今と同じ出所・「直した」は根拠なしの警告（その種目の最も強い警告）を残す・? は入らない',
      JSON.stringify(sets('ベンチプレス')) === JSON.stringify([['50', '10', null, false], ['50', '8', 'inferred', false], ['60', '6', 'nobasis', true], ['20', '10', 'nobasis', true], ['45', '6', 'nobasis', true]]), JSON.stringify(sets('ベンチプレス')));
-  ok('T3 自重は w が空（I61）・重さ不明だけの種目はセットなしで入る・部位を選んだ種目は regPart', JSON.stringify(sets('スクワット')) === JSON.stringify([['', '15', null, false]]) && JSON.stringify(sets('レッグプレス')) === '[]' && D.items.find((x) => x.exercise === 'スカルクラッシャー').regPart === 'arm', JSON.stringify(D.items));
+  ok('T3 自重は w が空（I61）・重さ不明だけの種目はセットなしで入る・部位を選んだ種目は regPart', JSON.stringify(sets('スクワット')) === JSON.stringify([['', '15', null, false]]) && JSON.stringify(sets('レッグプレス')) === '[]' && D.items.find((x) => x.exercise === 'スカルクラッシュ改').regPart === 'arm', JSON.stringify(D.items));
   ok('T10 ★下書きのセットの ✓ は全部 false（I57）', D.items.every((it) => it.sets.every((s) => s.done === false)));
   ok('T7 ★社内メモ：今日の流れ・種目のメモ（セットのメモをまとめた行も）・状態・指導（お客様を含む）・ヒアリング・次回やること',
      /今日の流れ：ベンチプレスを50キロから始めた スクワットを自重で行った/.test(D.memo) && /ベンチプレス：肩甲骨を寄せる/.test(D.memo) && /ベンチプレス：1セット目：フォーム良い/.test(D.memo) && /状態：睡眠不足で疲れ気味/.test(D.memo) && /\nお客様の肘を張りすぎない/.test(D.memo) && /ヒアリング：睡眠は5時間くらい/.test(D.memo) && /次回やること：次回はベンチプレスを52\.5キロで/.test(D.memo), D.memo);
@@ -193,7 +197,7 @@ async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('but
 {
   const { w } = boot({ src: FULL });
   await toReview(w);
-  await pickPart(w, 'スカルクラッシャー', '腕');
+  await pickPart(w, 'スカルクラッシュ改', '腕');
   R(w).querySelector('.k-rvmemon').click(); await settle();
   put(w).click(); await nav();
   const D = draftOf(w);
@@ -203,9 +207,9 @@ async function pickPart(w, name, part) { [...card(w, name).querySelectorAll('but
 {
   const { w } = boot({ src: FULL });
   await toReview(w);
-  await pickPart(w, 'スカルクラッシャー', '腕');
-  type(w, card(w, 'スカルクラッシャー').querySelector('.k-rvname'), 'スカル');
-  ok('T6 ★部位を選んだ後に名前を変えると、また押せない', put(w).disabled && why(w).includes('一覧に無い種目名'), why(w));
+  await pickPart(w, 'スカルクラッシュ改', '腕');
+  type(w, card(w, 'スカルクラッシュ改').querySelector('.k-rvname'), 'スカル');
+  ok('N2 部位を選んだ後に名前を変えると、部位は推定に戻る（押せるまま）', !put(w).disabled && card(w, 'スカル').querySelector('.k-rvpart').textContent.includes('（推定）'), why(w));
   type(w, cards(w)[1].querySelector('.k-rvname'), 'アームカール');
   ok('T6 ★一覧の名前に変えると押せる・その種目のセットは「直した（種目名を変更）」・帯に「種目名を変えた 1」', !put(w).disabled && JSON.stringify(chipsOf(cards(w)[1])) === '["renamed"]' && foot(w).includes('種目名を変えた 1'), foot(w) + JSON.stringify(chipsOf(cards(w)[1])));
   btn(R(w), '＋ 種目を足す').click(); await settle();
@@ -230,7 +234,7 @@ for (const [label, src] of [['trial', SRC], ['不正な値（Full）', BOGUS]]) 
   await toReview(w);
   ok('T12 ★' + label + '：推測・根拠なしの数字は初期値に入れない（?）・今日の流れ・状態・次回やることは readonly', lineOf(card(w, 'ベンチプレス')).value === '50×10  ?  ?  ?  ?' && ['flow', 'condition', 'next'].every((k) => field(w, k).hasAttribute('readonly')) && !field(w, 'coaching').hasAttribute('readonly'), lineOf(card(w, 'ベンチプレス')).value);
   if (label !== 'trial') continue;
-  await pickPart(w, 'スカルクラッシャー', '腕');
+  await pickPart(w, 'スカルクラッシュ改', '腕');
   put(w).click(); await nav();
   const D = draftOf(w);
   ok('T12 ★試用：社内メモに今日の流れ・状態・次回やることが入らない・指導とヒアリングは入る', D && !/今日の流れ|状態：|次回やること：/.test(D.memo) && /肘を張りすぎない/.test(D.memo) && /ヒアリング：/.test(D.memo), D && D.memo);

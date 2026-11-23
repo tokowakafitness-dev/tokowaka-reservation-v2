@@ -232,17 +232,17 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
 {
   const { w, sent } = boot();
   await openImport(w);
-  paste(w, 'ゴブレットスクワット\n20×10');
+  paste(w, 'ピストルスクワット\n20×10');
   btn(R(w), '読み取る').click(); await settle();
   btn(card(w, 'name'), '種目にする').click(); await settle();
   card(w, 'name').querySelector('button[data-part="legs"]').click(); await settle();
   btn(R(w), '記録の画面に入れる').click(); await nav();
-  const reg = R(w).querySelector('.k-exunreg[data-name="ゴブレットスクワット"]');
+  const reg = R(w).querySelector('.k-exunreg[data-name="ピストルスクワット"]');
   ok('M8-1 ★記録の画面の種目カードに「共有の一覧にありません」・選んだ部位（脚・尻）が初期値', !!reg && reg.querySelector('button[data-part="legs"]').getAttribute('aria-checked') === 'true' && reg.textContent.includes('痛み・診断・服薬'));
   ok('M8-2 ★取り込みの画面からは k_saveExercise を送っていない', !sent.some((x) => x.action === 'k_saveExercise'));
   btn(reg, '脚・尻で登録する').click(); await settle();
   const sv = sent.filter((x) => x.action === 'k_saveExercise');
-  ok('M8-3 登録するかは記録の画面でトレーナーが選ぶ（押せば名前と部位を送る・欄が消える）', sv.length === 1 && sv[0].name === 'ゴブレットスクワット' && sv[0].part === 'legs' && !R(w).querySelector('.k-exunreg'));
+  ok('M8-3 登録するかは記録の画面でトレーナーが選ぶ（押せば名前と部位を送る・欄が消える）', sv.length === 1 && sv[0].name === 'ピストルスクワット' && sv[0].part === 'legs' && !R(w).querySelector('.k-exunreg'));
 }
 
 // ================= M9 手入力：✎ → 補助・無理やり・ドロップ → 印 → 送られる鍵 =================

@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23e AI の振り分けの途中を当日中だけ端末に残して続きから（設計51）';
+  var KARTE_BUILD = '2026-11-23f 種目名で止めない・固定の種目の一覧を85種目に（設計52）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -69,7 +69,106 @@
   var REGION_POS = { neck: ['f', 60, 40], shoulder_r: ['f', 30, 52], shoulder_l: ['f', 90, 52], elbow_r: ['f', 22, 80], elbow_l: ['f', 98, 80],
     wrist_r: ['f', 22, 102], wrist_l: ['f', 98, 102], hip_r: ['f', 48, 114], hip_l: ['f', 72, 114], knee_r: ['f', 48, 150], knee_l: ['f', 72, 150],
     ankle_r: ['f', 48, 184], ankle_l: ['f', 72, 184], upper_back: ['b', 60, 62], lower_back: ['b', 60, 98] };
-  var EXERCISES = ['ベンチプレス', 'チェストプレス', 'スクワット', 'レッグプレス', 'ヒップスラスト', 'デッドリフト', 'ラットプルダウン', 'シーテッドロウ', 'ショルダープレス', 'サイドレイズ', 'アームカール', 'プランク'];
+  //   ---- 設計52：固定の種目の一覧（1つの表）。★オーナーが直すのはここだけ
+  //     直し方：1行1種目 [正式名, 部位の鍵, [別名…]]。部位の鍵は chest・legs・back・shoulder・arm・core・other。
+  //       ★今ある正式名の文字は変えない（過去の記録・前回の値が名前で結びついている）。
+  //       ★別名は「その種目だけを指す語」に限る（AI の名前が別名に完全一致したら、確認画面で自動で正式名に置き換える）。
+  //         ベンチ・フライ・腹筋のような広い語は別名にせず、下の EX_HINTS（もしかしての候補止まり）に書く（検査 N10 の禁止リスト）
+  //       ★表の部位は、過去の記録の部位の表示・部位ごとの何日ぶりにも、さかのぼって効く
+  var EXERCISE_TABLE = [
+    ['ベンチプレス', 'chest', ['バーベルベンチプレス']],
+    ['インクラインベンチプレス', 'chest', ['インクラインベンチ']],
+    ['デクラインベンチプレス', 'chest', ['デクラインベンチ']],
+    ['スミスマシンベンチプレス', 'chest', ['スミスベンチ']],
+    ['ダンベルプレス', 'chest', ['ダンベルベンチプレス']],
+    ['インクラインダンベルプレス', 'chest', []],
+    ['チェストプレス', 'chest', ['マシンチェストプレス']],
+    ['ダンベルフライ', 'chest', []],
+    ['ペックフライ', 'chest', ['バタフライ', 'ペックデック', 'マシンフライ']],
+    ['ケーブルクロスオーバー', 'chest', ['ケーブルフライ']],
+    ['腕立て伏せ', 'chest', ['プッシュアップ', '腕立て']],
+    ['ディップス', 'chest', ['ディップ']],
+    ['ラットプルダウン', 'back', ['ラットプル', 'ラットプルダウンマシン']],
+    ['懸垂', 'back', ['チンニング', 'プルアップ']],
+    ['アシストプルアップ', 'back', ['アシスト懸垂', 'アシストチンニング']],
+    ['シーテッドロウ', 'back', ['シーテッドロー', 'シーテッドローイング']],
+    ['ケーブルロウ', 'back', ['ケーブルロー']],
+    ['ベントオーバーロウ', 'back', ['ベントオーバーロー', 'ベントロウ']],
+    ['ワンハンドロウ', 'back', ['ワンハンドロー', 'ワンハンドダンベルロウ']],
+    ['Tバーロウ', 'back', ['Tバーロー']],
+    ['バックエクステンション', 'back', ['ハイパーエクステンション']],
+    ['プルオーバー', 'back', ['ダンベルプルオーバー']],
+    ['ストレートアームプルダウン', 'back', []],
+    ['シュラッグ', 'back', ['シュラッグス']],
+    ['スクワット', 'legs', ['バーベルスクワット']],
+    ['ゴブレットスクワット', 'legs', []],
+    ['スミスマシンスクワット', 'legs', ['スミススクワット']],
+    ['フロントスクワット', 'legs', []],
+    ['ブルガリアンスクワット', 'legs', ['ブルガリアンスプリットスクワット']],
+    ['ランジ', 'legs', ['フロントランジ']],
+    ['ウォーキングランジ', 'legs', []],
+    ['ステップアップ', 'legs', []],
+    ['レッグプレス', 'legs', []],
+    ['レッグエクステンション', 'legs', []],
+    ['レッグカール', 'legs', ['ライイングレッグカール', 'シーテッドレッグカール']],
+    ['ヒップスラスト', 'legs', ['バーベルヒップスラスト']],
+    ['ヒップリフト', 'legs', ['グルートブリッジ']],
+    ['デッドリフト', 'legs', ['バーベルデッドリフト']],
+    ['ルーマニアンデッドリフト', 'legs', ['RDL']],
+    ['スティッフレッグデッドリフト', 'legs', []],
+    ['アダクション', 'legs', ['アダクター']],
+    ['アブダクション', 'legs', ['アブダクター']],
+    ['カーフレイズ', 'legs', []],
+    ['ショルダープレス', 'shoulder', ['マシンショルダープレス']],
+    ['ダンベルショルダープレス', 'shoulder', []],
+    ['アーノルドプレス', 'shoulder', []],
+    ['サイドレイズ', 'shoulder', ['ラテラルレイズ']],
+    ['ケーブルサイドレイズ', 'shoulder', []],
+    ['フロントレイズ', 'shoulder', []],
+    ['リアレイズ', 'shoulder', []],
+    ['リアデルトフライ', 'shoulder', ['リバースフライ']],
+    ['アップライトロウ', 'shoulder', ['アップライトロー']],
+    ['フェイスプル', 'shoulder', []],
+    ['アームカール', 'arm', ['バーベルカール']],
+    ['ダンベルカール', 'arm', []],
+    ['ハンマーカール', 'arm', []],
+    ['インクラインカール', 'arm', ['インクラインダンベルカール']],
+    ['プリーチャーカール', 'arm', []],
+    ['ケーブルカール', 'arm', []],
+    ['トライセプスプレスダウン', 'arm', ['ケーブルプレスダウン']],
+    ['スカルクラッシャー', 'arm', ['ライイングトライセプスエクステンション']],
+    ['オーバーヘッドエクステンション', 'arm', ['フレンチプレス']],
+    ['キックバック', 'arm', ['トライセプスキックバック']],
+    ['ナローベンチプレス', 'arm', ['クローズグリップベンチプレス']],
+    ['リストカール', 'arm', []],
+    ['プランク', 'core', []],
+    ['サイドプランク', 'core', []],
+    ['クランチ', 'core', []],
+    ['シットアップ', 'core', []],
+    ['ケーブルクランチ', 'core', []],
+    ['バイシクルクランチ', 'core', []],
+    ['レッグレイズ', 'core', []],
+    ['ハンギングレッグレイズ', 'core', []],
+    ['アブローラー', 'core', ['腹筋ローラー']],
+    ['ロシアンツイスト', 'core', []],
+    ['ドローイン', 'core', []],
+    ['デッドバグ', 'core', []],
+    ['バードドッグ', 'core', []],
+    ['マウンテンクライマー', 'core', []],
+    ['バーピー', 'other', []],
+    ['ケトルベルスイング', 'other', []],
+    ['エアロバイク', 'other', []],
+    ['トレッドミル', 'other', ['ランニングマシン']],
+    ['ストレッチ', 'other', []],
+    ['縄跳び', 'other', ['なわとび']]
+  ];
+  //   広い語・あいまいな語（別名にしない）→ もしかしての候補止まり（自動で置き換えない）
+  var EX_HINTS = { 'ベンチ': ['ベンチプレス'], 'フライ': ['ダンベルフライ', 'ペックフライ'], '腹筋': ['シットアップ', 'クランチ'], 'ケトルベル': ['ケトルベルスイング'], 'バイク': ['エアロバイク'],
+    '背筋': ['バックエクステンション'], '内転': ['アダクション'], '外転': ['アブダクション'], 'リアデルト': ['リアデルトフライ', 'リアレイズ'], 'プレスダウン': ['トライセプスプレスダウン'],
+    'ブルガリアン': ['ブルガリアンスクワット'], 'ルーマニアン': ['ルーマニアンデッドリフト'], 'ゴブレット': ['ゴブレットスクワット'], 'スティッフレッグ': ['スティッフレッグデッドリフト'] };
+  var EXERCISES = EXERCISE_TABLE.map(function (r) { return r[0]; });
+  var EX_TABLE_PART = {}, EX_ALIAS = {};
+  EXERCISE_TABLE.forEach(function (r) { EX_TABLE_PART[r[0]] = r[1]; r[2].forEach(function (a) { EX_ALIAS[a] = r[0]; }); });
   //   部位の鍵と表示名（鍵は worker/src/lib/karte-exercises.js の EXERCISE_PARTS・表の CHECK と同じ＝検査で一致を確かめる）
   var PART_KEYS = [['chest', '胸'], ['legs', '脚・尻'], ['back', '背中'], ['shoulder', '肩'], ['arm', '腕'], ['core', '体幹'], ['other', 'その他']];
   //   種目名からの推定（共有の一覧に部位が無いときだけ使う）。上から順に当てる（「ショルダープレス」「プレスダウン」「レッグレイズ」を胸・脚に取られないよう、胸は最後）
@@ -1193,7 +1292,8 @@
   // ---------------------------------------------------------------- トレーニング
   //   部位：共有の一覧の部位 → 無ければ名前からの推定 → それも無ければ「その他」
   function guessPart(ex) { for (var i = 0; i < PART_RULES.length; i++) if (PART_RULES[i][1].test(String(ex || ''))) return PART_RULES[i][0]; return 'other'; }
-  function partKeyOf(ex) { var k = exMaster[String(ex || '')]; return (k && PART_KEYS.some(function (p) { return p[0] === k; })) ? k : guessPart(ex); }
+  //   部位：共有の一覧に登録した部位 → 固定の表の部位（設計52）→ 名前からの推定
+  function partKeyOf(ex) { var n = String(ex || ''), k = exMaster[n]; if (k && PART_KEYS.some(function (p) { return p[0] === k; })) return k; if (Object.prototype.hasOwnProperty.call(EX_TABLE_PART, n)) return EX_TABLE_PART[n]; return guessPart(ex); }
   function partOf(ex) { return label(PART_KEYS, partKeyOf(ex)); }
   //   重量の表示：0 は「自重」（自重の種目は重量を空のまま✓して 0 で保存する・2026-11-06）
   function isBw(w) { return w !== '' && w != null && Number(w) === 0; }
@@ -1529,6 +1629,42 @@
   function memoKey(x) {   // 「もしかして」の照合だけに使う（自動の照合には使わない）
     return String(x).normalize('NFKC').toLowerCase().replace(/[\s()\[\]・\-_\/.、,]/g, '')
       .replace(/[ぁ-ゖ]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) + 0x60); });
+  }
+  //   設計52：もしかして（候補を出すだけ・自動では置き換えない）。畳んだ鍵＝濁点・半濁点・小さい文字・長音を畳む
+  var EX_SMALL = { 'ァ': 'ア', 'ィ': 'イ', 'ゥ': 'ウ', 'ェ': 'エ', 'ォ': 'オ', 'ッ': 'ツ', 'ャ': 'ヤ', 'ュ': 'ユ', 'ョ': 'ヨ', 'ヮ': 'ワ', 'ヵ': 'カ', 'ヶ': 'ケ' };
+  function exFold(x) { return memoKey(x).normalize('NFD').replace(/[\u3099\u309a]/g, '').normalize('NFC').replace(/[ァィゥェォッャュョヮヵヶ]/g, function (c) { return EX_SMALL[c]; }).replace(/ー/g, ''); }
+  function editDist1(a, b) {   // 編集距離がちょうど1か
+    if (a === b || Math.abs(a.length - b.length) > 1) return false;
+    var i = 0, j = 0, d = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++d > 1) return false;
+      if (a.length > b.length) i++; else if (a.length < b.length) j++; else { i++; j++; }
+    }
+    return d + (a.length - i) + (b.length - j) === 1;
+  }
+  /**
+   * もしかしての候補（設計52 §3-3・関門① 5）。返り値 [{ name: 正式名, via: 当たった語（正式名・別名・広い語）, tier: 1|2|3 }]（最大2件・初期選択なし）
+   *   段：1＝鍵（memoKey）の完全一致 → 2＝畳んだ鍵の一致 → 3＝畳んだ鍵の編集距離1（4字以上）。最初に候補が出た段だけ使う
+   *   同じ段は正式名で重複を除く。3件以上なら出さない（迷わせない）。今の名前が一覧と完全一致なら出さない
+   */
+  function exSuggest(name, extraNames) {
+    var n = exName(name);
+    if (!n || n.length > EX_NAME_MAX) return [];
+    var pool = [];
+    EXERCISES.forEach(function (x) { pool.push([x, x]); });
+    (extraNames || []).forEach(function (x) { if (EXERCISES.indexOf(x) < 0) pool.push([x, x]); });
+    Object.keys(EX_ALIAS).forEach(function (a) { pool.push([a, EX_ALIAS[a]]); });
+    Object.keys(EX_HINTS).forEach(function (h) { EX_HINTS[h].forEach(function (c) { pool.push([h, c]); }); });
+    if (pool.some(function (pe) { return pe[1] === n && pe[0] === n; })) return [];
+    var k = memoKey(n), f = exFold(n);
+    var tiers = [function (pe) { return memoKey(pe[0]) === k; }, function (pe) { return exFold(pe[0]) === f; }, function (pe) { var g = exFold(pe[0]); return f.length >= 4 && g.length >= 4 && editDist1(f, g); }];
+    for (var t = 0; t < tiers.length; t++) {
+      var out = [];
+      pool.forEach(function (pe) { if (pe[1] !== n && tiers[t](pe) && !out.some(function (o) { return o.name === pe[1]; })) out.push({ name: pe[1], via: pe[0], tier: t + 1 }); });
+      if (out.length) return out.length > 2 ? [] : out;
+    }
+    return [];
   }
   function memoList(l) {
     var out = [];
@@ -2224,6 +2360,8 @@
     function lst(k) { return (Array.isArray(dr[k]) ? dr[k] : []).map(rvStr).filter(Boolean); }
     rv.exercises = (Array.isArray(dr.exercises) ? dr.exercises : []).map(function (e, ei) {
       var name = exName(e && e.name), heard = rvStr(e && e.heard);
+      //   設計52：別名の表に完全一致したら正式名へ（name0 も正式名＝S-H5 の明示の例外：AI がその名前で返したのと同じ扱い）。それ以外の似た名前はもしかしてだけ
+      if (name && Object.prototype.hasOwnProperty.call(EX_ALIAS, name)) name = EX_ALIAS[name];
       var n0 = ((name && isAuto(name)) ? name : (name || heard)).slice(0, EX_NAME_MAX);
       var orig = (Array.isArray(e && e.sets) ? e.sets : []).map(function (s) {
         var st = AI_STATUSES.indexOf(s && s.status) >= 0 ? s.status : 'nobasis', hid = st === 'healthHidden';
@@ -2324,18 +2462,19 @@
     if (MEMO_HEALTH.test(n)) return 'health';
     if (n.length > EX_NAME_MAX) return 'long';
     if (isAuto(n)) return 'known';
-    return ex.part && ex.partFor === n ? 'named' : 'unresolved';
+    return ex.part && ex.partFor === n ? 'named' : 'guessed';   // 設計52：一覧に無くても止めない（部位は推定）
   }
   /** 件数と押せない理由（下の帯と reviewBuild の唯一の判定） */
   function reviewTally(rv, scope, isAuto) {
-    var t = { ex: 0, sets: 0, inf: 0, nob: 0, skip: 0, bad: 0, renamed: 0, reasons: [], firstBad: null };
+    var t = { ex: 0, sets: 0, inf: 0, nob: 0, skip: 0, bad: 0, renamed: 0, unlisted: 0, reasons: [], firstBad: null };
     var nNoName = 0, nUnres = 0, health = [];
     rv.exercises.forEach(function (ex, ei) {
       if (ex.off) return;
       var toks = rvTokens(ex, scope), ns = rvNameState(ex, isAuto);
       if (ns === 'empty') { if (toks.length || rvLines(ex.note).length) nNoName++; return; }
       if (ns === 'health') health.push('種目名');
-      else if (ns === 'unresolved' || ns === 'long') nUnres++;
+      else if (ns === 'long') nUnres++;
+      else if (ns === 'guessed' || ns === 'named') t.unlisted++;
       t.ex++;
       if (ex.orig.length && exName(ex.name) !== exName(ex.name0)) t.renamed++;
       toks.forEach(function (k, ki) {
@@ -2355,7 +2494,7 @@
     }
     if (t.bad) t.reasons.unshift('書き方が読めない所が' + t.bad + 'か所あります（' + t.firstBad + '）。');
     if (nNoName) t.reasons.push('種目名が空の種目があります。');
-    if (nUnres) t.reasons.push('一覧に無い種目名があります（部位を選ぶか、名前を直すか、外してください）。');
+    if (nUnres) t.reasons.push('種目名が長すぎます（' + EX_NAME_MAX + '字まで）。');
     if (health.length) t.reasons.push('体のことの言葉を含む行があります（' + health.join('・') + '）。消すか「注意すること」の画面で入れてください。');
     return t;
   }
@@ -2374,7 +2513,7 @@
       if (ex.off) return;
       var ns = rvNameState(ex, isAuto), n = exName(ex.name);
       if (ns === 'empty') return;
-      if (ns !== 'known' && ns !== 'named') throw new Error('RV_OPEN');
+      if (ns !== 'known' && ns !== 'named' && ns !== 'guessed') throw new Error('RV_OPEN');
       var sets = [];
       rvTokens(ex, scope).forEach(function (k) {
         if (k.kind !== 'set') return;
@@ -2386,7 +2525,8 @@
       });
       var it = { exercise: n, sets: sets, fromMemo: true };
       if (!sets.length) it.doneOnly = false;
-      if (ns === 'named') it.regPart = ex.part;
+      //   設計52：一覧に無い名前は推定の部位で登録の欄（任意）を出す。★名前らしい印（敬称・回目等）の名前は登録の欄を出さない（関門① 4）
+      if ((ns === 'named' || ns === 'guessed') && !MEMO_PII_WEAK.test(n)) it.regPart = ns === 'named' ? ex.part : guessPart(n);
       items.push(it);
       rvLines(ex.note).forEach(function (x) { exMemos.push(n + '：' + x); });
     });
@@ -3132,13 +3272,25 @@
       box.innerHTML = '';
       var ns = rvNameState(ex, isAuto);
       if (ns === 'health') box.appendChild(el('div', { class: 'k-sub', style: 'color:var(--k-warn);', text: '種目名に体のことの言葉は入れられません（「注意すること」へ）' }));
-      if (ns === 'unresolved') {
-        box.appendChild(el('div', { class: 'k-sub', text: '一覧に無い種目です。部位を選ぶと新しい種目になります。' }));
-        var pp = el('div', { class: 'k-pills', role: 'radiogroup', 'aria-label': '部位', style: 'gap:6px;' });
-        PART_KEYS.forEach(function (pk) { pp.appendChild(el('button', { type: 'button', role: 'radio', class: 'k-pill', 'aria-checked': 'false', 'data-part': pk[0], text: pk[1], onclick: function () { ex.part = pk[0]; ex.partFor = exName(ex.name); draw(); } })); });
-        box.appendChild(pp);
+      //   設計52：一覧に無い名前でも止めない。部位は推定を既定にしたチップ（タップで7つの部位を開く）・もしかしての候補（最大2件・初期選択なし）
+      if (ns === 'guessed' || ns === 'named') {
+        var pk0 = ns === 'named' ? ex.part : guessPart(exName(ex.name));
+        box.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;' }, [el('span', { class: 'k-sub', text: '一覧に無い種目です　部位：' }),
+          el('button', { type: 'button', class: 'k-pill k-rvpart', 'data-part': pk0, 'aria-expanded': ex.partOpen ? 'true' : 'false', style: 'min-height:44px;', text: label(PART_KEYS, pk0) + (ns === 'guessed' ? '（推定）' : '') + ' ▾', onclick: function () { ex.partOpen = !ex.partOpen; rvNameBox(ex, box); } })]));
+        if (ex.partOpen) {
+          var pp = el('div', { class: 'k-pills', role: 'radiogroup', 'aria-label': '部位', style: 'gap:6px;' });
+          PART_KEYS.forEach(function (pk) { pp.appendChild(el('button', { type: 'button', role: 'radio', class: 'k-pill' + (pk[0] === pk0 ? ' on' : ''), 'aria-checked': pk[0] === pk0 ? 'true' : 'false', 'data-part': pk[0], text: pk[1], onclick: function () { ex.part = pk[0]; ex.partFor = exName(ex.name); ex.partOpen = false; draw(); } })); });
+          box.appendChild(pp);
+        }
       }
-      if (ns === 'named') box.appendChild(el('div', { class: 'k-sub', text: '新しい種目（' + label(PART_KEYS, ex.part) + '）として入れます' }));
+      if (ns !== 'known' && ns !== 'empty') {
+        var sg = exSuggest(ex.name, Object.keys(exMaster));
+        if (sg.length) {
+          var sb = el('div', { class: 'k-rvsuggs', style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;' }, [el('span', { class: 'k-sub', text: 'もしかして：' })]);
+          sg.forEach(function (c) { sb.appendChild(el('button', { type: 'button', class: 'k-btn out small k-rvsugg', 'data-name': c.name, 'data-via': c.via, 'data-tier': String(c.tier), style: 'min-height:44px;margin:0;', text: exName(ex.name) + ' → ' + c.name, onclick: function () { ex.name = c.name; ex.partOpen = false; draw(); } })); });
+          box.appendChild(sb);
+        }
+      }
       if (ex.orig.length && exName(ex.name) !== exName(ex.name0)) box.appendChild(el('div', { class: 'k-sub k-rvrenamed', text: '種目名を変えたため、数字は全部「直した」として入れます' }));
     }
     function rvExCard(ex) {
@@ -3456,7 +3608,7 @@
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:2px 0 8px;' }, [el('div', { class: 'k-sub', style: 'flex:1;min-width:0;', text: prevLabel(it.exercise) }), ac]));
         var db = doneBtn(it);
         if (db) blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:0 0 8px;' }, [db, el('span', { class: 'k-sub', text: '数字の無い種目は「実施した」で記録します' })]));
-        if (it.regPart && !registeredEx(it.exercise)) blk.appendChild(regCard(it));
+        if (it.regPart && !registeredEx(it.exercise) && !MEMO_PII_WEAK.test(String(it.exercise || ''))) blk.appendChild(regCard(it));   // 設計52：名前らしい印の名前は登録の欄を出さない
         if (it.sets.length) blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;line-height:1.2;', text: extOk() ? 'メモ・補助' : 'メモ' }), el('span')]));
         it.sets.forEach(function (s, si) {
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
@@ -3936,7 +4088,7 @@
       if (editMode && !editing) area.appendChild(el('div', { class: 'k-sub', style: 'margin-top:8px;', text: '部位を直す種目を押してください。' }));
       var t = exName(q.value), all = allNames();
       if (t) {
-        var hit = all.filter(function (x) { return x.indexOf(t) >= 0; });
+        var hit = all.filter(function (x) { return x.indexOf(t) >= 0 || EXERCISE_TABLE.some(function (r) { return r[0] === x && r[2].some(function (a) { return a.indexOf(t) >= 0; }); }); });   // 設計52：別名でも正式名を出す
         var p1 = el('div', { class: 'k-pills', style: 'margin-top:10px;' }); hit.forEach(function (x) { p1.appendChild(chip(x)); });
         area.appendChild(p1);
         if (!editMode && hit.indexOf(t) < 0 && t.length <= EX_NAME_MAX) {
@@ -4452,6 +4604,6 @@
   purgeAiReviews();   // 設計51：起動のたびに期限切れ・壊れた一時保存を物理削除する
   window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
     //   検査用（純粋な部分だけ）
-    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewTally: reviewTally, rvParseLine: rvParseLine, rvTokens: rvTokens, rvForSave: rvForSave, rvRestore: rvRestore, AIR_HASH_MIN: AIR_HASH_MIN, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
+    _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewTally: reviewTally, rvParseLine: rvParseLine, rvTokens: rvTokens, rvForSave: rvForSave, rvRestore: rvRestore, exSuggest: exSuggest, EXERCISE_TABLE: EXERCISE_TABLE, EX_ALIAS: EX_ALIAS, EX_HINTS: EX_HINTS, guessPart: guessPart, partsOf: partsOf, AIR_HASH_MIN: AIR_HASH_MIN, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
 })();
