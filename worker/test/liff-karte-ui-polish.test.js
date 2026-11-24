@@ -44,6 +44,7 @@ function boot(o = {}) {
   w.confirms = 0; w.confirm = () => { w.confirms++; return true; };
   w.__karteReload = () => {};
   w.liff = { getIDToken: () => w.idToken, logout: () => {} };
+  if (o.vv) w.visualViewport = Object.assign({ addEventListener() {}, removeEventListener() {}, width: 390 }, o.vv);
   w.cfg = Object.assign({ sessions: [], aiDraft: true, aiConsent: 'agreed', hangSave: false }, o);
   w.fetch = async (url, opt) => {
     const body = JSON.parse(opt.body);
@@ -176,6 +177,42 @@ for (const [label, sessions] of [['過去の記録なし', []], ['過去の記�
   ok('U3d ★元に戻すと種目ごと戻る', itemsOf(w) === before, itemsOf(w));
 }
 
+// ---- 関門② 軽：消した後に残ったセットを直してから元に戻す → 両方残る／元に戻した後に見出しの保存 ----
+{
+  const { w, sent } = boot();
+  seed(w, ITEMS());
+  await openRecord(w);
+  exBlock(w, 0).querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
+  btn(exBlock(w, 0), 'このセットを消す').click(); await settle();   // 50×10（✓・メモA）を消す → 残りは 50×8
+  const wIn = exBlock(w, 0).querySelector('input[aria-label="1セット目の重量"]'), rIn = exBlock(w, 0).querySelector('input[aria-label="1セット目の回数"]');
+  wIn.value = '55'; wIn.dispatchEvent(new w.Event('input', { bubbles: true }));
+  rIn.value = '9'; rIn.dispatchEvent(new w.Event('input', { bubbles: true }));
+  ok('U3e 前提：数字を直しても描き直さない＝元に戻すの案内は残っている', !!undoBar(w));
+  btn(undoBar(w), '元に戻す').click(); await settle();
+  const s0 = draftOf(w).items[0].sets;
+  ok('U3e ★消したセット（50×10・メモ）が元の位置に戻り、消した後に直した数字（55×9）も残る', s0.length === 2 && s0[0].w === '50' && s0[0].r === '10' && s0[0].note === 'メモA' && s0[0].done === true && s0[1].w === '55' && s0[1].r === '9', JSON.stringify(s0));
+  exBlock(w, 0).querySelector('button[aria-label="2セット目を実施済みにする"]').click(); await settle();
+  R(w).querySelector('.k-entryhead button.k-hsave').click(); await settle();
+  const add = sent.filter((x) => x.action === 'k_addTraining');
+  const bp = add.length ? add[0].items.find((x) => x.exercise === 'ベンチプレス') : null;
+  ok('U3e ★元に戻した後に見出しの保存：送る中身に消す前のセットと消した後の直しが両方入る', !!bp && JSON.stringify(bp.sets.map((x) => [x.weight, x.reps])) === '[[50,10],[55,9]]', JSON.stringify(add.map((x) => x.items)));
+}
+// ---- 関門② 軽：休憩中のセットを消す → 止まる → 元に戻すとそのセットの下で続きから ----
+{
+  const { w } = boot();
+  seed(w, ITEMS());
+  await openRecord(w);
+  exBlock(w, 0).querySelector('button[aria-label="2セット目を実施済みにする"]').click(); await settle();
+  const host = () => { const b = R(w).querySelector('.k-restbar'); return b && b.children.length && b.previousElementSibling ? b.previousElementSibling : null; };
+  ok('U3f 前提：休憩の帯は2セット目の下', !!host() && !!host().querySelector('button[aria-label="2セット目を実施済みにする"]'));
+  exBlock(w, 0).querySelector('button[aria-label="2セット目のメモ"]').click(); await settle();
+  exBlock(w, 0).querySelector('button[aria-label="2セット目を消す"]').click(); await settle();   // 1セット目はメモがあり欄が開いている＝名前で選ぶ
+  ok('U3f 休憩中のセットを消すと休憩は止まる（今までどおり）', restHost(w) === null, String(restHost(w)) + ' ' + (R(w).querySelector('.k-restbar') || {}).textContent);
+  btn(undoBar(w), '元に戻す').click(); await settle();
+  const bar = R(w).querySelector('.k-restbar');
+  ok('U3f ★元に戻すと休憩の帯が同じセットの下に戻り、数え続ける', !!bar && /休憩 \d:\d\d/.test(bar.textContent) && !!bar.closest('[data-ei="0"]') && [...bar.closest('[data-ei="0"]').querySelectorAll('.k-setrow, .k-restbar, .k-setnote')].some((x, i, a) => x === bar && a[i - 1] && (a[i - 1].querySelector('button[aria-label="2セット目を実施済みにする"]') || (a[i - 2] && a[i - 2].querySelector && a[i - 2].querySelector('button[aria-label="2セット目を実施済みにする"]')))), bar && bar.textContent);
+}
+
 // ================= U4 文字の大きさ =================
 {
   const { w } = boot({ sessions: HIST });
@@ -261,7 +298,13 @@ for (const [label, o] of [['同意なし', { aiDraft: true, aiConsent: 'none' }]
   const go = pb && btn(pb, '選んだ');
   ok('U8 ★種目の欄を開くと下の帯に［選んだ種目を足す］（選ぶまで押せない）', !!pb && !!go && go.disabled === true && !btn(pb, '保存する'));
   ok('U8 「＋ 種目を足す」は開いていることを読み上げる', btn(R(w), '＋ 種目を足す').getAttribute('aria-expanded') === 'true');
-  ok('U8 キーパッドが出ている間も種目の欄の帯は下に止まる（ほかの帯は今までどおり static）', /#karteRoot\.k-kb \.k-savebar\{position:static;\}',\n    '#karteRoot\.k-kb \.k-pickbar\{position:sticky;\}/.test(SRC));
+  const cs = w.getComputedStyle(pb);
+  ok('U8 ★関門②：種目の欄の帯は画面の下に固定（fixed・bottom 0）＝開いた直後から見える', cs.position === 'fixed' && cs.bottom === '0px' && /#karteRoot \.k-pickbar,#karteRoot\.k-kb \.k-pickbar\{position:fixed;[^}]*bottom:0;[^}]*env\(safe-area-inset-bottom\)/.test(SRC), cs.position + ' ' + cs.bottom);
+  const form = R(w).querySelector('.k-trform');
+  ok('U8 ★帯が出ている間はフォームの下に余白（最後の要素が帯に隠れない）', form.classList.contains('k-pickpad') && /#karteRoot \.k-trform\.k-pickpad\{padding-bottom:calc\(76px \+ env\(safe-area-inset-bottom\)\);\}/.test(SRC) && w.getComputedStyle(form).paddingBottom !== '' && w.getComputedStyle(form).paddingBottom !== '0px', w.getComputedStyle(form).paddingBottom);
+  R(w).classList.add('k-kb');
+  ok('U8 ★キーパッド中（k-kb）も帯は fixed のまま（ほかの帯の static に負けない）', w.getComputedStyle(pb).position === 'fixed');
+  R(w).classList.remove('k-kb');
   ok('U8 下の帯は前に出る（z-index 3）・種目の欄の決定ボタンは帯の中で止まる（76px に浮かせない）', /#karteRoot \.k-savebar\{position:sticky;bottom:0;z-index:3;/.test(SRC) && !/\.k-picker-go\{position:sticky;bottom:76px/.test(SRC) && w.getComputedStyle(go).position !== 'sticky');
   [...R(w).querySelectorAll('button.k-pill')].find((x) => x.textContent === 'ベンチプレス').click(); await settle();
   ok('U8 選ぶと押せる・数が出る', go.disabled === false && go.textContent === '選んだ 1 種目を足す', go.textContent);
@@ -270,7 +313,7 @@ for (const [label, o] of [['同意なし', { aiDraft: true, aiConsent: 'none' }]
   btn(R(w), '＋ 種目を足す').click(); await settle();
   ok('U8 もう一度開くと帯が出る', bars().some((b) => shown(w, b)));
   btn(R(w), '＋ 種目を足す').click(); await settle();
-  ok('U8 ★閉じると帯が消える', bars().every((b) => !shown(w, b)) && btn(R(w), '＋ 種目を足す').getAttribute('aria-expanded') === 'false');
+  ok('U8 ★閉じると帯が消える・フォームの余白も消える', bars().every((b) => !shown(w, b)) && btn(R(w), '＋ 種目を足す').getAttribute('aria-expanded') === 'false' && !R(w).querySelector('.k-trform').classList.contains('k-pickpad'));
   //   見出しの保存 → 今までの保存の経路（buildPayload の中身・未✓の確認）
   const expect = JSON.stringify(w.KarteUI._t.buildPayload(draftOf(w).items));
   w.cfg.hangSave = true;
@@ -283,6 +326,19 @@ for (const [label, o] of [['同意なし', { aiDraft: true, aiConsent: 'none' }]
   ok('U8 ★送信中にもう一度押しても二重に送らない', sent.filter((x) => x.action === 'k_addTraining').length === 1);
   w.releaseSave(); await settle();
   ok('U8 保存後の画面（記録しました）では見出しの保存を出さない', R(w).textContent.includes('記録しました') && !R(w).querySelector('.k-entryhead button.k-hsave'));
+}
+
+// ---- 関門②：キーパッドで見える範囲が縮んでいる（visualViewport）＝帯をその下端に合わせる ----
+{
+  const { w } = boot({ vv: { height: 400, offsetTop: 0 } });
+  w.innerHeight = 768;
+  seed(w, ITEMS());
+  await openRecord(w);
+  btn(R(w), '＋ 種目を足す').click(); await settle();
+  const pb = R(w).querySelector('.k-pickbar');
+  ok('U8v ★見える範囲が縮んでいれば、帯を見える範囲の下端へ（768−400＝368px 上げる）', pb.style.bottom === '368px', pb.style.bottom);
+  btn(R(w), '＋ 種目を足す').click(); await settle();
+  ok('U8v 閉じたら位置の指定も外す', pb.style.bottom === '' && !shown(w, pb));
 }
 
 console.log(`liff-karte-ui-polish: ${pass} passed, ${fail} failed`);

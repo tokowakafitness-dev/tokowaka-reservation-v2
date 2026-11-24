@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-24a 画面の使いやすさ：保存は見出しの右上・下の帯は種目の欄だけ・外す直後に元に戻す・タブはアイコン（設計55）';
+  var KARTE_BUILD = '2026-11-24b 画面の使いやすさ：保存は見出しの右上・種目の欄の帯は画面の下に固定・外す直後に元に戻す・タブはアイコン（設計55 関門②）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -290,7 +290,10 @@
     '#karteRoot .k-entrytitle{font-size:16px;font-weight:700;} #karteRoot .k-entrysub{font-size:12px;opacity:.85;}',
     '#karteRoot .k-savebar{position:sticky;bottom:0;z-index:3;background:#fff;border-top:1px solid var(--k-line);margin:10px -14px -18px;padding:10px 14px calc(10px + env(safe-area-inset-bottom));}',
     '#karteRoot.k-kb .k-savebar{position:static;}',
-    '#karteRoot.k-kb .k-pickbar{position:sticky;}',   // 設計55：種目を探して打っている間も［選んだ種目を足す］は見えたまま（今までの k-picker-go の bottom:0 と同じ）
+    //   設計55 関門②：種目の欄の帯は画面の下に固定（fixed）。フォームの末尾に sticky で置くと、開いた直後は自然位置が画面外で見えない経路があった。
+    //     帯が出ている間はフォームの下に帯の高さぶんの余白（k-pickpad）を足し、最後の要素が帯に隠れないようにする。キーパッド中も fixed のまま（下端は placePick が見える範囲に合わせる）
+    '#karteRoot .k-pickbar,#karteRoot.k-kb .k-pickbar{position:fixed;left:0;right:0;bottom:0;z-index:6;max-width:520px;margin:0 auto;padding:10px 14px calc(10px + env(safe-area-inset-bottom));box-sizing:border-box;}',
+    '#karteRoot .k-trform.k-pickpad{padding-bottom:calc(76px + env(safe-area-inset-bottom));}',
     '#karteRoot .k-entrytext{position:relative;min-height:44px;}',
     '#karteRoot .k-dateover{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:44px;border:0;}',
     //   設計55：記録の画面の保存は見出しの右上。日付の入力欄は日付の文字の部分だけ（保存・タイトルを覆わない）。上下は 44px になるよう外へ広げる
@@ -533,6 +536,7 @@
     }
     else if (h > kb.base) kb.base = h;
     root.style.top = top + 'px'; root.style.height = h + 'px'; root.style.bottom = 'auto';
+    if (cur.pickPlace) cur.pickPlace();   // 設計55：種目の欄の帯を見える範囲の下端へ
     var open = (kb.base - h) > 120;   // 120px 以上縮んだ＝キーパッドが出ている
     if (open !== kb.on) {
       kb.on = open; root.classList.toggle('k-kb', open);
@@ -4028,8 +4032,18 @@
     if (pickGo) pickBar.appendChild(pickGo);
     function setPicker(on) {
       picker.style.display = on ? '' : 'none'; pickBar.style.display = on ? '' : 'none';
+      c.classList.toggle('k-pickpad', !!on);   // 帯が出ている間だけフォームの下に余白
       addExBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+      placePick();
     }
+    //   キーパッドが出ている間（見える範囲が縮んだ）も帯が見える範囲の下端に来るよう合わせる。visualViewport が無ければ fixed の bottom:0 のまま
+    function placePick() {
+      if (pickBar.style.display === 'none') { pickBar.style.bottom = ''; return; }
+      var vv = window.visualViewport;
+      var gap = vv ? Math.max(0, Math.round((window.innerHeight || 0) - (vv.offsetTop + vv.height))) : 0;
+      pickBar.style.bottom = gap ? gap + 'px' : '';
+    }
+    cur.pickPlace = function () { if (pickBar.isConnected) placePick(); };
     c.appendChild(picker);
     //   指導メモ（2026-11-05 モック K3：セッション中にそのまま書く）。社内メモ＝既存の指導メモ（k_addNote）にそのまま残す
     //   ★書きかけは記録の下書き（D.memo）に残す＝セットと同じく画面を離れても消えない。「お客様へ」は第2弾（保存先を作る）
