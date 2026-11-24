@@ -101,7 +101,7 @@ async function openImport(w) {
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const b = btn(R(w), '＋ 今日の記録') || btn(R(w), '記録の入力（途中）を開く');
   if (b && !R(w).classList.contains('k-entry')) { b.click(); await settle(); }
-  btn(R(w), 'メモから取り込む').click(); await settle();
+  R(w).querySelector('button.k-impgo').click(); await settle();
 }
 function paste(w, text) { const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text; ta.dispatchEvent(new w.Event('input', { bubbles: true })); return ta; }
 async function toReview(w) { await openImport(w); paste(w, TRANSCRIPT); btn(R(w), 'AIで振り分ける').click(); await settle(); }

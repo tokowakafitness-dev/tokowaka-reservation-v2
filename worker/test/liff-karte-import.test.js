@@ -89,7 +89,7 @@ async function openForm(w) {
 }
 async function openImport(w) {
   await openForm(w);
-  btn(R(w), 'メモから取り込む').click(); await settle();
+  R(w).querySelector('button.k-impgo').click(); await settle();
 }
 function paste(w, text) { const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text; ta.dispatchEvent(new w.Event('input', { bubbles: true })); return ta; }
 const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter((c) => c.dataset.kind === kind)[i];
@@ -99,7 +99,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const { w, sent } = boot();
   let ops = 0;
   await openForm(w);
-  btn(R(w), 'メモから取り込む').click(); ops++; await settle();
+  R(w).querySelector('button.k-impgo').click(); ops++; await settle();
   ok('M1-0 取り込みの画面（専用の画面・履歴は trimport）', R(w).querySelector('.k-entrytitle').textContent === 'メモから取り込む' && w.history.state.sub === 'trimport');
   paste(w, P1); ops++;
   btn(R(w), '読み取る').click(); ops++; await nav();
@@ -223,7 +223,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const pend = { payload: { customerId: 'C1', sessionDate: '2026-11-05', items: [{ exercise: 'スクワット', sets: [{ weight: 40, reps: 10 }] }] }, reqId: 'kpend0001' };
   const { w } = boot({ ls: draftLS([], { pending: pend }) });
   await openForm(w);
-  ok('M7-1 ★送った結果待ち（pending）の画面に「メモから取り込む」は出ない', R(w).textContent.includes('前回の保存の結果を確かめられませんでした') && !btn(R(w), 'メモから取り込む'));
+  ok('M7-1 ★送った結果待ち（pending）の画面に「メモから取り込む」は出ない', R(w).textContent.includes('前回の保存の結果を確かめられませんでした') && !R(w).querySelector('button.k-impgo'));
   w.KarteUI.open('C1', '会員', 'training', { kind: 'sub', sub: 'trimport' }); await settle();
   ok('M7-2 取り込みの画面を直接開いても取り込めない（案内だけ）', R(w).textContent.includes('前回の保存の結果を確かめるまで取り込めません') && !R(w).querySelector('textarea[aria-label="メモを貼る"]'));
 }
@@ -293,7 +293,7 @@ const S32 = { schema: 32 };
 {
   const { w } = boot({ cfg: S32 });
   await openForm(w);
-  ok('M13 ★32 なら「メモから取り込む」を出さない・補助などの欄も出さない', !btn(R(w), 'メモから取り込む') && !R(w).textContent.includes('メモ・補助'));
+  ok('M13 ★32 なら「メモから取り込む」を出さない・補助などの欄も出さない', !R(w).querySelector('button.k-impgo') && !R(w).textContent.includes('メモ・補助'));
 }
 {
   const { w, sent } = boot({ cfg: S32, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '40', r: '10', done: true, assist: '3' }] }]) });
@@ -363,14 +363,14 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
 {
   const { w } = boot({ cfg: { sessions: [S_NEW] }, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '10', r: '1', done: false }] }]) });
   await openForm(w);
-  btn(R(w), '過去の記録から写す').click(); await settle();
+  R(w).querySelector('button.k-pickgo').click(); await settle();
   btn(R(w), '重量・回数ごと写す').click(); await nav();
   const d = draftOf(w);
   eq('M20-1 ★新しい回：同じ名前の2つの ord は2つの種目（下書きの同じ名前にも混ぜない）・ドロップの形は写す・補助/無理やりは写さない・数字の無い種目はそのまま', d.items.map((x) => [x.exercise, x.sets.map((s) => [String(s.w), String(s.r), s.done, s.assist || null, s.forced || null, (s.drops || []).map((q) => q.w + 'x' + q.r).join()]), x.doneOnly === undefined ? null : x.doneOnly]),
     [['スクワット', [['10', '1', false, null, null, '']], null], ['スクワット', [['60', '10', false, null, null, ''], ['100', '3', false, null, null, '']], null], ['ベンチプレス', [['40', '10', false, null, null, '']], null], ['スクワット', [['50', '8', false, null, null, '30x10']], null], ['プランク', [], false]]);
   const e = boot({ cfg: { sessions: [S_OLD] }, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '10', r: '1', done: false }] }]) });
   await openForm(e.w);
-  btn(R(e.w), '過去の記録から写す').click(); await settle();
+  R(e.w).querySelector('button.k-pickgo').click(); await settle();
   btn(R(e.w), '重量・回数ごと写す').click(); await nav();
   const d2 = draftOf(e.w);
   ok('M20-2 ★古い回：今までどおり下書きの同じ名前に足す', d2.items.length === 1 && d2.items[0].sets.length === 2 && String(d2.items[0].sets[1].w) === '80', JSON.stringify(d2.items));
@@ -425,7 +425,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   ok('M23-2 ★pending を解く・下書き（種目・セット・補助の印）を残す・次は新しい送信番号', d && !d.pending && d.items.length === 1 && d.items[0].sets[0].assist === '3' && d.reqId !== 'kfixedreq0001');
   w.cfg.schema = 32;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
-  ok('M23-3 その後 karteSchema 32 で読み直すと取り込みのボタンが消える', !btn(R(w), 'メモから取り込む') && !!R(w).querySelector('.k-marks'));
+  ok('M23-3 その後 karteSchema 32 で読み直すと取り込みのボタンが消える', !R(w).querySelector('button.k-impgo') && !!R(w).querySelector('.k-marks'));
   w.cfg.schema = 33; w.cfg.add = null;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   btn(R(w), '保存する').click(); await settle();

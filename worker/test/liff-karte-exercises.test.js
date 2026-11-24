@@ -449,7 +449,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
   const { w } = boot(async (b) => (b.action === 'k_training' ? { success: true, karteSchema: 32, sessions: BW_HIST, best: [] } : { success: true, exercises: [] }));
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   btn(R(w), '＋ 今日の記録').click(); await settle();
-  btn(R(w), '過去の記録から写す').click(); await settle();
+  R(w).querySelector('button.k-pickgo').click(); await settle();
   ok('B3-1 写す画面の中身も 0 は「自重」', R(w).textContent.includes('ディップス') && R(w).textContent.includes('自重 × 12・10'), R(w).textContent.slice(0, 300));
   btn(R(w), '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
   const d = draftOf(w);

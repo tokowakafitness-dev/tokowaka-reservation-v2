@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-24c 画面の使いやすさ：保存は見出しの右上・種目の欄の帯は画面の下に固定・外す直後に元に戻す・タブはアイコン（設計55 関門②）';
+  var KARTE_BUILD = '2026-11-24d 種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -261,6 +261,17 @@
     '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;border:1px solid #8692a6;border-radius:10px;padding:0 10px;font-size:16px;}',
     //   ★設計55：種目の欄の決定ボタンは下の帯（.k-savebar）の中に置く（76px に浮かせると保存の帯の裏に隠れた・2026-11-24 実機）
     '#karteRoot .k-picker-go{margin:0;}',
+    //   設計56：種目を探す欄の直下の候補（予測変換のような縦1列・1行44px以上・名前は左／部位は右に小さく・一致した文字は太字・選んだものに✓）
+    '#karteRoot .k-suggest{background:#fff;border:1px solid #8692a6;border-top:none;border-radius:0 0 10px 10px;overflow:hidden;margin-top:-2px;}',
+    '#karteRoot .k-sugrow{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:0 12px;border:0;border-top:1px solid var(--k-line);background:#fff;font-size:16px;font-family:inherit;color:var(--k-ink);text-align:left;}',
+    '#karteRoot .k-sugrow:first-child{border-top:none;}',
+    '#karteRoot .k-sugrow.on{background:var(--k-acc-l);}',
+    '#karteRoot .k-sugrow:active{background:#e3e8ef;}',
+    '#karteRoot .k-sugname{flex:1;min-width:0;}',
+    '#karteRoot .k-sugname b{font-weight:700;color:var(--k-acc);}',
+    '#karteRoot .k-sugpart{font-size:12px;color:var(--k-sub);white-space:nowrap;}',
+    '#karteRoot .k-sugchk{flex:none;width:18px;text-align:center;color:var(--k-acc);font-weight:700;}',
+    '#karteRoot .k-sugnew{color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-picker-go:disabled{opacity:.45;}',
     //   キーパッドが出ているあいだ（k-kb）：下のタブを隠す
     '#karteRoot.k-kb .k-tabs{display:none;}',
@@ -304,6 +315,7 @@
     '#karteRoot .k-datehit .k-dateover{inset:-14px -6px;width:auto;height:auto;}',
     '#karteRoot .k-btn.k-btn-line{background:#fff;color:var(--k-acc);border:1px solid var(--k-acc);min-height:44px;margin:0 0 10px;}',
     '#karteRoot .k-excol{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;background:#fff;border:1px solid #dde3ea;box-shadow:0 1px 3px rgba(28,35,33,.07);border-radius:12px;padding:0 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
+    '#karteRoot .k-exhead{flex:1;min-width:0;display:flex;align-items:center;gap:8px;min-height:44px;border:0;background:transparent;padding:0;font-family:inherit;color:inherit;text-align:left;}',   // 設計56：開いた種目の見出し（押すと閉じる）
     '#karteRoot .k-addset{display:block;width:100%;min-height:44px;border:1px dashed var(--k-acc);border-radius:10px;background:#fff;color:var(--k-acc);font-size:14px;font-family:inherit;margin-top:4px;}',
     '#karteRoot .k-pick{display:flex;flex-direction:column;gap:8px;width:100%;text-align:left;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-pick.on{border:2px solid var(--k-acc);}',
@@ -2302,25 +2314,31 @@
     if (D && D.pending) { box.appendChild(msg('前回の保存の結果を確かめるまで写せません。今日の記録の画面に戻ってください。', true)); return; }
     var sessionDate = D ? D.sessionDate : today();
     var list0 = (sessions || []).filter(function (x) { return String(x.session_date) < String(sessionDate); }).sort(byNewest).slice(0, 30);   // 記録の日付より前・新しい順に30回まで
-    if (!list0.length) { box.appendChild(msg('写せる過去の記録がありません。')); return; }
-    var sel = list0[0], part = '';
+    if (!list0.length) { box.appendChild(msg('写せる過去の記録がありません。記録の日付（' + md(sessionDate) + '）より前の記録だけが出ます。')); return; }
+    //   設計56：同じ日に何回かに分けて保存した記録は1枚にまとめる（種目は保存した順につなぐ・部位は合わせる・写すときも全部写す）
+    var days = [], byDay = {};
+    list0.forEach(function (x) { var k = String(x.session_date); if (!byDay[k]) { byDay[k] = { session_date: x.session_date, list: [] }; days.push(byDay[k]); } byDay[k].list.push(x); });
+    days.forEach(function (d) { d.list.sort(function (a, b) { return (Number(a.created_at) || 0) - (Number(b.created_at) || 0); }); });
+    function dayParts(d) { var out = []; d.list.forEach(function (x) { partsOf(x).forEach(function (pt) { if (out.indexOf(pt) < 0) out.push(pt); }); }); return out; }
+    function dayGroups(d) { var out = []; d.list.forEach(function (x) { out = out.concat(exOrder(x).groups); }); return out; }
+    var sel = days[0], part = '';
     var chips = el('div', { class: 'k-pills', style: 'gap:6px;' }), info = el('div', { class: 'k-sub' }), cards = el('div', { style: 'display:flex;flex-direction:column;gap:10px;' });
     box.appendChild(chips); box.appendChild(info); box.appendChild(cards);
     var bar = el('div', { class: 'k-savebar' });
     box.appendChild(bar);
     function draw() {
       chips.innerHTML = ''; cards.innerHTML = '';
-      var allParts = []; list0.forEach(function (x) { partsOf(x).forEach(function (pt) { if (allParts.indexOf(pt) < 0) allParts.push(pt); }); });
+      var allParts = []; days.forEach(function (x) { dayParts(x).forEach(function (pt) { if (allParts.indexOf(pt) < 0) allParts.push(pt); }); });
       [''].concat(allParts).forEach(function (pt) {
         chips.appendChild(el('button', { type: 'button', class: 'k-pill' + (part === pt ? ' on' : ''), text: pt || 'すべて', onclick: function () { part = pt; var f = shown(); sel = f[0] || null; draw(); } }));
       });
-      function shown() { return list0.filter(function (x) { return !part || partsOf(x).indexOf(part) >= 0; }); }
+      function shown() { return days.filter(function (x) { return !part || dayParts(x).indexOf(part) >= 0; }); }
       var f = shown();
       info.textContent = (part ? '「' + part + '」の日 ' : '') + f.length + '件（新しい順）';
       f.forEach(function (x) {
-        var on = sel === x, o = exOrder(x);
+        var on = sel === x, o = { groups: dayGroups(x) };
         var kids = [el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;' }, [el('b', { style: 'font-size:15px;', text: mdw(x.session_date) }), on ? el('span', { style: 'font-size:12px;color:var(--k-acc);font-weight:700;', text: '選択中' }) : null]),
-          el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, partsOf(x).map(function (pt) { return el('span', { class: 'k-tag', text: pt }); }))];
+          el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, dayParts(x).map(function (pt) { return el('span', { class: 'k-tag', text: pt }); }))];
         if (on) kids.push(el('div', { style: 'display:flex;flex-direction:column;gap:4px;font-size:14px;' }, o.groups.map(function (g) {
           return el('div', { style: 'display:flex;justify-content:space-between;gap:8px;' }, [el('span', { text: g.exercise }), el('span', { class: 'k-sub', style: 'font-size:13px;', text: setLineOf(g.sets) })]);
         })));
@@ -2339,7 +2357,8 @@
       if (T && (T.tid !== tid || T.cid !== cid || T.v !== 1)) T = null;
       if (T && T.pending) return;
       if (!T) T = { v: 1, tid: tid, cid: cid, sessionDate: sessionDate, items: [], reqId: newReqId(), pending: null, at: Date.now() };
-      var cut = copyInto(T, sel, withNums);
+      var cut = false;
+      sel.list.forEach(function (x) { cut = copyInto(T, x, withNums) || cut; });   // 設計56：その日の記録を保存した順に全部写す
       T.at = Date.now();
       if (!lsSet(key, T)) { window.alert('この端末に下書きを残せないため、写せませんでした。'); return; }
       if (cut) window.alert('上限（20種目・1種目10セット・合計60セット）を超える分は写していません。');
@@ -2793,6 +2812,13 @@
     var D0 = draftNow();
     if (D0 && (D0.pending || D0.mpending || D0.memoPending)) { box.appendChild(msg('前回の保存の結果を確かめるまで取り込めません。今日の記録の画面に戻ってください。', true)); return; }
     if (!extOk()) { box.appendChild(msg('いまはメモから取り込めません（システムの更新中の可能性があります）。今日の記録の画面から入力してください。', true)); return; }
+    //   設計56：記録の画面にいまある内容には足される（上書きしない）ことを最初に言う
+    var addNote = null;
+    if (D0) {
+      var nEx0 = (D0.items || []).length, hasMemo0 = !!String(D0.memo || '').trim(), m00 = D0.member || {}, hasMem0 = !!(String(m00.message || '').trim() || (Array.isArray(m00.todo) && m00.todo.some(function (x) { return String(x || '').trim(); })));
+      if (nEx0 || hasMemo0 || hasMem0) addNote = el('div', { class: 'k-addnote', role: 'status', style: 'background:var(--k-acc-l);border-radius:10px;padding:8px 10px;font-size:14px;font-weight:700;color:var(--k-acc);',
+        text: 'いまある内容（' + [nEx0 ? '種目 ' + nEx0 : '', hasMemo0 ? '社内メモ' : '', hasMem0 ? 'お客様に見える欄' : ''].filter(Boolean).join('・') + '）に足されます。上書きはしません' });
+    }
     //   autoKnown＝固定の種目 ∪ 共有の種目（自動で種目にしてよい名前）。suggestKnown＝この方の最近の種目（候補にだけ使う・自動では使わない）
     var autoKnown = EXERCISES.concat(Object.keys(exMaster));
     var sugg = [];
@@ -2802,6 +2828,7 @@
     });
     function isAuto(name) { return autoKnown.some(function (a) { return exName(a) === name; }); }
     var wrap = el('div', { class: 'k-imp', style: 'display:flex;flex-direction:column;gap:8px;' });
+    if (addNote) wrap.appendChild(addNote);
     wrap.appendChild(el('div', { class: 'k-sub', style: 'font-size:13px;line-height:1.7;', text: '紙のメモを打つか、貼ってください。キーボードのマイクで話しても入ります（例：ヒップリフト／改行／30かける10　50かける10プラス5）。' }));
     wrap.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }));
     if (exTruncated) wrap.appendChild(el('div', { class: 'k-sub', style: 'color:var(--k-warn);', text: '共有の種目を一部しか読めていないため、確かめが必要な名前が増えます。' }));
@@ -3695,12 +3722,28 @@
     var hdr = cur.root && cur.root.querySelector('.k-entryhead');
     var saveBtn = null;
     if (hdr) { var oldHs = hdr.querySelector('.k-hsave'); if (oldHs) oldHs.remove(); }
-    //   過去の記録から写す（専用の画面・モック K3b）
-    if ((sessions || []).length) c.appendChild(el('button', { type: 'button', class: 'k-btn k-btn-line', text: '過去の記録から写す', onclick: function () { trPickSub(sessions); } }));
-    //   メモから取り込む（設計38 §5-1）：Worker が新しい鍵を受け付けるとき（karteSchema 33）だけ。送信中・結果待ちの間はここまで来ない（上で return）
+    //   設計56：下書きの日付が今日でないとき（前の日の下書きの続き）は1行で知らせる。過去の日をわざと入れる運用もある＝自動で変えない・ダイアログも出さない
+    var dateWarn = el('div', { class: 'k-datewarn', role: 'status', 'aria-live': 'polite' });
+    c.appendChild(dateWarn);
+    function drawDateWarn() {
+      dateWarn.innerHTML = '';
+      if (!D.sessionDate || D.sessionDate === today()) { dateWarn.style.display = 'none'; return; }
+      dateWarn.style.cssText = 'display:flex;align-items:center;gap:8px;background:#fbefd9;border-radius:10px;padding:6px 6px 6px 12px;margin:0 0 8px;';
+      dateWarn.appendChild(el('span', { style: 'flex:1;min-width:0;font-size:14px;font-weight:700;color:#5c3a05;', text: '日付が ' + mdw(D.sessionDate) + ' のままです' }));
+      dateWarn.appendChild(el('button', { type: 'button', class: 'k-btn out small k-datetoday', style: 'min-height:44px;margin:0;flex:none;', text: '今日にする', onclick: function () {
+        D.sessionDate = today(); d.el.value = D.sessionDate; save(); refreshTop(); drawDateWarn(); draw();
+      } }));
+    }
+    drawDateWarn();
+    //   設計56（2026-11-24 CEO 裁定・オーナー回答）：始め方は種目が0件のときだけ上に3つ（前回の記録から／メモ・音声から／手動で入れる）。
+    //     1件以上のときは上に出さず、「＋ 種目を足す」の下に「＋ 音声・メモを追加で取り込む」（枠のボタン）と小さな「前回から写す」。
+    //     ★取り込み（設計38）は既存の入力を上書きしない：種目は後ろに足す・メモ／お客様へは後ろに改行して足す（commit）
+    //   メモから取り込むは Worker が新しい鍵を受け付けるとき（karteSchema 33）だけ。送信中・結果待ちの間はここまで来ない（上で return）
     var airT = String((window.state && state.trainerId) || ''), airX = lsRead(airKey(airT, cur.customerId));
     var airHas = airX.st === 'ok' && rvRestore(airX.v, { tid: airT, cid: cur.customerId, scope: aiScope(), now: Date.now() }).ok;   // 設計51：振り分けの途中があれば気づけるように
-    if (extOk()) c.appendChild(el('button', { type: 'button', class: 'k-btn k-btn-line k-impgo', text: airHas ? 'メモから取り込む（振り分けの途中あり）' : 'メモから取り込む', onclick: function () { trImportSub(sessions); } }));
+    var hasPast = (sessions || []).length > 0;
+    var startBox = el('div', { class: 'k-start' });
+    c.appendChild(startBox);
     //   休憩タイマーの切り替え（端末に覚える・2026-11-06 オーナー）。なし＝✓で数えない・帯と秒数・終了音の行を出さない
     var restTg = el('button', { type: 'button', class: 'k-rtg', 'data-nodirty': '1', onclick: function () {
       setRestOn(!restOn()); drawRestTg(); draw();   // ★なしにした瞬間に動いているタイマーは止める（setRestOn の中）
@@ -3751,7 +3794,7 @@
       t.appendChild(hit);
     }
     function trimTotal() { var n = 0; D.items.forEach(function (it) { it.sets = it.sets.filter(function () { n++; return n <= TR_TOTAL; }); }); D.items = D.items.filter(function (it) { return it.sets.length; }); }
-    d.el.onchange = function () { D.sessionDate = d.get() || today(); save(); refreshTop(); draw(); };
+    d.el.onchange = function () { D.sessionDate = d.get() || today(); save(); refreshTop(); drawDateWarn(); draw(); };
 
     function numInput(val, kind, label, onv) {   // kind：'kg'（重量）／'回'
       var i = el('input', { type: 'number', step: kind === 'kg' ? '0.5' : '1', placeholder: kind === 'kg' ? '自重なら空のまま' : '回', 'aria-label': label, enterkeyhint: 'next', autocomplete: 'off' });
@@ -3823,12 +3866,13 @@
       //   設計55：元に戻すの案内は消した直後の1回だけ描く（2回目の描き直しで捨てる）。置き場所は消したものがあった位置
       var uNow = null, uPlaced = false;
       if (undo) { if (undo.shown) undo = null; else { undo.shown = true; uNow = undo; } }
-      if (D.openEi == null || D.openEi >= D.items.length || D.openEi < 0) D.openEi = D.items.length - 1;
+      //   設計56：-1＝どの種目も開いていない（開いた種目の見出しを押して閉じた）。null・範囲外だけ最後の種目を開く
+      if (D.openEi == null || D.openEi >= D.items.length || D.openEi < -1) D.openEi = D.items.length - 1;
       D.items.forEach(function (it, ei) {
         if (uNow && uNow.kind === 'ex' && uNow.ei === ei) { list.appendChild(undoBar(uNow)); uPlaced = true; }
         if (ei !== D.openEi) {   // 畳んだ種目：押すと広げる（入力済み・✓の数を出す）
           var nd = it.sets.filter(function (x) { return x.done === true; }).length;
-          var colBtn = el('button', { type: 'button', class: 'k-excol', 'aria-label': it.exercise + 'を開く', onclick: function () { D.openEi = ei; save(); draw(); } }, [
+          var colBtn = el('button', { type: 'button', class: 'k-excol', 'aria-expanded': 'false', 'aria-label': it.exercise + 'を開く', onclick: function () { D.openEi = ei; save(); draw(); } }, [
             el('span', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;text-align:left;', text: it.exercise }),
             it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
             el('span', { class: 'k-tag', text: partOf(it.exercise) }),
@@ -3847,10 +3891,13 @@
         //   数字の無い種目で「実施した」が無い＝保存されない（設計38）。目で分かるように同じ色にする
         var warn = (hasVal && noneDone) || (!it.sets.length && it.doneOnly !== true);
         var blk = el('div', { style: 'border:1px solid ' + (warn ? '#f5c9bb' : 'var(--k-line)') + ';border-radius:12px;padding:10px;margin-bottom:10px;background:' + (warn ? '#fff7f4' : '#fff') + ';' });
+        //   設計56：見出しの種目名・部位の部分を押すと閉じる（畳んだ行を押すと開く＝同じ場所で開閉）。［外す］［≡］はこのボタンの外＝押しても開閉しない
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
-          el('div', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
-          it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
-          el('span', { class: 'k-tag', text: partOf(it.exercise) }),
+          el('button', { type: 'button', class: 'k-exhead', 'aria-expanded': 'true', 'aria-label': it.exercise + 'を閉じる', onclick: function () { D.openEi = -1; save(); draw(); } }, [
+            el('span', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
+            it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
+            el('span', { class: 'k-tag', text: partOf(it.exercise) }),
+            el('span', { class: 'k-sub k-exfold', 'aria-hidden': 'true', style: 'font-size:16px;', text: '⌄' })]),
           el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { rmEx(ei); } }),   // 設計55：直後に元に戻せる
           D.items.length > 1 ? trGrip(it, ei) : null]));   // 設計53：つまみは右端
         blk.setAttribute('data-ei', String(ei));
@@ -3925,7 +3972,7 @@
       if (uNow && !uPlaced) list.appendChild(undoBar(uNow));   // 最後の種目を外した
       if (!placed && restOn()) list.insertBefore(restBar, list.firstChild);
       else if (!placed && restBar.parentNode) restBar.parentNode.removeChild(restBar);   // ✓のセットが無い・消えた：一覧の先頭（数えていれば見える・空なら隠れる）
-      if (!D.items.length) list.appendChild(msg((sessions || []).length ? '「過去の記録から写す」か「＋ 種目を足す」から始めてください。' : '「＋ 種目を足す」から始めてください。'));   // 設計55：実在するボタンの名前だけ
+      drawStart();   // 設計56：種目が0件なら上に始め方の3つ・1件以上なら下に追加の取り込みと前回から写す
       var t = totalSets(D.items), rec = 0;
       buildPayload(D.items).forEach(function (x) { rec += x.sets.length; });
       remain.textContent = '記録する ' + rec + 'セット・記録しない ' + uncheckedCount(D.items) + 'セット（合計 ' + t + '／' + TR_TOTAL + '）';
@@ -4028,6 +4075,27 @@
     var addExBtn = el('button', { type: 'button', class: 'k-btn out', text: '＋ 種目を足す', 'aria-expanded': 'false', onclick: function () { setPicker(picker.style.display === 'none'); } });
     c.appendChild(addExBtn);
     var picker = exercisePicker(sessions, function (names) { addExercises(names); setPicker(false); }, cid, exRestore && exRestore.cid === cid ? exRestore : null);
+    var moreBox = el('div', { class: 'k-more' });   // 設計56：種目が1件以上のとき「＋ 種目を足す」の下（種目の欄はその間に開く）
+    function impLabel(first) { return (first ? 'メモ・音声から' : '＋ 音声・メモを追加で取り込む') + (airHas ? '（振り分けの途中あり）' : ''); }
+    function drawStart() {
+      var empty = !D.items.length, pOpen = picker.style.display !== 'none';
+      startBox.innerHTML = ''; moreBox.innerHTML = '';
+      addExBtn.style.display = (empty && !pOpen) ? 'none' : '';   // 0件のときは「手動で入れる」が同じ役（種目の欄を開いたら閉じるために出す）
+      if (empty) {
+        startBox.appendChild(el('div', { class: 'k-h', style: 'margin:4px 0 8px;', text: 'どう始めますか？' }));
+        var pb = el('button', { type: 'button', class: 'k-btn k-startbtn k-pickgo', style: 'min-height:52px;margin:0 0 8px;', text: hasPast ? '前回の記録から' : '前回の記録から（過去の記録がありません）', onclick: function () { trPickSub(sessions); } });
+        if (!hasPast) pb.disabled = true;
+        startBox.appendChild(pb);
+        if (extOk()) startBox.appendChild(el('button', { type: 'button', class: 'k-btn k-startbtn k-impgo', style: 'min-height:52px;margin:0 0 8px;', text: impLabel(true), onclick: function () { trImportSub(sessions); } }));
+        startBox.appendChild(el('button', { type: 'button', class: 'k-btn out k-startbtn k-manualgo', style: 'min-height:52px;margin:0 0 12px;', text: '手動で入れる', 'aria-expanded': pOpen ? 'true' : 'false', onclick: function () {
+          setPicker(true); var q = picker.querySelector('input[aria-label="種目を探す"]'); if (q) { try { q.focus(); } catch (e) {} }
+        } }));
+        return;
+      }
+      if (extOk()) moreBox.appendChild(el('button', { type: 'button', class: 'k-btn out k-impgo', style: 'min-height:44px;margin:8px 0 0;', text: impLabel(false), onclick: function () { trImportSub(sessions); } }));
+      if (hasPast) moreBox.appendChild(el('div', { style: 'display:flex;justify-content:center;margin-top:2px;' }, [
+        el('button', { type: 'button', class: 'k-link k-pickgo', style: 'min-height:44px;', text: '前回から写す', onclick: function () { trPickSub(sessions); } })]));
+    }
     //   設計55：下の帯は「いま開いている操作の確定ボタン」だけ＝種目の欄を開いている間の［選んだ種目を足す］。何も開いていなければ帯を出さない
     var pickBar = el('div', { class: 'k-savebar k-pickbar' });
     var pickGo = picker.querySelector('.k-picker-go');
@@ -4036,6 +4104,7 @@
       picker.style.display = on ? '' : 'none'; pickBar.style.display = on ? '' : 'none';
       c.classList.toggle('k-pickpad', !!on);   // 帯が出ている間だけフォームの下に余白
       addExBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+      if (moreBox.parentNode) drawStart();   // 0件のときの「＋ 種目を足す」の出し入れ
       placePick();
     }
     //   キーパッドが出ている間（見える範囲が縮んだ）も帯が見える範囲の下端に来るよう合わせる。visualViewport が無ければ fixed の bottom:0 のまま
@@ -4047,6 +4116,7 @@
     }
     cur.pickPlace = function () { if (pickBar.isConnected) placePick(); };
     c.appendChild(picker);
+    c.appendChild(moreBox);
     //   指導メモ（2026-11-05 モック K3：セッション中にそのまま書く）。社内メモ＝既存の指導メモ（k_addNote）にそのまま残す
     //   ★書きかけは記録の下書き（D.memo）に残す＝セットと同じく画面を離れても消えない。「お客様へ」は第2弾（保存先を作る）
     if (!D.memoReqId) D.memoReqId = newReqId();
@@ -4305,6 +4375,8 @@
     var q = el('input', { 'data-nodirty': '1', type: 'search', maxlength: String(EX_NAME_MAX), placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
     var editBtn = el('button', { type: 'button', class: 'k-btn out small k-exedit', 'data-nodirty': '1', onclick: function () { editMode = !editMode; editing = null; draw(); } });
     var area = el('div');
+    var sug = el('div', { class: 'k-suggest', role: 'listbox', 'aria-label': '種目の候補', style: 'display:none;' });   // 設計56：検索欄の直下
+    var SUG_MAX = 8;
     var go = el('button', { type: 'button', class: 'k-btn k-picker-go', text: '選んだ種目を足す' });
     if (restore) {
       q.value = String(restore.q || '');
@@ -4336,6 +4408,59 @@
         done(false, '部位を保存できませんでした（' + (w.code === 'BAD_STATE' ? ERR.EX_LIMIT : errText(w)) + '）。');
       }, function () { busy = false; done(false, '部位の保存の結果を確かめられませんでした。必要なら「部位を直す」からもう一度保存してください。'); });
     }
+    //   設計56：候補の順＝前方一致 → 部分一致 → 別名 → もしかして。同じ段の中は「この方の最近の種目」を先に。最大 SUG_MAX 件
+    function aliasHit(x, t) { return EXERCISE_TABLE.some(function (r) { return r[0] === x && r[2].some(function (a) { return a.indexOf(t) >= 0; }); }); }
+    function rankSuggest(t, all) {
+      var seen = {}, out = [];
+      //   ★段の中の順は allNames() の順（最近の種目 → 固定の種目 → 共有の一覧）のまま＝最近の種目が先に来る
+      function push(list, tier) { list.forEach(function (x) { if (!seen[x]) { seen[x] = 1; out.push({ name: x, tier: tier }); } }); }
+      push(all.filter(function (x) { return x.indexOf(t) === 0; }), 'prefix');
+      push(all.filter(function (x) { return x.indexOf(t) > 0; }), 'part');
+      push(all.filter(function (x) { return aliasHit(x, t); }), 'alias');
+      push(exSuggest(t, all).map(function (c) { return c.name; }).filter(function (x) { return all.indexOf(x) >= 0 || EXERCISES.indexOf(x) >= 0; }), 'maybe');
+      return out.slice(0, SUG_MAX);
+    }
+    function sugName(x, t) {   // 一致した文字を太字に（textContent で入れる＝HTML として解釈しない）
+      var i = t ? x.indexOf(t) : -1, sp = el('span', { class: 'k-sugname' });
+      if (i < 0) { sp.textContent = x; return sp; }
+      if (i > 0) sp.appendChild(document.createTextNode(x.slice(0, i)));
+      sp.appendChild(el('b', { text: x.slice(i, i + t.length) }));
+      if (i + t.length < x.length) sp.appendChild(document.createTextNode(x.slice(i + t.length)));
+      return sp;
+    }
+    //   選んだら入力欄を空にして、キーパッドは出したまま（続けて別の種目を探せる）
+    function keepTyping() { q.value = ''; newPart = null; draw(); try { q.focus(); } catch (e) {} }
+    function addNew(name, np) {
+      saveEx(name, np, 'new', function (ok2, m) {
+        //   ★保存できなくても今日の記録には足せる（部位は後で直せる）。記録を止めない
+        if (!ok2) { if (local.indexOf(name) < 0 && !(name in exMaster)) local.push(name); window.alert(m + '「' + name + '」は今日の記録用に選びました。'); }
+        if (picked.indexOf(name) < 0) picked.push(name);
+        keepTyping();
+      });
+    }
+    function drawSuggest(t, all, hit) {
+      sug.innerHTML = '';
+      sug.style.display = t ? '' : 'none';
+      if (!t) return;
+      rankSuggest(t, all).forEach(function (c) {
+        var x = c.name, on = picked.indexOf(x) >= 0;
+        sug.appendChild(el('button', { type: 'button', role: 'option', class: 'k-sugrow' + (on ? ' on' : ''), 'data-tier': c.tier, 'aria-selected': on ? 'true' : 'false', 'aria-pressed': on ? 'true' : 'false',
+          'aria-label': editMode ? x + 'の部位を直す' : x + (on ? '（選択済み）' : ''),
+          onclick: function () {
+            if (editMode) { editing = x; editPart = partKeyOf(x); q.value = ''; draw(); return; }
+            var i = picked.indexOf(x); if (i >= 0) picked.splice(i, 1); else picked.push(x);
+            keepTyping();
+          } }, [sugName(x, t), el('span', { class: 'k-sugpart', text: partOf(x) + (c.tier === 'alias' ? '・別名' : c.tier === 'maybe' ? '・もしかして' : '') }), el('span', { class: 'k-sugchk', text: on ? '✓' : '' })]));
+      });
+      //   一覧に無い名前（設計52）：最後の行で新しい種目として足す（部位は下の欄で変えられる）
+      if (!editMode && hit.indexOf(t) < 0 && t.length <= EX_NAME_MAX) {
+        var np = newPart || guessPart(t);
+        var nb = el('button', { type: 'button', role: 'option', class: 'k-sugrow k-sugnew', 'aria-selected': 'false', onclick: function () { addNew(t, np); } },
+          [el('span', { class: 'k-sugname', text: '「' + t + '」を新しい種目として足す' }), el('span', { class: 'k-sugpart', text: label(PART_KEYS, np) })]);
+        if (busy) nb.disabled = true;
+        sug.appendChild(nb);
+      }
+    }
     function chip(ex) {
       var on = picked.indexOf(ex) >= 0;
       if (editMode) return el('button', { type: 'button', class: 'k-pill', 'aria-label': ex + 'の部位を直す', text: ex + ' ✎', onclick: function () { editing = ex; editPart = partKeyOf(ex); draw(); } });
@@ -4363,21 +4488,12 @@
       }
       if (editMode && !editing) area.appendChild(el('div', { class: 'k-sub', style: 'margin-top:8px;', text: '部位を直す種目を押してください。' }));
       var t = exName(q.value), all = allNames();
+      var hit = t ? all.filter(function (x) { return x.indexOf(t) >= 0 || aliasHit(x, t); }) : [];   // 設計52：別名でも正式名を出す
+      drawSuggest(t, all, hit);   // 設計56：候補は検索欄の直下に縦1列（チップの折り返しはやめた）
       if (t) {
-        var hit = all.filter(function (x) { return x.indexOf(t) >= 0 || EXERCISE_TABLE.some(function (r) { return r[0] === x && r[2].some(function (a) { return a.indexOf(t) >= 0; }); }); });   // 設計52：別名でも正式名を出す
-        var p1 = el('div', { class: 'k-pills', style: 'margin-top:10px;' }); hit.forEach(function (x) { p1.appendChild(chip(x)); });
-        area.appendChild(p1);
         if (!editMode && hit.indexOf(t) < 0 && t.length <= EX_NAME_MAX) {
           var np = newPart || guessPart(t);
-          var addBtn = el('button', { type: 'button', class: 'k-btn k-exadd', text: busy ? '送信中…' : '「' + t + '」を' + label(PART_KEYS, np) + 'で登録して選ぶ', onclick: function () {
-            var name = t;
-            saveEx(name, np, 'new', function (ok2, m) {
-              //   ★保存できなくても今日の記録には足せる（部位は後で直せる）。記録を止めない
-              if (!ok2) { if (local.indexOf(name) < 0 && !(name in exMaster)) local.push(name); window.alert(m + '「' + name + '」は今日の記録用に選びました。'); }
-              if (picked.indexOf(name) < 0) picked.push(name);
-              q.value = ''; newPart = null; draw();
-            });
-          } });
+          var addBtn = el('button', { type: 'button', class: 'k-btn k-exadd', text: busy ? '送信中…' : '「' + t + '」を' + label(PART_KEYS, np) + 'で登録して選ぶ', onclick: function () { addNew(t, np); } });
           if (busy) addBtn.disabled = true;
           area.appendChild(el('div', { class: 'k-card k-exnew', style: 'margin-top:10px;display:flex;flex-direction:column;gap:6px;' }, [
             el('div', { style: 'font-weight:700;', text: '新しい種目「' + t + '」の部位' }),
@@ -4415,6 +4531,7 @@
     q.oninput = function () { newPart = null; draw(); };
     go.onclick = function () { if (!picked.length) { window.alert('種目を選んでください。'); return; } onAdd(picked.slice()); picked = []; q.value = ''; draw(); };
     box.appendChild(q);
+    box.appendChild(sug);   // 設計56：候補は検索欄にくっつけて出す（「部位を直す」はその下）
     box.appendChild(el('div', { style: 'display:flex;justify-content:flex-end;margin-top:6px;' }, [editBtn]));
     box.appendChild(area); box.appendChild(go);
     draw();
