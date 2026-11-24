@@ -2453,7 +2453,7 @@ function dailyHealthCheck(dryRunArg) {
     if (eSh && eSh.lbLeaseLost) throw eSh;   // 印を失った＝以降の副作用をせずに終える（外側で受ける・I-H21）
     _bad();
     //   ★見張りの段そのものが落ちたことを外に出す（関門②・2026-11-24）。例外の文は出さない（I-H1）。_done は付けない（今どおり）
-    add('selfheal_watch_fail', '定期処理', 'warn', 1, '自己修理の見張り（見送り・保存の失敗・修理の心拍）の点検そのものが失敗しました: ' + String((eSh && eSh.name) || 'Error'));
+    add('selfheal_watch_fail', '定期処理', 'warn', 1, '自己修理の見張り（見送り・保存の失敗・修理の心拍）の点検そのものが失敗しました');   // ★name も出さない（投げられた値の name は任意の文字列になりうる・関門②2回目）
   }
 
   _step('会員データ');

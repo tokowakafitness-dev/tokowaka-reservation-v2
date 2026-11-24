@@ -178,6 +178,17 @@ console.log('=== I-H33 関門②の直し（2026-11-24） ===');
   ok('I-H35-4 要約の facts は exception だけ', JSON.stringify((status(w).items.find((x) => x.k === 'selfheal_watch_fail') || {}).f) === '["exception"]');
 }
 
+{
+  //   投げられた値の name に架空の氏名・電話が入っていても detail に出さない（関門②2回目）
+  const w = makeWorld();
+  const c = makeCtx(w);
+  const real = c.PropertiesService.getScriptProperties;
+  c.PropertiesService.getScriptProperties = () => { const o = real(); const g0 = o.getProperty; o.getProperty = (k) => { if (k === 'LB_SELFHEAL_DONE') throw { name: FAKE.name + ' ' + FAKE.phone }; return g0(k); }; return o; };
+  const r = c.dailyHealthCheck();
+  const it = r.issues.find((x) => x.key === 'selfheal_watch_fail');
+  ok('I-H35-5 ★例外の name（架空の氏名・電話）も出さない', it && it.detail.indexOf(FAKE.name) < 0 && it.detail.indexOf(FAKE.phone) < 0 && JSON.stringify(w.sheets.health_status.data).indexOf(FAKE.name) < 0, it && it.detail);
+}
+
 console.log('=== I-H34 CEO が作業依頼で読める（heal_status） ===');
 const EJ = readFileSync(join(ROOT, 'gas/EdgeJob.js'), 'utf8');
 function job(w, args) {
