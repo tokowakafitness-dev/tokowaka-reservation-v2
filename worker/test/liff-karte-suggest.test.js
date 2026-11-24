@@ -218,6 +218,33 @@ async function openPicker(w) { await openRecord(w); btn(R(w), '＋ 種目を足�
   btn(R(w), '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
   ok('G8 ★写すとその日の種目が全部入る', JSON.stringify(names(w)) === '["スクワット","ベンチプレス"]', JSON.stringify(names(w)));
 }
+// ---- G8b 関門②：同じ日の別の記録に同じ名前の種目（旧形式）→ 記録ごとに別の種目として保存順に足す（結合しない・10セット超で落とさない） ----
+{
+  const sx = (n, w0) => Array.from({ length: n }, (_, i) => ({ exercise: 'スクワット', set_no: i + 1, weight_kg: w0, reps: 10 }));
+  const H = [
+    { session_id: 'S1', session_date: '2026-11-20', created_at: 100, author_trainer_id: 'T1', rev: 1, sets: sx(6, 50).concat([{ exercise: 'ベンチプレス', set_no: 7, weight_kg: 40, reps: 8 }]) },
+    { session_id: 'S2', session_date: '2026-11-20', created_at: 200, author_trainer_id: 'T1', rev: 1, sets: sx(6, 60) }];
+  const { w } = boot({ sessions: H });
+  await openRecord(w);
+  R(w).querySelector('button.k-pickgo').click(); await settle();
+  const card = R(w).querySelector('button.k-pick');
+  const shownNames = [...card.querySelectorAll('span')].map((x) => x.textContent).filter((t) => t === 'スクワット' || t === 'ベンチプレス');
+  btn(R(w), '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
+  const it = draftOf(w).items;
+  ok('G8b ★写した順はカードの表示と同じ（スクワット → ベンチプレス → スクワット・同名でも結合しない）', JSON.stringify(it.map((x) => x.exercise)) === '["スクワット","ベンチプレス","スクワット"]' && JSON.stringify(shownNames) === JSON.stringify(it.map((x) => x.exercise)), JSON.stringify(it.map((x) => x.exercise)) + ' / ' + JSON.stringify(shownNames));
+  ok('G8b ★セットが混ざらない・10セットを超えても落とさない（6・1・6）', it.length === 3 && it[0].sets.length === 6 && it[0].sets.every((x) => x.w === 50) && it[1].sets.length === 1 && it[2].sets.length === 6 && it[2].sets.every((x) => x.w === 60) && !w.alerts.some((m) => m.includes('上限')), JSON.stringify(it.map((x) => x.sets.length)) + ' ' + w.alerts.join('|'));
+}
+// ---- G8c 単一の記録を写すときの挙動は変えない（下書きの同名種目にまとめる） ----
+{
+  const H = [{ session_id: 'S1', session_date: '2026-11-20', created_at: 100, author_trainer_id: 'T1', rev: 1, sets: [{ exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }] }];
+  const { w } = boot({ sessions: H });
+  seed(w, [{ exercise: 'スクワット', sets: [set(40, 10, false)] }]);
+  await openRecord(w);
+  R(w).querySelector('button.k-pickgo').click(); await settle();
+  btn(R(w), '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
+  const it = draftOf(w).items;
+  ok('G8c 単一の記録：今までどおり下書きの同名種目にセットをまとめる', it.length === 1 && it[0].sets.length === 2, JSON.stringify(it));
+}
 {
   const { w } = boot({ sessions: [{ session_id: 'S9', session_date: TODAY, created_at: 1, author_trainer_id: 'T1', rev: 1, sets: [{ exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }] }] });
   await openRecord(w);

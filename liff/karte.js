@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-24f 取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-24g 同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2268,7 +2268,7 @@
     });
     return { by: by, order: order, groups: gs };
   }
-  function copyInto(D, sess, withNums) {
+  function copyInto(D, sess, withNums, noMerge) {   // noMerge：設計56 同じ日の複数の記録をまとめて写す＝記録ごとに別の種目として足す（同名でも結合しない）
     var o = exOrder(sess), cut = false;
     if (isNewSess(sess)) {
       //   ★新しい回：写す元の1つの ord ＝ 下書きの1つの種目（同じ名前が下書きにあっても混ぜない・後ろに足す）。
@@ -2292,7 +2292,7 @@
     }
     o.order.forEach(function (ex) {
       var sets = o.by[ex].map(function (x) { return withNums ? { w: isBw(x.weight_kg) ? '' : x.weight_kg, r: x.reps, done: false } : { w: '', r: '', done: false }; });   // 自重（0）は空で写す
-      var same0 = D.items.filter(function (it) { return it.exercise === ex; })[0];   // ★同じ種目は1つにまとめる（1種目10セットまで・関門②）
+      var same0 = noMerge ? null : D.items.filter(function (it) { return it.exercise === ex; })[0];   // ★同じ種目は1つにまとめる（1種目10セットまで・関門②）
       if (!same0 && D.items.length >= 20) { cut = true; return; }
       var cap = 10 - (same0 ? same0.sets.length : 0), room = TR_TOTAL - totalSets(D.items);
       var n = Math.min(sets.length, cap, room);
@@ -2358,7 +2358,8 @@
       if (T && T.pending) return;
       if (!T) T = { v: 1, tid: tid, cid: cid, sessionDate: sessionDate, items: [], reqId: newReqId(), pending: null, at: Date.now() };
       var cut = false;
-      sel.list.forEach(function (x) { cut = copyInto(T, x, withNums) || cut; });   // 設計56：その日の記録を保存した順に全部写す
+      var multi = sel.list.length > 1;   // 関門②：1件だけなら今までどおり（下書きの同名種目にまとめる）
+      sel.list.forEach(function (x) { cut = copyInto(T, x, withNums, multi) || cut; });   // 設計56：その日の記録を保存した順に全部写す
       T.at = Date.now();
       if (!lsSet(key, T)) { window.alert('この端末に下書きを残せないため、写せませんでした。'); return; }
       if (cut) window.alert('上限（20種目・1種目10セット・合計60セット）を超える分は写していません。');
