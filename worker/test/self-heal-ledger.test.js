@@ -189,6 +189,19 @@ console.log('=== I-H33 関門②の直し（2026-11-24） ===');
   ok('I-H35-5 ★例外の name（架空の氏名・電話）も出さない', it && it.detail.indexOf(FAKE.name) < 0 && it.detail.indexOf(FAKE.phone) < 0 && JSON.stringify(w.sheets.health_status.data).indexOf(FAKE.name) < 0, it && it.detail);
 }
 
+{
+  //   保存の結果を残す処理が name に架空の氏名・電話を持つ値を投げても、実行ログに出さない（関門②3回目）
+  const w = makeWorld();
+  const c = makeCtx(w);
+  const logs = [];
+  c.Logger = { log: (m) => logs.push(String(m)) };
+  const real = c.PropertiesService.getScriptProperties;
+  c.PropertiesService.getScriptProperties = () => { const o = real(); const s0 = o.setProperty; o.setProperty = (k, v) => { if (k === 'LB_HEALTH_SAVE_LAST') throw { name: FAKE.name + ' ' + FAKE.phone }; return s0(k, v); }; return o; };
+  c.dailyHealthCheck();
+  const hit = logs.filter((m) => m.indexOf('保存の結果を残せませんでした') >= 0);
+  ok('I-H35-6 ★例外の name をログに出さない（型名でなければ Error）', hit.length === 1 && hit[0].indexOf(FAKE.name) < 0 && hit[0].indexOf(FAKE.phone) < 0 && /: Error$/.test(hit[0]), JSON.stringify(hit));
+}
+
 console.log('=== I-H34 CEO が作業依頼で読める（heal_status） ===');
 const EJ = readFileSync(join(ROOT, 'gas/EdgeJob.js'), 'utf8');
 function job(w, args) {

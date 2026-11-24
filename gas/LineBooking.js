@@ -3165,10 +3165,10 @@ function dailyHealthCheck(dryRunArg) {
   if (!dryRun) {
     _hcNeed();
     try { _hcSaved = _lbHealthSave(issues, _hcCheckId, _hcChecked, _hcG, _hcSkipPrev); }
-    catch (eHs) { _hcSaved = { saved: false, why: 'exception' }; Logger.log('要約の保存に失敗: ' + String((eHs && eHs.name) || 'Error')); }
+    catch (eHs) { _hcSaved = { saved: false, why: 'exception' }; Logger.log('要約の保存に失敗: ' + _lbErrType(eHs)); }
     Logger.log('自己修理 P1 の要約: ' + JSON.stringify(_hcSaved));
     try { _lbHealthSaveNote(_hcSaved, _hcCheckId, _hcG); }   // ★黙らない：次の点検が heal_save_fail で知らせる（I-H33）
-    catch (eSn) { Logger.log('保存の結果を残せませんでした: ' + String((eSn && eSn.name) || 'Error')); }
+    catch (eSn) { Logger.log('保存の結果を残せませんでした: ' + _lbErrType(eSn)); }
   }
   return { stamp: stamp, issues: issues, worsened: worsened.length, notified: (!dryRun && worsened.length > 0),
            checkId: _hcCheckId, checked: _hcChecked.slice(), saved: _hcSaved };
@@ -3542,6 +3542,8 @@ function _lbHealthSummary(issues, checkId, checked) {
 }
 
 //   最後に1回で保存する（§4-2）：印 → 新しい要約があれば上書きしない → 要約 → SINCE → 台帳 → DONE → 見送りを引く → 通知
+//   ログに残す例外の型。英字の型名（TypeError 等）だけを通し、それ以外は 'Error'（投げられた値の name は任意の文字列になりうる・I-H1）
+function _lbErrType(e) { var n = String((e && e.name) || ''); return /^[A-Za-z]{1,40}$/.test(n) ? n : 'Error'; }
 function _lbHealthSave(issues, checkId, checked, g, skipPrev) {
   var p = PropertiesService.getScriptProperties();
   function lost() { return { saved: false, why: g.why || 'lease' }; }
