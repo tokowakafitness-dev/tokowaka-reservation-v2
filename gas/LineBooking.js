@@ -2324,7 +2324,9 @@ function refreshContractForApp(lineUserId) {
 //   ★倒れる向き：顧客向けトレーナーのカレンダーが1本でも読めない・日次点検の時間が足りない → 「0日」と言わず
 //     next_month_slots_unknown。24日までは何も読まない。新しいトリガー・op・Property は足さない。
 //   ★出すのは日数とトレーナーの記号（A/B/C）だけ。氏名・予定名を出さない。
-var LB_NMO = { BUDGET_LEFT_MS: 120000, HC_LIMIT_MS: 6 * 60000, PRE_MS: 3 * 3600000 };
+//   START_LIMIT_MS：点検の経過がこれ未満のときだけ数え始める。カレンダーの読みは同期で途中で止められないため、
+//   見込み（5〜30秒）に対し6分の制限まで3分の余裕を残す（関門② 再審）
+var LB_NMO = { START_LIMIT_MS: 3 * 60000, PRE_MS: 3 * 3600000 };
 //   翌月が予約できる範囲に入っていれば、翌月の {from, to, key} を返す（入っていなければ null）。判定は _lbBookingHorizonEnd と同じ式
 function _lbNextMonthRange(now) {
   var hz = _lbBookingHorizonEnd(now);
@@ -2349,7 +2351,7 @@ function _lbNextMonthOpenRead(rg) {
   return out;
 }
 //   点検の本体。返すのは null（24日まで）か {kind: 'unknown'|'none'|'open', count, detail, safe}。key は日次点検の add で付ける
-//   hcElapsedMs … 日次点検がここまでに使った時間（6分の制限に近ければ読まない）。readFn は検査で差し替える
+//   hcElapsedMs … 日次点検がここまでに使った時間（3分以上なら読まない）。readFn は検査で差し替える
 function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
   var now = new Date(nowMs), rg = _lbNextMonthRange(now);
   if (!rg) return null;   // 24日まで：翌月はまだ予約できる範囲にない＝読まない
@@ -2358,8 +2360,10 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
     return { kind: 'unknown', count: 1, safe: { facts: [why] },
              detail: mo + 'の空き枠が開いているか判定できません（' + msg + '）。0日とは言っていません。' };
   }
-  if (Number(hcElapsedMs || 0) > LB_NMO.HC_LIMIT_MS - LB_NMO.BUDGET_LEFT_MS) return unknown('no_time', '日次点検の時間が足りない');
+  if (!(Number(hcElapsedMs || 0) < LB_NMO.START_LIMIT_MS)) return unknown('no_time', '日次点検の経過が3分以上で、数え始めない');
+  var _t0 = Date.now();
   var r = (readFn || _lbNextMonthOpenRead)(rg);
+  var took = '・数えるのに' + Math.round((Date.now() - _t0) / 1000) + '秒';   // ★かかった時間を残す（次の25日に見積りを確かめる）
   var hidden = {};
   for (var t = 0; t < CALENDAR_IDS.TRAINERS.length; t++) if (CALENDAR_IDS.TRAINERS[t].hidden) hidden[String(CALENDAR_IDS.TRAINERS[t].id)] = true;
   var fromMs = rg.from.getTime(), toMs = rg.to.getTime();
@@ -2386,7 +2390,7 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
   }
   var nAll = Object.keys(allDays).length, nPub = Object.keys(pubDays).length, nShift = Object.keys(shiftAny).length;
   var facts = 'トレーナーに出勤のある日 ' + nShift + '日（' + perTr.join('・') + (unread.length ? '・読めない ' + unread.join('/') : '') + '）'
-    + '・枠のある日 全体 ' + nAll + '日／顧客向け ' + nPub + '日';
+    + '・枠のある日 全体 ' + nAll + '日／顧客向け ' + nPub + '日' + took;
   if (nPub === 0 && pubUnread.length) {
     //   ★顧客向けトレーナーのカレンダーが1本でも読めなければ、原因（出勤なし／枠なし）を確定できない＝0日と言わない（関門②）
     return unknown('cal_unreadable', '顧客向けトレーナーのカレンダーが読めない ' + pubUnread.join('/') + '・' + facts);
@@ -2413,7 +2417,7 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-25c 設計57 関門② 再審：公開シートを読まず、枠の計算 buildAvailableSlots を翌月だけで呼んで数える（書き直しとの競合・正常な0枠の取り違えを無くす）／2026-11-25b 設計57 関門②：公開シートの書き直し中（meta の前後・0行）と顧客向けトレーナーのカレンダーが読めないときは unknown／2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-25d 設計57 関門② 再審2：数え始めるのは点検の経過3分未満だけ・かかった秒数を詳細に残す／2026-11-25c 設計57 関門② 再審：公開シートを読まず、枠の計算 buildAvailableSlots を翌月だけで呼んで数える（書き直しとの競合・正常な0枠の取り違えを無くす）／2026-11-25b 設計57 関門②：公開シートの書き直し中（meta の前後・0行）と顧客向けトレーナーのカレンダーが読めないときは unknown／2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 

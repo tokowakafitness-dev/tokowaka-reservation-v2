@@ -100,10 +100,16 @@ console.log('=== ④ 判定できないときは 0日と言わない ===');
   const c = makeCtx(w2);
   let read = 0;
   const fake = () => { read++; return { slots: [], shifts: { A: [], B: [], C: [] } }; };
-  const r2 = c.lbNextMonthOpenCheck(w2.now, 4 * 60000 + 1, fake);
-  ok('④-4 ★日次点検が4分を超えていたら読まずに unknown（no_time）', r2 && r2.kind === 'unknown' && JSON.stringify(r2.safe.facts) === '["no_time"]' && read === 0, JSON.stringify(r2));
-  const r3 = c.lbNextMonthOpenCheck(w2.now, 4 * 60000, fake);
-  ok('④-5 4分ちょうどまでは読む', r3 && r3.kind === 'none' && read === 1, JSON.stringify(r3));
+  const r2 = c.lbNextMonthOpenCheck(w2.now, 3 * 60000, fake);
+  ok('④-4 ★点検の経過が3分ちょうどなら数え始めず unknown（no_time）', r2 && r2.kind === 'unknown' && JSON.stringify(r2.safe.facts) === '["no_time"]' && read === 0, JSON.stringify(r2));
+  const r3 = c.lbNextMonthOpenCheck(w2.now, 3 * 60000 - 1000, fake);
+  ok('④-5 2分59秒なら数える', r3 && r3.kind === 'none' && read === 1, JSON.stringify(r3));
+  //   遅いカレンダー（1本20秒×4本）→ かかった秒数が詳細に残る
+  const { r: rs } = dry({ now: at(2026, 11, 25), data: { nmo: { calDelayMs: 20000 } } });
+  const os = one(rs, 'next_month_open');
+  ok('④-5b ★かかった時間（80秒）を詳細に残す', os && os.detail.indexOf('数えるのに80秒') >= 0, os && os.detail);
+  const { r: rs2 } = dry({ now: at(2026, 11, 25), data: { nmo: { events: {}, calDelayMs: 15000 } } });
+  ok('④-5c none の詳細にも残す（60秒）', (one(rs2, 'next_month_slots_none') || {}).detail.indexOf('数えるのに60秒') >= 0, JSON.stringify(keysOf(rs2)));
   //   読んだ記録が残っていない（計算が途中で読みを残さなかった）→ 全員読めない扱い＝unknown
   const r4 = c._lbNextMonthOpenRead && (() => { const cc = makeCtx(makeWorld({ now: at(2026, 11, 25) })); cc.buildAvailableSlots = () => []; return cc.lbNextMonthOpenCheck(at(2026, 11, 25), 0); })();
   ok('④-6 出勤を読んだ記録が無ければ 0日と言わない（unknown）', r4 && r4.kind === 'unknown', JSON.stringify(r4));

@@ -67,9 +67,10 @@
 ## ■ 翌月の空き枠の見張り（設計57・2026-11-25）
 ```
 25日以降、翌月に顧客向けの空き枠のある日が0日なら日次点検が next_month_slots_none（出勤の日数も出す・判定できなければ unknown）
-  設計・実装・検査（claude/next-month-open・GAS 版 LB_HEALTH_BUILD 2026-11-25a→c・next-month-open.test.js・I86）  ✅ 11/25（未 push）
+  設計・実装・検査（claude/next-month-open・GAS 版 LB_HEALTH_BUILD 2026-11-25a→d・next-month-open.test.js・I86）  ✅ 11/25（未 push）
   └ 関門② 1回目（Codex）の指摘2件（重：書き直し中の誤判定／中：読めないカレンダー）を直す（版 2026-11-25b）  ✅ 11/25
   └ 関門② 再審（Codex）の指摘（重：読みの途中の消去／中：正常な0枠）→ CEO 判断で公開シートを読まず buildAvailableSlots を翌月だけで呼ぶ（版 2026-11-25c）  ✅ 11/25
+  └ 関門② 再審2（Codex）の指摘（中：4分の打ち切りでは途中で止まれない）→ 経過3分未満で数え始める・秒数を残す（版 2026-11-25d）  ✅ 11/25
   └ 関門② 再々審（CEO）                                                           🔄 ■ いまここ ■
   └ GAS 反映（オーナー・ほかの GAS の変更とまとめて1回）                              ⬜ ★オーナー
   └ 反映の翌朝：点検の「翌月の解放」に 12月の枠の日数（next_month_open）が出るか・段の所要時間（LB_HEALTH_STEP）  ⬜ CEO

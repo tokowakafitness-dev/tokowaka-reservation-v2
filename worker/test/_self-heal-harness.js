@@ -142,7 +142,7 @@ export function makeCtx(w) {
   };
   //   ---- 設計57：カレンダーの身代わり（枠の計算 buildAvailableSlots は本物を動かす）----
   //   既定＝「いまの翌月に B の出勤（10:00〜20:00）が毎日（1〜28日）」。w.data.nmo で上書きする
-  //     { events: { B: [{title, start, end}], B1: [...] }, calNull: ['C'] }   ★公開シートは身代わりを置かない（読んだら落ちる）
+  //     { events: { B: [{title, start, end}], B1: [...] }, calNull: ['C'], calDelayMs: 1本の読みにかかる ms }   ★公開シートは身代わりを置かない（読んだら落ちる）
   const nmoDefaultShifts = () => {
     const j = new Date(w.now + JST), y = j.getUTCFullYear(), m = j.getUTCMonth() + 1;   // 翌月（JST）
     const out = [];
@@ -155,6 +155,7 @@ export function makeCtx(w) {
     if ((o.calNull || []).indexOf(tid) >= 0) return null;
     const evs = o.events ? (o.events[tid] || []) : (tid === 'B' ? nmoDefaultShifts() : []);
     return { getEvents: (from, to) => { w.calReads = (w.calReads || []).concat([[tid, from.getTime(), to.getTime()]]);
+      if (o.calDelayMs) w.now += o.calDelayMs;   // 遅いカレンダー（読むたびに時計を進める）
       return evs.filter((e) => e.start < to.getTime() && (e.end || e.start + 3600000) > from.getTime())
         .map((e) => ({ getTitle: () => e.title, getStartTime: () => new FD(e.start), getEndTime: () => new FD(e.end || e.start + 3600000) })); } };
   };
