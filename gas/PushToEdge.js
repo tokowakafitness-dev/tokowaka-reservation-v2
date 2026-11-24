@@ -5292,22 +5292,13 @@ function _lbWsRun(who, startedAt, budget) {
 
   var prevStat = _lbWsStatRead();
   try {
-  // ---- 0. 前に飛ばした行をやり直す（照合が通れば顧客IDを消して一覧から外す）----
-  var skipped = (prevStat.eraseSkipped || []).slice(0, 20), keep = [];
-  for (var sk = 0; sk < skipped.length; sk++) {
-    var e0 = skipped[sk];
-    if (!timeLeft() || !(e0.row >= 2 && e0.row <= last)) { keep.push(e0); continue; }
-    var v0 = sh.getRange(e0.row, 1, 1, 6).getValues()[0], o0 = _lbWsParse(v0[5]);
-    if (!o0 || o0.n !== e0.nn || !o0.cid) { if (o0 && o0.n === e0.nn && !o0.cid) continue; keep.push(e0); continue; }   // 顧客IDが消えていれば外す
-    if (_lbWsCellKey(v0[0]) === e0.k && _lbWsRewrite(sh, e0.row, v0, o0.n, _lbWsStrip(o0, o0.sent === 1 ? 'sent' : 'stale')) === 'ok') continue;
-    e0.n = (Number(e0.n) || 0) + 1; keep.push(e0);
-  }
-  st.eraseSkipped = keep;
-
   // ---- 1. 消す役 ----
   var ec = _lbWsCursorRead(p, LB_WS.ERASE_PROP, sh, last);
   if (ec.state !== 'ok') { st.resetAt = nowMs; if (ec.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; } }
   var eRow = ec.row, eStop = '';
+  //   ★連続失敗の回数は「同じ行で続けて」だけ数える：照合の成功・別の行への前進・カーソルのリセットで必ず消す（関門② 再審4回目）
+  var efPrev = (ec.state === 'ok') ? (prevStat.eraseFail || null) : null;
+  st.eraseFail = null;
   var eEnd = Math.min(last, eRow + LB_WS.READ_MAX);
   if (eRow < last) {
     var eBase = eRow;   // ★読んだ範囲の起点（eRow はループの中で進むので行番号の計算に使わない）
@@ -5315,8 +5306,8 @@ function _lbWsRun(who, startedAt, budget) {
     for (var i = 0; i < ev.length; i++) {
       if (!timeLeft()) { eStop = 'time'; break; }
       var row = eBase + 1 + i, o = _lbWsParse(ev[i][5]);
-      if (o === false) { bump('unparsed'); eRow = row; continue; }
-      if (o === null || !o.cid) { eRow = row; continue; }          // 6列目が無い・顧客IDが無い（送った・期限の印・too_long）
+      if (o === false) { bump('unparsed'); eRow = row; efPrev = null; continue; }
+      if (o === null || !o.cid) { eRow = row; efPrev = null; continue; }          // 6列目が無い・顧客IDが無い（送った・期限の印・too_long）
       if (o.too_long === 1) bump('too_long');
       var age = nowMs - Number(o.t || 0);
       if (Number(o.t) > 0 && age <= LB_WS.STALE_MS) { eStop = 'fresh'; break; }   // ★ここから先は全部もっと新しい
@@ -5326,21 +5317,49 @@ function _lbWsRun(who, startedAt, budget) {
         //   ★同じ行（行番号＋1列目）で3回続けて照合に失敗したら、その行を飛ばして先へ進む（関門② 再審3回目）。
         //     飛ばした行は行番号・回数・最初の時刻・n（乱数）だけを残し、毎回やり直す。日次点検が ws_erase_stuck で人に見せる
         var fk = _lbWsCellKey(ev[i][0]);
-        var ef = (prevStat.eraseFail && prevStat.eraseFail.row === row && prevStat.eraseFail.k === fk) ? prevStat.eraseFail : { row: row, k: fk, n: 0, first: nowMs };
+        var ef = (efPrev && efPrev.row === row && efPrev.k === fk) ? { row: row, k: fk, n: efPrev.n, first: efPrev.first } : { row: row, k: fk, n: 0, first: nowMs };
         ef.n = (Number(ef.n) || 0) + 1;
         if (ef.n >= 3) {
-          st.eraseSkip = st.eraseSkip || [];
-          st.eraseSkip.push({ row: row, k: fk, nn: o.n, n: ef.n, first: ef.first });
-          st.eraseFail = null; eRow = row; continue;
+          //   ★飛ばした行は覚えない。「掃き出し」を立て、専用の走査が2行目から最後まで残りを探して消す（件数の上限なし・行の移動に強い）
+          var sw0 = prevStat.sweep || {};
+          st.sweep = { needed: true, skips: (Number(sw0.skips) || 0) + 1, first: sw0.needed ? (sw0.first || nowMs) : nowMs,
+                       row: sw0.needed ? (Number(sw0.row) || 2) : 2, found: sw0.needed ? (Number(sw0.found) || 0) : 0, laps: sw0.needed ? (Number(sw0.laps) || 0) : 0 };
+          eRow = row; efPrev = null; continue;
         }
         st.eraseFail = ef; eStop = 'verify'; break;   // ★確かめられないまま進めない（3回までは止まる）
       }
-      bump('stale'); eRow = row;
+      bump('stale'); eRow = row; efPrev = null;
     }
     if (!eStop && eEnd < last) { eStop = 'more'; bump('scan_more'); }
   }
   if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorSave(p, LB_WS.ERASE_PROP, sh, eRow);
   if (eStop === '' || eStop === 'fresh') st.fullScanAt = nowMs;   // 2時間超の顧客IDは消去カーソルの手前に残っていない
+
+  // ---- 1b. 掃き出し（消す役が行を飛ばしたときだけ）----
+  //   2行目から最終行まで1回500行ずつ・残り時間つきで進み、2時間超の顧客IDが残る行を照合つきで消す（失敗した行はその回は飛ばすだけ）。
+  //   最後まで読んで残りが0なら下ろす、残っていれば2行目からもう一周（laps）
+  var sw = st.sweep || (prevStat.sweep && prevStat.sweep.needed ? JSON.parse(JSON.stringify(prevStat.sweep)) : null);
+  if (sw && sw.needed && timeLeft()) {
+    var sFrom = Math.max(2, Math.min(Number(sw.row) || 2, last + 1));
+    var sTo = Math.min(last, sFrom + LB_WS.READ_MAX - 1), sAt = sFrom;
+    if (sFrom <= last) {
+      var swv = sh.getRange(sFrom, 1, sTo - sFrom + 1, 6).getValues();
+      for (var w2 = 0; w2 < swv.length; w2++) {
+        if (!timeLeft()) break;
+        var o3 = _lbWsParse(swv[w2][5]);
+        sAt = sFrom + w2 + 1;
+        if (!o3 || !o3.cid || !(nowMs - Number(o3.t || 0) > LB_WS.STALE_MS)) continue;
+        var rw3 = _lbWsRewrite(sh, sFrom + w2, swv[w2], o3.n, _lbWsStrip(o3, 'stale'));
+        if (rw3 === 'ok') bump('stale'); else { sw.found = (Number(sw.found) || 0) + 1; bump(rw3 === 'skip' ? 'write_skip' : 'write_conflict'); }
+      }
+    }
+    sw.row = sAt;
+    if (sAt > last) {   // 一周した
+      if (!(Number(sw.found) > 0)) sw = { needed: false, skips: sw.skips, first: sw.first, doneAt: nowMs, laps: sw.laps };
+      else { sw.laps = (Number(sw.laps) || 0) + 1; sw.row = 2; sw.found = 0; }
+    }
+    st.sweep = sw;
+  }
 
   // ---- 2. 送る役 ----
   var res = 'erased';
@@ -5414,7 +5433,8 @@ function _lbWsFlushStat(counts, st, statOut) {
     if (st.fullScanAt) o.fullScanAt = st.fullScanAt;
     if (st.sendResetWhy) o.sendResetWhy = { why: st.sendResetWhy, at: nowMs };
     if ('eraseFail' in st) o.eraseFail = st.eraseFail;
-    if (st.eraseSkipped || st.eraseSkip) o.eraseSkipped = (st.eraseSkipped || o.eraseSkipped || []).concat(st.eraseSkip || []).slice(-20);
+    if (st.sweep) o.sweep = st.sweep;
+    delete o.eraseSkipped;
     o.days = o.days || {};
     var d = _lbWsDay(nowMs);
     for (var k in counts) {
@@ -5520,8 +5540,9 @@ function lbWriteShadowDailyCheck(nowMs) {
   if (_lbWsProtectExpected(st) && !prot.ok) r.unprotected = 1;
   if (st.mismatchAt && nowMs - Number(st.mismatchAt) <= 26 * 3600000) r.unprotected = 1;
   if (st.blockedAt && nowMs - Number(st.blockedAt) <= 26 * 3600000) r.protectBlocked = 1;
-  r.eraseStuck = (st.eraseSkipped || []).length;
-  if (r.eraseStuck) r.eraseStuckWhere = st.eraseSkipped.slice(0, 5).map(function (x) { return 'row' + x.row + '×' + x.n; }).join(',');
+  //   ws_erase_stuck：掃き出しが立っている間（数＝周回の数＋1）。行番号は覚えていない
+  r.eraseStuck = (st.sweep && st.sweep.needed) ? (Number(st.sweep.laps) || 0) + 1 : 0;
+  if (r.eraseStuck) r.eraseStuckWhere = '飛ばした回数 ' + (Number(st.sweep.skips) || 0) + '・周回 ' + (Number(st.sweep.laps) || 0);
   var f = null;
   try { f = JSON.parse(p.getProperty(LB_WS.FAIL_PROP) || 'null'); } catch (eF) { f = null; }
   if (f && Number(f.n) > 0) { r.writeFail = Number(f.n); r.failSeen = Number(f.n); r.writeFailWhy = 'recorded:' + String(f.type || 'Error') + '/' + String(f.kind || ''); }

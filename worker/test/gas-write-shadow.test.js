@@ -452,12 +452,13 @@ console.log('=== ④-o 恒久的に照合に失敗する1行（関門② 再審3
   const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
   ok('④-o1 1・2回目はその行で止まる（後続の顧客IDは残る）', a1 === '111' && a2 === '111', a1 + ' ' + a2);
   ok('④-o2 ★3回目でその行を飛ばし、後続の期限切れの顧客IDが消える（飛ばした行だけ残る）', a3 === '100', a3);
-  ok('④-o3 飛ばした行は 行番号・回数・最初の時刻 だけで残る（顧客IDなし）', Array.isArray(st.eraseSkipped) && st.eraseSkipped.length === 1 && st.eraseSkipped[0].row === 2 && st.eraseSkipped[0].n === 3 && st.eraseSkipped[0].first > 0 && JSON.stringify(st.eraseSkipped).indexOf('C54') < 0, JSON.stringify(st.eraseSkipped));
+  ok('④-o3 飛ばした行は覚えず、掃き出しの印（sweep.needed・飛ばした回数・最初の時刻）だけが立つ（顧客IDなし・行番号の一覧なし）', st.sweep && st.sweep.needed === true && st.sweep.skips === 1 && st.sweep.first > 0 && !st.eraseSkipped && JSON.stringify(st.sweep).indexOf('C54') < 0, JSON.stringify(st.sweep));
+  ok('④-o3b 照合が通らない行が残る間は掃き出しが下りず、周回を重ねる', st.sweep.laps >= 1, JSON.stringify(st.sweep));
   //   照合が通るようになれば（保護が戻った等）次の回にやり直して消え、一覧から外れる
   w.out._lbSheet = (n) => (n === 'booking_metrics' ? sh : null);
   w.ctx._lbWsTick('TICK', Date.now());
   const st2 = JSON.parse(w.st.props.LB_WS_STAT || '{}');
-  ok('④-o4 照合が通るようになれば、飛ばした行もやり直して顧客IDが消え一覧から外れる', cidLeft() === '000' && (st2.eraseSkipped || []).length === 0, cidLeft() + JSON.stringify(st2.eraseSkipped));
+  ok('④-o4 照合が通るようになれば、掃き出しが残りを消し、一周して0件なら印が下りる', cidLeft() === '000' && st2.sweep && st2.sweep.needed === false, cidLeft() + JSON.stringify(st2.sweep));
   const wd = makeWorld({ data: { ws: { danger: 0, notRunning: 0, partial: 0, backlog: 0, unprotected: 0, protectBlocked: 0, writeFail: 0, failSeen: 0, eraseStuck: 1, eraseStuckWhere: 'row2×3' } } });
   hrun(wd, 'dailyHealthCheck');
   ok('④-o5 日次点検は ws_erase_stuck（B）を出す', incOf(wd, 'ws_erase_stuck').length === 1 && incOf(wd, 'ws_erase_stuck')[0].cls === 'B');
@@ -471,6 +472,50 @@ console.log('=== ④-o 恒久的に照合に失敗する1行（関門② 再審3
   w.ctx._lbWsTick('TICK', Date.now());
   const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
   ok('④-o6 カーソルの保存が例外でも、統計（stale の数）は書かれる（finally）', JSON.stringify(st.days || {}).indexOf('"stale":1') >= 0, JSON.stringify(st));
+}
+
+console.log('=== ④-p 掃き出し・連続失敗の回数（関門② 再審4回目） ===');
+{
+  //   消去カーソルより手前に、期限切れの顧客IDが残った行が25件（＝飛ばした行が25件あった形）。掃き出しが件数の上限なしで全部消す
+  const w = world({ props: {} });
+  const list = [];
+  for (let i = 0; i < 30; i++) list.push({ n: 'pa' + String(i).padStart(6, '0'), t: Date.now() - 5 * H });
+  rowsWith(w, list);
+  for (let i = 0; i < 5; i++) { const o = ws(w.st.metrics[i]); delete o.cid; o.stale = 1; w.st.metrics[i][5] = 'ws1' + JSON.stringify(o); }
+  const lastRow = w.st.metrics.length + 1;
+  w.st.props.LB_WS_ERASE_CURSOR = JSON.stringify({ row: lastRow, k: 'm' + parse(w.st.metrics[lastRow - 2][0]).getTime() });
+  w.st.props.LB_WS_STAT = JSON.stringify({ sweep: { needed: true, skips: 25, first: Date.now() - H, row: 2, found: 0, laps: 0 } });
+  w.ctx._lbWsTick('TICK', Date.now());
+  const st = JSON.parse(w.st.props.LB_WS_STAT);
+  ok('④-p1 ★飛ばした行が25件 → 掃き出しで全部消え、一周して0件なら sweep が下りる（件数の上限なし）',
+     !w.st.metrics.some((r) => 'cid' in ws(r)) && st.sweep.needed === false, JSON.stringify(st.sweep));
+}
+{
+  //   連続失敗の回数：1回失敗 → 次の回に成功 → 後で同じ行に戻って失敗したら、回数は1から
+  const w = world({ props: {} });
+  rowsWith(w, [{ n: 'pb000001', t: Date.now() - 5 * H }, { n: 'pb000002', t: Date.now() - 60000 }]);   // 2行目は新しい（まとめ読みは2行＝1列目は安定）
+  const sh = w.ctx._lbSheet('booking_metrics'), orig = sh.getRange;
+  let failing = true;
+  w.out._lbSheet = (n) => (n !== 'booking_metrics' ? null : { getLastRow: sh.getLastRow, getProtections: sh.getProtections, getRange: (r, c, nr, nc) => {
+    const g = orig(r, c, nr, nc);
+    if (failing && r === 2 && nr === 1 && nc === 6) return { getValues: () => { const v = g.getValues(); v[0][0] = 'x' + Math.random(); return v; }, setValue: g.setValue, getValue: g.getValue };
+    return g; } });
+  w.ctx._lbWsTick('TICK', Date.now());
+  const n1 = JSON.parse(w.st.props.LB_WS_STAT).eraseFail;
+  failing = false;
+  w.ctx._lbWsTick('TICK', Date.now());
+  const n2 = JSON.parse(w.st.props.LB_WS_STAT).eraseFail;
+  //   同じ行に戻る：顧客IDが残った形に戻し、消去カーソルを手前へ
+  const o = ws(w.st.metrics[0]); delete o.stale; o.cid = 'C5400000000001'; w.st.metrics[0][5] = 'ws1' + JSON.stringify(o);
+  w.st.props.LB_WS_ERASE_CURSOR = JSON.stringify({ row: 1, k: '' });
+  failing = true;
+  w.ctx._lbWsTick('TICK', Date.now());
+  const n3 = JSON.parse(w.st.props.LB_WS_STAT).eraseFail;
+  ok('④-p2 ★1回失敗（n=1）→ 成功で消える（null）→ 同じ行に戻って失敗したら n=1 から', n1 && n1.n === 1 && n2 === null && n3 && n3.n === 1, JSON.stringify([n1, n2, n3]));
+  w.st.props.LB_WS_ERASE_CURSOR = '{broken';
+  w.ctx._lbWsTick('TICK', Date.now());
+  const n4 = JSON.parse(w.st.props.LB_WS_STAT).eraseFail;
+  ok('④-p3 カーソルのリセットでも回数は消える（壊れたカーソル → 2行目から・n=1）', n4 && n4.n === 1, JSON.stringify(n4));
 }
 
 console.log('=== ④-f 保護 ===');
