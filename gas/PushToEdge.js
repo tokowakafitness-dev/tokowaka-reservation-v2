@@ -5089,11 +5089,64 @@ function _lbWsOn() { try { return PropertiesService.getScriptProperties().getPro
 
 // ---- 送る側の数と印（LB_WS_STAT）-----------------------------------------------------------
 function _lbWsDay(ms) { return Utilities.formatDate(new Date(ms), SETTINGS.TIMEZONE, 'yyyy-MM-dd'); }
-function _lbWsStatRead() {
-  try { var o = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_WS.STAT_PROP) || 'null'); return (o && typeof o === 'object') ? o : {}; }
-  catch (e) { return {}; }
+//   ★保存している状態（LB_WS_STAT）を読む関数はこれ1つ（関門② 再審6回目）。全フィールドを型・整数・範囲・組み合わせで確かめ、
+//     不正なものは安全側の初期値に戻す（sweep は needed=true・row=2・from2=false・nextAt=0）。戻した数は o._resets に返す
+//     last：booking_metrics の最終行（分からなければ省略＝行番号は 2〜1e9 で確かめる）
+function _lbWsIsInt(v, lo, hi) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= lo && v <= hi; }
+function _lbWsStatRead(last) {
+  var raw = null;
+  try { raw = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_WS.STAT_PROP) || 'null'); } catch (e) { raw = '__broken__'; }
+  return _lbWsStatClean(raw, last, Date.now());
+}
+function _lbWsStatClean(raw, last, nowMs) {
+  var o = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  var out = { days: {}, unsent: {}, _resets: (raw === '__broken__' || (raw != null && o !== raw)) ? 1 : 0 };
+  var L = _lbWsIsInt(last, 1, 1e9) ? last : 1e9;
+  var tMax = nowMs + 86400000;
+  function keepCounts(src) {
+    var c = {};
+    if (src && typeof src === 'object' && !Array.isArray(src)) for (var i = 0; i < LB_WS.STAT_KEYS.length; i++) { var k = LB_WS.STAT_KEYS[i]; if (_lbWsIsInt(src[k], 0, 1e9)) c[k] = src[k]; }
+    return c;
+  }
+  if (o.days && typeof o.days === 'object' && !Array.isArray(o.days)) {
+    for (var d in o.days) if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.days[d] = keepCounts(o.days[d]);
+  }
+  out.unsent = keepCounts(o.unsent);
+  var times = ['mismatchAt', 'resetAt', 'fullScanAt', 'blockedAt', 'protectedAt', 'unprotectedAt'];
+  for (var t = 0; t < times.length; t++) if (o[times[t]] != null) { if (_lbWsIsInt(o[times[t]], 1, tMax)) out[times[t]] = o[times[t]]; else out._resets++; }
+  if (o.userSame && typeof o.userSame === 'object' && ['same', 'mismatch', 'unknown'].indexOf(o.userSame.v) >= 0 && _lbWsIsInt(o.userSame.at, 1, tMax)) out.userSame = { v: o.userSame.v, at: o.userSame.at };
+  if (o.sendResetWhy && typeof o.sendResetWhy === 'object' && ['broken', 'range', 'moved'].indexOf(o.sendResetWhy.why) >= 0) out.sendResetWhy = { why: o.sendResetWhy.why, at: _lbWsIsInt(o.sendResetWhy.at, 1, tMax) ? o.sendResetWhy.at : nowMs };
+  out.lockStreak = _lbWsIsInt(o.lockStreak, 0, 1e6) ? o.lockStreak : 0;
+  if (o.phaseFail && typeof o.phaseFail === 'object') {
+    out.phaseFail = {};
+    for (var ph in o.phaseFail) if (['erase', 'send', 'sweep'].indexOf(ph) >= 0 && o.phaseFail[ph] && _lbWsIsInt(o.phaseFail[ph].n, 0, 1e9)) {
+      out.phaseFail[ph] = { n: o.phaseFail[ph].n, type: /^[A-Za-z]{1,40}$/.test(String(o.phaseFail[ph].type || '')) ? o.phaseFail[ph].type : 'Error', at: _lbWsIsInt(o.phaseFail[ph].at, 1, tMax) ? o.phaseFail[ph].at : nowMs };
+    }
+  }
+  //   連続失敗の回数：同じ行で1〜2回まで（3回目は飛ばして消える）
+  var ef = o.eraseFail;
+  if (ef != null) {
+    if (ef && typeof ef === 'object' && _lbWsIsInt(ef.row, 2, L) && typeof ef.k === 'string' && ef.k.length <= 200 && _lbWsIsInt(ef.n, 1, 2) && _lbWsIsInt(ef.first, 1, tMax)) out.eraseFail = { row: ef.row, k: ef.k, n: ef.n, first: ef.first };
+    else { out.eraseFail = null; out._resets++; }
+  } else out.eraseFail = null;
+  //   掃き出し：needed=false ならそのまま（下りている）。needed=true は全フィールドを確かめ、だめなら安全側（一周を最初から・from2 なし）
+  var sw = o.sweep;
+  if (sw != null) {
+    var skips = (sw && _lbWsIsInt(sw.skips, 0, 1e9)) ? sw.skips : 1;
+    if (sw && typeof sw === 'object' && sw.needed === false) out.sweep = { needed: false, skips: skips, laps: _lbWsIsInt(sw.laps, 0, 1e9) ? sw.laps : 0, doneAt: _lbWsIsInt(sw.doneAt, 1, tMax) ? sw.doneAt : 0 };
+    else if (sw && typeof sw === 'object' && sw.needed === true && _lbWsIsInt(sw.row, 2, L) && _lbWsIsInt(sw.found, 0, 1e9) && _lbWsIsInt(sw.laps, 0, 1e9)
+             && _lbWsIsInt(sw.first, 1, tMax) && typeof sw.from2 === 'boolean' && (sw.nextAt == null || _lbWsIsInt(sw.nextAt, 0, nowMs + 3600000))
+             && !(sw.from2 === false && sw.found > 0 && sw.row === 2)) {
+      out.sweep = { needed: true, skips: skips, first: sw.first, row: sw.row, found: sw.found, laps: sw.laps, from2: sw.from2, nextAt: sw.nextAt || 0 };
+    } else {
+      out.sweep = { needed: true, skips: skips, first: nowMs, row: 2, found: 0, laps: (sw && _lbWsIsInt(sw.laps, 0, 1e9)) ? sw.laps : 0, from2: false, nextAt: 0 };
+      out._resets++;
+    }
+  }
+  return out;
 }
 function _lbWsStatWrite(o) {
+  delete o._resets;
   //   日の数は直近3日だけ残す（値の天井 9KB に当たらない）
   var days = Object.keys(o.days || {}).sort();
   while (days.length > 3) delete o.days[days.shift()];
@@ -5254,147 +5307,149 @@ function _lbWsTick(who, startedAt) {
   } catch (e) { return 'error'; }
 }
 
-//   本体（UserLock の中）。返り値は固定の語
-//   ★消す役と送る役のカーソルを分ける（関門② 再審・CEO 判断）：
-//     消去カーソル LB_WS_ERASE_CURSOR … 保護の下では行は足されるだけ＝行の順＝時刻の順。前へ読み、2時間超の行は顧客IDを消し（照合つき）、
-//       最初の「2時間未満で顧客IDの残る行」で止まってそこを保存する（その先は全部もっと新しい＝時間がたてば必ず進む）。
-//       無い・壊れた・範囲の外・行が動いた → 2行目から。1行ごとに残り時間を見る。照合に失敗した行ではその行で止まる。
-//     送信カーソル LB_WS_CURSOR … 送るのはここから前だけ。無い・壊れた・範囲の外・行が動いた → 消去カーソルの位置から再出発
-//       （それより前は顧客IDが消えた＝送らない行なので取りこぼしにならない）。壊れた・範囲の外・行が動いた回は送らない（印を残す）。
-//     行が動いたかは1列目を epoch ミリ秒にそろえて比べる（Date と文字列の表現差で誤検知しない）
 function _lbWsCellKey(v) { var ms = _lbWsCellMs(v); return (ms == null) ? 's:' + String(v == null ? '' : v) : 'm' + ms; }
 function _lbWsCursorRead(p, prop, sh, last) {
   var raw = p.getProperty(prop);
   if (raw == null || raw === '') return { state: 'none', row: 1 };
   var cur = null;
   try { cur = JSON.parse(raw); } catch (e) { return { state: 'broken', row: 1 }; }
-  if (!cur || typeof cur !== 'object' || typeof cur.row !== 'number' || Math.floor(cur.row) !== cur.row) return { state: 'broken', row: 1 };
+  if (!cur || typeof cur !== 'object' || !_lbWsIsInt(cur.row, -1e12, 1e12)) return { state: 'broken', row: 1 };
   if (cur.row < 1 || cur.row > last) return { state: 'range', row: 1 };
   if (cur.row === 1) return { state: 'ok', row: 1 };
-  if (_lbWsCellKey(sh.getRange(cur.row, 1).getValue()) !== String(cur.k)) return { state: 'moved', row: 1 };
+  if (typeof cur.k !== 'string') return { state: 'broken', row: 1 };
+  if (_lbWsCellKey(sh.getRange(cur.row, 1).getValue()) !== cur.k) return { state: 'moved', row: 1 };
   return { state: 'ok', row: cur.row };
 }
 function _lbWsCursorSave(p, prop, sh, row) {
   p.setProperty(prop, JSON.stringify({ row: row, k: row >= 2 ? _lbWsCellKey(sh.getRange(row, 1).getValue()) : '' }));
 }
+//   本体（UserLock の中）。返り値は固定の語
+//   ★3つの段に分け、それぞれ独立の try/catch（関門② 再審6回目）：①消去 ②送信 ③掃き出し。どの段が例外でも他の段は必ず走る。
+//     段ごとの例外は LB_WS_STAT.phaseFail に型名と回数だけ残す。状態は _lbWsStatRead（全フィールドを確かめる1つの関数）で読む
+//   ①消去カーソル LB_WS_ERASE_CURSOR：前へ読み、2時間超の行は顧客IDを消し（照合つき）、最初の「2時間未満で顧客IDの残る行」で止まって保存。
+//     同じ行で照合が3回続けて失敗したら飛ばし、掃き出しを立てる（行は覚えない）
+//   ②送信カーソル LB_WS_CURSOR：無い・壊れた・範囲の外・行が動いた → 消去カーソルの位置から再出発（none 以外の回は送らない）
+//   ③掃き出し：送る役の後・1回20秒かつ500行・2行目から一周（from2）して残り0なら下ろす・残った周の後は1時間あける
 function _lbWsRun(who, startedAt, budget) {
   var sh = _lbSheet(LB_METRICS_SHEET);
   if (!sh) return 'no_sheet';
   var last = sh.getLastRow();
   if (last < 2) return 'empty';
   var p = PropertiesService.getScriptProperties();
-  var st = {};
   var nowMs = Date.now();
+  var st = _lbWsStatRead(last);
   var counts = {};
   function bump(k, n) { counts[k] = (counts[k] || 0) + (n || 1); }
+  if (st._resets) bump('cursor_reset', st._resets);
   function timeLeft() { return Date.now() - startedAt < budget; }
-  var prot = _lbWsProtState(sh);
-  var sendOk = _lbWsOn() && prot.ok && _edgeEnabled();
-
-  var prevStat = _lbWsStatRead();
-  try {
-  // ---- 1. 消す役 ----
-  var ec = _lbWsCursorRead(p, LB_WS.ERASE_PROP, sh, last);
-  if (ec.state !== 'ok') { st.resetAt = nowMs; if (ec.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; } }
-  var eRow = ec.row, eStop = '';
-  //   ★連続失敗の回数は「同じ行で続けて」だけ数える：照合の成功・別の行への前進・カーソルのリセットで必ず消す（関門② 再審4回目）
-  var efPrev = (ec.state === 'ok') ? (prevStat.eraseFail || null) : null;
-  st.eraseFail = null;
-  var eEnd = Math.min(last, eRow + LB_WS.READ_MAX);
-  if (eRow < last) {
-    var eBase = eRow;   // ★読んだ範囲の起点（eRow はループの中で進むので行番号の計算に使わない）
-    var ev = sh.getRange(eBase + 1, 1, eEnd - eBase, 6).getValues();
-    for (var i = 0; i < ev.length; i++) {
-      if (!timeLeft()) { eStop = 'time'; break; }
-      var row = eBase + 1 + i, o = _lbWsParse(ev[i][5]);
-      if (o === false) { bump('unparsed'); eRow = row; efPrev = null; continue; }
-      if (o === null || !o.cid) { eRow = row; efPrev = null; continue; }          // 6列目が無い・顧客IDが無い（送った・期限の印・too_long）
-      if (o.too_long === 1) bump('too_long');
-      var age = nowMs - Number(o.t || 0);
-      if (Number(o.t) > 0 && age <= LB_WS.STALE_MS) { eStop = 'fresh'; break; }   // ★ここから先は全部もっと新しい
-      var rw = _lbWsRewrite(sh, row, ev[i], o.n, _lbWsStrip(o, 'stale'));
-      if (rw !== 'ok') {
-        bump(rw === 'skip' ? 'write_skip' : 'write_conflict');
-        //   ★同じ行（行番号＋1列目）で3回続けて照合に失敗したら、その行を飛ばして先へ進む（関門② 再審3回目）。
-        //     飛ばした行は行番号・回数・最初の時刻・n（乱数）だけを残し、毎回やり直す。日次点検が ws_erase_stuck で人に見せる
-        var fk = _lbWsCellKey(ev[i][0]);
-        var ef = (efPrev && efPrev.row === row && efPrev.k === fk) ? { row: row, k: fk, n: efPrev.n, first: efPrev.first } : { row: row, k: fk, n: 0, first: nowMs };
-        ef.n = (Number(ef.n) || 0) + 1;
-        if (ef.n >= 3) {
-          //   ★飛ばした行は覚えない。「掃き出し」を立て、専用の走査が2行目から最後まで残りを探して消す（件数の上限なし・行の移動に強い）
-          var sw0 = prevStat.sweep || {};
-          st.sweep = sw0.needed ? Object.assign({}, sw0, { skips: (Number(sw0.skips) || 0) + 1 })
-                                : { needed: true, skips: (Number(sw0.skips) || 0) + 1, first: nowMs, row: 2, found: 0, laps: 0, from2: true, nextAt: 0 };
-          eRow = row; efPrev = null; continue;
-        }
-        st.eraseFail = ef; eStop = 'verify'; break;   // ★確かめられないまま進めない（3回までは止まる）
-      }
-      bump('stale'); eRow = row; efPrev = null;
-    }
-    if (!eStop && eEnd < last) { eStop = 'more'; bump('scan_more'); }
+  function phaseFail(ph, e) {
+    st.phaseFail = st.phaseFail || {};
+    var f = st.phaseFail[ph] || { n: 0 };
+    st.phaseFail[ph] = { n: (Number(f.n) || 0) + 1, type: _lbErrType(e), at: nowMs };
   }
-  if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorSave(p, LB_WS.ERASE_PROP, sh, eRow);
-  if (eStop === '' || eStop === 'fresh') st.fullScanAt = nowMs;   // 2時間超の顧客IDは消去カーソルの手前に残っていない
-
-  // ---- 2. 送る役 ----
+  var statOut = {};
   var res = 'erased';
-  var statOut = _lbWsStatOut(_lbWsStatRead(), counts);
-  if (sendOk) {
-    var sc = _lbWsCursorRead(p, LB_WS.CURSOR_PROP, sh, last);
-    var sRow = sc.row;
-    if (sc.state !== 'ok') {
-      sRow = eRow;   // ★消去カーソルの位置から再出発
-      if (sc.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; st.sendResetWhy = sc.state; _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, sRow); sendOk = false; }
-    }
-    if (sendOk) {
-      if (sRow < eRow) sRow = eRow;   // 消去カーソルより手前は顧客IDが無い（送らない行）
-      var plan = [], toSend = [];
-      var sEnd = Math.min(last, sRow + LB_WS.READ_MAX);
-      var sv = sRow < last ? sh.getRange(sRow + 1, 1, sEnd - sRow, 6).getValues() : [];
-      for (var j = 0; j < sv.length; j++) {
-        var r2 = sRow + 1 + j, o2 = _lbWsParse(sv[j][5]);
-        if (o2 === null || o2 === false || o2.sent === 1 || o2.stale === 1 || !o2.cid) { plan.push({ row: r2, act: 'done' }); continue; }
-        if (toSend.length >= LB_WS.SEND_MAX || !timeLeft()) break;
-        var item = {};
-        for (var k = 0; k < LB_WS.KEYS.length; k++) { var kk = LB_WS.KEYS[k]; if (o2[kk] != null && o2[kk] !== '') item[kk] = o2[kk]; }
-        toSend.push(item);
-        plan.push({ row: r2, act: 'send', v: sv[j], o: o2 });
-      }
-      var acked = {};
-      statOut = _lbWsStatOut(_lbWsStatRead(), counts);
-      if (toSend.length || Object.keys(statOut).length) {
-        var pr = _lbWsPost({ items: toSend, drain: who, build: LB_WS_BUILD, stat: statOut });
-        if (pr && pr.ok) { for (var a = 0; a < pr.acked.length; a++) acked[String(pr.acked[a])] = true; statOut = null; }
-      }
-      var adv = sRow, stopped = false;
-      for (var q = 0; q < plan.length; q++) {
-        var pl = plan[q], done = (pl.act === 'done');
-        if (!done && acked[pl.o.n]) {
-          if (!timeLeft()) { stopped = true; break; }
-          var rw2 = _lbWsRewrite(sh, pl.row, pl.v, pl.o.n, _lbWsStrip(pl.o, 'sent'));
-          if (rw2 === 'ok') done = true; else bump(rw2 === 'skip' ? 'write_skip' : 'write_conflict');   // ★sent を付けない＝次の回にもう一度送る
+  var ec = { state: 'none', row: 1 }, eRow = 1;
+
+  // ---- ① 消す役 ----
+  try {
+    ec = _lbWsCursorRead(p, LB_WS.ERASE_PROP, sh, last);
+    if (ec.state !== 'ok') { st.resetAt = nowMs; if (ec.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; } }
+    eRow = ec.row;
+    var eStop = '';
+    var efPrev = (ec.state === 'ok') ? st.eraseFail : null;
+    st.eraseFail = null;
+    var eEnd = Math.min(last, eRow + LB_WS.READ_MAX);
+    if (eRow < last) {
+      var eBase = eRow;
+      var ev = sh.getRange(eBase + 1, 1, eEnd - eBase, 6).getValues();
+      for (var i = 0; i < ev.length; i++) {
+        if (!timeLeft()) { eStop = 'time'; break; }
+        var row = eBase + 1 + i, o = _lbWsParse(ev[i][5]);
+        if (o === false) { bump('unparsed'); eRow = row; efPrev = null; continue; }
+        if (o === null || !o.cid) { eRow = row; efPrev = null; continue; }
+        if (o.too_long === 1) bump('too_long');
+        var age = nowMs - Number(o.t || 0);
+        if (Number(o.t) > 0 && age <= LB_WS.STALE_MS) { eStop = 'fresh'; break; }
+        var rw = _lbWsRewrite(sh, row, ev[i], o.n, _lbWsStrip(o, 'stale'));
+        if (rw !== 'ok') {
+          bump(rw === 'skip' ? 'write_skip' : 'write_conflict');
+          var fk = _lbWsCellKey(ev[i][0]);
+          var ef = (efPrev && efPrev.row === row && efPrev.k === fk) ? { row: row, k: fk, n: efPrev.n, first: efPrev.first } : { row: row, k: fk, n: 0, first: nowMs };
+          ef.n = (Number(ef.n) || 0) + 1;
+          if (ef.n >= 3) {
+            var sw0 = st.sweep || {};
+            st.sweep = sw0.needed ? Object.assign({}, sw0, { skips: (Number(sw0.skips) || 0) + 1 })
+                                  : { needed: true, skips: (Number(sw0.skips) || 0) + 1, first: nowMs, row: 2, found: 0, laps: 0, from2: true, nextAt: 0 };
+            eRow = row; efPrev = null; continue;
+          }
+          st.eraseFail = ef; eStop = 'verify'; break;
         }
-        if (!done) stopped = true;
-        if (stopped) break;
-        adv = pl.row;
+        bump('stale'); eRow = row; efPrev = null;
       }
-      if (adv !== sc.row || sc.state !== 'ok') _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, adv);
-      res = stopped ? 'partial' : 'done';
+      if (!eStop && eEnd < last) { eStop = 'more'; bump('scan_more'); }
     }
-  }
-  // ---- 3. 掃き出し（消す役が行を飛ばしたときだけ・送る役の後・専用の上限 20秒かつ500行）----
-  //   2行目から最終行まで、2時間超の顧客IDが残る行を照合つきで消す（失敗した行はその回は飛ばすだけ）。
-  //   ★一周の判定は「2行目から読み始めて最終行まで読んだ」とき（from2）だけ。そのときだけ残り0で下ろす。
-  //   ★カーソル sw.row は整数かつ 2〜last+1 でなければ 2 へ戻し、その周は下ろさない（from2=false）。
-  //   ★残りが0にならなかった周の後は、次の周の開始を1時間あける（恒久失敗の1行で毎回全シートを読まない）
-  var sw = st.sweep || (prevStat.sweep && prevStat.sweep.needed ? JSON.parse(JSON.stringify(prevStat.sweep)) : null);
-  if (sw && sw.needed && timeLeft() && !(Number(sw.nextAt) > nowMs)) {
-    var swT0 = Date.now();
-    var r0 = sw.row;
-    if (!(typeof r0 === 'number' && Math.floor(r0) === r0 && r0 >= 2 && r0 <= last + 1)) { sw.row = 2; sw.found = 0; sw.from2 = false; bump('cursor_reset'); }
-    var sFrom = sw.row;
-    var sTo = Math.min(last, sFrom + LB_WS.READ_MAX - 1), sAt = sFrom;
-    if (sFrom <= last) {
+    if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorSave(p, LB_WS.ERASE_PROP, sh, eRow);
+    if (eStop === '' || eStop === 'fresh') st.fullScanAt = nowMs;
+  } catch (eE) { phaseFail('erase', eE); }
+
+  // ---- ② 送る役 ----
+  try {
+    var prot = _lbWsProtState(sh);
+    var sendOk = _lbWsOn() && prot.ok && _edgeEnabled();
+    if (sendOk) {
+      var sc = _lbWsCursorRead(p, LB_WS.CURSOR_PROP, sh, last);
+      var sRow = sc.row;
+      if (sc.state !== 'ok') {
+        sRow = eRow;
+        if (sc.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; st.sendResetWhy = { why: sc.state, at: nowMs }; _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, sRow); sendOk = false; }
+      }
+      if (sendOk) {
+        if (sRow < eRow) sRow = eRow;
+        var plan = [], toSend = [];
+        var sEnd = Math.min(last, sRow + LB_WS.READ_MAX);
+        var sv = sRow < last ? sh.getRange(sRow + 1, 1, sEnd - sRow, 6).getValues() : [];
+        for (var j = 0; j < sv.length; j++) {
+          var r2 = sRow + 1 + j, o2 = _lbWsParse(sv[j][5]);
+          if (o2 === null || o2 === false || o2.sent === 1 || o2.stale === 1 || !o2.cid) { plan.push({ row: r2, act: 'done' }); continue; }
+          if (toSend.length >= LB_WS.SEND_MAX || !timeLeft()) break;
+          var item = {};
+          for (var k = 0; k < LB_WS.KEYS.length; k++) { var kk = LB_WS.KEYS[k]; if (o2[kk] != null && o2[kk] !== '') item[kk] = o2[kk]; }
+          toSend.push(item);
+          plan.push({ row: r2, act: 'send', v: sv[j], o: o2 });
+        }
+        var acked = {};
+        var so = _lbWsStatOut(st, counts);
+        if (toSend.length || Object.keys(so).length) {
+          var pr = _lbWsPost({ items: toSend, drain: who, build: LB_WS_BUILD, stat: so });
+          if (pr && pr.ok) { for (var a = 0; a < pr.acked.length; a++) acked[String(pr.acked[a])] = true; statOut = null; }
+        }
+        var adv = sRow, stopped = false;
+        for (var q = 0; q < plan.length; q++) {
+          var pl = plan[q], done = (pl.act === 'done');
+          if (!done && acked[pl.o.n]) {
+            if (!timeLeft()) { stopped = true; break; }
+            var rw2 = _lbWsRewrite(sh, pl.row, pl.v, pl.o.n, _lbWsStrip(pl.o, 'sent'));
+            if (rw2 === 'ok') done = true; else bump(rw2 === 'skip' ? 'write_skip' : 'write_conflict');
+          }
+          if (!done) stopped = true;
+          if (stopped) break;
+          adv = pl.row;
+        }
+        if (adv !== sc.row || sc.state !== 'ok') _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, adv);
+        res = stopped ? 'partial' : 'done';
+      }
+    }
+  } catch (eS) { phaseFail('send', eS); }
+
+  // ---- ③ 掃き出し ----
+  try {
+    var sw = st.sweep;
+    if (sw && sw.needed && timeLeft() && !(Number(sw.nextAt) > nowMs)) {
+      var swT0 = Date.now();
+      if (!_lbWsIsInt(sw.row, 2, last)) { sw.row = 2; sw.found = 0; sw.from2 = false; bump('cursor_reset'); }
+      var sFrom = sw.row;
+      var sTo = Math.min(last, sFrom + LB_WS.READ_MAX - 1), sAt = sFrom;
       var swv = sh.getRange(sFrom, 1, sTo - sFrom + 1, 6).getValues();
       for (var w2 = 0; w2 < swv.length; w2++) {
         if (!timeLeft() || Date.now() - swT0 >= LB_WS.SWEEP_BUDGET_MS) break;
@@ -5404,22 +5459,20 @@ function _lbWsRun(who, startedAt, budget) {
         var rw3 = _lbWsRewrite(sh, sFrom + w2, swv[w2], o3.n, _lbWsStrip(o3, 'stale'));
         if (rw3 === 'ok') bump('stale'); else { sw.found = (Number(sw.found) || 0) + 1; bump(rw3 === 'skip' ? 'write_skip' : 'write_conflict'); }
       }
-    }
-    sw.row = sAt;
-    if (sAt > last) {   // 最終行まで読んだ
-      if (sw.from2 === true && !(Number(sw.found) > 0)) sw = { needed: false, skips: sw.skips, first: sw.first, doneAt: nowMs, laps: sw.laps };
-      else {
-        if (sw.from2 === true) { sw.laps = (Number(sw.laps) || 0) + 1; sw.nextAt = nowMs + 3600000; }   // 残った周の後は1時間あける
-        sw.row = 2; sw.found = 0; sw.from2 = true;
+      sw.row = sAt;
+      if (sAt > last) {
+        if (sw.from2 === true && !(Number(sw.found) > 0)) sw = { needed: false, skips: sw.skips, laps: sw.laps, doneAt: nowMs };
+        else {
+          if (sw.from2 === true) { sw.laps = (Number(sw.laps) || 0) + 1; sw.nextAt = nowMs + 3600000; }
+          sw.row = 2; sw.found = 0; sw.from2 = true;
+        }
       }
+      st.sweep = sw;
     }
-    st.sweep = sw;
-  }
+  } catch (eW) { phaseFail('sweep', eW); }
+
+  _lbWsFlushStat(counts, st, statOut);
   return res;
-  } finally {
-    //   ★カーソルの保存などで例外が出ても、数と印は必ず書く（関門② 再審3回目）
-    _lbWsFlushStat(counts, st, (typeof statOut === 'undefined') ? {} : statOut);
-  }
 }
 //   まだ Worker に報告していない数（前回までの残り＋今回）
 function _lbWsStatOut(st, counts) {
@@ -5435,14 +5488,8 @@ function _lbWsStatOut(st, counts) {
 function _lbWsFlushStat(counts, st, statOut) {
   try {
     var nowMs = Date.now();
-    var o = _lbWsStatRead();
-    if (st.mismatchAt) o.mismatchAt = st.mismatchAt;
-    if (st.resetAt) o.resetAt = st.resetAt;
-    if (st.fullScanAt) o.fullScanAt = st.fullScanAt;
-    if (st.sendResetWhy) o.sendResetWhy = { why: st.sendResetWhy, at: nowMs };
-    if ('eraseFail' in st) o.eraseFail = st.eraseFail;
-    if (st.sweep) o.sweep = st.sweep;
-    delete o.eraseSkipped;
+    var o = st;   // ★_lbWsStatRead が確かめた状態に、今回の数と印を足して書く（生の値を読み直さない）
+    delete o._resets;
     o.days = o.days || {};
     var d = _lbWsDay(nowMs);
     for (var k in counts) {

@@ -154,7 +154,7 @@ function world(opt = {}) {
   src += ['handleLineGet', '_lbWpStart', '_lbWpMark', '_lbWpCode', '_lbWpRow', '_lbWpStagesOf', '_lbWpValidRow', '_lbWpFinish',
           'makeReservationLine', '_lbReserveCore', '_lbReserveCoreImpl', '_lbLogOutcome', 'changeReservationLine'].map((n) => pluckFn(LB, n)).join('\n');
   src += pluckVar(LB, 'MAP_COL');
-  src += ['_lbWsOpOf', '_lbWsId', '_lbWsFacts', '_lbMetricsWriteFailNote', 'lbWriteShadowSetOn', 'lbWriteShadowSetOff', '_lbWsOn', '_lbWsDay',
+  src += ['_lbWsOpOf', '_lbWsId', '_lbWsFacts', '_lbMetricsWriteFailNote', 'lbWriteShadowSetOn', 'lbWriteShadowSetOff', '_lbWsOn', '_lbWsDay', '_lbWsIsInt', '_lbWsStatClean',
           '_lbWsStatRead', '_lbWsStatWrite', '_lbWsStatBump', '_lbWsStatEdit', '_lbWsParse', '_lbWsStrip', '_lbWsSame5', '_lbWsRewrite',
           '_lbWsProtectionOf', '_lbWsProtState', '_lbWsPrecheckCore', 'setupMetricsProtection', '_lbWsUnprotect', '_lbWsProtectExpected',
           '_lbWsNoteUser', '_lbWsTick', '_lbWsCellKey', '_lbWsCursorRead', '_lbWsCursorSave', '_lbWsRun', '_lbWsStatOut', '_lbWsFlushStat', '_lbWsPost', '_lbWsCellMs', '_lbWsDayStartMs',
@@ -569,6 +569,69 @@ for (const [label, row] of [['範囲の外 99999', 99999], ['小数 2.5', 2.5], 
   w.ctx._lbWsTick('TICK', tt);
   const st = JSON.parse(w.st.props.LB_WS_STAT);
   ok('④-q5 ★掃き出しは1回20秒の専用の上限で止まる（送る役の予算を使い切らない）', st.sweep.row > 2 && st.sweep.row < 40, JSON.stringify(st.sweep));
+}
+
+console.log('=== ④-r 乱数：保存状態に壊れた値を数百通り入れて回す（種は固定・関門② 再審6回目） ===');
+{
+  let seed = 20261124;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const junk = () => pick([null, undefined, 'x', '', 2.5, -3, 0, 1e300, -1e300, NaN, Infinity, [], {}, true, false, 2, 3, 99999, Date.now() + 10 * DAY, '7']);
+  const badCursor = () => pick([undefined, '', '{oops', 'null', '[]', '"s"', JSON.stringify({ row: junk(), k: junk() }), JSON.stringify({ row: 99999, k: 'x' }), JSON.stringify({ row: 2.5 }), JSON.stringify({ row: 3, k: 'not-the-key' }), JSON.stringify({ row: 1, k: '' })]);
+  const badStat = () => {
+    const o = {};
+    if (rnd() < 0.7) o.sweep = pick([junk(), { needed: junk(), row: junk(), found: junk(), laps: junk(), first: junk(), from2: junk(), nextAt: junk(), skips: junk() },
+      { needed: true, row: 21, from2: true, found: 0, laps: 0, first: Date.now(), nextAt: 0 }, { needed: true, row: 2, from2: true, found: 0, laps: 0, first: Date.now(), nextAt: 1e300 },
+      { needed: false }, { needed: true, row: 5, from2: false, found: 3, laps: 1, first: Date.now(), nextAt: Date.now() + 30 * 60000 }]);
+    if (rnd() < 0.5) o.eraseFail = pick([junk(), { row: junk(), k: junk(), n: junk(), first: junk() }, { row: 2, k: 'x', n: 2, first: Date.now() }]);
+    if (rnd() < 0.5) o.days = pick([junk(), { '2026-11-24': { stale: junk(), lock_miss: junk() } }]);
+    if (rnd() < 0.5) o.unsent = pick([junk(), { stale: junk() }]);
+    if (rnd() < 0.3) o.lockStreak = junk();
+    if (rnd() < 0.3) o.mismatchAt = junk();
+    return pick([JSON.stringify(o), '{broken', 'null', '5', '"str"']);
+  };
+  let bad = [];
+  for (let c = 0; c < 300 && bad.length < 5; c++) {
+    const props = {};
+    const ec = badCursor(), sc = badCursor(), stt = badStat();
+    if (ec !== undefined) props.LB_WS_ERASE_CURSOR = ec;
+    if (sc !== undefined) props.LB_WS_CURSOR = sc;
+    props.LB_WS_STAT = stt;
+    if (rnd() < 0.5) props.LB_WS_ON = 'on';
+    const w = world({ props });
+    if (rnd() < 0.5) protectOk(w);
+    const list = [];
+    const nRows = 5 + Math.floor(rnd() * 20);
+    for (let i = 0; i < nRows; i++) list.push({ n: 'rz' + String(c).padStart(3, '0') + String(i).padStart(3, '0'), t: Date.now() - (i < nRows - 2 ? 5 * H : 60000) });
+    rowsWith(w, list);
+    let runs = 0, err = null;
+    while (runs < 6) {
+      const pre = (() => { try { return w.ctx._lbWsStatClean(JSON.parse(w.st.props.LB_WS_STAT || 'null'), w.st.metrics.length + 1, Date.now()); } catch (e) { return w.ctx._lbWsStatClean('__broken__', 0, Date.now()); } })();
+      let r;
+      try { r = w.ctx._lbWsTick('TICK', Date.now()); } catch (e) { err = 'threw ' + e.message; break; }
+      if (r === 'error') { err = 'error'; break; }
+      const post = JSON.parse(w.st.props.LB_WS_STAT || '{}');
+      if (pre.sweep && pre.sweep.needed === true && post.sweep && post.sweep.needed === false && pre.sweep.from2 !== true) { err = 'lowered without from2 ' + JSON.stringify(pre.sweep); break; }
+      if (post.sweep && Number(post.sweep.nextAt) > Date.now() + 3600000 + 5000) { err = 'nextAt beyond 1h ' + JSON.stringify(post.sweep); break; }
+      const pf = post.phaseFail;
+      if (pf && Object.keys(pf).length) { err = 'phase fail ' + JSON.stringify(pf); break; }
+      runs++;
+    }
+    const stale = w.st.metrics.filter((r) => { const o = ws(r); return o && 'cid' in o && Date.now() - o.t > 2 * H; }).length;
+    if (!err && stale) err = 'stale cid left ' + stale;
+    if (err) bad.push({ c, err, ec, sc, stt: String(stt).slice(0, 200) });
+  }
+  ok('④-r ★壊れた保存状態300通り：例外を外へ出さない・from2 の一周なしに下りない・nextAt が1時間を超えて残らない・期限切れの顧客IDが6回以内に必ず消える', bad.length === 0, JSON.stringify(bad).slice(0, 1500));
+}
+{
+  //   段ごとの try：送る段が例外でも、消す段と掃き出しは走る（型名だけ数える）
+  const w = world({ props: { LB_WS_ON: 'on', LB_WS_STAT: JSON.stringify({ sweep: { needed: true, skips: 1, first: Date.now(), row: 2, found: 0, laps: 0, from2: true, nextAt: 0 } }) } }); protectOk(w);
+  rowsWith(w, [{ n: 'rs000001', t: Date.now() - 5 * H }, { n: 'rs000002' }]);
+  w.out._lbWsPost = () => { const e = new Error('boom'); e.name = 'TypeError'; throw e; };
+  w.ctx._lbWsPost = w.out._lbWsPost;
+  const r = w.ctx._lbWsTick('TICK', Date.now());
+  const st = JSON.parse(w.st.props.LB_WS_STAT);
+  ok('④-r2 送る段が例外でも外へ出ず、消す段（期限切れの顧客IDを消す）と掃き出しは走る・phaseFail.send に型名だけ', r !== 'error' && !('cid' in ws(w.st.metrics[0])) && st.phaseFail && st.phaseFail.send && st.phaseFail.send.type === 'TypeError' && st.sweep.needed === false, JSON.stringify([r, st.phaseFail, st.sweep]));
 }
 
 console.log('=== ④-f 保護 ===');
