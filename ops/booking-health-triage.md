@@ -82,8 +82,8 @@ cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・
 | metrics_unprotected | B | 設計54：booking_metrics の保護が無い・崩れた・行が動いた（送る側は止まる） |
 | metrics_protect_blocked | B | 設計54：書き手が同じアカウントか確かめられず保護を置かなかった |
 | metrics_write_fail | B | 設計54：booking_metrics に書けなかった（失敗の記録 LB_METRICS_WRITE_FAIL か、台帳の前日の確定と outcome の比較）。**日次点検の段の中で印つきの保護を外して元に戻す**（「元に戻す」なので A の条件に当たるが、lbSelfHeal の修理ではなく点検の段で行うため区分は B。LB_HEAL_KEYS・I-H12 は変えない） |
-| next_month_slots_none | B | 設計57：25日以降、翌月に顧客向け（非表示でない）トレーナーの空き枠のある日が0日。出勤のある日数（トレーナーの記号ごと）を並べる。facts は no_shift（出勤も0日＝入れ忘れの見込み）／not_covered（出勤はあるのに枠が0＝予定名か枠の作り直し）。手当ては出勤の入力の確認（トレーナーへの連絡）＝顧客の枠に直結するので B |
-| next_month_slots_unknown | B | 設計57：公開シートの枠の写しが翌月を覆う時刻（その月の25日0時）より前・3時間より古い・読めない・日次点検の時間が足りない・書き直しの途中（meta の前後が違う／slots が0行）・顧客向けトレーナーのカレンダーが読めない＝判定できない（0日とは言わない）。facts は stale／unreadable／no_time／rewriting／cal_unreadable |
+| next_month_slots_none | B | 設計57：25日以降、日次点検の中で枠の計算（buildAvailableSlots・書き込みなし）を翌月だけで呼び、顧客向け（非表示でない）トレーナーの空き枠のある日が0日。出勤のある日数（トレーナーの記号ごと）を並べる。facts は no_shift（出勤も0日＝入れ忘れの見込み）／not_covered（出勤はあるのに枠が0＝予定名か予約・ブロックで埋まっている）。手当ては出勤の入力の確認（トレーナーへの連絡）＝顧客の枠に直結するので B |
+| next_month_slots_unknown | B | 設計57：顧客向けトレーナーのカレンダーが1本でも読めない（読んだ記録が無いも同じ）・日次点検の時間が足りない＝判定できない（0日とは言わない）。facts は cal_unreadable／no_time |
 | next_month_open | 記録 | 設計57：25日以降、翌月の顧客向けの枠のある日数（件数＝日数）と出勤のある日数。案件にしない |
 
 ## 数え（90）
