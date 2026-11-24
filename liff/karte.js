@@ -3270,7 +3270,7 @@
       if (!d && p.propose) { var pd = proposeDest(p, j); if (pd) c.appendChild(el('div', { class: 'k-sub k-imppro', text: '提案：' + pd })); }
       if (d) {
         var t = d.act === 'discard' ? '捨てる' : d.act === 'memo' ? '社内メモに足す'
-          : d.act === 'member' ? 'お客様へに入れる（お客様に見えます）' : d.act === 'todo' ? '次回までにに入れる（お客様に見えます）'
+          : d.act === 'member' ? '「お客様へ」に入れる（お客様に見えます）' : d.act === 'todo' ? '「次回までに」に入れる（お客様に見えます）'
           : d.act === 'exnote' ? (function () { var nm = exTargetName(exTarget(j)); return '「' + nm + '」の1セット目のメモにする（お客様には見えません）' + (p.parsed && p.parsed.sets && p.parsed.sets.length ? '。下の数値も「' + nm + '」のセットにする' : ''); })()
           : d.act === 'setnote' ? (setNoteOk(p) ? setNoteDest(p) + 'にする（お客様には見えません）' : '社内メモに足す')
           : d.act === 'set' ? (d.note ? '括弧の中をセットのメモに入れてセットにする' : '括弧を除いてセットにする')
@@ -3292,7 +3292,7 @@
         if (cat === 'member' || cat === 'todo') {
           c.appendChild(el('div', { class: 'k-sub', style: 'font-weight:700;color:var(--k-acc);', text: 'お客様にそのまま見えます' }));
           var lim = cat === 'member' ? MEMBER_MAX.message : MEMBER_MAX.todoLen;
-          if (!memoQuiet(p.text) && String(p.text).length <= lim) kids.push(act(cat === 'member' ? 'お客様へに入れる' : '次回までにに入れる', function () { decide(j, { act: cat }); }, ''));
+          if (!memoQuiet(p.text) && String(p.text).length <= lim) kids.push(act(cat === 'member' ? '「お客様へ」に入れる' : '「次回までに」に入れる', function () { decide(j, { act: cat }); }, ''));
         }
         kids.push(act('社内メモに足す', function () { decide(j, { act: 'memo' }); }));
         kids.push(act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger'));
