@@ -328,6 +328,33 @@ for (const [label, o] of [['同意なし', { aiDraft: true, aiConsent: 'none' }]
   ok('U8 保存後の画面（記録しました）では見出しの保存を出さない', R(w).textContent.includes('記録しました') && !R(w).querySelector('.k-entryhead button.k-hsave'));
 }
 
+// ---- 関門② 再審：種目の欄を開いたまま見出しの保存 → 完了画面に余白・帯・位置合わせを残さない ----
+{
+  const { w } = boot({ vv: { height: 400, offsetTop: 0 } });
+  seed(w, ITEMS().map((it) => Object.assign(it, { sets: it.sets.map((x) => Object.assign(x, { done: true })) })));
+  await openRecord(w);
+  btn(R(w), '＋ 種目を足す').click(); await settle();
+  ok('U8d 前提：種目の欄を開くとフォームに余白・位置合わせがある', R(w).querySelector('.k-trform').classList.contains('k-pickpad') && typeof w.KarteUI._pickPlace() === 'function');
+  R(w).querySelector('.k-entryhead button.k-hsave').click(); await settle();
+  const f = R(w).querySelector('.k-trform');
+  ok('U8d ★開いたまま保存 → 「記録しました」の画面にフォームの余白（k-pickpad）が残らない', R(w).textContent.includes('記録しました') && !!f && !f.classList.contains('k-pickpad'));
+  ok('U8d ★完了画面では帯の位置合わせも外す（cur.pickPlace が null）', w.KarteUI._pickPlace() === null);
+}
+// ---- 関門② 再審：タブを移る・カルテを閉じると位置合わせを外す ----
+{
+  const { w } = boot();
+  seed(w, ITEMS());
+  await openRecord(w);
+  btn(R(w), '＋ 種目を足す').click(); await settle();
+  ok('U8t 前提：記録の画面では位置合わせがある', typeof w.KarteUI._pickPlace() === 'function');
+  w.KarteUI.open('C1', '会員', 'notes'); await settle();
+  ok('U8t ★タブを移ると位置合わせを外す', w.KarteUI._pickPlace() === null);
+  await openRecord(w);
+  btn(R(w), '＋ 種目を足す').click(); await settle();
+  R(w).querySelector('.k-entryhead button.k-back').click(); await new Promise((r) => setTimeout(r, 40)); await settle();   // 戻る（端末の戻ると同じ経路）
+  ok('U8t ★記録の画面から戻ると位置合わせを外す', !R(w).classList.contains('k-entry') && w.KarteUI._pickPlace() === null);
+}
+
 // ---- 関門②：キーパッドで見える範囲が縮んでいる（visualViewport）＝帯をその下端に合わせる ----
 {
   const { w } = boot({ vv: { height: 400, offsetTop: 0 } });

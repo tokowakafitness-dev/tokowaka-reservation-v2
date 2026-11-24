@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-24b 画面の使いやすさ：保存は見出しの右上・種目の欄の帯は画面の下に固定・外す直後に元に戻す・タブはアイコン（設計55 関門②）';
+  var KARTE_BUILD = '2026-11-24c 画面の使いやすさ：保存は見出しの右上・種目の欄の帯は画面の下に固定・外す直後に元に戻す・タブはアイコン（設計55 関門②）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -707,6 +707,7 @@
     return root;
   }
   function close() {
+    cur.pickPlace = null;   // 設計55 関門②：種目の欄の帯の位置合わせは記録の画面の間だけ
     gripCancel();
     restStop();
     if (window.visualViewport) { window.visualViewport.removeEventListener('resize', fitViewport); window.visualViewport.removeEventListener('scroll', fitViewport); }
@@ -720,6 +721,7 @@
   }
 
   function open(customerId, name, tab, draft, mode) {
+    cur.pickPlace = null;   // 設計55 関門②：タブ・画面を移ったら種目の欄の帯の位置合わせを外す（記録の画面を開き直せば作り直す）
     gripCancel();   // 設計53 関門②：別のお客様・タブの切り替え
     restStop();   // ★画面を移ったら休憩タイマーは消す（設計33 §9-7）
     navPush({ cid: String(customerId || ''), tab: tab || 'summary' }, mode);
@@ -4136,9 +4138,12 @@
       }, unknownMemo);
     }
     //   設計55：送信中は保存のボタンを押せない（見出しの保存は c の外にあるため、c の中を止めるだけでは止まらない）
+    //   設計55 関門②：記録の入力を離れる（保存の完了・保存中の案内に替える）ときは、種目の欄・帯・フォームの余白・位置合わせを外す
+    function leaveForm() { if (picker) setPicker(false); c.classList.remove('k-pickpad'); cur.pickPlace = null; }   // ★送り直し（memoPending 等）の画面では種目の欄を作らない＝picker が無い
     function saveBusy() { if (saveBtn) { saveBtn.textContent = '送信中…'; saveBtn.disabled = true; } }
     function doneScreen(trainingLine, memoSaved, memoBody, date, memberSaved) {
       if (saveBtn && saveBtn.classList.contains('k-hsave') && saveBtn.parentNode) saveBtn.parentNode.removeChild(saveBtn);   // 保存した後は見出しの保存を出さない
+      leaveForm();
       c.innerHTML = '';
       c.appendChild(el('div', { class: 'k-h', text: '記録しました' }));
       if (trainingLine) c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:4px;', text: trainingLine }));
@@ -4188,7 +4193,7 @@
           var n = 0; payload.items.forEach(function (x) { n += x.sets.length; });
           var line = md(payload.sessionDate) + '・' + payload.items.length + '種目・' + n + 'セット';
           if (!memoBody) { doneScreen(line, false, '', payload.sessionDate, memberSent); return; }
-          c.innerHTML = ''; c.appendChild(msg('記録しました。指導メモを保存しています…'));
+          leaveForm(); c.innerHTML = ''; c.appendChild(msg('記録しました。指導メモを保存しています…'));
           submitMemo(payload.sessionDate, memoBody, line, memberSent);
           return;
         }
@@ -4228,7 +4233,7 @@
           else lsDel(draftKey);
           if (!same()) return;
           if (!memoBody) { doneScreen('', false, '', payload.sessionDate, true); return; }
-          c.innerHTML = ''; c.appendChild(msg('お客様に見える欄を保存しました。指導メモを保存しています…'));
+          leaveForm(); c.innerHTML = ''; c.appendChild(msg('お客様に見える欄を保存しました。指導メモを保存しています…'));
           submitMemo(payload.sessionDate, memoBody, '', true);
           return;
         }
@@ -4875,6 +4880,7 @@
 
   purgeAiReviews();   // 設計51：起動のたびに期限切れ・壊れた一時保存を物理削除する
   window.KarteUI = { open: open, openBoard: openBoard, build: KARTE_BUILD,
+    _pickPlace: function () { return cur.pickPlace || null; },   // 検査用（設計55 関門②：種目の欄の帯の位置合わせが残っていないか）
     //   検査用（純粋な部分だけ）
     _t: { NEED_SCHEMA: NEED_SCHEMA, NEED_SCHEMA_EXT: NEED_SCHEMA_EXT, usesExt: usesExt, exOrder: exOrder, setLineOf: setLineOf, copyInto: copyInto, totalSets: totalSets, memberOf: memberOf, PART_KEYS: PART_KEYS, uncheckedCount: uncheckedCount, wLabel: wLabel, partKeyOf: partKeyOf, DAY_TAGS: DAY_TAGS, buildPayload: buildPayload, reviewFromDraft: reviewFromDraft, reviewBuild: reviewBuild, reviewTally: reviewTally, rvParseLine: rvParseLine, rvTokens: rvTokens, rvForSave: rvForSave, rvRestore: rvRestore, exSuggest: exSuggest, moveIndex: moveIndex, movedIndex: movedIndex, EXERCISE_TABLE: EXERCISE_TABLE, EX_ALIAS: EX_ALIAS, EX_HINTS: EX_HINTS, guessPart: guessPart, partsOf: partsOf, AIR_HASH_MIN: AIR_HASH_MIN, scopeAllows: scopeAllows, aiScope: aiScope, parseMemo: parseMemo, prevSession: prevSession, prevOfExercise: prevOfExercise, partsSince: partsSince, dayDiff: dayDiff, assess: assess, partOf: partOf, exerciseStats: exerciseStats, PURPOSES: PURPOSES, SLIM_AREAS: SLIM_AREAS, REGIONS: REGIONS, TAGS: TAGS, REASONS: REASONS } };
   resume();
