@@ -2259,6 +2259,7 @@ function _calsyncUse1F() {
 // カレンダー全量を読んで、D1へ押し出す形を作る（読み取りだけ・送信はしない）。
 //   送る前にこの関数だけを実行すれば、何を送ることになるかを確認できる。
 function buildCalSyncPayload(nowMs) {
+  var _wsLu = (typeof _lbWsOn === 'function') && _lbWsOn();   // 設計54 M2：最終更新の時刻を足すか
   var now = (nowMs != null) ? new Date(nowMs) : new Date();
   var horizonEnd = _lbBookingHorizonEnd(now);
   // 地平の始まりは当日0時（設計書 §2）。過去の予定は空き枠に影響しないが、
@@ -2308,7 +2309,7 @@ function buildCalSyncPayload(nowMs) {
       var allDay = 0;
       try { allDay = ev.isAllDayEvent() ? 1 : 0; } catch (eA) { allDay = 0; }
 
-      events.push({
+      var _evOut = {
         calendarId: cals[c].calendarId,
         eventId: uid,
         role: cals[c].role,
@@ -2319,7 +2320,14 @@ function buildCalSyncPayload(nowMs) {
         startAt: sMs,
         endAt: eMs,
         allDay: allDay
-      });
+      };
+      //   ★設計54 M2：人が入れた予定（トレーナーの 出勤・休憩・ブロック）だけ最終更新の時刻を足す。
+      //     中身の印（_calsyncHash）と Worker の差分の比べ方（EV_CMP）には入れない＝unchanged の判定と枠の押し出し（I74）を変えない
+      //     ★LB_WS_ON が on のときだけ（スイッチを入れるまで同期の送り物も呼び出しも今と同じ）
+      if (_wsLu && cals[c].role === 'trainer' && (cls.reason === 'shift' || cls.reason === 'break' || cls.reason === 'block')) {
+        try { var _lu = ev.getLastUpdated(); if (_lu && isFinite(_lu.getTime())) _evOut.updatedAt = _lu.getTime(); } catch (eLu) {}
+      }
+      events.push(_evOut);
     }
   }
 
@@ -2494,6 +2502,7 @@ function _calsyncAutoOn() {
 //   記録（成功時刻・連続失敗）と重なり防止を1か所にまとめるため。
 // ------------------------------------------------------------
 function lbCalSyncTick() {
+  var _wsT0 = Date.now();   // 設計54：送る段の残り時間の起点
   //   ★設計42（2026-11-11）：同期 → 配線の印 → 変わっていれば枠をすぐ押し出す（ロックの外）。
   //     引数は取らない（時間主導トリガーは第1引数にイベントを渡す・trigger-args.test.js）。
   //   ★設計45：一回限りトリガーが消えた・遅れた・時間切れの待ちを拾う（90秒より古いものだけ）
@@ -2503,6 +2512,8 @@ function lbCalSyncTick() {
   var r = _lbCalSyncCore();
   _lbCalSlotsWired();
   _lbCalSlotsAfter(r, 'TICK');
+  //   ★設計54 S1a：最後に（今ある段の後）。経過が3分以上なら何もしない。例外は外へ出さない
+  try { _lbWsTick('TICK', _wsT0); } catch (eWs) {}
   return r;
 }
 
@@ -2585,6 +2596,7 @@ function _lbCleanCalSyncAfterTriggers(onlyUid) {
 }
 
 function _lbCalSyncAfterWrite(e) {
+  var _wsT0 = Date.now();   // 設計54：送る段の残り時間の起点
   //   ★時間主導トリガーは第1引数にイベントを渡す。真偽で判定せず、オブジェクトで triggerUid が文字列のときだけ使う
   //     （手で実行したとき・形が違うときは ''＝今のまま同名を全部消す・記憶 env_gas_trigger_passes_event_arg）
   var _uid = (typeof e === 'object' && e !== null && typeof e.triggerUid === 'string') ? e.triggerUid : '';
@@ -2604,6 +2616,8 @@ function _lbCalSyncAfterWrite(e) {
   _lbCleanCalSyncAfterTriggers(_uid);   // 役目を終えたら自分を消す（トリガー上限20件に溜めない）。自分のものだけ（設計45）
   //   ★設計42：枠の押し出し（25〜115秒）は最後。二重書きの速い道とトリガーの枠を先に済ませる。
   _lbCalSlotsAfter(r, 'AFTER');
+  //   ★設計54 S1a：さらにその後（今ある段の開始時刻を変えない）。経過が4分以上なら何もしない。例外は外へ出さない
+  try { _lbWsTick('AFTER', _wsT0); } catch (eWs) {}
 }
 
 // ============================================================
@@ -4967,3 +4981,819 @@ function lbDwDailyCheck(dryRunArg) {
 }
 
 // ===== DUALWRITE:END =====
+
+// ===== WRITESHADOW:BEGIN =====
+// ============================================================
+// 設計54 S1a：予約の確定を Worker でも判定して比べる（計測だけ・write-shadow・2026-11-24）
+//   ops/design/54-write-shadow-measure.md（関門① 10回で通過・決定0207 追記）
+//
+//   ★顧客の要求の中で増えるのは、既に毎回書いている outcome の記録（_lbLogOutcome の appendRow）の6列目だけ。
+//     新しい Script Property・ロック・書き込みの回数は足さない（I83）。6列目は常に書く（CEO 承認）。
+//   ★送るのは一回限りトリガー（_lbCalSyncAfterWrite）と5分ごとの同期（lbCalSyncTick）の最後だけ。新しいトリガーは作らない。
+//     送るのは LB_WS_ON が 'on'・booking_metrics の保護が置かれている・押し出しの元栓が開いている、のすべてのときだけ。
+//   ★顧客IDは送れたら6列目から消す。送れなくても2時間で消す（スイッチ・保護に関係なく毎回の走査で行う）。
+//   ★排他は UserLock（顧客の経路は使わない鍵）。ScriptLock は使わない（I81・I82 のロックに新しい保持者を作らない）。
+//   ★氏名・LINE の ID・電話・予定名・顧客が書いた文は6列目に載せない（許可した鍵だけ・1セル1,000文字以内）。
+// ============================================================
+var LB_WS = {
+  ON_PROP: 'LB_WS_ON',                     // 'on' のときだけ送る（切替関数 lbWriteShadowSetOn/Off）
+  CURSOR_PROP: 'LB_WS_CURSOR',             // 送信カーソル { row, k }（行番号とその行の1列目の epoch ミリ秒）
+  ERASE_PROP: 'LB_WS_ERASE_CURSOR',        // 消去カーソル { row, k }（2時間超の顧客IDを消した所まで）
+  STAT_PROP: 'LB_WS_STAT',                 // 送る側の数・印（トリガーと作業依頼と日次点検だけが書く）
+  FAIL_PROP: 'LB_METRICS_WRITE_FAIL',      // booking_metrics に書けなかった数（失敗したときだけ書く）
+  PROTECT_DESC: 'lb-write-shadow-v1',      // setupMetricsProtection が置いた保護の印
+  PREFIX: 'ws1',
+  MAX_CHARS: 1000, MAX_ID: 120, STALE_MS: 2 * 3600000,
+  READ_MAX: 500, SEND_MAX: 50,
+  AFTER_BUDGET_MS: 4 * 60000, TICK_BUDGET_MS: 3 * 60000, LOCK_MS: 1000,
+  USER_RECHECK_MS: 6 * 3600000,
+  SWEEP_BUDGET_MS: 20000,
+  STAT_LOCK_MS: 500,                       // LB_WS_STAT の読み直し→合成→書き込みを囲む ScriptLock の待ち（数ミリ秒だけ持つ）
+  STAT_MISS_PROP: 'LB_WS_STAT_MISS',       // 取れずに捨てた数（下限値）                  // 掃き出しの1回の上限（送る役の後・500行まで）
+  //   6列目に載せてよい鍵（これ以外は載せない・検査 ③ が固定）
+  KEYS: ['n', 'op', 'ok', 'code', 'at', 'cid', 'rid', 'xr', 'eb', 'et', 'tid', 's', 'e', 'ex', 'att', 'pk', 'cm', 't', 'sent', 'stale', 'too_long'],
+  //   GAS の「どこで決まったか」（_lbReserveCoreImpl の _LB_WS.at）。Worker の WS_GAS_AT と同じ集合（検査で突き合わせる）
+  AT: ['gate', 'bad', 'deadline', 'horizon', 'busy', 'att', 'remain', 'cap', 'b1', 'trainer', 'f1', 'consec', 'write', 'ok'],
+  OPS: ['reserve', 'proxy', 'batch', 'transfer', 'change', 'autobook', 'recurring', 'other'],
+  //   保護の前に「同じアカウントから見えるか」を確かめるトリガー（booking_metrics に書く・送る・点検する実行）
+  WATCH_HANDLERS: ['lbCalSyncTick', 'dailyHealthCheck', 'edgeJobPoll', 'autoBookRecurringPatterns'],
+  STAT_KEYS: ['lock_miss', 'write_conflict', 'write_skip', 'stale', 'cursor_reset', 'scan_more', 'too_long', 'unparsed']
+};
+var LB_WS_BUILD = '2026-11-24a 設計54 S1a';
+
+// ---- 6列目の材料を作る（顧客の要求の中・_lbReserveCore から）----------------------------
+//   ★Script Property を読まない・書かない。例外を外へ出さない（呼び出し元も try で包む）。
+//   ★code の許可値は LB_WP_CODES（LineBooking.js）の1か所だけ。外は OTHER
+function _lbWsOpOf(channel, body) {
+  if (body && body.autoBookCap != null) return 'autobook';
+  var c = String(channel || '');
+  if (c === 'change') return 'change';
+  if (c === 'transfer') return 'transfer';
+  var a = (typeof _LB_WP !== 'undefined' && _LB_WP && _LB_WP.op) ? String(_LB_WP.op) : '';
+  if (a === 'makeReservationLine') return 'reserve';
+  if (a === 'makeReservationLineProxy') return 'proxy';
+  if (a === 'makeBatchReservation' || a === 'makeBatchReservationProxy') return 'batch';
+  if (a === 'makeTransferReservation') return 'transfer';
+  return 'other';
+}
+function _lbWsId(v) { var s = String(v == null ? '' : v); return (s && s.length <= LB_WS.MAX_ID) ? s : ''; }
+function _lbWsFacts(custInfo, body, channel, r) {
+  try {
+    if (String(channel || '') === 'perf_test') return null;
+    var w = (typeof _LB_WS !== 'undefined' && _LB_WS) ? _LB_WS : null;
+    if (!w) return null;
+    var ok = !!(r && r.success === true);
+    var code = ok ? '' : String((r && r.code) || '');
+    if (code && !(typeof LB_WP_CODES !== 'undefined' && LB_WP_CODES[code])) code = 'OTHER';
+    var s = body && body.startISO ? new Date(body.startISO).getTime() : NaN;
+    var o = {
+      n: String(Utilities.getUuid()).replace(/-/g, '').slice(0, 8).toLowerCase(),
+      op: _lbWsOpOf(channel, body),
+      ok: ok ? 1 : 0,
+      code: code,
+      at: (LB_WS.AT.indexOf(w.at) >= 0) ? w.at : 'gate',
+      cid: /^C\d{6,20}$/.test(String((custInfo && custInfo.customerId) || '')) ? String(custInfo.customerId) : '',
+      tid: _lbWsId(body && body.trainerId).slice(0, 40),
+      s: isFinite(s) ? s : null,
+      e: (typeof w.e === 'number' && isFinite(w.e)) ? w.e : null,
+      ex: (typeof w.ex === 'number' && isFinite(w.ex)) ? w.ex : null,
+      att: (body && Number(body.attendeeCount) === 2) ? 2 : 1,
+      pk: (w.pk === 'pair' || w.pk === 'normal') ? w.pk : '',
+      cm: String(w.cm || '').slice(0, 8),
+      t: Date.now()
+    };
+    if (ok) { o.rid = _lbWsId(r.reservationId); o.eb = _lbWsId(r.calendarEventId); o.et = _lbWsId(r.trainerEventId); }
+    if (body && body.wsOldRid) o.xr = _lbWsId(body.wsOldRid);
+    var str = LB_WS.PREFIX + JSON.stringify(o);
+    if (str.length > LB_WS.MAX_CHARS) str = LB_WS.PREFIX + JSON.stringify({ n: o.n, op: o.op, ok: o.ok, t: o.t, too_long: 1 });
+    return str;
+  } catch (e) { return null; }
+}
+
+// ---- booking_metrics に書けなかった事実を数える（失敗したときだけ・I83）---------------------
+//   ★ロックを取らずに足す（同時の2件で1件落ちうる下限値。判定は「0より大きいか」だけ）。例外の文は残さない
+function _lbMetricsWriteFailNote(e, kind) {
+  var p = PropertiesService.getScriptProperties();
+  var o = null;
+  try { o = JSON.parse(p.getProperty(LB_WS.FAIL_PROP) || 'null'); } catch (e1) { o = null; }
+  if (!o || typeof o !== 'object') o = { n: 0 };
+  o.n = (Number(o.n) || 0) + 1;
+  o.last = Date.now();
+  o.type = (typeof _lbErrType === 'function') ? _lbErrType(e) : 'Error';
+  o.kind = (kind === 'rewrite') ? 'rewrite' : 'append';
+  p.setProperty(LB_WS.FAIL_PROP, JSON.stringify(o));
+}
+
+// ---- スイッチ（画面で Script Property を足さない・決定0192）-----------------------------------
+function lbWriteShadowSetOn() { PropertiesService.getScriptProperties().setProperty(LB_WS.ON_PROP, 'on'); Logger.log('LB_WS_ON=on'); return 'on'; }
+function lbWriteShadowSetOff() { PropertiesService.getScriptProperties().deleteProperty(LB_WS.ON_PROP); Logger.log('LB_WS_ON を外しました'); return 'off'; }
+function _lbWsOn() { try { return PropertiesService.getScriptProperties().getProperty(LB_WS.ON_PROP) === 'on'; } catch (e) { return false; } }
+
+// ---- 送る側の数と印（LB_WS_STAT）-----------------------------------------------------------
+function _lbWsDay(ms) { return Utilities.formatDate(new Date(ms), SETTINGS.TIMEZONE, 'yyyy-MM-dd'); }
+//   ★保存している状態（LB_WS_STAT）を読む関数はこれ1つ（関門② 再審6回目）。全フィールドを型・整数・範囲・組み合わせで確かめ、
+//     不正なものは安全側の初期値に戻す（sweep は needed=true・row=2・from2=false・nextAt=0）。戻した数は o._resets に返す
+//     last：booking_metrics の最終行（分からなければ省略＝行番号は 2〜1e9 で確かめる）
+function _lbWsIsInt(v, lo, hi) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= lo && v <= hi; }
+function _lbWsStatRead(last) {
+  var raw = null;
+  try { raw = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_WS.STAT_PROP) || 'null'); } catch (e) { raw = '__broken__'; }
+  return _lbWsStatClean(raw, last, Date.now());
+}
+function _lbWsStatClean(raw, last, nowMs) {
+  var o = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  var out = { days: {}, unsent: {}, _resets: (raw === '__broken__' || (raw != null && o !== raw)) ? 1 : 0 };
+  var L = _lbWsIsInt(last, 1, 1e9) ? last : 1e9;
+  var tMax = nowMs + 86400000;
+  function keepCounts(src) {
+    var c = {};
+    if (src && typeof src === 'object' && !Array.isArray(src)) for (var i = 0; i < LB_WS.STAT_KEYS.length; i++) { var k = LB_WS.STAT_KEYS[i]; if (_lbWsIsInt(src[k], 0, 1e9)) c[k] = src[k]; }
+    return c;
+  }
+  if (o.days && typeof o.days === 'object' && !Array.isArray(o.days)) {
+    for (var d in o.days) if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.days[d] = keepCounts(o.days[d]);
+  }
+  out.unsent = keepCounts(o.unsent);
+  var times = ['mismatchAt', 'resetAt', 'fullScanAt', 'blockedAt', 'protectedAt', 'unprotectedAt'];
+  for (var t = 0; t < times.length; t++) if (o[times[t]] != null) { if (_lbWsIsInt(o[times[t]], 1, tMax)) out[times[t]] = o[times[t]]; else out._resets++; }
+  if (o.userSame && typeof o.userSame === 'object' && ['same', 'mismatch', 'unknown'].indexOf(o.userSame.v) >= 0 && _lbWsIsInt(o.userSame.at, 1, tMax)) out.userSame = { v: o.userSame.v, at: o.userSame.at };
+  if (o.sendResetWhy && typeof o.sendResetWhy === 'object' && ['broken', 'range', 'moved'].indexOf(o.sendResetWhy.why) >= 0) out.sendResetWhy = { why: o.sendResetWhy.why, at: _lbWsIsInt(o.sendResetWhy.at, 1, tMax) ? o.sendResetWhy.at : nowMs };
+  out.lockStreak = _lbWsIsInt(o.lockStreak, 0, 1e6) ? o.lockStreak : 0;
+  if (o.phaseFail && typeof o.phaseFail === 'object') {
+    out.phaseFail = {};
+    for (var ph in o.phaseFail) if (['erase', 'send', 'sweep'].indexOf(ph) >= 0 && o.phaseFail[ph] && _lbWsIsInt(o.phaseFail[ph].n, 0, 1e9)) {
+      out.phaseFail[ph] = { n: o.phaseFail[ph].n, type: /^[A-Za-z]{1,40}$/.test(String(o.phaseFail[ph].type || '')) ? o.phaseFail[ph].type : 'Error', at: _lbWsIsInt(o.phaseFail[ph].at, 1, tMax) ? o.phaseFail[ph].at : nowMs };
+    }
+  }
+  //   連続失敗の回数：同じ行で1〜2回まで（3回目は飛ばして消える）
+  var ef = o.eraseFail;
+  if (ef != null) {
+    if (ef && typeof ef === 'object' && _lbWsIsInt(ef.row, 2, L) && typeof ef.k === 'string' && ef.k.length <= 200 && _lbWsIsInt(ef.n, 1, 2) && _lbWsIsInt(ef.first, 1, tMax)) out.eraseFail = { row: ef.row, k: ef.k, n: ef.n, first: ef.first };
+    else { out.eraseFail = null; out._resets++; }
+  } else out.eraseFail = null;
+  //   掃き出し：needed=false ならそのまま（下りている）。needed=true は全フィールドを確かめ、だめなら安全側（一周を最初から・from2 なし）
+  var sw = o.sweep;
+  if (sw != null) {
+    var skips = (sw && _lbWsIsInt(sw.skips, 0, 1e9)) ? sw.skips : 1;
+    if (sw && typeof sw === 'object' && sw.needed === false) out.sweep = { needed: false, skips: skips, laps: _lbWsIsInt(sw.laps, 0, 1e9) ? sw.laps : 0, doneAt: _lbWsIsInt(sw.doneAt, 1, tMax) ? sw.doneAt : 0 };
+    else if (sw && typeof sw === 'object' && sw.needed === true && _lbWsIsInt(sw.row, 2, L) && _lbWsIsInt(sw.found, 0, 1e9) && _lbWsIsInt(sw.laps, 0, 1e9)
+             && _lbWsIsInt(sw.first, 1, tMax) && typeof sw.from2 === 'boolean' && (sw.nextAt == null || _lbWsIsInt(sw.nextAt, 0, nowMs + 3600000))
+             && !(sw.from2 === false && sw.found > 0 && sw.row === 2)) {
+      out.sweep = { needed: true, skips: skips, first: sw.first, row: sw.row, found: sw.found, laps: sw.laps, from2: sw.from2, nextAt: sw.nextAt || 0 };
+    } else {
+      out.sweep = { needed: true, skips: skips, first: nowMs, row: 2, found: 0, laps: (sw && _lbWsIsInt(sw.laps, 0, 1e9)) ? sw.laps : 0, from2: false, nextAt: 0 };
+      out._resets++;
+    }
+  }
+  return out;
+}
+function _lbWsStatWrite(o) {
+  delete o._resets;
+  //   日の数は直近3日だけ残す（値の天井 9KB に当たらない）
+  var days = Object.keys(o.days || {}).sort();
+  while (days.length > 3) delete o.days[days.shift()];
+  PropertiesService.getScriptProperties().setProperty(LB_WS.STAT_PROP, JSON.stringify(o));
+}
+function _lbWsStatBump(o, key, n, nowMs) {
+  if (LB_WS.STAT_KEYS.indexOf(key) < 0 || !(n > 0)) return;
+  o.days = o.days || {};
+  var d = _lbWsDay(nowMs);
+  o.days[d] = o.days[d] || {};
+  o.days[d][key] = (Number(o.days[d][key]) || 0) + n;
+  o.unsent = o.unsent || {};
+  o.unsent[key] = (Number(o.unsent[key]) || 0) + n;
+}
+//   UserLock の中で読んで書く（トリガー・作業依頼・日次点検から）。取れなければ書かない
+function _lbWsStatEdit(fn) {
+  //   ★LB_WS_STAT の書き込みは「書く直前に読み直して、変えたい所だけ変えて書く」を ScriptLock で数ミリ秒だけ囲む（関門② 再審7回目）。
+  //     UserLock だと別のアカウントのトリガーと排他にならず後勝ちで巻き戻る。tryLock は500ms・取れなければ変更を捨てて数える（下限値）
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
+  var got = false;
+  try { got = !!(lock && lock.tryLock(LB_WS.STAT_LOCK_MS)); } catch (e2) { got = false; }
+  if (!got) { _lbWsStatMissNote(); return false; }
+  try { var o = _lbWsStatRead(); fn(o); _lbWsStatWrite(o); return true; }
+  catch (e3) { return false; }
+  finally { try { lock.releaseLock(); } catch (e4) {} }
+}
+//   ScriptLock が取れずに捨てた変更の数（ロックを取らずに足す・下限値）
+function _lbWsStatMissNote() {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var n = Number(p.getProperty(LB_WS.STAT_MISS_PROP) || 0);
+    p.setProperty(LB_WS.STAT_MISS_PROP, String((isFinite(n) && n >= 0 ? Math.floor(n) : 0) + 1));
+  } catch (e) {}
+}
+
+// ---- 6列目の読み書き -------------------------------------------------------------------
+function _lbWsParse(cell) {
+  var s = String(cell == null ? '' : cell);
+  if (s.indexOf(LB_WS.PREFIX) !== 0) return null;
+  try { var o = JSON.parse(s.slice(LB_WS.PREFIX.length)); return (o && typeof o === 'object' && typeof o.n === 'string') ? o : false; }
+  catch (e) { return false; }
+}
+function _lbWsStrip(o, mark) {
+  var out = {};
+  for (var i = 0; i < LB_WS.KEYS.length; i++) {
+    var k = LB_WS.KEYS[i];
+    if (k === 'cid') continue;   // ★顧客IDを消す
+    if (o[k] != null && o[k] !== '') out[k] = o[k];
+  }
+  out[mark] = 1;
+  return LB_WS.PREFIX + JSON.stringify(out);
+}
+function _lbWsSame5(a, b) {
+  for (var i = 0; i < 5; i++) {
+    var x = a[i], y = b[i];
+    var xs = (x instanceof Date) ? 'd' + x.getTime() : String(x == null ? '' : x);
+    var ys = (y instanceof Date) ? 'd' + y.getTime() : String(y == null ? '' : y);
+    if (xs !== ys) return false;
+  }
+  return true;
+}
+//   ★シートには「比べてから書く」を1回で行う手段が無い：書く前に行（1〜6列目）を取り直して照合し、書いた後にも照合する。
+//     違えば直さない（'skip'＝書かなかった／'conflict'＝書いた後に確かめられない）
+function _lbWsRewrite(sh, row, expect, n, str) {
+  var v = sh.getRange(row, 1, 1, 6).getValues()[0];
+  var cur = _lbWsParse(v[5]);
+  if (!_lbWsSame5(v, expect) || !cur || cur.n !== n) return 'skip';
+  try { sh.getRange(row, 6).setValue(str); }
+  catch (eW) { try { _lbMetricsWriteFailNote(eW, 'rewrite'); } catch (eN) {} return 'conflict'; }
+  var v2 = sh.getRange(row, 1, 1, 6).getValues()[0];
+  if (!_lbWsSame5(v2, expect) || String(v2[5]) !== str) return 'conflict';
+  return 'ok';
+}
+
+// ---- 保護 -------------------------------------------------------------------------------
+function _lbWsProtectionOf(sh) {
+  var ps = sh.getProtections(SpreadsheetApp.ProtectionType.SHEET) || [];
+  for (var i = 0; i < ps.length; i++) if (String(ps[i].getDescription() || '') === LB_WS.PROTECT_DESC) return ps[i];
+  return null;
+}
+//   { present, ok, editors, warning, domain }。ok＝保護があり・警告だけでない・ドメインの編集が無い・編集者が2人以下（持ち主＋置いた人）
+function _lbWsProtState(sh) {
+  var pr = _lbWsProtectionOf(sh);
+  if (!pr) return { present: false, ok: false };
+  var eds = 0, warn = true, dom = true;
+  try { eds = (pr.getEditors() || []).length; } catch (e1) { eds = 99; }
+  try { warn = !!pr.isWarningOnly(); } catch (e2) { warn = true; }
+  try { dom = !!pr.canDomainEdit(); } catch (e3) { dom = true; }
+  return { present: true, ok: (!warn && !dom && eds <= 2), editors: eds, warning: warn, domain: dom };
+}
+//   保護の前に確かめられる範囲（設計54 §3-1-e の1・2）。メールで比べる案は権限が要るので採らない
+function _lbWsPrecheckCore(nowMs) {
+  var st = _lbWsStatRead();
+  var u = st.userSame || null;
+  var item1 = (u && u.v === 'same' && nowMs - Number(u.at || 0) <= 48 * 3600000) ? true
+            : (u && u.v === 'mismatch') ? false : null;
+  var visible = {};
+  try {
+    var ts = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < LB_WS.WATCH_HANDLERS.length; i++) visible[LB_WS.WATCH_HANDLERS[i]] = false;
+    for (var j = 0; j < ts.length; j++) { var h = ts[j].getHandlerFunction(); if (h in visible) visible[h] = true; }
+  } catch (e) { visible = null; }
+  var item2 = null;
+  if (visible) { item2 = true; for (var k in visible) if (!visible[k]) item2 = false; }
+  return { ok: item1 === true && item2 === true, item1: item1, item2: item2, visible: visible };
+}
+//   保護を置く（冪等）。確かめられる範囲が通ったときだけ。作業依頼から1回呼ぶ
+function setupMetricsProtection() {
+  var now = Date.now();
+  var pre = _lbWsPrecheckCore(now);
+  if (!pre.ok) {
+    _lbWsStatEdit(function (o) { o.blockedAt = now; });
+    Logger.log('[ws] 保護を置きません（確かめられない）: item1=' + pre.item1 + ' item2=' + pre.item2);
+    return { ok: false, why: 'precheck', item1: pre.item1, item2: pre.item2 };
+  }
+  var sh = _lbMetricsSheet();
+  var st = _lbWsProtState(sh);
+  if (st.ok) { _lbWsStatEdit(function (o) { o.protectedAt = o.protectedAt || now; delete o.blockedAt; }); return { ok: true, already: true }; }
+  var pr = _lbWsProtectionOf(sh) || sh.protect().setDescription(LB_WS.PROTECT_DESC);
+  pr.setWarningOnly(false);
+  var me = Session.getEffectiveUser();
+  pr.addEditor(me);
+  pr.removeEditors(pr.getEditors());   // 置いた人と持ち主は外れない
+  if (pr.canDomainEdit()) pr.setDomainEdit(false);
+  var after = _lbWsProtState(sh);
+  _lbWsStatEdit(function (o) { o.protectedAt = now; delete o.blockedAt; });
+  return { ok: after.ok, editors: after.editors };
+}
+//   自分が置いた印つきの保護だけを外す（元に戻すだけ・日次点検が metrics_write_fail のときに呼ぶ）
+function _lbWsUnprotect() {
+  var sh = _lbMetricsSheet();
+  var pr = _lbWsProtectionOf(sh);
+  if (pr) pr.remove();
+  var now = Date.now();
+  _lbWsStatEdit(function (o) { o.unprotectedAt = now; });
+  return !!pr;
+}
+//   保護が「置かれているはず」か（一度置いて、その後に自分で外していない）
+function _lbWsProtectExpected(st) {
+  return !!(st && st.protectedAt && (!st.unprotectedAt || Number(st.unprotectedAt) < Number(st.protectedAt)));
+}
+
+// ---- 送る側（一回限りトリガー・5分ごとの同期の最後）--------------------------------------
+function _lbWsNoteUser(nowMs) {
+  var st = _lbWsStatRead();
+  if (st.userSame && nowMs - Number(st.userSame.at || 0) < LB_WS.USER_RECHECK_MS) return;
+  var v = 'unknown';
+  try { v = (typeof _lbCalSlotsSameUser === 'function') ? _lbCalSlotsSameUser() : 'unknown'; } catch (e) { v = 'unknown'; }
+  _lbWsStatEdit(function (o) { o.userSame = { v: (v === 'same' || v === 'mismatch') ? v : 'unknown', at: nowMs }; });
+}
+function _lbWsTick(who, startedAt) {
+  try {
+    var budget = (who === 'AFTER') ? LB_WS.AFTER_BUDGET_MS : LB_WS.TICK_BUDGET_MS;
+    if (Date.now() - startedAt >= budget) return 'no_time';
+    if (who === 'AFTER') _lbWsNoteUser(Date.now());   // Web アプリの実行者＝同期のトリガーの作成者か（設計42 の印・保護の前の確認の1）
+    var lock = LockService.getUserLock();
+    var got = false;
+    try { got = lock.tryLock(LB_WS.LOCK_MS); } catch (eL) { got = false; }
+    if (!got) {
+      //   ★取れなければ何もしない。次の一回限りトリガーか5分ごとの同期が続きから読む（カーソルは進んでいない）
+      _lbWsStatEdit(function (o) { _lbWsStatBump(o, 'lock_miss', 1, Date.now()); });
+      return 'lock_miss';
+    }
+    try { return _lbWsRun(who, startedAt, budget); }
+    finally { try { lock.releaseLock(); } catch (eR) {} }
+  } catch (e) { return 'error'; }
+}
+
+function _lbWsCellKey(v) { var ms = _lbWsCellMs(v); return (ms == null) ? 's:' + String(v == null ? '' : v) : 'm' + ms; }
+function _lbWsCursorRead(p, prop, sh, last) {
+  var raw = p.getProperty(prop);
+  var R0 = (raw == null) ? null : String(raw);
+  if (raw == null || raw === '') return { state: 'none', row: 1, raw: R0 };
+  var cur = null;
+  try { cur = JSON.parse(raw); } catch (e) { return { state: 'broken', row: 1, raw: R0 }; }
+  if (!cur || typeof cur !== 'object' || !_lbWsIsInt(cur.row, -1e12, 1e12)) return { state: 'broken', row: 1, raw: R0 };
+  if (cur.row < 1 || cur.row > last) return { state: 'range', row: 1, raw: R0 };
+  if (cur.row === 1) return { state: 'ok', row: 1, raw: R0 };
+  if (typeof cur.k !== 'string') return { state: 'broken', row: 1, raw: R0 };
+  if (_lbWsCellKey(sh.getRange(cur.row, 1).getValue()) !== cur.k) return { state: 'moved', row: 1, raw: R0 };
+  return { state: 'ok', row: cur.row, raw: R0 };
+}
+//   カーソルを保存する予定を作る（シートの読みはここ＝ロックの外）。実際に書くのは _lbWsCommit（前進のみ・リセットは読んだときから変わっていなければ）
+function _lbWsCursorPlan(plans, prop, sh, row, readState) {
+  plans[prop] = { row: row, k: row >= 2 ? _lbWsCellKey(sh.getRange(row, 1).getValue()) : '', reset: readState.state !== 'ok', raw: readState.raw };
+}
+//   本体（UserLock の中）。返り値は固定の語
+//   ★3つの段に分け、それぞれ独立の try/catch（関門② 再審6回目）：①消去 ②送信 ③掃き出し。どの段が例外でも他の段は必ず走る。
+//     段ごとの例外は LB_WS_STAT.phaseFail に型名と回数だけ残す。状態は _lbWsStatRead（全フィールドを確かめる1つの関数）で読む
+//   ①消去カーソル LB_WS_ERASE_CURSOR：前へ読み、2時間超の行は顧客IDを消し（照合つき）、最初の「2時間未満で顧客IDの残る行」で止まって保存。
+//     同じ行で照合が3回続けて失敗したら飛ばし、掃き出しを立てる（行は覚えない）
+//   ②送信カーソル LB_WS_CURSOR：無い・壊れた・範囲の外・行が動いた → 消去カーソルの位置から再出発（none 以外の回は送らない）
+//   ③掃き出し：送る役の後・1回20秒かつ500行・2行目から一周（from2）して残り0なら下ろす・残った周の後は1時間あける
+function _lbWsRun(who, startedAt, budget) {
+  var sh = _lbSheet(LB_METRICS_SHEET);
+  if (!sh) return 'no_sheet';
+  var last = sh.getLastRow();
+  if (last < 2) return 'empty';
+  var p = PropertiesService.getScriptProperties();
+  var nowMs = Date.now();
+  var baseRaw = p.getProperty(LB_WS.STAT_PROP);   // ★読んだときの生の値（書く直前に読み直した生の値と同じなら、他の実行は書いていない）
+  var st = _lbWsStatRead(last);
+  var base = JSON.parse(JSON.stringify(st));
+  base._raw = (baseRaw == null) ? null : String(baseRaw);   // ★読んだときの状態（書く直前に読み直したものと比べて、他の実行が変えた所を巻き戻さない）
+  var plans = {};
+  var counts = {};
+  function bump(k, n) { counts[k] = (counts[k] || 0) + (n || 1); }
+  if (st._resets) bump('cursor_reset', st._resets);
+  function timeLeft() { return Date.now() - startedAt < budget; }
+  function phaseFail(ph, e) {
+    st.phaseFail = st.phaseFail || {};
+    var f = st.phaseFail[ph] || { n: 0 };
+    st.phaseFail[ph] = { n: (Number(f.n) || 0) + 1, type: _lbErrType(e), at: nowMs };
+  }
+  var statOut = null;   // 報告できた数（null＝報告していない）
+  var res = 'erased';
+  var ec = { state: 'none', row: 1 }, eRow = 1;
+
+  // ---- ① 消す役 ----
+  try {
+    ec = _lbWsCursorRead(p, LB_WS.ERASE_PROP, sh, last);
+    if (ec.state !== 'ok') { st.resetAt = nowMs; if (ec.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; } }
+    eRow = ec.row;
+    var eStop = '';
+    var efPrev = (ec.state === 'ok') ? st.eraseFail : null;
+    st.eraseFail = null;
+    var eEnd = Math.min(last, eRow + LB_WS.READ_MAX);
+    if (eRow < last) {
+      var eBase = eRow;
+      var ev = sh.getRange(eBase + 1, 1, eEnd - eBase, 6).getValues();
+      for (var i = 0; i < ev.length; i++) {
+        if (!timeLeft()) { eStop = 'time'; break; }
+        var row = eBase + 1 + i, o = _lbWsParse(ev[i][5]);
+        if (o === false) { bump('unparsed'); eRow = row; efPrev = null; continue; }
+        if (o === null || !o.cid) { eRow = row; efPrev = null; continue; }
+        if (o.too_long === 1) bump('too_long');
+        var age = nowMs - Number(o.t || 0);
+        if (Number(o.t) > 0 && age <= LB_WS.STALE_MS) { eStop = 'fresh'; break; }
+        var rw = _lbWsRewrite(sh, row, ev[i], o.n, _lbWsStrip(o, 'stale'));
+        if (rw !== 'ok') {
+          bump(rw === 'skip' ? 'write_skip' : 'write_conflict');
+          var fk = _lbWsCellKey(ev[i][0]);
+          var ef = (efPrev && efPrev.row === row && efPrev.k === fk) ? { row: row, k: fk, n: efPrev.n, first: efPrev.first } : { row: row, k: fk, n: 0, first: nowMs };
+          ef.n = (Number(ef.n) || 0) + 1;
+          if (ef.n >= 3) {
+            var sw0 = st.sweep || {};
+            st.sweep = sw0.needed ? Object.assign({}, sw0, { skips: (Number(sw0.skips) || 0) + 1 })
+                                  : { needed: true, skips: (Number(sw0.skips) || 0) + 1, first: nowMs, row: 2, found: 0, laps: 0, from2: true, nextAt: 0 };
+            eRow = row; efPrev = null; continue;
+          }
+          st.eraseFail = ef; eStop = 'verify'; break;
+        }
+        bump('stale'); eRow = row; efPrev = null;
+      }
+      if (!eStop && eEnd < last) { eStop = 'more'; bump('scan_more'); }
+    }
+    if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorPlan(plans, LB_WS.ERASE_PROP, sh, eRow, ec);
+    if (eStop === '' || eStop === 'fresh') st.fullScanAt = nowMs;
+  } catch (eE) { if (eE && eE.lbLeaseLost) throw eE; phaseFail('erase', eE); }   // ★将来、借りる印の中で呼ぶときのため（I-H21）
+
+  // ---- ② 送る役 ----
+  try {
+    var prot = _lbWsProtState(sh);
+    var sendOk = _lbWsOn() && prot.ok && _edgeEnabled();
+    if (sendOk) {
+      var sc = _lbWsCursorRead(p, LB_WS.CURSOR_PROP, sh, last);
+      var sRow = sc.row;
+      if (sc.state !== 'ok') {
+        sRow = eRow;
+        if (sc.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; st.sendResetWhy = { why: sc.state, at: nowMs }; _lbWsCursorPlan(plans, LB_WS.CURSOR_PROP, sh, sRow, sc); sendOk = false; }
+      }
+      if (sendOk) {
+        if (sRow < eRow) sRow = eRow;
+        var plan = [], toSend = [];
+        var sEnd = Math.min(last, sRow + LB_WS.READ_MAX);
+        var sv = sRow < last ? sh.getRange(sRow + 1, 1, sEnd - sRow, 6).getValues() : [];
+        for (var j = 0; j < sv.length; j++) {
+          var r2 = sRow + 1 + j, o2 = _lbWsParse(sv[j][5]);
+          if (o2 === null || o2 === false || o2.sent === 1 || o2.stale === 1 || !o2.cid) { plan.push({ row: r2, act: 'done' }); continue; }
+          if (toSend.length >= LB_WS.SEND_MAX || !timeLeft()) break;
+          var item = {};
+          for (var k = 0; k < LB_WS.KEYS.length; k++) { var kk = LB_WS.KEYS[k]; if (o2[kk] != null && o2[kk] !== '') item[kk] = o2[kk]; }
+          toSend.push(item);
+          plan.push({ row: r2, act: 'send', v: sv[j], o: o2 });
+        }
+        var acked = {};
+        var so = _lbWsStatOut(st, counts);
+        if (toSend.length || Object.keys(so).length) {
+          var pr = _lbWsPost({ items: toSend, drain: who, build: LB_WS_BUILD, stat: so });
+          if (pr && pr.ok) { for (var a = 0; a < pr.acked.length; a++) acked[String(pr.acked[a])] = true; statOut = so; }   // 報告した数（書くときに引く）
+        }
+        var adv = sRow, stopped = false;
+        for (var q = 0; q < plan.length; q++) {
+          var pl = plan[q], done = (pl.act === 'done');
+          if (!done && acked[pl.o.n]) {
+            if (!timeLeft()) { stopped = true; break; }
+            var rw2 = _lbWsRewrite(sh, pl.row, pl.v, pl.o.n, _lbWsStrip(pl.o, 'sent'));
+            if (rw2 === 'ok') done = true; else bump(rw2 === 'skip' ? 'write_skip' : 'write_conflict');
+          }
+          if (!done) stopped = true;
+          if (stopped) break;
+          adv = pl.row;
+        }
+        if (adv !== sc.row || sc.state !== 'ok') _lbWsCursorPlan(plans, LB_WS.CURSOR_PROP, sh, adv, sc);
+        res = stopped ? 'partial' : 'done';
+      }
+    }
+  } catch (eS) { if (eS && eS.lbLeaseLost) throw eS; phaseFail('send', eS); }   // ★将来、借りる印の中で呼ぶときのため（I-H21）
+
+  // ---- ③ 掃き出し ----
+  try {
+    var sw = st.sweep;
+    if (sw && sw.needed && timeLeft() && !(Number(sw.nextAt) > nowMs)) {
+      var swT0 = Date.now();
+      if (!_lbWsIsInt(sw.row, 2, last)) { sw.row = 2; sw.found = 0; sw.from2 = false; bump('cursor_reset'); }
+      var sFrom = sw.row;
+      var sTo = Math.min(last, sFrom + LB_WS.READ_MAX - 1), sAt = sFrom;
+      var swv = sh.getRange(sFrom, 1, sTo - sFrom + 1, 6).getValues();
+      for (var w2 = 0; w2 < swv.length; w2++) {
+        if (!timeLeft() || Date.now() - swT0 >= LB_WS.SWEEP_BUDGET_MS) break;
+        var o3 = _lbWsParse(swv[w2][5]);
+        sAt = sFrom + w2 + 1;
+        if (!o3 || !o3.cid || !(nowMs - Number(o3.t || 0) > LB_WS.STALE_MS)) continue;
+        var rw3 = _lbWsRewrite(sh, sFrom + w2, swv[w2], o3.n, _lbWsStrip(o3, 'stale'));
+        if (rw3 === 'ok') bump('stale'); else { sw.found = (Number(sw.found) || 0) + 1; bump(rw3 === 'skip' ? 'write_skip' : 'write_conflict'); }
+      }
+      sw.row = sAt;
+      if (sAt > last) {
+        if (sw.from2 === true && !(Number(sw.found) > 0)) sw = { needed: false, skips: sw.skips, laps: sw.laps, doneAt: nowMs };
+        else {
+          if (sw.from2 === true) { sw.laps = (Number(sw.laps) || 0) + 1; sw.nextAt = nowMs + 3600000; }
+          sw.row = 2; sw.found = 0; sw.from2 = true;
+        }
+      }
+      st.sweep = sw;
+    }
+  } catch (eW) { if (eW && eW.lbLeaseLost) throw eW; phaseFail('sweep', eW); }   // ★将来、借りる印の中で呼ぶときのため（I-H21）
+
+  _lbWsCommit(base, st, counts, statOut, plans, last);
+  return res;
+}
+//   まだ Worker に報告していない数（前回までの残り＋今回）
+function _lbWsStatOut(st, counts) {
+  var out = {}, un = st.unsent || {};
+  for (var i = 0; i < LB_WS.STAT_KEYS.length; i++) {
+    var k = LB_WS.STAT_KEYS[i];
+    var n = (Number(un[k]) || 0) + (Number(counts[k]) || 0);
+    if (n > 0) out[k] = n;
+  }
+  return out;
+}
+//   数を LB_WS_STAT に書く（UserLock は呼び出し元が持っている＝直接書く）。statOut が null なら報告済み＝unsent を空に
+//   ★書く直前に読み直し、今回の差分だけを足して書く（ScriptLock は getProperty→検証→合成→setProperty の数ミリ秒だけ・tryLock 500ms）。
+//     顧客の書き込み（_lbTakeWriteLock・I81 は10秒待つ）を待たせるのはこの数ミリ秒だけ。取れなければ差分を捨てて数える（下限値）
+//     ・数：足す（報告できた数は引く）  ・時刻の印：大きい方  ・sweep・eraseFail：読んだときから他の実行が変えていなければ自分の値、
+//       変えていれば sweep は「立てる」を優先（どちらかが立てたら立つ）・eraseFail は相手の値  ・カーソル：前進のみ（大きい方）。
+//       自分がリセットしたカーソルは、読んだときから変わっていなければ書く
+function _lbWsCommit(base, st, counts, reported, plans, last) {
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
+  var got = false;
+  try { got = !!(lock && lock.tryLock(LB_WS.STAT_LOCK_MS)); } catch (e2) { got = false; }
+  if (!got) { _lbWsStatMissNote(); return false; }
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var nowMs = Date.now();
+    var curRaw = p.getProperty(LB_WS.STAT_PROP);
+    var untouched = (base && '_raw' in base) && String(curRaw == null ? '' : curRaw) === String(base._raw == null ? '' : base._raw);
+    var cur = _lbWsStatRead(last);
+    //   ★他の実行が書いていなければ自分の値をそのまま（検証で入れた初期値の時刻の違いを「相手が変えた」と取り違えない）
+    var same = function (a, b) { return untouched || JSON.stringify(a == null ? null : a) === JSON.stringify(b == null ? null : b); };
+    //   数
+    var d = _lbWsDay(nowMs);
+    cur.days = cur.days || {};
+    for (var k in counts) {
+      if (LB_WS.STAT_KEYS.indexOf(k) < 0) continue;
+      cur.days[d] = cur.days[d] || {};
+      cur.days[d][k] = (Number(cur.days[d][k]) || 0) + counts[k];
+    }
+    cur.unsent = cur.unsent || {};
+    for (var i = 0; i < LB_WS.STAT_KEYS.length; i++) {
+      var kk = LB_WS.STAT_KEYS[i];
+      var v = (Number(cur.unsent[kk]) || 0) + (Number(counts[kk]) || 0) - (reported ? (Number(reported[kk]) || 0) : 0);
+      if (v > 0) cur.unsent[kk] = v; else delete cur.unsent[kk];
+    }
+    //   時刻の印：大きい方
+    var times = ['mismatchAt', 'resetAt', 'fullScanAt'];
+    for (var t = 0; t < times.length; t++) if (Number(st[times[t]]) > (Number(cur[times[t]]) || 0)) cur[times[t]] = st[times[t]];
+    if (st.sendResetWhy && (!cur.sendResetWhy || st.sendResetWhy.at > cur.sendResetWhy.at)) cur.sendResetWhy = st.sendResetWhy;
+    //   段の例外：今回ふえた分だけ足す
+    if (st.phaseFail) {
+      cur.phaseFail = cur.phaseFail || {};
+      for (var ph in st.phaseFail) {
+        var dn = (Number(st.phaseFail[ph].n) || 0) - ((base.phaseFail && base.phaseFail[ph]) ? Number(base.phaseFail[ph].n) || 0 : 0);
+        if (dn > 0) cur.phaseFail[ph] = { n: ((cur.phaseFail[ph] && Number(cur.phaseFail[ph].n)) || 0) + dn, type: st.phaseFail[ph].type, at: st.phaseFail[ph].at };
+      }
+    }
+    //   連続失敗の回数
+    if (same(cur.eraseFail, base.eraseFail)) cur.eraseFail = st.eraseFail || null;
+    //   掃き出し：立てるを優先
+    if (same(cur.sweep, base.sweep)) { if (st.sweep) cur.sweep = st.sweep; }
+    else if (st.sweep && st.sweep.needed === true && !(cur.sweep && cur.sweep.needed === true)) cur.sweep = st.sweep;
+    else if (cur.sweep && cur.sweep.needed === true && st.sweep) cur.sweep.skips = Math.max(Number(cur.sweep.skips) || 0, Number(st.sweep.skips) || 0);
+    cur.lockStreak = counts.lock_miss ? (Number(cur.lockStreak) || 0) + 1 : 0;
+    _lbWsStatWrite(cur);
+    //   カーソル：前進のみ
+    for (var prop in plans) {
+      var pl = plans[prop], raw = p.getProperty(prop);
+      var write = false;
+      if (pl.reset) write = (String(raw == null ? '' : raw) === String(pl.raw == null ? '' : pl.raw));
+      else {
+        var c0 = null; try { c0 = JSON.parse(raw); } catch (e3) { c0 = null; }
+        write = !(c0 && _lbWsIsInt(c0.row, 1, 1e9)) || pl.row > c0.row;
+      }
+      if (write) p.setProperty(prop, JSON.stringify({ row: pl.row, k: pl.k }));
+    }
+    return true;
+  } catch (e4) { return false; }
+  finally { try { lock.releaseLock(); } catch (e5) {} }
+}
+function _lbWsPost(payload) {
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return null;
+  try {
+    var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/writeshadow', {
+      method: 'post', contentType: 'application/json', headers: { 'X-Ingest-Secret': secret },
+      payload: JSON.stringify(payload), muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) return null;
+    var j = JSON.parse(res.getContentText());
+    return { ok: !!(j && j.success), acked: (j && Array.isArray(j.acked)) ? j.acked : [] };
+  } catch (e) { return null; }
+}
+function _lbWsStatusFetch() {
+  var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');
+  if (!url || !secret) return null;
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/writeshadow/status', {
+    method: 'get', headers: { 'X-Ingest-Secret': secret }, muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) throw new Error('writeshadow/status HTTP ' + res.getResponseCode());
+  return JSON.parse(res.getContentText());
+}
+
+// ---- 時刻の変換（設計54 改訂10：時刻を落とさない・日付だけの _lbDateKey は使わない）----------
+//   Date 値は epoch ミリ秒。文字列は SETTINGS.TIMEZONE の 'yyyy/MM/dd HH:mm[:ss]'。形に合わなければ null
+function _lbWsCellMs(v) {
+  if (v instanceof Date) { var t = v.getTime(); return isFinite(t) ? t : null; }
+  var s = String(v == null ? '' : v).replace(/^\s+|\s+$/g, '');
+  var fmt = /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/.test(s) ? 'yyyy/MM/dd HH:mm:ss'
+          : /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/.test(s) ? 'yyyy/MM/dd HH:mm' : '';
+  if (!fmt) return null;
+  try { var d = Utilities.parseDate(s, SETTINGS.TIMEZONE, fmt); var ms = d.getTime(); return isFinite(ms) ? ms : null; }
+  catch (e) { return null; }
+}
+//   その日の 00:00:00.000（SETTINGS.TIMEZONE）
+function _lbWsDayStartMs(ms) {
+  var key = Utilities.formatDate(new Date(ms), SETTINGS.TIMEZONE, 'yyyy/MM/dd');
+  return Utilities.parseDate(key + ' 00:00:00', SETTINGS.TIMEZONE, 'yyyy/MM/dd HH:mm:ss').getTime();
+}
+
+// ---- 独立の検知：台帳の前日の確定（L）と outcome の success（M）を比べる（設計54 改訂8〜10）----
+//   L＝台帳の作成日時（11列目・分まで）が前日 00:00:00 ≤ t < 前日 23:50:00、channel が _lbReserveCore の channel
+//   M＝booking_metrics の時刻（1列目・秒まで）が前日 00:00:00 ≤ t ≤ 当日 00:10:00、同じ channel、outcome が success
+//   ★当日 00:10:00 より後の実行だけ比べる（それより前は M の窓が閉じていない）。返り値 { checked, L, M, unparsed, fail }
+var LB_WS_CORE_CHANNELS = { line: 1, trainer_manual: 1, transfer: 1, change: 1, proxy: 1 };
+function _lbWsIndependentCheck(nowMs) {
+  var today0 = _lbWsDayStartMs(nowMs);
+  var out = { checked: false, L: 0, M: 0, unparsed: 0, fail: false };
+  if (nowMs <= today0 + 10 * 60000) return out;
+  var y0 = _lbWsDayStartMs(today0 - 3600000);
+  var lEnd = y0 + (23 * 60 + 50) * 60000, mEnd = today0 + 10 * 60000;
+  var rs = _lbSheet(LINE_BOOKING.RESV_SHEET);
+  if (rs && rs.getLastRow() >= 2) {
+    var lv = rs.getRange(2, 10, rs.getLastRow() - 1, 2).getValues();   // 10列目 channel・11列目 作成日時
+    for (var i = 0; i < lv.length; i++) {
+      if (!LB_WS_CORE_CHANNELS[String(lv[i][0] || '')]) continue;
+      var t = _lbWsCellMs(lv[i][1]);
+      if (t == null) { if (String(lv[i][1] || '') !== '') out.unparsed++; continue; }
+      if (t >= y0 && t < lEnd) out.L++;
+    }
+  }
+  var ms = _lbSheet(LB_METRICS_SHEET);
+  if (ms && ms.getLastRow() >= 2) {
+    var mv = ms.getRange(2, 1, ms.getLastRow() - 1, 4).getValues();
+    for (var j = mv.length - 1; j >= 0; j--) {
+      var tm = _lbWsCellMs(mv[j][0]);
+      if (tm == null) { if (String(mv[j][0] || '') !== '') out.unparsed++; continue; }
+      if (tm < y0 - 86400000) break;   // 末尾から読んで前々日より前に来たら止める（日次点検の時間を守る）
+      if (tm >= y0 && tm <= mEnd && String(mv[j][2]) === 'success' && LB_WS_CORE_CHANNELS[String(mv[j][3] || '')]) out.M++;
+    }
+  }
+  out.checked = true;
+  out.fail = (out.L >= 1 && out.M === 0) || (out.L >= 5 && out.M / out.L < 0.8);
+  return out;
+}
+
+// ---- 日次点検から呼ぶ（dailyHealthCheck の段「書き込みの比較」）------------------------------
+//   返り値は数と固定の語だけ。保護を外す副作用は日次点検の側で（印を確かめてから）行う
+function lbWriteShadowDailyCheck(nowMs) {
+  var r = { danger: 0, notRunning: 0, partial: 0, partialWhere: '', backlog: 0, unprotected: 0, protectBlocked: 0,
+            writeFail: 0, writeFailWhy: '', failSeen: 0, protectedNow: false, independent: null };
+  var st = _lbWsStatRead();
+  var p = PropertiesService.getScriptProperties();
+  var sh = _lbSheet(LB_METRICS_SHEET);
+  var prot = sh ? _lbWsProtState(sh) : { present: false, ok: false };
+  r.protectedNow = !!prot.present;
+  if (_lbWsProtectExpected(st) && !prot.ok) r.unprotected = 1;
+  if (st.mismatchAt && nowMs - Number(st.mismatchAt) <= 26 * 3600000) r.unprotected = 1;
+  if (st.blockedAt && nowMs - Number(st.blockedAt) <= 26 * 3600000) r.protectBlocked = 1;
+  //   ws_erase_stuck：掃き出しが立っている間（数＝周回の数＋1）。行番号は覚えていない
+  r.eraseStuck = (st.sweep && st.sweep.needed) ? (Number(st.sweep.laps) || 0) + 1 : 0;
+  if (r.eraseStuck) r.eraseStuckWhere = '飛ばした回数 ' + (Number(st.sweep.skips) || 0) + '・周回 ' + (Number(st.sweep.laps) || 0);
+  var f = null;
+  try { f = JSON.parse(p.getProperty(LB_WS.FAIL_PROP) || 'null'); } catch (eF) { f = null; }
+  if (f && Number(f.n) > 0) { r.writeFail = Number(f.n); r.failSeen = Number(f.n); r.writeFailWhy = 'recorded:' + String(f.type || 'Error') + '/' + String(f.kind || ''); }
+  if (prot.present) {
+    var ind = _lbWsIndependentCheck(nowMs);
+    r.independent = ind;
+    if (ind.fail) { r.writeFail = Math.max(r.writeFail, 1); r.writeFailWhy = (r.writeFailWhy ? r.writeFailWhy + ' ' : '') + 'independent:L=' + ind.L + ',M=' + ind.M; }
+  }
+  var yd = _lbWsDay(nowMs - 86400000);
+  var ys = (st.days && st.days[yd]) || {};
+  if (Number(ys.stale) > 0 || Number(st.lockStreak) >= 3) r.backlog = (Number(ys.stale) || 0) + (Number(st.lockStreak) >= 3 ? 1 : 0);
+  //   Worker の記録と、booking_metrics の6列目つきの行（前日）を op×時間帯で突き合わせる（スイッチ on のときだけ）
+  if (_lbWsOn()) {
+    var target = {}, tSum = 0;
+    if (sh && sh.getLastRow() >= 2) {
+      var y0 = _lbWsDayStartMs(_lbWsDayStartMs(nowMs) - 3600000), y1 = y0 + 86400000;
+      var n = Math.min(sh.getLastRow() - 1, 5000);
+      var vv = sh.getRange(sh.getLastRow() - n + 1, 1, n, 6).getValues();
+      for (var i = 0; i < vv.length; i++) {
+        var o = _lbWsParse(vv[i][5]);
+        if (!o || String(vv[i][2]) === 'BUSY') continue;
+        var t = Number(o.t);
+        if (!(t >= y0 && t < y1)) continue;
+        var key = String(o.op || 'other') + '@' + Number(Utilities.formatDate(new Date(t), SETTINGS.TIMEZONE, 'H'));
+        target[key] = (target[key] || 0) + 1; tSum++;
+      }
+    }
+    var ws = _lbWsStatusFetch();
+    var day = ws && ws.days ? ws.days[yd] : null;
+    var rec = day ? (day.byOpHour || {}) : {}, rSum = day ? Number(day.n || 0) : 0;
+    if (day) r.danger = Number((day.side || {}).gas_ng_worker_ok || 0);
+    if (tSum > 0 && rSum === 0) r.notRunning = tSum;
+    else if (tSum > 0) {
+      var bad = [];
+      for (var kk in target) { var got = Number(rec[kk] || 0); if (target[kk] >= 3 && got / target[kk] < 0.95) bad.push(kk); }
+      if (rSum / tSum < 0.95 || bad.length) { r.partial = Math.max(1, tSum - rSum); r.partialWhere = bad.slice(0, 5).join(',') || 'total'; }
+    }
+  }
+  return r;
+}
+//   日次点検が見た分だけ失敗の数を引く（読んだ後に増えた分は残す）
+function _lbWsFailConsume(seen) {
+  if (!(seen > 0)) return;
+  var p = PropertiesService.getScriptProperties();
+  var f = null;
+  try { f = JSON.parse(p.getProperty(LB_WS.FAIL_PROP) || 'null'); } catch (e) { f = null; }
+  if (!f) return;
+  f.n = Math.max(0, (Number(f.n) || 0) - seen);
+  if (f.n === 0) p.deleteProperty(LB_WS.FAIL_PROP); else p.setProperty(LB_WS.FAIL_PROP, JSON.stringify(f));
+}
+
+// ---- 作業依頼 remaining {wsPrecheck}：実装の前提の実測（件数と真偽だけ・読み取りだけ）---------
+function lbWsPrecheckText() {
+  var out = ['===== 設計54 S1a 実装の前提の実測（' + LB_WS_BUILD + '） ====='];
+  var now = Date.now();
+  var pre = _lbWsPrecheckCore(now);
+  out.push('1. Web アプリの実行者＝同期のトリガーの作成者（設計42 の印）: ' + (pre.item1 === true ? 'true' : pre.item1 === false ? 'false' : 'unknown（まだ観測していない）'));
+  var vis = pre.visible ? LB_WS.WATCH_HANDLERS.map(function (h) { return h + '=' + (pre.visible[h] ? 'true' : 'false'); }).join(' ') : 'unknown';
+  out.push('2. 作業依頼のアカウントから見えるトリガー: ' + vis + ' → ' + (pre.item2 === true ? 'true' : pre.item2 === false ? 'false' : 'unknown'));
+  out.push('   保護を置いてよいか（1・2 が true）: ' + (pre.ok ? 'true' : 'false'));
+  try {
+    var ss = _lbSs(), sheets = ss.getSheets(), grid = 0, bmR = 0, bmC = 0, bmLast = 0;
+    for (var i = 0; i < sheets.length; i++) {
+      var r = sheets[i].getMaxRows(), c = sheets[i].getMaxColumns();
+      grid += r * c;
+      if (sheets[i].getName() === LB_METRICS_SHEET) { bmR = r; bmC = c; bmLast = sheets[i].getLastRow(); }
+    }
+    out.push('3. グリッド: シート数=' + sheets.length + ' 合計セル=' + grid + '（上限 10000000・' + Math.round(grid / 100000) + '%）'
+             + ' booking_metrics 最大行=' + bmR + ' 最大列=' + bmC + ' 最終行=' + bmLast
+             + ' 6列目の増分=' + (bmR * Math.max(0, 6 - bmC)) + ' → ' + (grid > 8000000 ? '80%超（6列目の前に整理を決める）' : '80%以下'));
+    try { out.push('4. 共有: 編集者=' + (ss.getEditors() || []).length + ' 閲覧者=' + (ss.getViewers() || []).length + '（持ち主を含む・人数だけ）'); }
+    catch (eS) { out.push('4. 共有: 読めない（' + _lbErrType(eS) + '）'); }
+    var bm = _lbSheet(LB_METRICS_SHEET);
+    if (bm && bm.getLastRow() >= 2) {
+      var first = bm.getRange(2, 2).getValue();
+      out.push('5. booking_metrics の保持: 行=' + (bm.getLastRow() - 1) + ' 最初の行の日付=' + (first instanceof Date ? Utilities.formatDate(first, SETTINGS.TIMEZONE, 'yyyy-MM-dd') : String(first).slice(0, 10)));
+      var n = Math.min(bm.getLastRow() - 1, 5000);
+      var v = bm.getRange(bm.getLastRow() - n + 1, 1, n, 4).getValues();
+      var perDay = {}, times = [];
+      for (var j = 0; j < v.length; j++) {
+        var t = _lbWsCellMs(v[j][0]); if (t == null || now - t > 7 * 86400000) continue;
+        var d = _lbWsDay(t); perDay[d] = (perDay[d] || 0) + 1; times.push(t);
+      }
+      times.sort(function (a, b) { return a - b; });
+      var max3h = 0;
+      for (var a = 0, b = 0; b < times.length; b++) { while (times[b] - times[a] > 3 * 3600000) a++; max3h = Math.max(max3h, b - a + 1); }
+      var days = Object.keys(perDay).sort();
+      out.push('6. booking_metrics の行数（直近7日）: ' + days.map(function (k) { return k.slice(5) + '=' + perDay[k]; }).join(' ') + ' 3時間の最大=' + max3h);
+    }
+    var rs = _lbSheet(LINE_BOOKING.RESV_SHEET);
+    if (rs && rs.getLastRow() >= 2) {
+      var m = Math.min(rs.getLastRow() - 1, 5000);
+      var cv = rs.getRange(rs.getLastRow() - m + 1, 10, m, 2).getValues(), ch = {};
+      for (var q = 0; q < cv.length; q++) {
+        var tt = _lbWsCellMs(cv[q][1]); if (tt == null || now - tt > 30 * 86400000) continue;
+        var nm = String(cv[q][0] || '');
+        nm = /^[a-z_]{1,20}$/.test(nm) ? nm : (nm ? 'OTHER' : '(空)');
+        ch[nm] = (ch[nm] || 0) + 1;
+      }
+      out.push('7. 台帳の channel（直近30日・作成日時で）: ' + Object.keys(ch).sort().map(function (k) { return k + '=' + ch[k]; }).join(' '));
+    }
+    var ps = bm ? _lbWsProtState(bm) : { present: false };
+    out.push('8. 保護: ' + (ps.present ? ('あり ok=' + ps.ok + ' 編集者=' + ps.editors + ' 警告だけ=' + ps.warning) : 'なし'));
+  } catch (e) { out.push('（読めなかった段がある: ' + _lbErrType(e) + '）'); }
+  var f = null; try { f = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_WS.FAIL_PROP) || 'null'); } catch (eF) {}
+  out.push('9. booking_metrics に書けなかった数: ' + (f ? (Number(f.n) || 0) + '（型 ' + String(f.type || '') + '）' : '0'));
+  out.push('10. LB_WS_ON: ' + (_lbWsOn() ? 'on' : 'off'));
+  var st0 = _lbWsStatRead();
+  out.push('11. 先頭から読み直した後に最終行まで片づけたか: ' + (st0.resetAt ? (Number(st0.fullScanAt || 0) >= Number(st0.resetAt) ? 'true' : 'false（まだ途中）') : '（まだ一度も走っていない）'));
+  return out.join('\n');
+}
+//   作業依頼 remaining {writeShadow}：Worker の status と送る側の数（件数と分布だけ）
+function lbWriteShadowStatusText() {
+  var out = ['===== 設計54 S1a write-shadow の状態（' + LB_WS_BUILD + '） ====='];
+  var st = _lbWsStatRead();
+  out.push('LB_WS_ON=' + (_lbWsOn() ? 'on' : 'off') + ' 保護が置かれているはず=' + _lbWsProtectExpected(st));
+  var days = Object.keys(st.days || {}).sort();
+  for (var i = 0; i < days.length; i++) out.push('送る側 ' + days[i] + ': ' + JSON.stringify(st.days[days[i]]));
+  try {
+    var w = _lbWsStatusFetch();
+    out.push('Worker: on=' + (w && w.on));
+    var ks = Object.keys((w && w.days) || {}).sort();
+    for (var j = 0; j < ks.length; j++) {
+      var d = w.days[ks[j]];
+      out.push(ks[j] + ': n=' + d.n + ' verdict=' + JSON.stringify(d.byVerdict) + ' side=' + JSON.stringify(d.side)
+               + ' totalMs=' + JSON.stringify(d.totalMs) + ' allocMs=' + JSON.stringify(d.allocMs) + ' lagAfterMs=' + JSON.stringify(d.lagAfterMs)
+               + ' stat=' + JSON.stringify(d.stat));
+      out.push('   op×verdict=' + JSON.stringify(d.byOpVerdict));
+    }
+    out.push('M3 契約の入力が届くまで（前日）: ' + JSON.stringify(w && w.freshDelay));
+    out.push('M2 直接入れた予定が届くまで（前日）: ' + JSON.stringify(w && w.arrival));
+  } catch (e) { out.push('Worker の status が読めない（' + _lbErrType(e) + '）'); }
+  return out.join('\n');
+}
+// ===== WRITESHADOW:END =====

@@ -180,6 +180,9 @@ export function makeCtx(w) {
     lbCalSlotsDailyCheck: hook('lbCalSlotsDailyCheck', () => []), lbEdgeDeferDailyCheck: () => [], lbNotifyDeferDailyMaint: hook('lbNotifyDeferDailyMaint', () => {}), lbNotifyDeferDailyCheck: () => [],
     lbAutoBookHeldDailyCheck: () => [], lbLockCountDailyCheck: () => [], lbKarteAiDailyCheck: hook('lbKarteAiDailyCheck', () => []),
     lbContractInputCheck: hook('lbContractInputCheck', () => []),
+    //   設計54 S1a：書き込みの比較（既定は何も無い）・保護を外す（呼ばれたら数える）
+    lbWriteShadowDailyCheck: hook('lbWriteShadowDailyCheck', () => (w.data.ws || { danger: 0, notRunning: 0, partial: 0, backlog: 0, unprotected: 0, protectBlocked: 0, writeFail: 0, failSeen: 0 })),
+    _lbWsUnprotect: hook('_lbWsUnprotect', () => { w.wsUnprotect = (w.wsUnprotect || 0) + 1; return true; }), _lbWsFailConsume: () => {},
     //   ---- 通知 ----
     _lbPushOnce: (to, text, opts) => { w.pushes.push({ to, text, opts }); if (w.hooks.push && top()) w.hooks.push(to, text); return w.pushOk ? { ok: true, code: 200 } : { ok: false, code: 500 }; },
     _lbPush: forbid('_lbPush'),

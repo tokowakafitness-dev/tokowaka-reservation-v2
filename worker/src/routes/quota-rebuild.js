@@ -20,6 +20,7 @@
 //   本文の契約行には氏名・電話が入る。エラー応答は { code, kind, count } だけ。本文・行・例外を応答にもログにも出さない。
 //   計算の issue は code だけに縮める（detail・予約ID・pack_id・row_json を返さない）。
 
+import { noteFreshDelay } from '../lib/write-shadow.js';
 import { requireSecret, mask, computeCustomerBuild } from './quota.js';
 import { assembleCalcInput } from '../calc.js';
 import { customerReplaceStatements } from './ingest.js';
@@ -157,6 +158,8 @@ export async function quotaRebuild(request, env) {
   //   書いた後の状態（名乗れるか）を返す。★読み直しに失敗しても書き込みは済んでいる
   let after = null;
   try { after = await readSyncVersion(env, cid); } catch (_) { after = null; }
+  //   ★設計54 M3：新しくない状態から戻った長さを残す（WRITE_SHADOW が on のときだけ・失敗しても結果は変えない）
+  if (after && !blocked) await noteFreshDelay(env, ver0, after, now);
   return res({
     ok: true,
     customer: mask(cid),

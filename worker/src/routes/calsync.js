@@ -21,6 +21,8 @@
 //       calendar_snapshot.built_at … その世代を作り終えた時刻。世代を作った時だけ
 //     鮮度は checked_at で見る。ここを取り違えると、2分変更がないだけでD1が使えなくなる。
 
+import { noteArrivals } from '../lib/write-shadow.js';
+import { writeShadowOn } from './write-shadow.js';
 import { allowedEffectsFor, trainerVariesPerEvent, classifyEvent, overlaps, findInvalidIntervals, CAL_ROLE, EV_KIND } from '../lib/calclass.js';
 
 // ---- 上限と期限 -------------------------------------------------------------
@@ -429,6 +431,8 @@ async function calsync(request, env) {
   if (prevGen != null && cur.status === 'ready' && cur.built_at != null && sameShape) {
     const patched = await tryPatch(env, prevGen, Number(cur.built_at), p, calsJson, now, warnings);
     if (patched.mode === 'patched') {
+      //   ★設計54 M2：人が入れた予定（休憩・ブロック・出勤）が D1 に届くまでの遅れ（WRITE_SHADOW が on のときだけ・失敗しても同期の結果は変えない）
+      if (writeShadowOn(env)) await noteArrivals(env, p.events, patched, Number(cur.checked_at), now);
       if (warnings.length) console.warn('calsync warnings', prevGen, JSON.stringify(warnings).slice(0, 500));
       return jsonRes({ success: true, mode: 'patched', generation: prevGen, events: p.events.length,
                        inserted: patched.inserted, updated: patched.updated, deleted: patched.deleted,
@@ -523,7 +527,7 @@ async function tryPatch(env, gen, prevBuiltAt, p, calsJson, now, warnings) {
     else if (!sameEv(old, row)) upd.push(row);
   }
   const del = [];
-  for (const [key, r] of have) if (!seen.has(key)) del.push({ calendar_id: r.calendar_id, event_id: r.event_id });
+  for (const [key, r] of have) if (!seen.has(key)) del.push({ calendar_id: r.calendar_id, event_id: r.event_id, role: r.role, trainer_id: r.trainer_id, reason: r.reason, start_at: r.start_at, end_at: r.end_at });
   if (ins.length + upd.length + del.length > PATCH_MAX) return { mode: 'too_big' };
 
   //   公開中の世代が始めに読んだままであること（すべての文に付ける）
@@ -569,7 +573,7 @@ async function tryPatch(env, gen, prevBuiltAt, p, calsJson, now, warnings) {
   const res = await env.DB.batch(stmts);
   const nSnap = changes(res[res.length - 2]), nAct = changes(res[res.length - 1]);
   if (nSnap !== 1 || nAct !== 1) return { mode: 'race' };
-  return { mode: 'patched', inserted: ins.length, updated: upd.length, deleted: del.length };
+  return { mode: 'patched', inserted: ins.length, updated: upd.length, deleted: del.length, insRows: ins, updRows: upd, delRows: del };
 }
 
 // ---- 世代の行を1つ作る。採番はD1（AUTOINCREMENT）に任せる（MAX+1は使わない）----

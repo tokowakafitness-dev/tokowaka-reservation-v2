@@ -318,6 +318,8 @@ var LB_WP_CODES = { UNAUTHORIZED: 1, UNKNOWN_ACTION: 1, BAD_REQUEST: 1, NOT_VERI
   BALANCE_NOT_APPROVED: 1, BOOKING_FROZEN: 1, NOT_LIVE: 1, RESERVATION_SOURCE_UNAVAILABLE: 1, NOT_OPEN_YET: 1, BUSY: 1,
   NO_TRANSFER_ENTITLEMENT: 1, OUT_OF_CONTRACT: 1, RECURRING_DISABLED: 1 };
 var _LB_WP = null;   // GAS の実行は要求ごとに独立＝この要求だけの記録器
+//   ★設計54 S1a：予約の芯（_lbReserveCoreImpl）が「どこで決まったか」と材料を置く場所。芯を呼ぶたびに作り直す（Script Property は使わない）
+var _LB_WS = null;
 //   ★設計45：書き込みの関数が既に知っている会員ID（氏名は持たない）。edgeAfterWrite が名簿を読み直さずに使う。
 //     handleLineGet の入口で null に戻す。応答には載せない
 var _LB_WRITE_CUST = null;
@@ -2324,7 +2326,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -3112,6 +3114,29 @@ function dailyHealthCheck(dryRunArg) {
   }
   _done('契約の入力');
 
+  _step('書き込みの比較');
+  // ---- 設計54 S1a：予約の確定を Worker でも判定して比べる（write-shadow）・booking_metrics の保護 ----
+  //   ★保護が置かれていて booking_metrics に書けなかった事実（失敗の記録・台帳との比較）があれば、印つきの保護を外して元に戻す。
+  //     自己修理のモードに関係なく行う（S1a の前の状態に戻すだけ）。副作用の直前に印を確かめる（I-H21）
+  try {
+    var wsr = lbWriteShadowDailyCheck(now.getTime());
+    if (wsr.danger) add('ws_danger', '書き込みの比較', 'warn', wsr.danger, '危険側の食い違い（GAS が断り Worker が通した）が前日 ' + wsr.danger + ' 件');
+    if (wsr.notRunning) add('ws_not_running', '書き込みの比較', 'warn', wsr.notRunning, '比べる対象が前日 ' + wsr.notRunning + ' 件あるのに Worker の記録が0件');
+    if (wsr.partial) add('ws_partial', '書き込みの比較', 'warn', wsr.partial, '比べる対象と Worker の記録が合わない（欠け ' + wsr.partial + ' 件・' + wsr.partialWhere + '）');
+    if (wsr.backlog) add('ws_backlog', '書き込みの比較', 'info', wsr.backlog, '期限で顧客IDだけ消した行・送る側のロックの取りこぼしがある');
+    if (wsr.unprotected) add('metrics_unprotected', '書き込みの比較', 'warn', 1, 'booking_metrics の保護が無い・崩れている・行が動いた（送るのを止めています）');
+    if (wsr.eraseStuck) add('ws_erase_stuck', '書き込みの比較', 'warn', wsr.eraseStuck, '顧客IDを消す照合が同じ行で続けて失敗し、その行を飛ばしています（' + (wsr.eraseStuckWhere || '') + '・保護の崩れか不具合の印）');
+    if (wsr.protectBlocked) add('metrics_protect_blocked', '書き込みの比較', 'warn', 1, '書き手が同じアカウントか確かめられず、保護を置きませんでした');
+    if (wsr.writeFail) {
+      add('metrics_write_fail', '書き込みの比較', 'warn', wsr.writeFail, 'booking_metrics に書けなかった（' + wsr.writeFailWhy + '）。印つきの保護を外して元に戻します');
+      if (!dryRun) { _hcNeed(); _lbWsUnprotect(); _lbWsFailConsume(wsr.failSeen); }
+    }
+  } catch (e) {
+    if (e && e.lbLeaseLost) throw e;   // ★印を失ったら外へ（I-H21）
+    add('ws_check_fail', '書き込みの比較', 'warn', 1, '書き込みの比較の点検そのものが失敗しました: ' + _lbErrType(e));
+  }
+  _done('書き込みの比較');
+
   _step('記録');
   // ---- 記録（推移が見えるよう追記）----
   if (!dryRun) _hcNeed();   // ★書く直前に印を確かめる（I-H21）
@@ -3273,7 +3298,13 @@ var LB_TRIAGE = {
   health_skipped: ['B', '自己修理の見張り'], selfheal_stale: ['B', '自己修理の見張り'],
   heal_save_fail: ['B', '自己修理の見張り'],   // 2026-11-24：要約・台帳・完走の印を保存できなかった（I-H33）
   selfheal_watch_fail: ['B', '自己修理の見張り'],   // 2026-11-24：見張りの段そのものが落ちた（関門②）
-  selfheal_practice_long: ['info', '自己修理の見張り']
+  selfheal_practice_long: ['info', '自己修理の見張り'],
+  //   設計54 S1a で足した見張り（振り分け表の「P1 で足した key」の後半）。★A にしない：保護を外すのは日次点検の段の中で行い、
+  //     lbSelfHeal の修理ではない（LB_HEAL_KEYS・I-H12 は変えない）
+  ws_danger: ['B', '書き込みの比較'], ws_not_running: ['B', '書き込みの比較'], ws_partial: ['B', '書き込みの比較'],
+  metrics_unprotected: ['B', '書き込みの比較'], metrics_protect_blocked: ['B', '書き込みの比較'],
+  metrics_write_fail: ['B', '書き込みの比較'], ws_check_fail: ['AB', '書き込みの比較'], ws_erase_stuck: ['B', '書き込みの比較'],
+  ws_backlog: ['info', '書き込みの比較']
 };
 function _lbTriage(key) {
   var t = LB_TRIAGE.hasOwnProperty(key) ? LB_TRIAGE[key] : null;
@@ -3312,7 +3343,7 @@ var LB_FACT_EXCEPTION_KEYS = ['cancel_notes_check_fail', 'pace_fail', 'datahealt
   'consec_read_fail', 'shadow_sweep_read_fail', 'trigger_check_fail', 'pending_payment_check_fail', 'dualwrite_check_fail',
   'calslots_check_fail', 'contract_input_check_fail', 'd1_allow_unreadable',
   'edge_defer_check_fail', 'notify_defer_check_fail', 'autobook_check_fail', 'lock_count_check_fail', 'karte_ai_check_fail',
-  'selfheal_watch_fail'];
+  'selfheal_watch_fail', 'ws_check_fail'];
 //   いまの詳細に氏名が入る key（要約へは ids_unavailable か会員番号だけ）
 var LB_FACT_NAME_KEYS = ['member_broken', 'member_nocontract', 'resv_dup_ev', 'resv_dup_slot', 'resv_unlinked',
   'cal_missing', 'cal_orphan', 'cal_missing_tr', 'cal_orphan_tr', 'cal_manual'];
@@ -5987,7 +6018,7 @@ function getBookableRemaining(customerId, contractType, customerName, targetDate
   if (b.code === 'INVALID_ATTENDEE_COUNT') return { ok: false, code: 'INVALID_ATTENDEE_COUNT', message: '来店人数の指定が不正です。' };
   // Codex条件：割当器 result.ok===true を厳守。不正入力（データ不整合・期限欠損）は fail-closed で予約拒否。
   if (!b.ok) return { ok: false, code: 'REVIEW_REQUIRED', message: 'ご契約情報の確認が必要です。恐れ入りますが担当トレーナーへご連絡ください。' };
-  if (!b.canBook) return { ok: false, code: 'NO_REMAINING', message: (wantAtt > 1 ? 'ペアチケットの残数が不足しています（2名分が同一チケットに必要です）。' : '予約可能な残数がありません。') };
+  if (!b.canBook) return { ok: false, code: 'NO_REMAINING', packKind: wantKind, message: (wantAtt > 1 ? 'ペアチケットの残数が不足しています（2名分が同一チケットに必要です）。' : '予約可能な残数がありません。') };
   // ★月額(通常/モニター)契約の種別を求める（2026-10-05）。予約タイトルの種別を決めるのに使う。
   //   contractType は最新の契約行から来るため、追加チケット行が並列にあると 'チケット' になる。
   //   月額枠を消化した予約が チケット_ に化けるのを防ぐため、月額契約の種別を別に渡す。
@@ -7358,7 +7389,12 @@ function _lbNotifyReservation(customerLineUserId, trainer, start, end, customerN
 function _lbReserveCore(custInfo, body, channel) {
   var r = _lbReserveCoreImpl(custInfo, body, channel);
   if (r && r._skipOutcome) delete r._skipOutcome;   // 連続ルールで弾いた分は CONSEC_ で記録済み（二重に数えない）
-  else { try { _lbLogOutcome((r && r.success) ? 'success' : ((r && r.code) || 'ERROR'), channel); } catch (e) { Logger.log('outcomeログ失敗（予約は継続）: ' + e.message); } }
+  else {
+    //   ★設計54 S1a：比べる材料は outcome の行の6列目に相乗りする（新しい書き込み・ロック・Script Property は足さない）。
+    //     作れなければ今と同じ5列の行（_lbWsFacts は例外を外へ出さない）
+    var _ws = null; try { _ws = _lbWsFacts(custInfo, body, channel, r); } catch (eWs) { _ws = null; }
+    try { _lbLogOutcome((r && r.success) ? 'success' : ((r && r.code) || 'ERROR'), channel, '', _ws); } catch (e) { Logger.log('outcomeログ失敗（予約は継続）: ' + e.message); }
+  }
   //   ★連続ルールの dry（設計18 §3-10・関門③）：予約が成立したあとで「on なら弾いたか」と「判定にかかった時間」を記録する。
   //     ロックの外なので同時に予約した人を待たせない。結果は変えない。例外は外へ出さない
   if (r && r.success && custInfo && custInfo.consecRule === true && String(custInfo.contractType || '').indexOf('体験') < 0) {
@@ -7368,8 +7404,10 @@ function _lbReserveCore(custInfo, body, channel) {
 }
 // custInfo: { customerId, customerName, lineUserId(空可) }
 function _lbReserveCoreImpl(custInfo, body, channel) {
+  _LB_WS = { at: 'gate', pk: '', e: null, ex: null, cm: '' };   // 設計54：どこで決まったか（値は固定の語）
   var _gate = _lbBookingGate(String(custInfo.customerId || ''), channel);   // 移行B2：kill switch＋オンボードゲート（通常/変更/振替/代行の全作成経路に適用）
   if (!_gate.ok) return { success: false, code: _gate.code, message: _gate.message };
+  _LB_WS.at = 'bad';
   var trainer = _lbTrainerById(String(body.trainerId || ''));
   if (!trainer) return { success: false, code: 'BAD_REQUEST', message: 'トレーナーが不明です。' };
   var start = new Date(body.startISO);
@@ -7378,6 +7416,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
   // 極端な未来日時のガード（残数割当器が対象月まで月単位でループ＝異常な遠未来でLock占有DoSになるのを遮断・Codex）。
   //   予約窓は当月〜翌月なので400日先で十分に余裕。全予約経路(単発/一括/代行)を保護。
   if (start.getTime() > new Date().getTime() + 400 * 86400000) return { success: false, code: 'BAD_REQUEST', message: 'ご予約は先すぎる日時です。' };
+  _LB_WS.at = 'deadline';
   // 受付締め切り（午前枠＝前日22時／それ以外＝開始3時間前）。トレーナー代理/テストは除外。
   //   表示(buildAvailableSlots)と同じ _lbBookingOpen を使う＝「見えているのに予約できない」を構造的に防ぐ。
   if (channel !== 'trainer_manual' && channel !== 'perf_test' &&
@@ -7387,11 +7426,13 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
   }
   // 予約できる最終日（25日以降は翌月末・それ以前は当月末）より先は、本人の操作なら作らない（設計25）。
   //   印 enforceHorizon はサーバーが組み立てる custInfo にだけ付く（body は見ない）。代行・固定枠の自動予約には付かない（繰り返しは全回に付く）
+  _LB_WS.at = 'horizon';
   if (custInfo.enforceHorizon === true) { var _hzNg = _lbHorizonGate(start.getTime()); if (_hzNg) return _hzNg; }
   // 体験契約の会員がLINEから予約した場合も実際は90分押さえる（表示・案内は60分）。
   var _sessMins = (String((custInfo && custInfo.contractType) || '').indexOf('体験') >= 0)
     ? (SETTINGS.TRIAL_SESSION_MINUTES || SETTINGS.SESSION_MINUTES) : SETTINGS.SESSION_MINUTES;
   var end = new Date(start.getTime() + _sessMins * 60000);
+  _LB_WS.e = end.getTime(); _LB_WS.at = 'busy';
 
   _lbWpMark('pre');
   var _wl = _lbTakeWriteLock('reserve');   // 設計47：既に持っていれば取り直さない（変更から呼ばれるとき）・取れなければ BUSY
@@ -7411,17 +7452,21 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     //   落として残数集合から除外済み＝ここで別途 exclude は渡さない（同時刻の別sessionを過剰除外しない・C3）。
     // ペア来店人数：1 or 2 の整数のみ（既定1）。黙って丸めない＝不正値は予約を通さない。
     //   「ペア会員かどうか」は契約種別の文字列でなく実体（有効なペアpack）で判定する＝probeに委ねる。
+    _LB_WS.at = 'att';
     var _att = (body.attendeeCount == null || body.attendeeCount === '') ? 1 : Number(body.attendeeCount);
     if (!(_att === 1 || _att === 2)) return { success: false, code: 'INVALID_ATTENDEE_COUNT', message: '来店人数の指定が不正です。' };
     var _kind = 'normal';
+    _LB_WS.at = 'remain';
     if (channel !== 'transfer') {
       // 残数判定は probe 一本（合計残での通過を廃止：ペアは単一packに人数ぶんの空きが必要）
       rem = getBookableRemaining(custInfo.customerId, custInfo.contractType, custInfo.customerName, start.getTime(), undefined, _att, body.packKind);
+      if (rem && (rem.packKind === 'pair' || rem.packKind === 'normal')) _LB_WS.pk = rem.packKind;   // 設計54：GAS が決めた消化先（Worker が同じ種別で判定する）
       if (!rem.ok) return { success: false, code: rem.code || 'NO_REMAINING', message: rem.message || '予約可能な残数がありません。' };
       _kind = rem.packKind || 'normal';   // 実際に消化する種別＝カレンダー種別・記録(book_type)と厳密に一致させる
       //   ★固定枠の自動予約だけ：その月の合計回数の上限（2026-10-25・方針A）。**ロックの内側で**数え直す。
       //     自動予約は1件ずつロックを取り直すので、途中で本人が予約すると外で数えた上限を超えうる（Codex関門②）。
       //     数えるのは本人のその月の予約（confirmed/consumed）のうち振替以外（振替は月の回数を使わない別枠）。
+      _LB_WS.at = (body.autoBookCap == null) ? 'remain' : 'cap';   // 設計54
       if (body.autoBookCap != null && _lbIsFiniteNum(Number(body.autoBookCap))) {
         var _capSs = _lbResvSessions(custInfo.customerId);
         if (_capSs === null) return { success: false, code: 'REVIEW_REQUIRED', message: '予約情報の確認ができません。' };
@@ -7439,6 +7484,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     // [消化]は計上の証跡として残るが席は空き。施設キャパ判定からは除外（共通ルール）。
     // 変更/振替元(自分の旧予定)を空き判定から除外＝隣接/重複時刻への変更・振替を可能に（問題2）
     var exStart = body.excludeStartISO ? new Date(body.excludeStartISO).getTime() : null;
+    _LB_WS.ex = exStart; _LB_WS.at = 'b1';
     var b1busy = calB1.getEvents(start, end).filter(function (ev) {
       if (ev.getTitle().indexOf('[消化]') === 0) return false;                       // [消化]は席開放
       if (exStart && ev.getStartTime().getTime() === exStart) return false;          // 自分の旧予定は除外
@@ -7450,11 +7496,13 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     }
     _lap('B1競合チェック');
     // 選択トレーナーのリアルタイム空き照合
+    _LB_WS.at = 'trainer';
     if (!_lbCheckTrainerAvailable(trainer, start, end, exStart)) {
       return { success: false, code: 'SLOT_TAKEN', message: 'この時間帯は選択されたトレーナーが対応できません。' };
     }
     // 1Fオンライン等でそのトレーナーが埋まっていないか（B1容量を使わない予約の二重防止・Codex#1）
     //   1F取得失敗は fail-closed で予約拒否。除外はstart時刻でなくcalendar_event_id一致のみ（変更元の誤除外防止・Codex#2）。
+    _LB_WS.at = 'f1';
     if (_lb1FBlockEnabled()) {
       var _f1 = _lb1FTrainerBusy(start, end);
       if (!_f1.ok) return { success: false, code: 'SLOT_CHECK_UNAVAILABLE', message: '空き状況を確認できませんでした。時間をおいて再度お試しください。' };
@@ -7470,6 +7518,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     if (custInfo.consecRule === true && String(custInfo.contractType || '').indexOf('体験') < 0) {
       //   ★ロックの中で判定するのは on のときだけ。dry は結果を変えないので、予約が成立して
       //     ロックを離した後（_lbReserveCore）で判定する＝同時に予約した人を待たせない（関門③）
+      _LB_WS.at = 'consec';
       var _cm = _lbConsecMode();
       if (_cm === 'on') {
         var _cvT0 = Date.now();
@@ -7487,8 +7536,10 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
           }
         }
       }
+      _LB_WS.cm = String(_cm || '') + '1';   // 設計54：既に読んだモードを使う（新しく読まない）
       _lap('連続ルール');
     }
+    _LB_WS.at = 'write';
     // カレンダー登録（TECH_SPEC §5・末尾 _line で billingパーサ非破壊）※B1のみ＋トレーナーカレンダー
     var lastName = trainer.name.split(' ')[0];
     // 予約種別プレフィックス：振替(channel) → レンタル(契約種別) → 通常 の優先順で決定。
@@ -7537,6 +7588,7 @@ function _lbReserveCoreImpl(custInfo, body, channel) {
     _lap('通知push');
 
     _LB_WRITE_CUST = { id: String(custInfo.customerId || '') };   // 設計45：会員IDだけ（応答には載せない）
+    _LB_WS.at = 'ok';
     return { success: true, reservationId: resId, trainerName: trainer.name, calendarEventId: capEvId, trainerEventId: tEvId };
   } catch (e) {
     Logger.log('_lbReserveCore エラー: ' + e.message);
@@ -10645,7 +10697,8 @@ function changeReservationLine(lineUserId, reservationId, newStartISO, opts) {
           // 変更は「日時だけ」が不変条件。会計属性（来店人数・消化先）は旧行から復元して持ち越す。
           //   packKindを渡さないと月額＋ペア併存会員の「ペア1名」予約が変更で月額/通常packへ変質する。
           attendeeCount: ((r[14] === '' || r[14] == null) ? 1 : Number(r[14])),
-          packKind: (String(r[13] || '').indexOf('ペア') >= 0 ? 'pair' : 'normal') },   // 問題2：自分の旧予定を空き判定から除外
+          packKind: (String(r[13] || '').indexOf('ペア') >= 0 ? 'pair' : 'normal'),
+          wsOldRid: String(reservationId || '') },   // 問題2：自分の旧予定を空き判定から除外／設計54：変更前の予約ID（比べるときに Worker が外す）
         'change'
       );
     } catch (eC) { sh.getRange(row, 7).setValue('confirmed'); return { success: false, code: 'SERVER_ERROR', message: eC.message }; }  // core例外＝新行未コミット→旧復活
@@ -11442,7 +11495,7 @@ function _lbLogNotifyFail(reason, purpose, detail) {
   try { _lbLogOutcome('NOTIFY_FAIL_' + String(reason || '?'), String(purpose || 'push'), detail); }
   catch (e) { Logger.log('通知失敗ログの記録に失敗: ' + e.message); }
 }
-function _lbLogOutcome(outcome, channel, detail) {
+function _lbLogOutcome(outcome, channel, detail, ws) {
   var tz = SETTINGS.TIMEZONE, now = new Date();
   //   ★5列目に「相手が何と言って断ったか」を残す（2026-10-13）。
   //
@@ -11456,13 +11509,23 @@ function _lbLogOutcome(outcome, channel, detail) {
   //
   //   ★集計（getBookingMetrics）は4列しか読まないので、足しても壊れない。
   //   ★相手の応答にはお客様の情報は入らない（LINEの汎用のエラー文）。長さだけ切る。
-  _lbMetricsSheet().appendRow([
+  var row = [
     Utilities.formatDate(now, tz, 'yyyy/MM/dd HH:mm:ss'),
     Utilities.formatDate(now, tz, 'yyyy-MM-dd'),
     String(outcome || ''),
     String(channel || ''),
     String(detail == null ? '' : detail).slice(0, 200)
-  ]);
+  ];
+  //   ★設計54 S1a：6列目に比べる材料（'ws1'＋JSON・_lbWsFacts が作る）。無ければ今と同じ5列
+  if (typeof ws === 'string' && ws.indexOf('ws1') === 0) row.push(ws);
+  try {
+    _lbMetricsSheet().appendRow(row);
+  } catch (eA) {
+    //   ★設計54 §3-1-e：断られた事実を数える（失敗したときだけ・成功では何もしない）。
+    //     記録は別の try の中＝記録が落ちても元の例外をそのまま投げ直す（呼び出し元が握る＝予約の結果は変わらない）
+    try { _lbMetricsWriteFailNote(eA, 'append'); } catch (eN) {}
+    throw eA;
+  }
 }
 
 // 直近 sinceDays 日の「通知失敗の理由（相手の応答）」を、種別ごとに1件ずつ返す。
