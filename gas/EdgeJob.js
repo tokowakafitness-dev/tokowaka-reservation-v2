@@ -122,7 +122,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-11-24a remaining {healStatus}（自己修理 P1 の状態）／2026-11-20a 作業依頼の中の押し出しの記録をロックを放した直後に書く・実行中の印（設計47）';
+var LB_JOB_BUILD = '2026-11-24b remaining {wsPrecheck}・{writeShadow}・{wsProtect=setup}（設計54 S1a）／2026-11-24a remaining {healStatus}（自己修理 P1 の状態）／2026-11-20a 作業依頼の中の押し出しの記録をロックを放した直後に書く・実行中の印（設計47）';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);
@@ -187,6 +187,11 @@ function _ejRunInner(op, args) {
       // 自己修理 P1 の状態（2026-11-24・I-H34）。要約・完走の印・保存の結果・台帳の行を列挙と日時だけで（読み取りだけ）。
       //   ★2026-11-24 本番で台帳が空のタブのまま初回から黙って止まっていた。CEO が自分で読めるようにする。新しい op は足さない
       if (args && (args.healStatus || args.heal_status)) return _ejScrub(lbHealStatusText());
+      //   設計54 S1a：実装の前提の実測（件数と真偽だけ）・write-shadow の状態。新しい op は足さない
+      if (args && args.wsPrecheck) return _ejScrub(lbWsPrecheckText());
+      //   保護を置く（確かめられる範囲が通ったときだけ・冪等）。★結果を読んでから CEO が明示して呼ぶ
+      if (args && args.wsProtect === 'setup') return _ejScrub(JSON.stringify(setupMetricsProtection()));
+      if (args && args.writeShadow) return _ejScrub(lbWriteShadowStatusText());
       if (args && args.date) return _ejScrub(dayReservationsText(args.date));
       return _ejScrub(remainingDebugText((args && args.name) || ''));
     // 過去のある時点の残数を再現する（2026-10-04）。args = { name, at: '2026-09-25 12:56' }。

@@ -17,6 +17,7 @@ import { handleIngest } from './routes/ingest.js';
 import { handleMailClick, handleMailClickList, handleMailClickLookup } from './routes/mailclick.js';
 import { handleCalSync } from './routes/calsync.js';
 import { handleCalCompare } from './routes/calcompare.js';
+import { handleWriteShadow } from './routes/write-shadow.js';
 import { buildQuota, quotaStatus, quotaBehind } from './routes/quota.js';
 import { quotaRebuild } from './routes/quota-rebuild.js';
 import { remainAllow, remainProbe } from './routes/remain-allow.js';
@@ -35,7 +36,7 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
 
 // 版の印（/health に載せる・認証不要・個人情報なし）。★Worker を変えて出すたびに上げる。
 //   無いと「反映したつもりで入っていない」を外から見分けられない（2026-11-07・設計38 の設置で気づいた）
-export const WORKER_BUILD = '2026-11-19a 設計44 同意の規則（会員画面からの健康情報の撤回・紙の同意の人にも聞く）＋印だけ（行0件）の送信で表の全行を読まない（打ち手A）・設計45 写しが書き込みの印を含まなければ答えない（I79）';
+export const WORKER_BUILD = '2026-11-24a 設計54 S1a write-shadow（/writeshadow・既定は記録しない WRITE_SHADOW 未設定）／2026-11-19a 設計44 同意の規則（会員画面からの健康情報の撤回・紙の同意の人にも聞く）＋印だけ（行0件）の送信で表の全行を読まない（打ち手A）・設計45 写しが書き込みの印を含まなければ答えない（I79）';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
@@ -169,6 +170,9 @@ export default {
     }
 
     // ①の突き合わせ（GASとD1の空き枠を本番で比べて compare_log に記録する）。読み取りのみ。
+    // 設計54 S1a：予約の確定を Worker でも判定して比べる（計測だけ・合言葉・既定は WRITE_SHADOW 未設定＝記録しない）
+    if (url.pathname === '/writeshadow' || url.pathname === '/writeshadow/status') return handleWriteShadow(request, env);
+
     if (url.pathname === '/calcompare' || url.pathname === '/calcompare/status'
         || url.pathname === '/calcompare/direct') return handleCalCompare(request, env);
 
