@@ -140,7 +140,7 @@ export function makeCtx(w) {
   };
   //   ---- 設計57：公開シート（枠）とトレーナーのカレンダーの身代わり ----
   //   既定＝「いまの翌月（25日以降なら）に B の枠と出勤が毎日ある・10分前に作った」。w.data.nmo で上書きする
-  //     { meta: 値（null で meta シートなし）, slots: [[startISO, trainerId]]|null（null でシートなし）, events: { B: [{title, start}] }, calNull: ['C'] }
+  //     { meta: 値（null で meta シートなし・関数なら読むたびに呼ぶ）, slots: [[startISO, trainerId]]|null（null でシートなし）, events: { B: [{title, start}] }, calNull: ['C'] }
   const nmoDefaultDays = () => {
     const j = new Date(w.now + JST), y = j.getUTCFullYear(), m = j.getUTCMonth() + 1;   // 翌月（JST）
     const out = [];
@@ -153,7 +153,10 @@ export function makeCtx(w) {
       const o = nmo();
       if (n === 'meta') {
         const v = ('meta' in o) ? o.meta : new Date(w.now - 600000).toISOString();
-        return v === null ? null : makeSheet('meta', [[v]]);
+        if (v === null) return null;
+        //   関数なら読むたびに呼ぶ（読みの途中で書き直しが終わった＝前後で時刻が変わる、を再現する）
+        if (typeof v === 'function') return { getRange: () => ({ getValue: () => v() }) };
+        return makeSheet('meta', [[v]]);
       }
       if (n === 'slots') {
         const sl = ('slots' in o) ? o.slots : nmoDefaultDays().map((ms) => [new Date(ms).toISOString(), 'B']);

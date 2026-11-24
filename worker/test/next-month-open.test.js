@@ -17,14 +17,16 @@ const iso = (ms) => new Date(ms).toISOString();
 const days = (y, m, n, h = 10) => Array.from({ length: n }, (_, i) => at(y, m, i + 1, h, 0));
 const keysOf = (r) => (r.issues || []).filter((x) => /^next_month_/.test(x.key));
 const one = (r, k) => (r.issues || []).find((x) => x.key === k);
+//   今月の枠（11/26〜30・B）＝公開シートが書き直し中ではない（0行ではない）印。翌月の判定には数えない
+const NOV = days(2026, 11, 30).slice(25).map((ms) => [iso(ms), 'B']);
 
 console.log('=== ① 24日までは読まない・出さない ===');
 {
-  const w = makeWorld({ now: at(2026, 11, 24, 7, 5), data: { nmo: { slots: [], events: {} } } });   // 翌月の枠0でも
+  const w = makeWorld({ now: at(2026, 11, 24, 7, 5), data: { nmo: { slots: NOV, events: {} } } });   // 翌月の枠0でも
   const r = run(w, 'dailyHealthCheck', true);
   ok('①-1 24日 7:05：next_month_* は1つも出ない', keysOf(r).length === 0, JSON.stringify(keysOf(r)));
   ok('①-2 ★24日は公開シートもカレンダーも読まない（重さを足さない）', !w.calls.openById && !w.calls.getCalendarById, JSON.stringify(w.calls));
-  const w2 = makeWorld({ now: at(2026, 11, 24, 23, 59), data: { nmo: { slots: [], events: {} } } });
+  const w2 = makeWorld({ now: at(2026, 11, 24, 23, 59), data: { nmo: { slots: NOV, events: {} } } });
   ok('①-3 24日 23:59 も出さない', keysOf(run(w2, 'dailyHealthCheck', true)).length === 0);
 }
 
@@ -41,7 +43,7 @@ console.log('=== ② 25日・翌月の枠が0日なら出す ===');
   ok('②-4 判定できた日は unknown を出さない・記録（open）も出さない', !one(r, 'next_month_slots_unknown') && !one(r, 'next_month_open'));
 
   //   出勤はあるのに枠が0（予定名の取り違え・枠の作り直しが翌月を覆っていない）
-  const w2 = makeWorld({ now: at(2026, 11, 26), data: { nmo: { slots: [], events: { B: days(2026, 12, 20, 9).map((ms) => ({ title: '出勤', start: ms })) } } } });
+  const w2 = makeWorld({ now: at(2026, 11, 26), data: { nmo: { slots: NOV, events: { B: days(2026, 12, 20, 9).map((ms) => ({ title: '出勤', start: ms })) } } } });
   const x2 = one(run(w2, 'dailyHealthCheck', true), 'next_month_slots_none');
   ok('②-5 出勤20日・枠0日 → none（facts not_covered・B:20 が出る）', x2 && JSON.stringify(x2.safe.facts) === '["not_covered"]' && x2.detail.indexOf('B:20') >= 0 && x2.detail.indexOf('出勤のある日 20日') >= 0, x2 && x2.detail);
 
@@ -51,7 +53,7 @@ console.log('=== ② 25日・翌月の枠が0日なら出す ===');
   ok('②-6 ★非表示のトレーナーの枠だけ（31日）でも、顧客向けが0日なら出す（全体 31日／顧客向け 0日）', x3 && x3.detail.indexOf('全体 31日／顧客向け 0日') >= 0, x3 && x3.detail);
 
   //   出勤の予定名でないもの（予約・休憩）は出勤に数えない＝枠の計算と同じ isShiftEvent
-  const w4 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: [], events: { C: [{ title: '[RESERVED] 架空', start: at(2026, 12, 3, 10, 0) }, { title: '休憩', start: at(2026, 12, 4, 12, 0) }] } } } });
+  const w4 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: NOV, events: { C: [{ title: '[RESERVED] 架空', start: at(2026, 12, 3, 10, 0) }, { title: '休憩', start: at(2026, 12, 4, 12, 0) }] } } } });
   const x4 = one(run(w4, 'dailyHealthCheck', true), 'next_month_slots_none');
   ok('②-7 予約・休憩は出勤に数えない（C:0）', x4 && x4.detail.indexOf('C:0') >= 0 && JSON.stringify(x4.safe.facts) === '["no_shift"]', x4 && x4.detail);
 
@@ -79,7 +81,7 @@ console.log('=== ③ 枠があれば出さない ===');
 
 console.log('=== ④ 判定できないときは 0日と言わない ===');
 {
-  const base = { slots: [], events: {} };   // 読めれば none になる中身
+  const base = { slots: NOV, events: {} };   // 読めれば none になる中身
   const cases = [
     ['④-1 写しが25日0時より前（24日23:55）＝翌月を覆っていない', { meta: iso(at(2026, 11, 24, 23, 55)) }, 'stale'],
     ['④-2 写しが4時間前', { meta: iso(at(2026, 11, 25, 3, 0)) }, 'stale'],
@@ -101,20 +103,41 @@ console.log('=== ④ 判定できないときは 0日と言わない ===');
     ok('④-1b ★25日 1:00・写しは65分前だが24日 23:55（地平が伸びる前）→ unknown（stale）・none は出さない', u && !one(r, 'next_month_slots_none') && JSON.stringify(u.safe.facts) === '["stale"]', JSON.stringify(keysOf(r)));
   }
   //   meta がシートの日付型で返っても読める
-  const w = makeWorld({ now: at(2026, 11, 25), data: { nmo: { meta: new Date(at(2026, 11, 25, 6, 50)), slots: [], events: {} } } });
+  const w = makeWorld({ now: at(2026, 11, 25), data: { nmo: { meta: new Date(at(2026, 11, 25, 6, 50)), slots: NOV, events: {} } } });
   ok('④-6 meta が日付型でも新しさを読める（none になる）', !!one(run(w, 'dailyHealthCheck', true), 'next_month_slots_none'));
   //   時間が足りない（日次点検がもう4分以上使った）→ 読まずに unknown
   const w2 = makeWorld({ now: at(2026, 11, 25) });
   const c = makeCtx(w2);
   let read = 0;
-  const r2 = c.lbNextMonthOpenCheck(w2.now, 4 * 60000 + 1, () => { read++; return { builtAtMs: w2.now, slots: [], shifts: {} }; });
+  const fake = () => { read++; return { builtAtMs: w2.now, metaBefore: w2.now, metaAfter: w2.now, totalRows: NOV.length, slots: NOV, shifts: { A: [], B: [], C: [] } }; };
+  const r2 = c.lbNextMonthOpenCheck(w2.now, 4 * 60000 + 1, fake);
   ok('④-7 ★日次点検が4分を超えていたら読まずに unknown（no_time）', r2 && r2.kind === 'unknown' && JSON.stringify(r2.safe.facts) === '["no_time"]' && read === 0, JSON.stringify(r2));
-  const r3 = c.lbNextMonthOpenCheck(w2.now, 4 * 60000, () => { read++; return { builtAtMs: w2.now, slots: [], shifts: {} }; });
+  const r3 = c.lbNextMonthOpenCheck(w2.now, 4 * 60000, fake);
   ok('④-8 4分ちょうどまでは読む', r3 && r3.kind === 'none' && read === 1, JSON.stringify(r3));
-  //   カレンダーが読めないトレーナーは 0日と数えない（読めないと書く）。枠で判定できるので none は出せる
-  const w3 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: [], events: {}, calNull: ['C'] } } });
-  const x3 = one(run(w3, 'dailyHealthCheck', true), 'next_month_slots_none');
-  ok('④-9 カレンダーが読めないトレーナーは「読めない C」と書き、C:0 とは書かない', x3 && x3.detail.indexOf('読めない C') >= 0 && x3.detail.indexOf('C:0') < 0, x3 && x3.detail);
+  //   ★顧客向けトレーナーのカレンダーが1本でも読めなければ、原因を確定できない＝unknown（関門②）
+  const w3 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: NOV, events: {}, calNull: ['C'] } } });
+  const r3b = run(w3, 'dailyHealthCheck', true), u3 = one(r3b, 'next_month_slots_unknown');
+  ok('④-9 ★顧客向けトレーナー（C）のカレンダーが読めない・枠0日 → none ではなく unknown（cal_unreadable）', u3 && !one(r3b, 'next_month_slots_none') && JSON.stringify(u3.safe.facts) === '["cal_unreadable"]' && u3.detail.indexOf('C:0') < 0, JSON.stringify(keysOf(r3b)));
+  //   非表示（A）だけ読めないなら、顧客向けで判定できる＝none
+  const w4 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: NOV, events: {}, calNull: ['A'] } } });
+  const x4 = one(run(w4, 'dailyHealthCheck', true), 'next_month_slots_none');
+  ok('④-10 非表示（A）のカレンダーだけ読めないなら none（「読めない A」と書く）', x4 && x4.detail.indexOf('読めない A') >= 0, x4 && x4.detail);
+  //   ★公開シートの書き直し中（関門②）
+  const wE = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: [], events: {} } } });
+  const rE = run(wE, 'dailyHealthCheck', true), uE = one(rE, 'next_month_slots_unknown');
+  ok('④-11 ★slots が全体で0行（消した直後）→ unknown（rewriting）・none は出さない', uE && !one(rE, 'next_month_slots_none') && JSON.stringify(uE.safe.facts) === '["rewriting"]', JSON.stringify(keysOf(rE)));
+  //   見出しだけ（0行）も同じ
+  const wH2 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: [], events: { B: [] } } } });
+  ok('④-12 見出しだけ（データ0行）も unknown', !!one(run(wH2, 'dailyHealthCheck', true), 'next_month_slots_unknown'));
+  let n = 0;
+  const t1 = iso(at(2026, 11, 25, 6, 50)), t2 = iso(at(2026, 11, 25, 7, 0));
+  const wM = makeWorld({ now: at(2026, 11, 25), data: { nmo: { meta: () => (n++ === 0 ? t1 : t2), slots: NOV, events: {} } } });
+  const rM = run(wM, 'dailyHealthCheck', true), uM = one(rM, 'next_month_slots_unknown');
+  ok('④-13 ★slots を読む前と後で meta が変わった（読みの途中で書き直された）→ unknown（rewriting）', uM && !one(rM, 'next_month_slots_none') && JSON.stringify(uM.safe.facts) === '["rewriting"]' && n === 2, JSON.stringify(keysOf(rM)) + ' n=' + n);
+  //   部分（今月の枠だけ・翌月が欠けた）で meta の前後が同じ＝書き終えた枠＝none（writeToSpreadsheet は全行を1回の setValues で書く）
+  let n2 = 0;
+  const wP = makeWorld({ now: at(2026, 11, 25), data: { nmo: { meta: () => { n2++; return t1; }, slots: NOV, events: {} } } });
+  ok('④-14 meta の前後が同じなら判定する（none）・meta は2回読む', !!one(run(wP, 'dailyHealthCheck', true), 'next_month_slots_none') && n2 === 2, 'n2=' + n2);
 }
 
 console.log('=== ⑤ 点検そのものが落ちたら ===');
@@ -129,7 +152,7 @@ console.log('=== ⑤ 点検そのものが落ちたら ===');
 
 console.log('=== ⑥ 本番の実行（要約・台帳）・出すのは日数と記号だけ ===');
 {
-  const w = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: [], events: {} } } });
+  const w = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: NOV, events: {} } } });
   const r = run(w, 'dailyHealthCheck');
   const it = (status(w).items || []).find((x) => x.k === 'next_month_slots_none');
   ok('⑥-1 要約に facts（no_shift）つきで載る', it && it.c === 1 && JSON.stringify(it.f) === '["no_shift"]', JSON.stringify(it));
@@ -141,7 +164,7 @@ console.log('=== ⑥ 本番の実行（要約・台帳）・出すのは日数�
   run(w, 'dailyHealthCheck');
   ok('⑥-5 翌日も0日のまま → 悪化ではないのでメールしない（同じ問題を毎日送らない）', !w.mails.some((m) => m.body.indexOf('空き枠のある日が0日') >= 0), JSON.stringify(w.mails.map((m) => m.subject)));
   //   ★出力に氏名・予定名が入らない（予定名に架空の顧客名を入れても詳細に出ない）
-  const w2 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: [], events: { B: [{ title: '出勤 テスト 太郎', start: at(2026, 12, 2, 9, 0) }] } } } });
+  const w2 = makeWorld({ now: at(2026, 11, 25), data: { nmo: { slots: NOV, events: { B: [{ title: '出勤 テスト 太郎', start: at(2026, 12, 2, 9, 0) }] } } } });
   const x2 = one(run(w2, 'dailyHealthCheck', true), 'next_month_slots_none');
   ok('⑥-6 予定名（架空の名前入り）は詳細に出ない・数だけ', x2 && x2.detail.indexOf('テスト') < 0 && x2.detail.indexOf('B:1') >= 0, x2 && x2.detail);
 }

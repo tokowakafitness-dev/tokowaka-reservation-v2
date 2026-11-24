@@ -2338,17 +2338,25 @@ function _lbNextMonthOpenRead(rg) {
   var ssId = PropertiesService.getScriptProperties().getProperty('PUBLIC_SLOTS_SPREADSHEET_ID') || SETTINGS.SPREADSHEET_ID;
   var ss = SpreadsheetApp.openById(ssId);
   var sh = ss.getSheetByName(SETTINGS.SHEET_NAME), meta = ss.getSheetByName('meta');
-  var out = { builtAtMs: 0, slots: null, shifts: {} };
-  if (meta) {
+  //   ★公開シートは原子的に差し替えられていない（writeToSpreadsheet：slots を全消去→見出し→全行を1回で書き戻し→最後に meta!A1）。
+  //     書き直しの途中に読むと slots は空なのに meta は前回の新しい時刻のまま＝0日と取り違える（関門②）。
+  //     だから meta!A1 を slots の前と後で2回読み、違えば書き直し中。slots の全体（今月を含む）が0行も書き直し中とみなす
+  var out = { builtAtMs: 0, metaBefore: 0, metaAfter: 0, totalRows: 0, slots: null, shifts: {} };
+  function metaMs() {
+    if (!meta) return 0;
     var mv = meta.getRange(1, 1).getValue();
     var mt = (mv instanceof Date) ? mv.getTime() : new Date(String(mv || '')).getTime();
-    out.builtAtMs = isFinite(mt) ? mt : 0;
+    return isFinite(mt) ? mt : 0;
   }
+  out.metaBefore = metaMs();
   if (sh) {
     var n = sh.getLastRow() - 1;
+    out.totalRows = n > 0 ? n : 0;
     //   5列目 startISO 〜 8列目 trainerId（並びは writeToSpreadsheet の見出しと同じ・変えない）
     out.slots = n > 0 ? sh.getRange(2, 5, n, 4).getValues().map(function (r) { return [r[0], r[3]]; }) : [];
   }
+  out.metaAfter = metaMs();
+  out.builtAtMs = out.metaAfter;
   for (var t = 0; t < CALENDAR_IDS.TRAINERS.length; t++) {
     var tr = CALENDAR_IDS.TRAINERS[t];
     var cal = CalendarApp.getCalendarById(tr.email);
@@ -2371,6 +2379,9 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
   if (Number(hcElapsedMs || 0) > LB_NMO.HC_LIMIT_MS - LB_NMO.BUDGET_LEFT_MS) return unknown('no_time', '日次点検の時間が足りない');
   var r = (readFn || _lbNextMonthOpenRead)(rg);
   if (!r || r.slots == null) return unknown('unreadable', '公開シートの枠が読めない');
+  if (Number(r.metaBefore || 0) !== Number(r.metaAfter || 0) || !(Number(r.totalRows || 0) > 0)) {
+    return unknown('rewriting', '公開シートの枠が書き直しの途中（前後で時刻が違う／今月を含めて枠が0行）');
+  }
   var built = Number(r.builtAtMs || 0);
   if (!(built >= rg.openedAt.getTime()) || nowMs - built > LB_NMO.STALE_MS) {
     return unknown('stale', '枠の写しが' + (built ? Math.round((nowMs - built) / 60000) + '分前' : '時刻なし') + '＝翌月を覆っていない／古い');
@@ -2388,10 +2399,10 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
     allDays[d] = true;
     if (!hidden[String(r.slots[i][1] || '')]) pubDays[d] = true;
   }
-  var shiftAny = {}, perTr = [], unread = [];
+  var shiftAny = {}, perTr = [], unread = [], pubUnread = [];
   for (var u = 0; u < CALENDAR_IDS.TRAINERS.length; u++) {
     var id = String(CALENDAR_IDS.TRAINERS[u].id), list = (r.shifts || {})[id];
-    if (list == null) { unread.push(id); continue; }
+    if (list == null) { unread.push(id); if (!hidden[id]) pubUnread.push(id); continue; }
     var mine = {};
     for (var k = 0; k < list.length; k++) {
       var s = Number(list[k]);
@@ -2403,6 +2414,10 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
   var nAll = Object.keys(allDays).length, nPub = Object.keys(pubDays).length, nShift = Object.keys(shiftAny).length;
   var facts = 'トレーナーに出勤のある日 ' + nShift + '日（' + perTr.join('・') + (unread.length ? '・読めない ' + unread.join('/') : '') + '）'
     + '・枠のある日 全体 ' + nAll + '日／顧客向け ' + nPub + '日・枠は' + Math.max(0, Math.round((nowMs - built) / 60000)) + '分前に作ったもの';
+  if (nPub === 0 && pubUnread.length) {
+    //   ★顧客向けトレーナーのカレンダーが1本でも読めなければ、原因（出勤なし／枠なし）を確定できない＝0日と言わない（関門②）
+    return unknown('cal_unreadable', '顧客向けトレーナーのカレンダーが読めない ' + pubUnread.join('/') + '・' + facts);
+  }
   if (nPub === 0) {
     return { kind: 'none', count: 1, safe: { facts: [nShift === 0 ? 'no_shift' : 'not_covered'] },
               detail: mo + 'に顧客が予約できる空き枠のある日が0日です。' + facts + '。'
@@ -2425,7 +2440,7 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-25b 設計57 関門②：公開シートの書き直し中（meta の前後・0行）と顧客向けトレーナーのカレンダーが読めないときは unknown／2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -3447,7 +3462,7 @@ var LB_FACT_ENUM = {
   health_skipped: ['held', 'lock_busy', 'lease_broken', 'expired', 'no_time'],
   heal_save_fail: ['ledger', 'header_mismatch', 'exception', 'lease', 'lock_busy', 'expired', 'lost', 'other', 'broken'],
   next_month_slots_none: ['no_shift', 'not_covered'],          // 設計57：出勤が0日／出勤はあるのに枠が0日
-  next_month_slots_unknown: ['no_time', 'unreadable', 'stale']  // 設計57：判定できなかった理由
+  next_month_slots_unknown: ['no_time', 'unreadable', 'stale', 'rewriting', 'cal_unreadable']  // 設計57：判定できなかった理由
 };
 //   保存の失敗の理由（_lbHealthSave の why のうち newer 以外）。一覧に無い値は other
 var LB_SAVE_WHY = ['ledger', 'header_mismatch', 'exception', 'lease', 'lock_busy', 'expired', 'lost'];
