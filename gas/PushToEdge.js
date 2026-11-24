@@ -4997,7 +4997,8 @@ function lbDwDailyCheck(dryRunArg) {
 // ============================================================
 var LB_WS = {
   ON_PROP: 'LB_WS_ON',                     // 'on' のときだけ送る（切替関数 lbWriteShadowSetOn/Off）
-  CURSOR_PROP: 'LB_WS_CURSOR',             // { row, t }＝前回どこまで見たか（行番号とその行の1列目）
+  CURSOR_PROP: 'LB_WS_CURSOR',             // 送信カーソル { row, k }（行番号とその行の1列目の epoch ミリ秒）
+  ERASE_PROP: 'LB_WS_ERASE_CURSOR',        // 消去カーソル { row, k }（2時間超の顧客IDを消した所まで）
   STAT_PROP: 'LB_WS_STAT',                 // 送る側の数・印（トリガーと作業依頼と日次点検だけが書く）
   FAIL_PROP: 'LB_METRICS_WRITE_FAIL',      // booking_metrics に書けなかった数（失敗したときだけ書く）
   PROTECT_DESC: 'lb-write-shadow-v1',      // setupMetricsProtection が置いた保護の印
@@ -5253,98 +5254,115 @@ function _lbWsTick(who, startedAt) {
 }
 
 //   本体（UserLock の中）。返り値は固定の語
+//   ★消す役と送る役のカーソルを分ける（関門② 再審・CEO 判断）：
+//     消去カーソル LB_WS_ERASE_CURSOR … 保護の下では行は足されるだけ＝行の順＝時刻の順。前へ読み、2時間超の行は顧客IDを消し（照合つき）、
+//       最初の「2時間未満で顧客IDの残る行」で止まってそこを保存する（その先は全部もっと新しい＝時間がたてば必ず進む）。
+//       無い・壊れた・範囲の外・行が動いた → 2行目から。1行ごとに残り時間を見る。照合に失敗した行ではその行で止まる。
+//     送信カーソル LB_WS_CURSOR … 送るのはここから前だけ。無い・壊れた・範囲の外・行が動いた → 消去カーソルの位置から再出発
+//       （それより前は顧客IDが消えた＝送らない行なので取りこぼしにならない）。壊れた・範囲の外・行が動いた回は送らない（印を残す）。
+//     行が動いたかは1列目を epoch ミリ秒にそろえて比べる（Date と文字列の表現差で誤検知しない）
+function _lbWsCellKey(v) { var ms = _lbWsCellMs(v); return (ms == null) ? 's:' + String(v == null ? '' : v) : 'm' + ms; }
+function _lbWsCursorRead(p, prop, sh, last) {
+  var raw = p.getProperty(prop);
+  if (raw == null || raw === '') return { state: 'none', row: 1 };
+  var cur = null;
+  try { cur = JSON.parse(raw); } catch (e) { return { state: 'broken', row: 1 }; }
+  if (!cur || typeof cur !== 'object' || typeof cur.row !== 'number' || Math.floor(cur.row) !== cur.row) return { state: 'broken', row: 1 };
+  if (cur.row < 1 || cur.row > last) return { state: 'range', row: 1 };
+  if (cur.row === 1) return { state: 'ok', row: 1 };
+  if (_lbWsCellKey(sh.getRange(cur.row, 1).getValue()) !== String(cur.k)) return { state: 'moved', row: 1 };
+  return { state: 'ok', row: cur.row };
+}
+function _lbWsCursorSave(p, prop, sh, row) {
+  p.setProperty(prop, JSON.stringify({ row: row, k: row >= 2 ? _lbWsCellKey(sh.getRange(row, 1).getValue()) : '' }));
+}
 function _lbWsRun(who, startedAt, budget) {
   var sh = _lbSheet(LB_METRICS_SHEET);
   if (!sh) return 'no_sheet';
   var last = sh.getLastRow();
   if (last < 2) return 'empty';
   var p = PropertiesService.getScriptProperties();
-  var st = _lbWsStatRead();
+  var st = {};
   var nowMs = Date.now();
   var counts = {};
   function bump(k, n) { counts[k] = (counts[k] || 0) + (n || 1); }
-
+  function timeLeft() { return Date.now() - startedAt < budget; }
   var prot = _lbWsProtState(sh);
   var sendOk = _lbWsOn() && prot.ok && _edgeEnabled();
-  var cur = null;
-  try { cur = JSON.parse(p.getProperty(LB_WS.CURSOR_PROP) || 'null'); } catch (eC) { cur = null; }
-  var startRow;
-  if (cur && typeof cur.row === 'number' && cur.row >= 1 && cur.row <= last) {
-    var c1 = sh.getRange(cur.row, 1).getValue();
-    var c1s = (c1 instanceof Date) ? 'd' + c1.getTime() : String(c1 == null ? '' : c1);
-    if (cur.row === 1 || c1s === String(cur.t)) startRow = cur.row + 1;
-    else {
-      //   ★位置の前提が崩れた（保護が外れて誰かが行を動かした）。送らない・書き換えは n の照合つきの「顧客IDを消す」だけにする
-      bump('cursor_reset');
-      sendOk = false;
-      st.mismatchAt = nowMs;
-      startRow = 2; st.resetAt = nowMs;
+
+  // ---- 1. 消す役 ----
+  var ec = _lbWsCursorRead(p, LB_WS.ERASE_PROP, sh, last);
+  if (ec.state !== 'ok') { st.resetAt = nowMs; if (ec.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; } }
+  var eRow = ec.row, eStop = '';
+  var eEnd = Math.min(last, eRow + LB_WS.READ_MAX);
+  if (eRow < last) {
+    var eBase = eRow;   // ★読んだ範囲の起点（eRow はループの中で進むので行番号の計算に使わない）
+    var ev = sh.getRange(eBase + 1, 1, eEnd - eBase, 6).getValues();
+    for (var i = 0; i < ev.length; i++) {
+      if (!timeLeft()) { eStop = 'time'; break; }
+      var row = eBase + 1 + i, o = _lbWsParse(ev[i][5]);
+      if (o === false) { bump('unparsed'); eRow = row; continue; }
+      if (o === null || !o.cid) { eRow = row; continue; }          // 6列目が無い・顧客IDが無い（送った・期限の印・too_long）
+      if (o.too_long === 1) bump('too_long');
+      var age = nowMs - Number(o.t || 0);
+      if (Number(o.t) > 0 && age <= LB_WS.STALE_MS) { eStop = 'fresh'; break; }   // ★ここから先は全部もっと新しい
+      var rw = _lbWsRewrite(sh, row, ev[i], o.n, _lbWsStrip(o, 'stale'));
+      if (rw !== 'ok') { bump(rw === 'skip' ? 'write_skip' : 'write_conflict'); eStop = 'verify'; break; }   // ★確かめられないまま進めない
+      bump('stale'); eRow = row;
     }
-  } else {
-    //   ★カーソルが無い（初めて）・壊れている・範囲の外：**先頭（2行目）から**1回500行ずつ前へ進める（関門② 中）。
-    //     末尾から始めると、それより古い行の顧客IDが永久に消えない（I84）。6列目の無い古い行は素通りなので軽い。
-    //     壊れている・範囲の外は位置の前提が崩れた＝送らない
-    if (cur) { bump('cursor_reset'); sendOk = false; st.mismatchAt = nowMs; }
-    startRow = 2; st.resetAt = nowMs;
+    if (!eStop && eEnd < last) { eStop = 'more'; bump('scan_more'); }
   }
-  if (startRow > last) { st.fullScanAt = nowMs; _lbWsFlushStat(counts, st, {}); return 'idle'; }
-  var endRow = Math.min(last, startRow + LB_WS.READ_MAX - 1);
-  if (endRow < last) bump('scan_more');
-  var vals = sh.getRange(startRow, 1, endRow - startRow + 1, 6).getValues();
+  if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorSave(p, LB_WS.ERASE_PROP, sh, eRow);
+  if (eStop === '' || eStop === 'fresh') st.fullScanAt = nowMs;   // 2時間超の顧客IDは消去カーソルの手前に残っていない
 
-  //   1回目：行ごとの扱いを決める（送る・期限で消す・済み・止まる）
-  var plan = [], toSend = [];
-  for (var i = 0; i < vals.length; i++) {
-    var row = startRow + i, v = vals[i], o = _lbWsParse(v[5]);
-    if (o === null) { plan.push({ row: row, act: 'done' }); continue; }          // 6列目が無い（私の行ではない・既存の5列の行）
-    if (o === false) { bump('unparsed'); plan.push({ row: row, act: 'done' }); continue; }
-    if (o.sent === 1 || o.stale === 1) { plan.push({ row: row, act: 'done' }); continue; }
-    if (o.too_long === 1) { bump('too_long'); }
-    var age = nowMs - Number(o.t || 0);
-    if (!(Number(o.t) > 0) || age > LB_WS.STALE_MS) { plan.push({ row: row, act: 'stale', v: v, o: o }); continue; }
-    if (!sendOk || toSend.length >= LB_WS.SEND_MAX || Date.now() - startedAt >= budget) { plan.push({ row: row, act: 'stop' }); break; }
-    var item = {};
-    for (var k = 0; k < LB_WS.KEYS.length; k++) { var kk = LB_WS.KEYS[k]; if (o[kk] != null && o[kk] !== '') item[kk] = o[kk]; }
-    toSend.push(item);
-    plan.push({ row: row, act: 'send', v: v, o: o });
-  }
-
-  //   送る（UrlFetch 1回）
-  var acked = {};
-  var statOut = _lbWsStatOut(st, counts);
-  if (sendOk && (toSend.length || Object.keys(statOut).length)) {
-    {
-      var res = _lbWsPost({ items: toSend, drain: who, build: LB_WS_BUILD, stat: statOut });
-      if (res && res.ok) {
-        for (var a = 0; a < res.acked.length; a++) acked[String(res.acked[a])] = true;
-        statOut = null;   // 届いた＝報告済みの数を消す
+  // ---- 2. 送る役 ----
+  var res = 'erased';
+  var statOut = _lbWsStatOut(_lbWsStatRead(), counts);
+  if (sendOk) {
+    var sc = _lbWsCursorRead(p, LB_WS.CURSOR_PROP, sh, last);
+    var sRow = sc.row;
+    if (sc.state !== 'ok') {
+      sRow = eRow;   // ★消去カーソルの位置から再出発
+      if (sc.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; st.sendResetWhy = sc.state; _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, sRow); sendOk = false; }
+    }
+    if (sendOk) {
+      if (sRow < eRow) sRow = eRow;   // 消去カーソルより手前は顧客IDが無い（送らない行）
+      var plan = [], toSend = [];
+      var sEnd = Math.min(last, sRow + LB_WS.READ_MAX);
+      var sv = sRow < last ? sh.getRange(sRow + 1, 1, sEnd - sRow, 6).getValues() : [];
+      for (var j = 0; j < sv.length; j++) {
+        var r2 = sRow + 1 + j, o2 = _lbWsParse(sv[j][5]);
+        if (o2 === null || o2 === false || o2.sent === 1 || o2.stale === 1 || !o2.cid) { plan.push({ row: r2, act: 'done' }); continue; }
+        if (toSend.length >= LB_WS.SEND_MAX || !timeLeft()) break;
+        var item = {};
+        for (var k = 0; k < LB_WS.KEYS.length; k++) { var kk = LB_WS.KEYS[k]; if (o2[kk] != null && o2[kk] !== '') item[kk] = o2[kk]; }
+        toSend.push(item);
+        plan.push({ row: r2, act: 'send', v: sv[j], o: o2 });
       }
+      var acked = {};
+      statOut = _lbWsStatOut(_lbWsStatRead(), counts);
+      if (toSend.length || Object.keys(statOut).length) {
+        var pr = _lbWsPost({ items: toSend, drain: who, build: LB_WS_BUILD, stat: statOut });
+        if (pr && pr.ok) { for (var a = 0; a < pr.acked.length; a++) acked[String(pr.acked[a])] = true; statOut = null; }
+      }
+      var adv = sRow, stopped = false;
+      for (var q = 0; q < plan.length; q++) {
+        var pl = plan[q], done = (pl.act === 'done');
+        if (!done && acked[pl.o.n]) {
+          if (!timeLeft()) { stopped = true; break; }
+          var rw2 = _lbWsRewrite(sh, pl.row, pl.v, pl.o.n, _lbWsStrip(pl.o, 'sent'));
+          if (rw2 === 'ok') done = true; else bump(rw2 === 'skip' ? 'write_skip' : 'write_conflict');   // ★sent を付けない＝次の回にもう一度送る
+        }
+        if (!done) stopped = true;
+        if (stopped) break;
+        adv = pl.row;
+      }
+      if (adv !== sc.row || sc.state !== 'ok') _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, adv);
+      res = stopped ? 'partial' : 'done';
     }
   }
-
-  //   2回目：順番に片づけ、カーソルは「片づいた行が連続している所」まで進める
-  var adv = startRow - 1, stopped = false;
-  for (var q = 0; q < plan.length; q++) {
-    var pl = plan[q];
-    var doneRow = false;
-    if (pl.act === 'done') doneRow = true;
-    else if (pl.act === 'stale' || (pl.act === 'send' && acked[pl.o.n])) {
-      var mark = (pl.act === 'stale') ? 'stale' : 'sent';
-      var rw = _lbWsRewrite(sh, pl.row, pl.v, pl.o.n, _lbWsStrip(pl.o, mark));
-      if (rw === 'ok') { doneRow = true; if (mark === 'stale') bump('stale'); }
-      else bump(rw === 'skip' ? 'write_skip' : 'write_conflict');   // ★確かめられないまま進めない
-    }
-    if (!doneRow) stopped = true;
-    if (!stopped && doneRow) adv = pl.row;
-  }
-  if (adv >= startRow) {
-    var t1 = sh.getRange(adv, 1).getValue();
-    p.setProperty(LB_WS.CURSOR_PROP, JSON.stringify({ row: adv, t: (t1 instanceof Date) ? 'd' + t1.getTime() : String(t1 == null ? '' : t1) }));
-  }
-  //   ★先頭から読み直した後、一度でも最終行まで片づけたことを残す（それまでは古い行に顧客IDが残りうる）
-  if (adv >= last) st.fullScanAt = nowMs;
   _lbWsFlushStat(counts, st, statOut);
-  return stopped ? 'partial' : 'done';
+  return res;
 }
 //   まだ Worker に報告していない数（前回までの残り＋今回）
 function _lbWsStatOut(st, counts) {
@@ -5364,6 +5382,7 @@ function _lbWsFlushStat(counts, st, statOut) {
     if (st.mismatchAt) o.mismatchAt = st.mismatchAt;
     if (st.resetAt) o.resetAt = st.resetAt;
     if (st.fullScanAt) o.fullScanAt = st.fullScanAt;
+    if (st.sendResetWhy) o.sendResetWhy = { why: st.sendResetWhy, at: nowMs };
     o.days = o.days || {};
     var d = _lbWsDay(nowMs);
     for (var k in counts) {

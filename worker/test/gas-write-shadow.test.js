@@ -90,7 +90,7 @@ function world(opt = {}) {
     getValues: () => st.resv.slice(r - 2, r - 2 + nr).map((row) => row.slice(c - 1, c - 1 + nc)) }) };
   const calEvent = (title, s, e, id) => ({ getTitle: () => title, getStartTime: () => new Date(s), getEndTime: () => new Date(e), getId: () => id });
   const out = {
-    String, Number, JSON, Math, Object, Array, Date, RegExp, Error, isFinite, isNaN, parseInt, parseFloat, encodeURIComponent,
+    String, Number, JSON, Math, Object, Array, Date: opt.Date || Date, RegExp, Error, isFinite, isNaN, parseInt, parseFloat, encodeURIComponent,
     Logger: { log: () => {} }, console,
     LockService: { getScriptLock: lockObj, getUserLock: userLock },
     PropertiesService: { getScriptProperties: () => ({
@@ -157,7 +157,7 @@ function world(opt = {}) {
   src += ['_lbWsOpOf', '_lbWsId', '_lbWsFacts', '_lbMetricsWriteFailNote', 'lbWriteShadowSetOn', 'lbWriteShadowSetOff', '_lbWsOn', '_lbWsDay',
           '_lbWsStatRead', '_lbWsStatWrite', '_lbWsStatBump', '_lbWsStatEdit', '_lbWsParse', '_lbWsStrip', '_lbWsSame5', '_lbWsRewrite',
           '_lbWsProtectionOf', '_lbWsProtState', '_lbWsPrecheckCore', 'setupMetricsProtection', '_lbWsUnprotect', '_lbWsProtectExpected',
-          '_lbWsNoteUser', '_lbWsTick', '_lbWsRun', '_lbWsStatOut', '_lbWsFlushStat', '_lbWsPost', '_lbWsCellMs', '_lbWsDayStartMs',
+          '_lbWsNoteUser', '_lbWsTick', '_lbWsCellKey', '_lbWsCursorRead', '_lbWsCursorSave', '_lbWsRun', '_lbWsStatOut', '_lbWsFlushStat', '_lbWsPost', '_lbWsCellMs', '_lbWsDayStartMs',
           '_lbWsIndependentCheck', '_lbWsFailConsume'].map((n) => pluckFn(PE, n)).join('\n');
   vm.runInContext(src, ctx);
   out._lbDispatch = opt.dispatch || ((params, action, luid) => out.makeReservationLine(luid, params));
@@ -307,7 +307,7 @@ console.log('=== ④-d〜④-k 送る側 ===');
   w.out.UrlFetchApp.fetch = ((orig) => (url, o) => { const res = orig(url, o); w.st.metrics[0][0] = '2000/01/01 00:00:00'; return res; })(w.out.UrlFetchApp.fetch);
   w.ctx._lbWsTick('TICK', Date.now());
   const x = ws(w.st.metrics[0]);
-  ok('④-h1 送った後に行が動いた（1列目が変わった）→ skip・sent を付けない・カーソルも進めない', x.sent === undefined && !w.st.props.LB_WS_CURSOR, JSON.stringify([x, w.st.props.LB_WS_CURSOR]));
+  ok('④-h1 送った後に行が動いた（1列目が変わった）→ skip・sent を付けない・カーソルも進めない', x.sent === undefined && JSON.parse(w.st.props.LB_WS_CURSOR || '{"row":1}').row === 1, JSON.stringify([x, w.st.props.LB_WS_CURSOR]));
   const stat = JSON.parse(w.st.props.LB_WS_STAT || '{}');
   ok('④-h2 書かなかった数（write_skip）を数える', JSON.stringify(stat).indexOf('write_skip') >= 0, JSON.stringify(stat));
 }
@@ -334,7 +334,7 @@ console.log('=== ④-d〜④-k 送る側 ===');
   const w = world({ props: { LB_WS_ON: 'on' }, userLockBusy: true }); protectOk(w);
   rowsWith(w, [{ n: 'ee000001' }]);
   const r = w.ctx._lbWsTick('TICK', Date.now());
-  ok('④-d5 UserLock が取れなければ何もしない（次の回に続きから）', r === 'lock_miss' && w.st.posts.length === 0 && !w.st.props.LB_WS_CURSOR);
+  ok('④-d5 UserLock が取れなければ何もしない（次の回に続きから）', r === 'lock_miss' && w.st.posts.length === 0 && !w.st.props.LB_WS_CURSOR && !w.st.props.LB_WS_ERASE_CURSOR);
 }
 {
   const w = world({ props: {} });   // スイッチ off・保護なし
@@ -342,7 +342,7 @@ console.log('=== ④-d〜④-k 送る側 ===');
   w.ctx._lbWsTick('TICK', Date.now());
   const x0 = ws(w.st.metrics[0]), x1 = ws(w.st.metrics[1]);
   ok('④-k1 ★スイッチ off・保護なしでも、2時間超の行は stale:1 の印を残して顧客IDを消す', x0.stale === 1 && !('cid' in x0), JSON.stringify(x0));
-  ok('④-k2 新しい行は送らず（off）顧客IDは残る・カーソルはその手前で止まる', x1.cid && JSON.parse(w.st.props.LB_WS_CURSOR).row === 2 && w.st.posts.length === 0, JSON.stringify([x1, w.st.props.LB_WS_CURSOR]));
+  ok('④-k2 新しい行は送らず（off）顧客IDは残る・カーソルはその手前で止まる', x1.cid && JSON.parse(w.st.props.LB_WS_ERASE_CURSOR).row === 2 && w.st.posts.length === 0, JSON.stringify([x1, w.st.props.LB_WS_ERASE_CURSOR]));
   const w2 = world({ props: { LB_WS_ON: 'on' }, postFail: true }); protectOk(w2);
   rowsWith(w2, [{ n: 'ff000003', t: Date.now() - 3 * H }]);
   w2.ctx._lbWsTick('TICK', Date.now());
@@ -360,12 +360,12 @@ console.log('=== ④-d〜④-k 送る側 ===');
     if (nr === 1 && nc === 6 && ++n === 1) return { getValues: () => { const v = g.getValues(); v[0][0] = 'changed'; return v; }, setValue: g.setValue, getValue: g.getValue };
     return g; } });
   w3.ctx._lbWsTick('TICK', Date.now());
-  ok('④-k4 書く前の照合が合わない → 書かずにその行でカーソルが止まる', ws(w3.st.metrics[0]).stale === undefined && !w3.st.props.LB_WS_CURSOR, JSON.stringify([w3.st.metrics[0][5], w3.st.props.LB_WS_CURSOR]));
+  ok('④-k4 書く前の照合が合わない → 書かずにその行でカーソルが止まる', ws(w3.st.metrics[0]).stale === undefined && JSON.parse(w3.st.props.LB_WS_ERASE_CURSOR).row === 1, JSON.stringify([w3.st.metrics[0][5], w3.st.props.LB_WS_ERASE_CURSOR]));
 }
 
 console.log('=== ④-m カーソルが無い・壊れている → 先頭から（古い行の顧客IDも必ず消す・関門② 中） ===');
 for (const [label, cursor] of [['無い', undefined], ['壊れた JSON', '{oops'], ['範囲の外', JSON.stringify({ row: 99999, t: 'x' })]]) {
-  const w = world({ props: cursor === undefined ? {} : { LB_WS_CURSOR: cursor } });
+  const w = world({ props: cursor === undefined ? {} : { LB_WS_ERASE_CURSOR: cursor } });
   const list = [];
   for (let i = 0; i < 600; i++) list.push({ n: 'mm' + String(i).padStart(6, '0'), t: Date.now() - 5 * H + i * 1000 });
   rowsWith(w, list);
@@ -374,7 +374,64 @@ for (const [label, cursor] of [['無い', undefined], ['壊れた JSON', '{oops'
   const left = w.st.metrics.filter((x) => ws(x) && 'cid' in ws(x)).length;
   const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
   ok(`④-m カーソルが${label}：数回（500行ずつ）で600件の期限切れの顧客IDが全部消える・最終行まで片づけた印（fullScanAt ≥ resetAt）`,
-     left === 0 && runs <= 2 && st.fullScanAt >= st.resetAt && st.resetAt > 0, JSON.stringify({ left, runs, resetAt: st.resetAt, fullScanAt: st.fullScanAt }));
+     left === 0 && runs <= 2 && st.fullScanAt >= st.resetAt && st.resetAt > 0, JSON.stringify({ left, runs, resetAt: st.resetAt, fullScanAt: st.fullScanAt, days: st.days, ec: w.st.props.LB_WS_ERASE_CURSOR }));
+}
+
+console.log('=== ④-n 消す役と送る役のカーソルを分ける（関門② 再審） ===');
+{
+  //   送信カーソルが壊れた JSON → その回は送らない・消去カーソルの位置から再出発・印（sendResetWhy=broken）
+  const w = world({ props: { LB_WS_ON: 'on', LB_WS_CURSOR: '{oops' } }); protectOk(w);
+  rowsWith(w, [{ n: 'na000001', t: Date.now() - 3 * H }, { n: 'na000002' }, { n: 'na000003' }]);
+  w.ctx._lbWsTick('TICK', Date.now());
+  const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
+  const sc = JSON.parse(w.st.props.LB_WS_CURSOR), ec = JSON.parse(w.st.props.LB_WS_ERASE_CURSOR);
+  ok('④-n1 ★送信カーソルが壊れた JSON → 送らない・送信カーソルは消去カーソルの位置へ・sendResetWhy=broken', w.st.posts.length === 0 && sc.row === ec.row && ec.row === 2 && st.sendResetWhy && st.sendResetWhy.why === 'broken', JSON.stringify({ posts: w.st.posts.length, sc, ec, why: st.sendResetWhy }));
+  w.ctx._lbWsTick('TICK', Date.now());
+  const sent = w.st.posts[0] && w.st.posts[0].body.items.map((x) => x.n);
+  ok('④-n2 次の回は消去カーソルの先（2時間未満の行）だけを送る', JSON.stringify(sent) === '["na000002","na000003"]', JSON.stringify(sent));
+}
+{
+  //   2時間未満の行が先頭側にある → 消去カーソルはそこで止まる。時間がたてば（行が古くなれば）次の回に進み、全部消える
+  const w = world({ props: {} });
+  rowsWith(w, [{ n: 'nb000001', t: Date.now() - 1 * H }, { n: 'nb000002', t: Date.now() - 1 * H }, { n: 'nb000003', t: Date.now() - 1 * H }]);
+  w.ctx._lbWsTick('TICK', Date.now());
+  ok('④-n3 先頭が2時間未満 → 消去カーソルは1行目のまま（止まった所を保存）', JSON.parse(w.st.props.LB_WS_ERASE_CURSOR).row === 1);
+  for (const r of w.st.metrics) { const o = ws(r); o.t = Date.now() - 3 * H; r[5] = 'ws1' + JSON.stringify(o); }   // 時間がたった
+  w.ctx._lbWsTick('TICK', Date.now());
+  ok('④-n4 ★時間がたてば次の回に進み、期限切れの顧客IDが全部消える（永久に止まらない）', w.st.metrics.every((r) => ws(r).stale === 1 && !('cid' in ws(r))) && JSON.parse(w.st.props.LB_WS_ERASE_CURSOR).row === 4, JSON.stringify(w.st.metrics.map((r) => r[5])));
+}
+{
+  //   範囲の外・行が動いた送信カーソル → 消去カーソルの位置から（範囲の外は2行目から読み直した消去カーソルと同じ）
+  const w = world({ props: { LB_WS_ON: 'on', LB_WS_CURSOR: JSON.stringify({ row: 99999, k: 'x' }) } }); protectOk(w);
+  rowsWith(w, [{ n: 'nc000001' }]);
+  w.ctx._lbWsTick('TICK', Date.now());
+  ok('④-n5 送信カーソルが範囲の外 → 送らない・sendResetWhy=range', w.st.posts.length === 0 && JSON.parse(w.st.props.LB_WS_STAT).sendResetWhy.why === 'range');
+}
+{
+  //   1列目が Date 値でも、epoch ミリ秒にそろえて比べる（文字列との表現差で「動いた」としない）
+  const w = world({ props: { LB_WS_ON: 'on' } }); protectOk(w);
+  rowsWith(w, [{ n: 'nd000001' }]);
+  w.ctx._lbWsTick('TICK', Date.now());   // 1列目は文字列のときにカーソルを保存
+  w.st.metrics[0][0] = parse(w.st.metrics[0][0]);   // ★同じ時刻が Date 値で返るようになった（シートの型が変わった）
+  rowsWith(w, [{ n: 'nd000002' }]);
+  w.ctx._lbWsTick('TICK', Date.now());
+  const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
+  ok('④-n6 カーソルの行の1列目が文字列から同じ時刻の Date 値に変わっても「行が動いた」と誤検知しない', w.st.posts.length === 2 && !st.mismatchAt && !st.sendResetWhy, JSON.stringify({ posts: w.st.posts.length, st }));
+}
+{
+  //   時間切れで途中保存：Date.now() が呼ばれるたびに2秒進む時計。600件の期限切れでも、途中で止まってそこまでを保存し、次の回に続きから
+  let tt = Date.now();
+  class FakeDate extends Date { static now() { tt += 2000; return tt; } }
+  const w = world({ props: {}, Date: FakeDate });
+  const list = [];
+  for (let i = 0; i < 600; i++) list.push({ n: 'ne' + String(i).padStart(6, '0'), t: Date.now() - 5 * H });
+  rowsWith(w, list);
+  w.ctx._lbWsTick('TICK', tt);
+  const r1 = JSON.parse(w.st.props.LB_WS_ERASE_CURSOR).row;
+  ok('④-n7 ★残り時間が尽きたら途中で止まり、そこまでを保存する（1回の上限500行より手前で止まる）', r1 > 1 && r1 < 400, String(r1));
+  let runs = 0;
+  while (runs < 20 && w.st.metrics.some((x) => 'cid' in ws(x))) { w.ctx._lbWsTick('TICK', tt); runs++; }
+  ok('④-n8 次の回から続きを読み、いずれ全部消える', !w.st.metrics.some((x) => 'cid' in ws(x)), String(runs));
 }
 
 console.log('=== ④-f 保護 ===');
