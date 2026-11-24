@@ -153,9 +153,10 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   btn(cardBy(w, /初回より安定/), '社内メモに足す').click(); await settle();
   //   お客様に見える欄：1件ずつ
   const mc = cardBy(w, /AI：お客様へ/);
-  ok('L2-9 ★お客様へは「お客様にそのまま見えます」を出し1件ずつ', mc && mc.textContent.includes('お客様にそのまま見えます') && btnsIn(mc)[0] === 'お客様へに入れる');
-  btn(mc, 'お客様へに入れる').click(); await settle();
-  btn(cardBy(w, /AI：次回までに/), '次回までにに入れる').click(); await settle();
+  ok('L2-9 ★お客様へは「お客様にそのまま見えます」を出し1件ずつ', mc && mc.textContent.includes('お客様にそのまま見えます') && btnsIn(mc)[0] === '「お客様へ」に入れる');
+  btn(mc, '「お客様へ」に入れる').click(); await settle();
+  ok('L2-9b ★ボタンの文言に助詞の重なり（にに・へに）が無い', ![...w.document.querySelectorAll('button')].some((b) => /にに|へに/.test(b.textContent)) && !!btn(cardBy(w, /AI：次回までに/), '「次回までに」に入れる'), [...w.document.querySelectorAll('button')].map((b) => b.textContent).filter((x) => /に入れる/.test(x)));
+  btn(cardBy(w, /AI：次回までに/), '「次回までに」に入れる').click(); await settle();
   const put = btn(R(w), '記録の画面に入れる');
   ok('L2-10 全部決めると押せる', put && !put.disabled, R(w).textContent.slice(-200));
   put.click(); await nav();
@@ -214,7 +215,7 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   paste(w, TRANSCRIPT);
   const before = w.localStorage.getItem(DKEY);
   btn(R(w), 'AIで振り分ける').click(); await settle();
-  btn(cardBy(w, /AI：お客様へ/), 'お客様へに入れる').click(); await settle();
+  btn(cardBy(w, /AI：お客様へ/), '「お客様へ」に入れる').click(); await settle();
   btn(R(w), '記録の画面に入れる').click(); await settle();
   ok('L3-6 ★お客様へが400字を超えるなら取り込み全体を止め、下書きを変えない', w.localStorage.getItem(DKEY) === before && R(w).textContent.includes('お客様に見える欄に入りきりません'));
 }

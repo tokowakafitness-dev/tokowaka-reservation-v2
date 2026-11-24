@@ -408,7 +408,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   const { w } = boot();
   await openImport(w);
   const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]');
-  ok('M22-1 貼る欄：16px・10行・自動補完/大文字/綴りの確認を切る・クリップボードの API を使わない', /k-memo\{[^}]*font-size:16px/.test(SRC) && ta.getAttribute('rows') === '10' && ta.getAttribute('autocomplete') === 'off' && ta.getAttribute('autocapitalize') === 'off' && ta.getAttribute('spellcheck') === 'false' && !/navigator\.clipboard/.test(SRC));
+  ok('M22-1 貼る欄：16px・6行（設計55）・自動補完/大文字/綴りの確認を切る・クリップボードの API を使わない', /k-memo\{[^}]*font-size:16px/.test(SRC) && ta.getAttribute('rows') === '6' && ta.getAttribute('autocomplete') === 'off' && ta.getAttribute('autocapitalize') === 'off' && ta.getAttribute('spellcheck') === 'false' && !/navigator\.clipboard/.test(SRC));
   ok('M22-2 ★新しいボタンは44px以上・「実施した」の✓は48px', /\.k-allchk\{[^}]*min-height:44px/.test(SRC) && /\.k-donechk\{[^}]*min-width:48px;min-height:48px/.test(SRC) && /\.k-dropadd\{[^}]*min-height:44px/.test(SRC) && /\.k-btn\{[^}]*min-height:44px/.test(SRC) && /\.k-rtg\{min-height:44px/.test(SRC));
   ok('M22-3 「読み取る」は下に固定・決定待ちのボタンは縦に並べ間を8px', btn(R(w), '読み取る').parentNode.classList.contains('k-savebar') && /\.k-impbtns\{display:flex;flex-direction:column;gap:8px;\}/.test(SRC));
   ok('M22-4 「全部✓」は見出しの「外す」と別の行（押し間違えない）', /前回の行の右に置く/.test(SRC));
