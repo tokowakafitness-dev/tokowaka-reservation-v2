@@ -2313,6 +2313,105 @@ function refreshContractForApp(lineUserId) {
 }
 
 // ============================================================
+// 翌月の空き枠の見張り（設計57・2026-11-25）
+//   ★25日以降（予約できる最終日 _lbBookingHorizonEnd が翌月末に伸びた後）に、翌月の空き枠が開いているかを日次点検で見る。
+//     翌月の出勤の入れ忘れ・枠の作り直しが翌月を覆っていない、を翌朝に気づけるようにする（オーナー 2026-11-25）。
+//   ★読むもの（新しいトリガー・新しい op は足さない）
+//     枠  … 公開シート（buildAndCacheSlots → writeToSpreadsheet が10分ごとに全部書き直す＝顧客・Worker へ押し出すのと同じ枠）
+//            の startISO と trainerId の2列だけ。meta!A1（書き終えた時刻）で新しさを確かめる
+//     出勤 … トレーナーのカレンダーを翌月の範囲だけ読み、isShiftEvent（枠の計算と同じ判定）で出勤の日を数える
+//   ★倒れる向き：写しが古い（翌月を覆う時刻＝その月の25日0時より前／3時間より古い）・読めない・時間が足りない
+//     → 「0日」と言わず next_month_slots_unknown（判定できない）。24日までは何も読まない。
+//   ★出すのは日数とトレーナーの記号（A/B/C）だけ。氏名・予定名を出さない。
+var LB_NMO = { STALE_MS: 3 * 3600000, BUDGET_LEFT_MS: 120000, HC_LIMIT_MS: 6 * 60000 };
+//   翌月が予約できる範囲に入っていれば、翌月の {from, to, key} を返す（入っていなければ null）。判定は _lbBookingHorizonEnd と同じ式
+function _lbNextMonthRange(now) {
+  var hz = _lbBookingHorizonEnd(now);
+  if (hz.getFullYear() === now.getFullYear() && hz.getMonth() === now.getMonth()) return null;
+  var from = new Date(hz.getFullYear(), hz.getMonth(), 1, 0, 0, 0);
+  //   翌月を覆う写しは、地平が伸びた瞬間（その月の25日0時）より後に作ったものだけ
+  var openedAt = new Date(now.getFullYear(), now.getMonth(), 25, 0, 0, 0);
+  return { from: from, to: hz, openedAt: openedAt, key: Utilities.formatDate(from, SETTINGS.TIMEZONE, 'yyyy-MM') };
+}
+//   GAS の部品から読む（公開シートの2列・meta!A1・トレーナーのカレンダーの翌月ぶん）
+function _lbNextMonthOpenRead(rg) {
+  var ssId = PropertiesService.getScriptProperties().getProperty('PUBLIC_SLOTS_SPREADSHEET_ID') || SETTINGS.SPREADSHEET_ID;
+  var ss = SpreadsheetApp.openById(ssId);
+  var sh = ss.getSheetByName(SETTINGS.SHEET_NAME), meta = ss.getSheetByName('meta');
+  var out = { builtAtMs: 0, slots: null, shifts: {} };
+  if (meta) {
+    var mv = meta.getRange(1, 1).getValue();
+    var mt = (mv instanceof Date) ? mv.getTime() : new Date(String(mv || '')).getTime();
+    out.builtAtMs = isFinite(mt) ? mt : 0;
+  }
+  if (sh) {
+    var n = sh.getLastRow() - 1;
+    //   5列目 startISO 〜 8列目 trainerId（並びは writeToSpreadsheet の見出しと同じ・変えない）
+    out.slots = n > 0 ? sh.getRange(2, 5, n, 4).getValues().map(function (r) { return [r[0], r[3]]; }) : [];
+  }
+  for (var t = 0; t < CALENDAR_IDS.TRAINERS.length; t++) {
+    var tr = CALENDAR_IDS.TRAINERS[t];
+    var cal = CalendarApp.getCalendarById(tr.email);
+    if (!cal) { out.shifts[tr.id] = null; continue; }   // 読めない＝数えない（0日とは言わない）
+    out.shifts[tr.id] = cal.getEvents(rg.from, rg.to).filter(function (ev) { return isShiftEvent(ev.getTitle()); })
+      .map(function (ev) { return ev.getStartTime().getTime(); });
+  }
+  return out;
+}
+//   点検の本体。返すのは null（24日まで）か {kind: 'unknown'|'none'|'open', count, detail, safe}。key は日次点検の add で付ける
+//   hcElapsedMs … 日次点検がここまでに使った時間（6分の制限に近ければ読まない）。readFn は検査で差し替える
+function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
+  var now = new Date(nowMs), rg = _lbNextMonthRange(now);
+  if (!rg) return null;   // 24日まで：翌月はまだ予約できる範囲にない＝読まない
+  var tz = SETTINGS.TIMEZONE, mo = Number(rg.key.slice(5)) + '月';
+  function unknown(why, msg) {
+    return { kind: 'unknown', count: 1, safe: { facts: [why] },
+             detail: mo + 'の空き枠が開いているか判定できません（' + msg + '）。0日とは言っていません。' };
+  }
+  if (Number(hcElapsedMs || 0) > LB_NMO.HC_LIMIT_MS - LB_NMO.BUDGET_LEFT_MS) return unknown('no_time', '日次点検の時間が足りない');
+  var r = (readFn || _lbNextMonthOpenRead)(rg);
+  if (!r || r.slots == null) return unknown('unreadable', '公開シートの枠が読めない');
+  var built = Number(r.builtAtMs || 0);
+  if (!(built >= rg.openedAt.getTime()) || nowMs - built > LB_NMO.STALE_MS) {
+    return unknown('stale', '枠の写しが' + (built ? Math.round((nowMs - built) / 60000) + '分前' : '時刻なし') + '＝翌月を覆っていない／古い');
+  }
+  var hidden = {};
+  for (var t = 0; t < CALENDAR_IDS.TRAINERS.length; t++) if (CALENDAR_IDS.TRAINERS[t].hidden) hidden[String(CALENDAR_IDS.TRAINERS[t].id)] = true;
+  var fromMs = rg.from.getTime(), toMs = rg.to.getTime();
+  function dayOf(ms) { return Utilities.formatDate(new Date(ms), tz, 'yyyy-MM-dd'); }
+  var allDays = {}, pubDays = {};
+  for (var i = 0; i < r.slots.length; i++) {
+    var sv = r.slots[i][0];   // 文字列（ISO）のはず。シートが日付型に変えていても読む
+    var ms = (sv instanceof Date) ? sv.getTime() : new Date(String(sv || '')).getTime();
+    if (!isFinite(ms) || ms < fromMs || ms > toMs) continue;
+    var d = dayOf(ms);
+    allDays[d] = true;
+    if (!hidden[String(r.slots[i][1] || '')]) pubDays[d] = true;
+  }
+  var shiftAny = {}, perTr = [], unread = [];
+  for (var u = 0; u < CALENDAR_IDS.TRAINERS.length; u++) {
+    var id = String(CALENDAR_IDS.TRAINERS[u].id), list = (r.shifts || {})[id];
+    if (list == null) { unread.push(id); continue; }
+    var mine = {};
+    for (var k = 0; k < list.length; k++) {
+      var s = Number(list[k]);
+      if (!isFinite(s) || s < fromMs || s > toMs) continue;
+      mine[dayOf(s)] = true; shiftAny[dayOf(s)] = true;
+    }
+    perTr.push(id + (hidden[id] ? '(非表示)' : '') + ':' + Object.keys(mine).length);
+  }
+  var nAll = Object.keys(allDays).length, nPub = Object.keys(pubDays).length, nShift = Object.keys(shiftAny).length;
+  var facts = 'トレーナーに出勤のある日 ' + nShift + '日（' + perTr.join('・') + (unread.length ? '・読めない ' + unread.join('/') : '') + '）'
+    + '・枠のある日 全体 ' + nAll + '日／顧客向け ' + nPub + '日・枠は' + Math.max(0, Math.round((nowMs - built) / 60000)) + '分前に作ったもの';
+  if (nPub === 0) {
+    return { kind: 'none', count: 1, safe: { facts: [nShift === 0 ? 'no_shift' : 'not_covered'] },
+              detail: mo + 'に顧客が予約できる空き枠のある日が0日です。' + facts + '。'
+                + (nShift === 0 ? '翌月の出勤がカレンダーに入っていない見込み。' : '出勤はあるのに枠が無い＝出勤の予定名・枠の作り直しを確かめてください。') };
+  }
+  return { kind: 'open', count: nPub, detail: mo + 'の空き枠：' + facts };
+}
+
+// ============================================================
 // 毎日の健康チェック（★問題の発見を人の申告に頼らない）
 //   顧客やトレーナーが「予約できない」「残数が違う」と気づいて報告してくる前に、
 //   こちらが先に把握して直すための仕組み。会員・予約・カレンダー・通知を1回でまとめて点検し、
@@ -2326,7 +2425,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -3033,6 +3132,17 @@ function dailyHealthCheck(dryRunArg) {
       }
     }
   } catch (e) { _bad(); }
+  // ---- 翌月の空き枠が開いているか（設計57・2026-11-25）----
+  //   ★25日以降だけ読む（公開シートの2列＋トレーナーのカレンダーの翌月ぶん）。24日までは何も読まない。
+  //     写しが古い・読めない・時間が足りないときは next_month_slots_unknown（0日とは言わない）
+  try {
+    var nmo = lbNextMonthOpenCheck(now.getTime(), Date.now() - _hcT0);
+    if (nmo && nmo.kind === 'unknown') add('next_month_slots_unknown', '翌月の解放', 'warn', 1, nmo.detail, nmo.safe);
+    if (nmo && nmo.kind === 'none') add('next_month_slots_none', '翌月の解放', 'warn', 1, nmo.detail, nmo.safe);
+    if (nmo && nmo.kind === 'open') add('next_month_open', '翌月の解放', 'info', nmo.count, nmo.detail);
+  } catch (e) {
+    add('next_month_check_fail', '翌月の解放', 'warn', 1, '翌月の空き枠の点検そのものが失敗しました: ' + _lbErrType(e));
+  }
   _done('翌月の解放');
 
   _step('二重書き');
@@ -3304,7 +3414,10 @@ var LB_TRIAGE = {
   ws_danger: ['B', '書き込みの比較'], ws_not_running: ['B', '書き込みの比較'], ws_partial: ['B', '書き込みの比較'],
   metrics_unprotected: ['B', '書き込みの比較'], metrics_protect_blocked: ['B', '書き込みの比較'],
   metrics_write_fail: ['B', '書き込みの比較'], ws_check_fail: ['AB', '書き込みの比較'], ws_erase_stuck: ['B', '書き込みの比較'],
-  ws_backlog: ['info', '書き込みの比較']
+  ws_backlog: ['info', '書き込みの比較'],
+  //   設計57 で足した見張り（翌月の空き枠・25日以降だけ）
+  next_month_slots_none: ['B', '翌月の解放'], next_month_slots_unknown: ['B', '翌月の解放'],
+  next_month_check_fail: ['AB', '翌月の解放'], next_month_open: ['info', '翌月の解放']
 };
 function _lbTriage(key) {
   var t = LB_TRIAGE.hasOwnProperty(key) ? LB_TRIAGE[key] : null;
@@ -3332,7 +3445,9 @@ var LB_FACT_ENUM = {
   trigger_missing: LB_HEAL_TARGETS,
   cancel_notes_unready: ['missing', 'mismatch', 'unreadable'],
   health_skipped: ['held', 'lock_busy', 'lease_broken', 'expired', 'no_time'],
-  heal_save_fail: ['ledger', 'header_mismatch', 'exception', 'lease', 'lock_busy', 'expired', 'lost', 'other', 'broken']
+  heal_save_fail: ['ledger', 'header_mismatch', 'exception', 'lease', 'lock_busy', 'expired', 'lost', 'other', 'broken'],
+  next_month_slots_none: ['no_shift', 'not_covered'],          // 設計57：出勤が0日／出勤はあるのに枠が0日
+  next_month_slots_unknown: ['no_time', 'unreadable', 'stale']  // 設計57：判定できなかった理由
 };
 //   保存の失敗の理由（_lbHealthSave の why のうち newer 以外）。一覧に無い値は other
 var LB_SAVE_WHY = ['ledger', 'header_mismatch', 'exception', 'lease', 'lock_busy', 'expired', 'lost'];
@@ -3343,7 +3458,7 @@ var LB_FACT_EXCEPTION_KEYS = ['cancel_notes_check_fail', 'pace_fail', 'datahealt
   'consec_read_fail', 'shadow_sweep_read_fail', 'trigger_check_fail', 'pending_payment_check_fail', 'dualwrite_check_fail',
   'calslots_check_fail', 'contract_input_check_fail', 'd1_allow_unreadable',
   'edge_defer_check_fail', 'notify_defer_check_fail', 'autobook_check_fail', 'lock_count_check_fail', 'karte_ai_check_fail',
-  'selfheal_watch_fail', 'ws_check_fail'];
+  'selfheal_watch_fail', 'ws_check_fail', 'next_month_check_fail'];
 //   いまの詳細に氏名が入る key（要約へは ids_unavailable か会員番号だけ）
 var LB_FACT_NAME_KEYS = ['member_broken', 'member_nocontract', 'resv_dup_ev', 'resv_dup_slot', 'resv_unlinked',
   'cal_missing', 'cal_orphan', 'cal_missing_tr', 'cal_orphan_tr', 'cal_manual'];

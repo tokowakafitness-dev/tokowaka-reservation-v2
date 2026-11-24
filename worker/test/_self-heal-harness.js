@@ -15,6 +15,7 @@ const GAS = process.env.GAS_DIR || join(ROOT, 'gas');
 export const LB = readFileSync(join(GAS, 'LineBooking.js'), 'utf8');
 export const NUDGE = readFileSync(join(GAS, 'Nudge.js'), 'utf8');
 const ALLOC = readFileSync(join(GAS, 'Allocate.js'), 'utf8');
+const CODE = readFileSync(join(GAS, 'コード.js'), 'utf8');   // 設計57：isShiftEvent（枠の計算と同じ出勤の判定）
 
 //   自己修理の塊（本物のソースの区切りで切る）
 export function healBlock(src = LB) {
@@ -137,9 +138,46 @@ export function makeCtx(w) {
     } });
     return b;
   };
+  //   ---- 設計57：公開シート（枠）とトレーナーのカレンダーの身代わり ----
+  //   既定＝「いまの翌月（25日以降なら）に B の枠と出勤が毎日ある・10分前に作った」。w.data.nmo で上書きする
+  //     { meta: 値（null で meta シートなし）, slots: [[startISO, trainerId]]|null（null でシートなし）, events: { B: [{title, start}] }, calNull: ['C'] }
+  const nmoDefaultDays = () => {
+    const j = new Date(w.now + JST), y = j.getUTCFullYear(), m = j.getUTCMonth() + 1;   // 翌月（JST）
+    const out = [];
+    for (let d = 1; d <= 28; d++) out.push(Date.UTC(y, m, d, 10 - 9, 0));
+    return out;
+  };
+  const nmo = () => w.data.nmo || {};
+  const nmoSs = () => ({
+    getSheetByName: (n) => {
+      const o = nmo();
+      if (n === 'meta') {
+        const v = ('meta' in o) ? o.meta : new Date(w.now - 600000).toISOString();
+        return v === null ? null : makeSheet('meta', [[v]]);
+      }
+      if (n === 'slots') {
+        const sl = ('slots' in o) ? o.slots : nmoDefaultDays().map((ms) => [new Date(ms).toISOString(), 'B']);
+        if (sl === null) return null;
+        return makeSheet('slots', [['date', 'dayOfWeek', 'startTime', 'endTime', 'startISO', 'endISO', 'trainerName', 'trainerId', 'trial_ok']]
+          .concat(sl.map((r) => ['', '', '', '', r[0], '', '', r[1], 'yes'])));
+      }
+      return null;
+    },
+  });
+  const nmoCal = (id) => {
+    const o = nmo(), tid = String(id).replace('cal-', '').toUpperCase();
+    if ((o.calNull || []).indexOf(tid) >= 0) return null;
+    const evs = (o.events && o.events[tid]) || (o.events ? [] : (tid === 'B' ? nmoDefaultDays().map((ms) => ({ title: '出勤', start: ms })) : []));
+    return { getEvents: (from, to) => evs.filter((e) => e.start >= from.getTime() && e.start <= to.getTime())
+      .map((e) => ({ getTitle: () => e.title, getStartTime: () => new FD(e.start) })) };
+  };
   const ctx = {
     String, Number, isNaN, isFinite, Math, JSON, Object, Array, RegExp, Error, Date: FD, parseInt,
-    SETTINGS: { TIMEZONE: 'Asia/Tokyo', SPREADSHEET_ID: 'x' },
+    SETTINGS: { TIMEZONE: 'Asia/Tokyo', SPREADSHEET_ID: 'x', SHEET_NAME: 'slots' },
+    //   設計57：翌月の空き枠の見張り。トレーナーは架空の記号だけ（A は非表示＝オーナーと同じ形）
+    CALENDAR_IDS: { TRAINERS: [{ id: 'A', email: 'cal-a', hidden: true }, { id: 'B', email: 'cal-b' }, { id: 'C', email: 'cal-c' }] },
+    SpreadsheetApp: { openById: hook('openById', () => nmoSs()) },
+    CalendarApp: { getCalendarById: hook('getCalendarById', (id) => nmoCal(id)) },
     LINE_BOOKING: { TRAINER_SHEET: 'trainer_master', MAP_SHEET: 'customer_line_map' },
     TR_COL: { LINE_USER_ID: 1, TRAINER_ID: 2, NAME: 3, ROLE: 4, ACTIVE: 5, NAME_EN: 6 },
     Logger: { log: () => {} },
@@ -201,6 +239,8 @@ export function makeCtx(w) {
     LB.slice(LB.indexOf('\nvar LB_CN = {'), LB.indexOf('\n//   見出しの確認。', LB.indexOf('\nvar LB_CN = {'))),
     pluckFn(LB, '_lbCnReady'), pluckFn(LB, '_lbCnHealth'), pluckFn(LB, 'setupCancelNotesSheet'),
     pluckFn(LB, 'dailyHealthCheck'), pluckFn(LB, 'runHealthCheckDryRun'),
+    pluckFn(LB, '_lbBookingHorizonEnd'), pluckVar(LB, 'LB_NMO'), pluckFn(LB, '_lbNextMonthRange'), pluckFn(LB, '_lbNextMonthOpenRead'),
+    pluckFn(LB, 'lbNextMonthOpenCheck'), pluckFn(CODE, 'isShiftEvent'),
     healBlock(),
   ].join('\n');
   vm.runInContext(src, ctx);
