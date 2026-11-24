@@ -830,7 +830,8 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
   btn(root, '保存する').click(); await settle();
   ok('14-11 ★メモだけ書いて✓の無いセットも「記録されない入力」として保存の前に知らせる（やめたら送らない）', msgs.some((m) => m.includes('記録されない入力が 1 セット')) && !sent.some((x) => x.action === 'k_addTraining'), msgs.join(' / '));
-  ok('14-12 幅の狭い端末（380px 以下＝SE・mini を含む）では、セットを消すボタンをメモ欄へ移して数字の欄を広く取る', /@media \(max-width:380px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 44px 44px/.test(SRC) && /k-setdel\{display:none;\}/.test(SRC));
+  //   設計55（2026-11-24）：セットを消すボタンは全部の幅でメモ欄の中（✎ の右に × を置かない）＝5列が既定。狭い端末は数字の欄をさらに広く取る
+  ok('14-12 セットの行は全部の幅で5列（× を行に置かない）・380px 以下は余白を詰めて数字の欄を広く取る', /#karteRoot \.k-setrow\{display:grid;grid-template-columns:22px minmax\(0,1fr\) minmax\(0,1fr\) 44px 44px;/.test(SRC) && /@media \(max-width:380px\)\{[^}]*k-setrow\{grid-template-columns:20px minmax\(0,1fr\) minmax\(0,1fr\) 44px 44px/.test(SRC) && !/class: 'k-setdel'/.test(SRC));
 }
 
 {
@@ -843,7 +844,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   await fromPrev(root);
   root.querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
   const del2 = root.querySelector('.k-setdel2');
-  ok('14-13 ★広い画面では「このセットを消す」は出さない（×だけ）', del2 && w.getComputedStyle(del2).display === 'none', del2 && w.getComputedStyle(del2).display);
+  ok('14-13 ★設計55：広い画面でも「このセットを消す」はメモ欄の中に出る（行に × は無い）', del2 && w.getComputedStyle(del2).display !== 'none' && !root.querySelector('.k-setdel'), del2 && w.getComputedStyle(del2).display);
 }
 
 {
@@ -886,7 +887,8 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   ok('15-11 ★休憩中に記録の欄が描き直されても、休憩の帯が出たまま数え続ける', !!again && !!rb3 && rb3.isConnected && rb3.textContent.includes('休憩 ') && w.getComputedStyle(rb3).display === 'flex', rb3 && (rb3.textContent + ' ' + w.getComputedStyle(rb3).display));
   const tab = root.querySelector('.k-tab');
   const tcs = tab && w.getComputedStyle(tab);
-  ok('15-12 ★下のタブは文字14px以上・押せる高さ56px以上（iPhone で小さすぎた）', !!tcs && parseFloat(tcs.fontSize) >= 14 && parseInt(tcs.minHeight, 10) >= 56, tcs && tcs.fontSize + ' ' + tcs.minHeight);
+  //   設計55（2026-11-24 オーナー）：14px では「トレーニ/ング」が2行に折れた＝上にアイコン・下にラベル1行（11px・折り返さない）。押せる高さは56px以上のまま
+  ok('15-12 ★下のタブはアイコン＋ラベル1行（11px・折り返さない）・押せる高さ56px以上', !!tcs && parseFloat(tcs.fontSize) === 11 && tcs.whiteSpace === 'nowrap' && parseInt(tcs.minHeight, 10) >= 56 && !!tab.querySelector('svg'), tcs && tcs.fontSize + ' ' + tcs.minHeight + ' ' + tcs.whiteSpace);
   ok('15-10 ★予約画面全体の viewport は変えない（会員の画面に効くため）', HTML.includes('<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'));
 }
 
@@ -946,7 +948,9 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   bar = root.querySelector('.k-restbar');
   ok('17-6 次に✓を押したセットの下へ移る', !!bar.previousElementSibling.querySelector('button[aria-label="1セット目を実施済みにする"]'));
   const w2sel = root.querySelectorAll('select[aria-label$="の休憩の秒数"]');
-  ok('17-7 休憩の行は種目ごとに1つ（終了音・説明もその行に）', w2sel.length === 1 && w2sel[0].parentNode.textContent.includes('終了音') && w2sel[0].parentNode.textContent.includes('✓を押すと休憩タイマーが始まります'));
+  //   設計55：秒数は「＋ セット」と同じ行・終了音は上部に1つ（端末で1つの設定）
+  const sndB = [...root.querySelectorAll('button')].filter((x) => x.textContent.indexOf('終了音') === 0);
+  ok('17-7 休憩の秒数は種目ごとに1つ（「＋ セット」の行）・終了音は上部に1つ', w2sel.length === 1 && w2sel[0].parentNode.textContent.includes('＋ セット') && sndB.length === 1 && !sndB[0].closest('[data-ei]'));
   w.KarteUI.close && w.KarteUI.close();
 }
 
@@ -999,9 +1003,12 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   await fromPrev(root);   // スクワット 2セット
   btn(root, '＋ セット').click(); await settle();   // 3セット
   root.querySelector('button[aria-label="3セット目を実施済みにする"]').click(); await settle();
+  //   設計55：セットを消すのは ✎ の中（✎ を開いてから「このセットを消す」）
+  root.querySelector('button[aria-label="1セット目のメモ"]').click(); await settle();
   root.querySelector('button[aria-label="1セット目を消す"]').click(); await settle();
   let bar = root.querySelector('.k-restbar');
   ok('17-8 ★休憩中に前のセットを消しても、帯は休憩中のセット（いまの2セット目）の下に残る', !!bar.previousElementSibling && !!bar.previousElementSibling.querySelector('button[aria-label="2セット目を実施済みにする"]') && bar.textContent.includes('休憩'), bar.previousElementSibling && bar.previousElementSibling.textContent);
+  root.querySelector('button[aria-label="2セット目のメモ"]').click(); await settle();
   root.querySelector('button[aria-label="2セット目を消す"]').click(); await settle();
   bar = root.querySelector('.k-restbar');
   ok('17-9 ★休憩中のセットそのものを消したら止める（別のセットの下に出さない）', bar.children.length === 0 && w.getComputedStyle(bar).display === 'none');
@@ -1090,9 +1097,9 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
 }
 
 ok('20-1 ★文字と余白は画面に合わせる（2026-11-05：カード余白12・間10・左右14・見出し14・主ボタン44/14・入力16/44）', /\.k-card\{[^}]*padding:12px;/.test(SRC) && /\.k-body\{padding:12px 14px 18px;[^}]*gap:10px;/.test(SRC) && /\.k-h\{font-size:14px;/.test(SRC) && /\.k-btn\{[^}]*min-height:44px;[^}]*font-size:14px;/.test(SRC) && /k-setrow input\{[^}]*min-height:44px;[^}]*font-size:16px;/.test(SRC));
-ok('20-2 ★下のタブは小さくしない（11-04 に「小さすぎる」で大きくした・56px・14px）', /\.k-tab\{min-height:56px;[^}]*font-size:14px;/.test(SRC));
+ok('20-2 ★下のタブは押せる高さを小さくしない（56px）・ラベルは11px で1行（設計55：14px では2行に折れた）', /\.k-tab\{min-height:56px;[^}]*font-size:11px;[^}]*white-space:nowrap;/.test(SRC));
 
-ok('20-3 ★見分けやすさ：入力・✓の枠は白地に3:1以上（#8692a6）・カードは影で浮かす・2番目のボタンはネイビーの枠・消す操作はコーラル・選んだ選択肢は塗りつぶし', !/#c9ccd3|#aab4c3/.test(SRC) && /#8692a6/.test(SRC) && /\.k-card\{[^}]*box-shadow:/.test(SRC) && /\.k-btn\.out\{[^}]*border:1\.5px solid var\(--k-acc\)/.test(SRC) && /\.k-btn\.out\.k-danger\{color:var\(--k-warn\)/.test(SRC) && /\.k-pill\.on\{[^}]*background:var\(--k-acc\);color:#fff/.test(SRC) && (SRC.match(/k-danger/g) || []).length >= 9 && /'k-btn out k-danger', text: '破棄して入れ直す'/.test(SRC) && /k-setdel'[^}]*color:var\(--k-warn\)/.test(SRC));
+ok('20-3 ★見分けやすさ：入力・✓の枠は白地に3:1以上（#8692a6）・カードは影で浮かす・2番目のボタンはネイビーの枠・消す操作はコーラル・選んだ選択肢は塗りつぶし', !/#c9ccd3|#aab4c3/.test(SRC) && /#8692a6/.test(SRC) && /\.k-card\{[^}]*box-shadow:/.test(SRC) && /\.k-btn\.out\{[^}]*border:1\.5px solid var\(--k-acc\)/.test(SRC) && /\.k-btn\.out\.k-danger\{color:var\(--k-warn\)/.test(SRC) && /\.k-pill\.on\{[^}]*background:var\(--k-acc\);color:#fff/.test(SRC) && (SRC.match(/k-danger/g) || []).length >= 9 && /'k-btn out k-danger', text: '破棄して入れ直す'/.test(SRC) && /'k-btn out small k-danger k-setdel2'/.test(SRC));   // 設計55：セットを消すのはメモ欄の中のコーラルのボタン
 
 // ================= 21. 今日の記録の中の指導メモ・見出しの戻る（2026-11-06 オーナー） =================
 {

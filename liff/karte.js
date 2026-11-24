@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-23i 種目の並べ替え：画面を離れたらつまみを捨てる（設計53 関門②）';
+  var KARTE_BUILD = '2026-11-24a 画面の使いやすさ：保存は見出しの右上・下の帯は種目の欄だけ・外す直後に元に戻す・タブはアイコン（設計55）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -211,8 +211,11 @@
     '#karteRoot .k-chip-h{font-size:12px;padding:4px 10px;background:var(--k-acc-l);color:var(--k-acc);border-radius:999px;}',
     '#karteRoot .k-gtag{font-size:12px;padding:3px 10px;background:var(--k-gold-l);color:#6b5427;border-radius:999px;}',
     '#karteRoot .k-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:#fff;border-top:1px solid var(--k-line);position:sticky;bottom:0;z-index:2;padding:4px 4px calc(8px + env(safe-area-inset-bottom));margin-top:auto;}',
-    '#karteRoot .k-tab{min-height:56px;padding:4px 2px;border:none;background:transparent;font-size:14px;line-height:1.25;color:var(--k-sub);border-top:3px solid transparent;font-family:inherit;}',   // ★iPhone で小さすぎた（12px・48px → 14px・56px、2026-11-04h）
-    '@media (min-width:400px){#karteRoot .k-tab{font-size:15px;}}',
+    //   ★設計55（2026-11-24 オーナー）：上にアイコン・下にラベル1行。14px では「トレーニ/ング」が2行に折れていた。文言は変えない
+    '#karteRoot .k-tab{min-height:56px;padding:6px 2px 4px;border:none;background:transparent;font-size:11px;line-height:1.2;white-space:nowrap;color:var(--k-sub);border-top:3px solid transparent;font-family:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;}',
+    '#karteRoot .k-tab svg{display:block;width:24px;height:24px;flex:none;}',
+    '#karteRoot .k-tab-l{display:block;white-space:nowrap;}',
+    '@media (max-width:360px){#karteRoot .k-tab{letter-spacing:-.06em;}}',
     '#karteRoot .k-tab.on{color:var(--k-acc);font-weight:700;border-top-color:var(--k-acc);}',
     '#karteRoot .k-body{padding:12px 14px 18px;display:flex;flex-direction:column;gap:10px;flex:1;}',
     '#karteRoot .k-card{background:#fff;border:1px solid #dde3ea;border-radius:14px;padding:12px;box-shadow:0 1px 3px rgba(28,35,33,.07);}',
@@ -247,20 +250,20 @@
     '#karteRoot .k-tl-item{position:relative;}',
     '#karteRoot .k-tl-dot{position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:6px;background:var(--k-acc);}',
     '#karteRoot .k-bar{height:12px;border-radius:6px;background:#eeeeec;} #karteRoot .k-bar>div{height:12px;border-radius:6px;background:var(--k-acc);}',
-    '#karteRoot .k-setrow{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr) 44px 44px 44px;gap:6px;align-items:center;margin-bottom:6px;}',
+    //   ★設計55：セットを消すボタンは全部の幅で ✎ の中（✎ の右 6px に × があると押し間違えて消えた）＝5列
+    '#karteRoot .k-setrow{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr) 44px 44px;gap:6px;align-items:center;margin-bottom:6px;}',
     '#karteRoot .k-setnote{margin:-2px 0 8px 28px;}',
-    '#karteRoot .k-btn.k-setdel2{display:none;}',   // .k-btn.small（inline-block）より強くする
     '#karteRoot .k-memochips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}',
     '#karteRoot .k-memochips button{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #8692a6;background:#fff;font-size:14px;font-family:inherit;color:#3f4550;}',
-    //   幅の狭い端末（380px 以下＝iPhone SE・mini を含む）：セットを消すボタンはメモ欄の中へ移し、数字の欄を広く取る
-    //   （375px で6列のままだと数字の欄が約47px＝「102.5」が欠ける）
-    '@media (max-width:380px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 44px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setdel{display:none;} #karteRoot .k-btn.k-setdel2{display:inline-block;} #karteRoot .k-setnote{margin-left:24px;}}',
+    //   幅の狭い端末（380px 以下＝iPhone SE・mini を含む）：数字の欄を広く取る
+    '@media (max-width:380px){#karteRoot .k-setrow{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 44px 44px;gap:4px;} #karteRoot .k-setrow input{padding:0 6px;} #karteRoot .k-setnote{margin-left:24px;}}',
     '#karteRoot .k-setnote input{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #8692a6;border-radius:10px;padding:0 10px;font-size:16px;background:#fff;}',
     '#karteRoot .k-setrow input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;border:1px solid #8692a6;border-radius:10px;padding:0 10px;font-size:16px;}',
-    '#karteRoot .k-picker-go{position:sticky;bottom:76px;z-index:2;}',
-    //   キーパッドが出ているあいだ（k-kb）：下のタブを隠し、決定ボタンは下に詰める
+    //   ★設計55：種目の欄の決定ボタンは下の帯（.k-savebar）の中に置く（76px に浮かせると保存の帯の裏に隠れた・2026-11-24 実機）
+    '#karteRoot .k-picker-go{margin:0;}',
+    '#karteRoot .k-picker-go:disabled{opacity:.45;}',
+    //   キーパッドが出ているあいだ（k-kb）：下のタブを隠す
     '#karteRoot.k-kb .k-tabs{display:none;}',
-    '#karteRoot.k-kb .k-picker-go{bottom:0;}',
     '#karteRoot .k-accessory{position:sticky;bottom:0;z-index:5;display:flex;gap:8px;align-items:center;padding:6px 10px;background:#eef0ee;border-top:1px solid var(--k-line);}',
     '#karteRoot .k-accessory button{min-height:44px;min-width:64px;border:1px solid #8692a6;border-radius:10px;background:#fff;font-size:16px;font-family:inherit;color:var(--k-ink);}',
     '#karteRoot .k-accessory button.done{background:var(--k-acc);color:#fff;border-color:var(--k-acc);font-weight:700;}',
@@ -287,8 +290,15 @@
     '#karteRoot .k-entrytitle{font-size:16px;font-weight:700;} #karteRoot .k-entrysub{font-size:12px;opacity:.85;}',
     '#karteRoot .k-savebar{position:sticky;bottom:0;z-index:3;background:#fff;border-top:1px solid var(--k-line);margin:10px -14px -18px;padding:10px 14px calc(10px + env(safe-area-inset-bottom));}',
     '#karteRoot.k-kb .k-savebar{position:static;}',
+    '#karteRoot.k-kb .k-pickbar{position:sticky;}',   // 設計55：種目を探して打っている間も［選んだ種目を足す］は見えたまま（今までの k-picker-go の bottom:0 と同じ）
     '#karteRoot .k-entrytext{position:relative;min-height:44px;}',
     '#karteRoot .k-dateover{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:44px;border:0;}',
+    //   設計55：記録の画面の保存は見出しの右上。日付の入力欄は日付の文字の部分だけ（保存・タイトルを覆わない）。上下は 44px になるよう外へ広げる
+    '#karteRoot .k-hsave{flex:none;min-height:44px;min-width:76px;padding:0 14px;border:none;border-radius:10px;background:#fff;color:var(--k-acc);font-size:15px;font-weight:700;font-family:inherit;}',
+    '#karteRoot .k-hsave:active{filter:brightness(.92);}',
+    '#karteRoot .k-hsave:disabled{opacity:.6;}',
+    '#karteRoot .k-datehit{position:relative;display:inline-block;white-space:nowrap;}',
+    '#karteRoot .k-datehit .k-dateover{inset:-14px -6px;width:auto;height:auto;}',
     '#karteRoot .k-btn.k-btn-line{background:#fff;color:var(--k-acc);border:1px solid var(--k-acc);min-height:44px;margin:0 0 10px;}',
     '#karteRoot .k-excol{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;background:#fff;border:1px solid #dde3ea;box-shadow:0 1px 3px rgba(28,35,33,.07);border-radius:12px;padding:0 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
     '#karteRoot .k-addset{display:block;width:100%;min-height:44px;border:1px dashed var(--k-acc);border-radius:10px;background:#fff;color:var(--k-acc);font-size:14px;font-family:inherit;margin-top:4px;}',
@@ -725,8 +735,8 @@
     ]);
     var tabs = el('div', { class: 'k-tabs', role: 'tablist' });
     TABS.forEach(function (t) {
-      tabs.appendChild(el('button', { class: 'k-tab' + (t[0] === cur.tab ? ' on' : ''), role: 'tab', text: t[1],
-        onclick: function () { open(cur.customerId, cur.name, t[0]); } }));
+      tabs.appendChild(el('button', { class: 'k-tab' + (t[0] === cur.tab ? ' on' : ''), role: 'tab', 'aria-selected': t[0] === cur.tab ? 'true' : 'false',
+        onclick: function () { open(cur.customerId, cur.name, t[0]); } }, [tabIcon(t[0]), el('span', { class: 'k-tab-l', text: t[1] })]));
     });
     var body = el('div', { class: 'k-body' });
     wrap.appendChild(head); wrap.appendChild(body); wrap.appendChild(tabs);   // タブは下（モックと同じ）
@@ -735,6 +745,19 @@
     fillHead();
     if (!cur.summary && !cur.name) loadSummary();
     ({ summary: tabSummary, body: tabBody, training: tabTraining, notes: tabNotes, contract: tabContract })[cur.tab](body, draft);
+  }
+  //   設計55：下のタブのアイコン（線のアイコン・24px・色は文字と同じ currentColor・外部読み込みなし）
+  var TAB_ICON = {
+    summary: [['rect', { x: 5, y: 4, width: 14, height: 17, rx: 2 }], ['rect', { x: 9, y: 2, width: 6, height: 4, rx: 1 }], ['path', { d: 'M9 11h6M9 15h6' }]],   // クリップボード
+    body: [['rect', { x: 3, y: 3, width: 18, height: 18, rx: 4 }], ['path', { d: 'M7.5 10a4.5 4.5 0 0 1 9 0' }], ['path', { d: 'M12 10l1.8-2.6' }]],   // 体重計
+    training: [['rect', { x: 4, y: 7, width: 3.5, height: 10, rx: 1 }], ['rect', { x: 16.5, y: 7, width: 3.5, height: 10, rx: 1 }], ['path', { d: 'M2 12h2M20 12h2M7.5 12h9' }]],   // ダンベル
+    notes: [['path', { d: 'M3 6h10M3 11h6M3 16h5' }], ['circle', { cx: 16, cy: 15, r: 5 }], ['path', { d: 'M16 12.5V15l1.8 1.2' }]],   // 時計付きの一覧
+    contract: [['rect', { x: 2, y: 5, width: 20, height: 14, rx: 2 }], ['circle', { cx: 8, cy: 11, r: 2 }], ['path', { d: 'M5 16c.6-1.6 1.8-2.4 3-2.4s2.4.8 3 2.4M14 10h5M14 14h4' }]]   // 会員証
+  };
+  function tabIcon(key) {
+    var s = sv('svg', { viewBox: '0 0 24 24', width: 24, height: 24, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false' });
+    (TAB_ICON[key] || []).forEach(function (x) { s.appendChild(sv(x[0], x[1])); });
+    return s;
   }
   //   見出しの補足（概要を一度読めば埋まる）
   function fillHead() {
@@ -2776,7 +2799,7 @@
     wrap.appendChild(el('div', { class: 'k-sub', style: 'font-size:13px;line-height:1.7;', text: '紙のメモを打つか、貼ってください。キーボードのマイクで話しても入ります（例：ヒップリフト／改行／30かける10　50かける10プラス5）。' }));
     wrap.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }));
     if (exTruncated) wrap.appendChild(el('div', { class: 'k-sub', style: 'color:var(--k-warn);', text: '共有の種目を一部しか読めていないため、確かめが必要な名前が増えます。' }));
-    var ta = el('textarea', { rows: '10', class: 'k-memo', 'aria-label': 'メモを貼る', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-nodirty': '1', placeholder: '9/18\nヒップリフト\n30×10 50×10+5' });
+    var ta = el('textarea', { rows: '6', class: 'k-memo', 'aria-label': 'メモを貼る', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-nodirty': '1', placeholder: '9/18\nヒップリフト\n30×10 50×10+5' });
     wrap.appendChild(ta);
     //   設計48：文字起こしのファイルを添付する。★端末の中で読んで上の欄に入れるだけ（fetch しない・中身もファイル名も保存領域・console に出さない＝I63）
     //     読んでいる途中に別のファイルを選んだ・画面を離れた・別の顧客を開いたら捨てる（世代と cid）。上限を超えたら切らずに入れない
@@ -3553,7 +3576,9 @@
         bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: allDecided() ? 'この画面からは何も送りません' : '全部選ぶと押せます（' + dec.filter(function (x) { return !x; }).length + '件のこり）' }));
         return;
       }
-      bar.appendChild(el('button', { type: 'button', class: 'k-btn k-impread', text: '読み取る', onclick: read }));
+      //   設計55（2026-11-24 オーナー）：AI が使えて同意があるときは「AIで振り分ける」が主（塗り）・「読み取る」は枠だけ。使えないときは今までどおり
+      var aiMain = !!cur.aiDraft && cur.aiConsent === 'agreed';
+      bar.appendChild(el('button', { type: 'button', class: aiMain ? 'k-btn out k-impread' : 'k-btn k-impread', text: '読み取る', onclick: read }));
       if (!cur.aiDraft) { bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: 'この画面からは何も送りません（端末の中で読み取ります）' })); return; }
       //   設計44：お客様の録音・AI の同意が無ければボタンを出さない（Worker でも 403 で止まる）
       if (cur.aiConsent !== 'agreed') {
@@ -3563,7 +3588,7 @@
         return;
       }
       //   設計39：AI で振り分ける（Worker の切替が開き鍵があるときだけ）。送信中は押せない
-      var ab = el('button', { type: 'button', class: 'k-btn out k-impai', style: 'margin-top:8px;', text: aiBusy ? '振り分けています（1分ほど）' : 'AIで振り分ける（録音の文字起こし）', onclick: aiSend });
+      var ab = el('button', { type: 'button', class: 'k-btn k-impai', style: 'margin-top:8px;', text: aiBusy ? '振り分けています（1分ほど）' : 'AIで振り分ける（録音の文字起こし）', onclick: aiSend });
       if (aiBusy) { ab.disabled = true; ab.setAttribute('aria-disabled', 'true'); }
       bar.appendChild(ab);
       bar.appendChild(el('div', { class: 'k-sub k-aiexplain', style: 'text-align:center;margin-top:6px;', text: '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。' + AI_KEEP_NOTE }));
@@ -3656,9 +3681,14 @@
 
     //   日付は見出しに出す（モック K3）。見出しの日付を押すと端末の日付ピッカーで変えられる
     var d = field('日付', D.sessionDate, 'date'); d.el.max = today(); d.el.setAttribute('data-nodirty', '1');
+    //   ★設計55：透明な日付の入力欄は日付の文字の部分（.k-datehit）だけに置く（見出しの右上の保存・タイトルを覆わない）。置くのは refreshTop
     var hdDate = cur.root && cur.root.querySelector('.k-entrytext');
-    if (hdDate) { d.el.className = 'k-dateover'; d.el.setAttribute('aria-label', '記録の日付を変える'); hdDate.appendChild(d.el); }
+    if (hdDate) { d.el.className = 'k-dateover'; d.el.setAttribute('aria-label', '記録の日付を変える'); }
     else c.appendChild(d.row);
+    //   設計55：トレーニング全体の保存は見出しの右上（下の帯は「いま開いている操作の確定ボタン」だけにする）
+    var hdr = cur.root && cur.root.querySelector('.k-entryhead');
+    var saveBtn = null;
+    if (hdr) { var oldHs = hdr.querySelector('.k-hsave'); if (oldHs) oldHs.remove(); }
     //   過去の記録から写す（専用の画面・モック K3b）
     if ((sessions || []).length) c.appendChild(el('button', { type: 'button', class: 'k-btn k-btn-line', text: '過去の記録から写す', onclick: function () { trPickSub(sessions); } }));
     //   メモから取り込む（設計38 §5-1）：Worker が新しい鍵を受け付けるとき（karteSchema 33）だけ。送信中・結果待ちの間はここまで来ない（上で return）
@@ -3669,9 +3699,21 @@
     var restTg = el('button', { type: 'button', class: 'k-rtg', 'data-nodirty': '1', onclick: function () {
       setRestOn(!restOn()); drawRestTg(); draw();   // ★なしにした瞬間に動いているタイマーは止める（setRestOn の中）
     } });
-    function drawRestTg() { var on = restOn(); restTg.setAttribute('aria-pressed', on ? 'true' : 'false'); restTg.textContent = on ? '休憩タイマー：あり' : '休憩タイマー：なし'; }
+    //   設計55：終了音は端末で1つ＝休憩タイマーの隣に1つだけ（種目ごとに出していた）。タイマーなしなら出さない
+    var sndTg = el('button', { type: 'button', class: 'k-rtg k-sndtg', 'data-nodirty': '1', onclick: function () {
+      var on = !restSound(); try { localStorage.setItem('karte_rest_sound', on ? 'on' : 'off'); } catch (e) {}
+      if (on) audioUnlock();   // ★この操作の中で用意する（後からでは iPhone は鳴らせない）
+      drawRestTg();
+    } });
+    function drawRestTg() {
+      var on = restOn(); restTg.setAttribute('aria-pressed', on ? 'true' : 'false'); restTg.textContent = on ? '休憩タイマー：あり' : '休憩タイマー：なし';
+      var so = restSound(); sndTg.setAttribute('aria-pressed', so ? 'true' : 'false'); sndTg.textContent = so ? '終了音：あり' : '終了音：なし';
+      if (on && sndTg.parentNode !== restRow) restRow.appendChild(sndTg);
+      else if (!on && sndTg.parentNode) sndTg.parentNode.removeChild(sndTg);   // なし＝終了音の切り替えも出さない（文字も残さない）
+    }
+    var restRow = el('div', { style: 'display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 8px;' }, [restTg]);
     drawRestTg();
-    c.appendChild(el('div', { style: 'display:flex;justify-content:flex-end;margin:0 0 8px;' }, [restTg]));
+    c.appendChild(restRow);
     var restBar = el('div', { class: 'k-restbar', style: 'display:none;' });   // ★見た目は CSS の .k-restbar（inline に display を2つ書くと後の flex が勝ち、空の帯が出ていた）
     rest.box = restBar;   // ★置き場所は draw() が決める：✓を押したセットの真下（無ければ一覧の先頭＝空なので見えない）
     //   ★休憩中に上の「記録の入力」をもう一度押すと、この欄ごと作り直される。この時点の欄はまだ画面に無い（返してから置かれる）ので、
@@ -3695,7 +3737,12 @@
     }
     function refreshTop() {
       var t = cur.root && cur.root.querySelector('.k-entrydate');
-      if (t) t.textContent = (cname ? cname + ' 様 ／ ' : '') + mdw(D.sessionDate) + ' ▾';   // ▾＝押すと日付を変えられる
+      if (!t) return;
+      //   ▾＝押すと日付を変えられる。★設計55：押せるのは日付の文字の部分（.k-datehit）だけ＝透明な日付の入力欄はその中に置く
+      t.textContent = cname ? cname + ' 様 ／ ' : '';
+      var hit = el('span', { class: 'k-datehit', text: mdw(D.sessionDate) + ' ▾' });
+      if (hdDate && d.el.className === 'k-dateover') hit.appendChild(d.el);
+      t.appendChild(hit);
     }
     function trimTotal() { var n = 0; D.items.forEach(function (it) { it.sets = it.sets.filter(function () { n++; return n <= TR_TOTAL; }); }); D.items = D.items.filter(function (it) { return it.sets.length; }); }
     d.el.onchange = function () { D.sessionDate = d.get() || today(); save(); refreshTop(); draw(); };
@@ -3715,14 +3762,64 @@
       i.oninput = function () { onv(i.value.trim()); save(); };
       return i;
     }
+    //   ---- 設計55：外す・セットを消すの直後だけ「〇〇を外しました［元に戻す］」（確認のダイアログは増やさない）
+    //     ★元に戻せるのは直後だけ：次に描き直したら（✓・並べ替え・足す等の次の操作）案内ごと捨てる＝古い位置に差し戻さない
+    //     ★戻すのは消したもの（種目・セット）だけを同じ位置へ。消した後に打った数字は消さない。休憩の帯の位置も付け替え、消したことで止まった休憩は続きから
+    var undo = null;
+    function restSnap() { return { endAt: rest.endAt, buzzed: rest.buzzed, pos: rest.pos ? { ei: rest.pos.ei, si: rest.pos.si } : null }; }
+    function rmEx(ei, text) {
+      if (sending || D.pending || !D.items[ei]) return;
+      var u = { kind: 'ex', ei: ei, item: D.items[ei], openEi: D.openEi, rest: restSnap(), text: text || (D.items[ei].exercise + 'を外しました') };
+      restShift(ei); D.items.splice(ei, 1);
+      undo = u; save(); draw();
+    }
+    function rmSet(ei, si) {
+      var it = D.items[ei];
+      if (sending || D.pending || !it || !it.sets[si]) return;
+      var text = it.exercise + 'の' + (si + 1) + 'セット目を消しました';
+      if (it.sets.length === 1) { rmEx(ei, text); return; }   // 最後のセット＝種目ごと消える（今までどおり）。戻すときも種目ごと
+      var u = { kind: 'set', ei: ei, si: si, set: it.sets[si], openEi: D.openEi, rest: restSnap(), text: text };
+      restShift(ei, si); it.sets.splice(si, 1);
+      undo = u; save(); draw();
+    }
+    function doUndo() {
+      var u = undo; undo = null;
+      if (!u || sending || D.pending) { draw(); return; }
+      if (u.kind === 'ex') {
+        if (u.ei > D.items.length) { draw(); return; }
+        D.items.splice(u.ei, 0, u.item);
+        if (rest.pos && rest.pos.ei >= u.ei) rest.pos.ei++;
+      } else {
+        var it = D.items[u.ei];
+        if (!it || u.si > it.sets.length) { draw(); return; }
+        it.sets.splice(u.si, 0, u.set);
+        if (rest.pos && rest.pos.ei === u.ei && rest.pos.si >= u.si) rest.pos.si++;
+      }
+      D.openEi = u.openEi;
+      //   消したことで休憩が止まり、その後に新しく数え始めていない＝続きから
+      if (!rest.endAt && u.rest.endAt && u.rest.pos && restOn()) { rest.endAt = u.rest.endAt; rest.buzzed = u.rest.buzzed; rest.pos = u.rest.pos; }
+      if (!save()) window.alert('この端末に下書きを残せません（保存するまで画面を閉じないでください）。');
+      draw();
+      if (rest.endAt && !rest.buzzed && !rest.iv) rest.iv = setInterval(restTick, 500);
+      if (rest.endAt) restTick();
+    }
+    function undoBar(u) {
+      return el('div', { class: 'k-undo', role: 'status', 'aria-live': 'polite', style: 'display:flex;align-items:center;gap:8px;background:#fbefd9;border-radius:10px;padding:6px 6px 6px 12px;margin:0 0 10px;' }, [
+        el('span', { style: 'flex:1;min-width:0;font-size:14px;font-weight:700;color:#5c3a05;', text: u.text }),
+        el('button', { type: 'button', class: 'k-btn out small k-undogo', style: 'min-height:44px;margin:0;flex:none;', text: '元に戻す', onclick: doUndo })]);
+    }
     function draw() {
       gripCancel();   // 設計53 関門②：描き直しで行が消える前に捨てる
       list.innerHTML = '';
       var placed = false;
       if (udFor >= D.items.length) udFor = -1;
       if (moveMsg) { list.appendChild(el('div', { class: 'k-sub k-movemsg', role: 'status', 'aria-live': 'polite', text: moveMsg })); moveMsg = ''; }   // 設計53：動かした結果を読み上げる1行
+      //   設計55：元に戻すの案内は消した直後の1回だけ描く（2回目の描き直しで捨てる）。置き場所は消したものがあった位置
+      var uNow = null, uPlaced = false;
+      if (undo) { if (undo.shown) undo = null; else { undo.shown = true; uNow = undo; } }
       if (D.openEi == null || D.openEi >= D.items.length || D.openEi < 0) D.openEi = D.items.length - 1;
       D.items.forEach(function (it, ei) {
+        if (uNow && uNow.kind === 'ex' && uNow.ei === ei) { list.appendChild(undoBar(uNow)); uPlaced = true; }
         if (ei !== D.openEi) {   // 畳んだ種目：押すと広げる（入力済み・✓の数を出す）
           var nd = it.sets.filter(function (x) { return x.done === true; }).length;
           var colBtn = el('button', { type: 'button', class: 'k-excol', 'aria-label': it.exercise + 'を開く', onclick: function () { D.openEi = ei; save(); draw(); } }, [
@@ -3748,31 +3845,30 @@
           el('div', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
           it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
           el('span', { class: 'k-tag', text: partOf(it.exercise) }),
-          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { restShift(ei); D.items.splice(ei, 1); save(); draw(); } }),
+          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { rmEx(ei); } }),   // 設計55：直後に元に戻せる
           D.items.length > 1 ? trGrip(it, ei) : null]));   // 設計53：つまみは右端
         blk.setAttribute('data-ei', String(ei));
         if (udFor === ei) blk.appendChild(gripUpDown(it.exercise, ei, D.items.length, reorderItems));
         //   「全部✓」は見出しの「外す」から離し、前回の行の右に置く（押し間違えて種目を消さない・設計38 §5-4）
         var ac = allChkBtn(it);
-        blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:2px 0 8px;' }, [el('div', { class: 'k-sub', style: 'flex:1;min-width:0;', text: prevLabel(it.exercise) }), ac]));
+        blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:2px 0 8px;' }, [el('div', { class: 'k-sub k-prev', style: 'flex:1;min-width:0;font-size:14px;color:var(--k-acc);', text: prevLabel(it.exercise) }), ac]));   // 設計55：実施中にいちばん見る行＝14px・ネイビー
         var db = doneBtn(it);
         if (db) blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:0 0 8px;' }, [db, el('span', { class: 'k-sub', text: '数字の無い種目は「実施した」で記録します' })]));
         if (it.regPart && !registeredEx(it.exercise) && !MEMO_PII_WEAK.test(String(it.exercise || ''))) blk.appendChild(regCard(it));   // 設計52：名前らしい印の名前は登録の欄を出さない
-        if (it.sets.length) blk.appendChild(el('div', { class: 'k-setrow', style: 'margin-bottom:2px;font-size:11px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;line-height:1.2;', text: extOk() ? 'メモ・補助' : 'メモ' }), el('span')]));
+        if (it.sets.length) blk.appendChild(el('div', { class: 'k-setrow k-sethead', style: 'margin-bottom:2px;font-size:12px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;line-height:1.2;', text: extOk() ? 'メモ・補助' : 'メモ' })]));
         it.sets.forEach(function (s, si) {
+          if (uNow && uNow.kind === 'set' && uNow.ei === ei && uNow.si === si) { blk.appendChild(undoBar(uNow)); uPlaced = true; }
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
             style: 'min-width:44px;min-height:44px;border-radius:12px;font-size:18px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#8692a6;border:1px solid #8692a6;'),
             text: '✓', onclick: function () { var go = !s.done && restOn(); s.done = !s.done; if (go) rest.pos = { ei: ei, si: si }; save(); draw(); if (go) restStart(restSecondsFor(it.exercise)); } });   // ★タイマーなしなら数えない
           blk.appendChild(el('div', { class: 'k-setrow' }, [
-            el('span', { style: 'color:var(--k-sub);font-size:13px;text-align:center;', text: String(si + 1) }),
+            el('span', { class: 'k-setno', style: 'color:var(--k-sub);font-size:15px;font-weight:700;text-align:center;', text: String(si + 1) }),
             numInput(s.w, 'kg', (si + 1) + 'セット目の重量', function (v) { s.w = v; }),
             numInput(s.r, '回', (si + 1) + 'セット目の回数', function (v) { s.r = v; }),
             chk,
             el('button', { type: 'button', 'aria-label': (si + 1) + 'セット目のメモ', 'aria-expanded': (s.note || s.memoOpen) ? 'true' : 'false',
               style: 'min-width:44px;min-height:44px;border-radius:10px;font-size:16px;' + (s.note || hasExt(s) ? 'background:var(--k-acc-l);color:var(--k-acc);border:1px solid var(--k-acc);' : 'background:#fff;color:#9a9ea6;border:1px solid #8692a6;'),
-              text: '✎', onclick: function () { s.memoOpen = !(s.memoOpen || s.note); if (!s.memoOpen && !s.note) { save(); draw(); return; } save(); draw(); focusMemo(ei, si); } }),
-            el('button', { type: 'button', class: 'k-setdel', 'aria-label': (si + 1) + 'セット目を消す', style: 'min-width:44px;min-height:44px;border:none;background:transparent;color:var(--k-warn);font-size:16px;', text: '×',
-              onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
+              text: '✎', onclick: function () { s.memoOpen = !(s.memoOpen || s.note); if (!s.memoOpen && !s.note) { save(); draw(); return; } save(); draw(); focusMemo(ei, si); } })]));   // 設計55：セットを消すのは ✎ の中（× を隣に置かない）
           //   印（補助・ドロップ・無理やり）はセットの行の真下に小さく＝✎ を閉じていても分かる（設計38 §5-4）
           var mk = marksOf(s);
           if (mk) blk.appendChild(el('div', { class: 'k-marks', text: mk }));
@@ -3798,32 +3894,32 @@
             blk.appendChild(el('div', { class: 'k-setnote' }, [mi, chips,
               el('div', { class: 'k-sub', style: 'margin-top:4px;color:var(--k-warn);', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }),
               extPanel(it, s, ei, si),
-              el('button', { type: 'button', class: 'k-btn out small k-danger k-setdel2', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { if (it.sets.length === 1) restShift(ei); else restShift(ei, si); it.sets.splice(si, 1); if (!it.sets.length) D.items.splice(ei, 1); save(); draw(); } })]));
+              el('button', { type: 'button', class: 'k-btn out small k-danger k-setdel2', 'aria-label': (si + 1) + 'セット目を消す', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { rmSet(ei, si); } })]));
           }
           if (restOn() && rest.pos && rest.pos.ei === ei && rest.pos.si === si) { blk.appendChild(restBar); placed = true; }   // ★休憩の帯は✓を押したセットの真下（2026-11-05 オーナー：スクロールが煩わしい）
         });
+        if (uNow && uNow.kind === 'set' && uNow.ei === ei && !uPlaced) { blk.appendChild(undoBar(uNow)); uPlaced = true; }   // 最後のセットを消した
         //   セットを足す＝直前のセットを複製（✓は外す）
-        blk.appendChild(el('button', { type: 'button', class: 'k-addset', text: '＋ セット', 'aria-label': 'セットを足す（前のセットを複製）', onclick: function () {
+        var addBtn = el('button', { type: 'button', class: 'k-addset', style: 'flex:1;min-width:0;width:auto;margin-top:0;', text: '＋ セット', 'aria-label': 'セットを足す（前のセットを複製）', onclick: function () {
           if (totalSets(D.items) >= TR_TOTAL) { window.alert('1回の記録は合計60セットまでです。'); return; }
           if (it.sets.length >= 10) { window.alert('1種目10セットまでです。'); return; }
           var last = it.sets[it.sets.length - 1] || { w: '', r: '' };
           it.sets.push({ w: last.w, r: last.r, done: false }); save(); draw();
-        } }));
-        //   休憩の行（従来の見た目のまま種目ごとに置く・2026-11-05 オーナー）。秒数はこの種目に覚える
-        var rs = el('select', { 'data-nodirty': '1', 'aria-label': it.exercise + 'の休憩の秒数', style: 'min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 8px;font-size:16px;background:#fff;' });
-        REST_CHOICES.forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSecondsFor(it.exercise)) o.selected = true; rs.appendChild(o); });
-        rs.onchange = function () { setRestSecondsFor(it.exercise, rs.value); };
-        var snd = el('button', { type: 'button', class: 'k-pill' + (restSound() ? ' on' : ''), 'aria-pressed': restSound() ? 'true' : 'false', text: restSound() ? '終了音：あり' : '終了音：なし', onclick: function () {
-          var on = !restSound(); try { localStorage.setItem('karte_rest_sound', on ? 'on' : 'off'); } catch (e) {}
-          if (on) audioUnlock();   // ★この操作の中で用意する（後からでは iPhone は鳴らせない）
-          draw();   // 終了音は端末で1つ＝ほかの種目の表示もそろえる
         } });
-        if (restOn()) blk.appendChild(el('div', { class: 'k-restrow', style: 'display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;' }, [rs, snd, el('span', { class: 'k-sub', text: '✓を押すと休憩タイマーが始まります（記録には保存されません）' })]));   // タイマーなしなら行ごと出さない
+        //   休憩の秒数はこの種目に覚える。★設計55：「＋ セット」と同じ行に置く（終了音は上部に1つ）。タイマーなしなら秒数は出さない
+        var rs = null;
+        if (restOn()) {
+          rs = el('select', { 'data-nodirty': '1', 'aria-label': it.exercise + 'の休憩の秒数', style: 'flex:none;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 8px;font-size:16px;background:#fff;' });
+          REST_CHOICES.forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSecondsFor(it.exercise)) o.selected = true; rs.appendChild(o); });
+          rs.onchange = function () { setRestSecondsFor(it.exercise, rs.value); };
+        }
+        blk.appendChild(el('div', { class: 'k-addrow', style: 'display:flex;align-items:stretch;gap:8px;margin-top:4px;' }, [addBtn, rs]));
         list.appendChild(blk);
       });
+      if (uNow && !uPlaced) list.appendChild(undoBar(uNow));   // 最後の種目を外した
       if (!placed && restOn()) list.insertBefore(restBar, list.firstChild);
       else if (!placed && restBar.parentNode) restBar.parentNode.removeChild(restBar);   // ✓のセットが無い・消えた：一覧の先頭（数えていれば見える・空なら隠れる）
-      if (!D.items.length) list.appendChild(msg('「前回の内容で始める」か「種目を足す」から始めてください。'));
+      if (!D.items.length) list.appendChild(msg((sessions || []).length ? '「過去の記録から写す」か「＋ 種目を足す」から始めてください。' : '「＋ 種目を足す」から始めてください。'));   // 設計55：実在するボタンの名前だけ
       var t = totalSets(D.items), rec = 0;
       buildPayload(D.items).forEach(function (x) { rec += x.sets.length; });
       remain.textContent = '記録する ' + rec + 'セット・記録しない ' + uncheckedCount(D.items) + 'セット（合計 ' + t + '／' + TR_TOTAL + '）';
@@ -3923,9 +4019,17 @@
       D.openEi = D.items.length - 1;
       save(); draw();
     }
-    c.appendChild(el('button', { type: 'button', class: 'k-btn out', text: '＋ 種目を足す', onclick: function () { picker.style.display = picker.style.display === 'none' ? '' : 'none'; } }));
-    var picker = exercisePicker(sessions, function (names) { addExercises(names); picker.style.display = 'none'; }, cid, exRestore && exRestore.cid === cid ? exRestore : null);
-    picker.style.display = (exRestore && exRestore.cid === cid) ? '' : 'none';   // 種目の登録の途中で読み直したら、種目を選ぶ欄を開いたまま戻す
+    var addExBtn = el('button', { type: 'button', class: 'k-btn out', text: '＋ 種目を足す', 'aria-expanded': 'false', onclick: function () { setPicker(picker.style.display === 'none'); } });
+    c.appendChild(addExBtn);
+    var picker = exercisePicker(sessions, function (names) { addExercises(names); setPicker(false); }, cid, exRestore && exRestore.cid === cid ? exRestore : null);
+    //   設計55：下の帯は「いま開いている操作の確定ボタン」だけ＝種目の欄を開いている間の［選んだ種目を足す］。何も開いていなければ帯を出さない
+    var pickBar = el('div', { class: 'k-savebar k-pickbar' });
+    var pickGo = picker.querySelector('.k-picker-go');
+    if (pickGo) pickBar.appendChild(pickGo);
+    function setPicker(on) {
+      picker.style.display = on ? '' : 'none'; pickBar.style.display = on ? '' : 'none';
+      addExBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
     c.appendChild(picker);
     //   指導メモ（2026-11-05 モック K3：セッション中にそのまま書く）。社内メモ＝既存の指導メモ（k_addNote）にそのまま残す
     //   ★書きかけは記録の下書き（D.memo）に残す＝セットと同じく画面を離れても消えない。「お客様へ」は第2弾（保存先を作る）
@@ -4000,7 +4104,7 @@
       var mp = D.memoPending;
       if (!save()) { window.alert('この端末に送信の控えを残せないため、指導メモを送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
       sending = true;
-      if (saveBtn) saveBtn.textContent = '送信中…';
+      saveBusy();   // 設計55：見出しの保存は c の外＝ここで止める
       function again() { if (same()) open(cid, cname, 'training', null, 'replace'); }
       function unknownMemo() { sending = false; if (same()) { window.alert('指導メモの保存の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); again(); } }
       kWrite('k_addNote', { customerId: cid, sessionDate: mp.date, tag: mp.tag, condition: '', body: mp.body, nextPlan: '' }, mp.reqId, { kind: 'training', customerId: cid }).then(function (w) {
@@ -4017,7 +4121,10 @@
         if (same()) { window.alert('指導メモは保存できませんでした（' + errText(w) + '）。内容は残っています。もう一度「保存する」を押してください。'); again(); }
       }, unknownMemo);
     }
+    //   設計55：送信中は保存のボタンを押せない（見出しの保存は c の外にあるため、c の中を止めるだけでは止まらない）
+    function saveBusy() { if (saveBtn) { saveBtn.textContent = '送信中…'; saveBtn.disabled = true; } }
     function doneScreen(trainingLine, memoSaved, memoBody, date, memberSaved) {
+      if (saveBtn && saveBtn.classList.contains('k-hsave') && saveBtn.parentNode) saveBtn.parentNode.removeChild(saveBtn);   // 保存した後は見出しの保存を出さない
       c.innerHTML = '';
       c.appendChild(el('div', { class: 'k-h', text: '記録しました' }));
       if (trainingLine) c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:4px;', text: trainingLine }));
@@ -4045,7 +4152,7 @@
       if (!save()) { D.pending = null; window.alert('この端末に送信の控えを残せないため、送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
       sending = true;   // ★送信中はお客様の欄・メモも止める（送った後に書き足した分が、成功で下書きから消えないように）
       Array.prototype.forEach.call(c.querySelectorAll('button,input,select,textarea'), function (x) { x.disabled = true; });
-      if (saveBtn) saveBtn.textContent = '送信中…';
+      saveBusy();   // 設計55：見出しの保存は c の外＝ここで止める
       function back() { if (same()) open(cid, cname, 'training', null, 'replace'); }
       function unknown() { sending = false; if (same()) { window.alert('通信の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); back(); } }
       kWrite('k_addTraining', payload, reqId, { kind: 'training', customerId: cid }).then(function (w) {
@@ -4094,7 +4201,7 @@
       if (!save()) { D.mpending = null; window.alert('この端末に送信の控えを残せないため、送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
       sending = true;
       Array.prototype.forEach.call(c.querySelectorAll('button,input,select,textarea'), function (x) { x.disabled = true; });
-      if (saveBtn) saveBtn.textContent = '送信中…';
+      saveBusy();   // 設計55：見出しの保存は c の外＝ここで止める
       function back() { if (same()) open(cid, cname, 'training', null, 'replace'); }
       function unknown() { sending = false; if (same()) { window.alert('通信の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); back(); } }
       kWrite('k_saveMemberNote', payload, reqId, { kind: 'training', customerId: cid }).then(function (w) {
@@ -4117,10 +4224,8 @@
         back();
       }, unknown);
     }
-    var saveBtn = null;
-    var saveBar = el('div', { class: 'k-savebar' });
-    c.appendChild(saveBar);
-    saveBar.appendChild(saveBtn = el('button', { class: 'k-btn', text: '保存する', onclick: function () {
+    //   設計55：保存は見出しの右上（見出しが無いときだけ従来どおり下の帯）。中身・確認・送信は今までと同じ
+    saveBtn = el('button', { type: 'button', class: hdr ? 'k-hsave' : 'k-btn', text: '保存する', onclick: function () {
       gripCancel();   // 設計53 関門① 2：動かしている途中の並べ替えは捨ててから送る中身を作る（送る中身と下書きの順を食い違わせない）
       var items = buildPayload(D.items);
       var memo = String(D.memo || '').trim();
@@ -4150,8 +4255,10 @@
       var payload = { customerId: cur.customerId, sessionDate: D.sessionDate, items: items };
       if (mem) payload.member = mem;   // 空なら送らない（member なし＝今までと同じ形）
       send(payload, D.reqId);
-    } }));
-    saveBar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: '記録・指導メモ・お客様に見える欄をまとめて保存し、「トレーニング」の画面に戻ります' }));
+    } });
+    if (hdr) hdr.appendChild(saveBtn); else c.appendChild(el('div', { class: 'k-savebar' }, [saveBtn]));
+    c.appendChild(pickBar);
+    setPicker(!!(exRestore && exRestore.cid === cid));   // 種目の登録の途中で読み直したら、種目を選ぶ欄を開いたまま戻す
     refreshTop(); draw();
     if (!restored) save();
     return c;
@@ -4284,6 +4391,7 @@
         });
       }
       go.textContent = picked.length ? '選んだ ' + picked.length + ' 種目を足す' : '選んだ種目を足す';
+      go.disabled = !picked.length; go.setAttribute('aria-disabled', picked.length ? 'false' : 'true');   // 設計55：選ぶまで押せない（帯には常に出す）
     }
     q.oninput = function () { newPart = null; draw(); };
     go.onclick = function () { if (!picked.length) { window.alert('種目を選んでください。'); return; } onAdd(picked.slice()); picked = []; q.value = ''; draw(); };
