@@ -5007,7 +5007,9 @@ var LB_WS = {
   READ_MAX: 500, SEND_MAX: 50,
   AFTER_BUDGET_MS: 4 * 60000, TICK_BUDGET_MS: 3 * 60000, LOCK_MS: 1000,
   USER_RECHECK_MS: 6 * 3600000,
-  SWEEP_BUDGET_MS: 20000,                  // 掃き出しの1回の上限（送る役の後・500行まで）
+  SWEEP_BUDGET_MS: 20000,
+  STAT_LOCK_MS: 500,                       // LB_WS_STAT の読み直し→合成→書き込みを囲む ScriptLock の待ち（数ミリ秒だけ持つ）
+  STAT_MISS_PROP: 'LB_WS_STAT_MISS',       // 取れずに捨てた数（下限値）                  // 掃き出しの1回の上限（送る役の後・500行まで）
   //   6列目に載せてよい鍵（これ以外は載せない・検査 ③ が固定）
   KEYS: ['n', 'op', 'ok', 'code', 'at', 'cid', 'rid', 'xr', 'eb', 'et', 'tid', 's', 'e', 'ex', 'att', 'pk', 'cm', 't', 'sent', 'stale', 'too_long'],
   //   GAS の「どこで決まったか」（_lbReserveCoreImpl の _LB_WS.at）。Worker の WS_GAS_AT と同じ集合（検査で突き合わせる）
@@ -5163,15 +5165,24 @@ function _lbWsStatBump(o, key, n, nowMs) {
 }
 //   UserLock の中で読んで書く（トリガー・作業依頼・日次点検から）。取れなければ書かない
 function _lbWsStatEdit(fn) {
+  //   ★LB_WS_STAT の書き込みは「書く直前に読み直して、変えたい所だけ変えて書く」を ScriptLock で数ミリ秒だけ囲む（関門② 再審7回目）。
+  //     UserLock だと別のアカウントのトリガーと排他にならず後勝ちで巻き戻る。tryLock は500ms・取れなければ変更を捨てて数える（下限値）
   var lock = null;
-  try { lock = LockService.getUserLock(); } catch (e) { lock = null; }
-  if (!lock) return false;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
   var got = false;
-  try { got = lock.tryLock(LB_WS.LOCK_MS); } catch (e2) { got = false; }
-  if (!got) return false;
+  try { got = !!(lock && lock.tryLock(LB_WS.STAT_LOCK_MS)); } catch (e2) { got = false; }
+  if (!got) { _lbWsStatMissNote(); return false; }
   try { var o = _lbWsStatRead(); fn(o); _lbWsStatWrite(o); return true; }
   catch (e3) { return false; }
   finally { try { lock.releaseLock(); } catch (e4) {} }
+}
+//   ScriptLock が取れずに捨てた変更の数（ロックを取らずに足す・下限値）
+function _lbWsStatMissNote() {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var n = Number(p.getProperty(LB_WS.STAT_MISS_PROP) || 0);
+    p.setProperty(LB_WS.STAT_MISS_PROP, String((isFinite(n) && n >= 0 ? Math.floor(n) : 0) + 1));
+  } catch (e) {}
 }
 
 // ---- 6列目の読み書き -------------------------------------------------------------------
@@ -5310,18 +5321,20 @@ function _lbWsTick(who, startedAt) {
 function _lbWsCellKey(v) { var ms = _lbWsCellMs(v); return (ms == null) ? 's:' + String(v == null ? '' : v) : 'm' + ms; }
 function _lbWsCursorRead(p, prop, sh, last) {
   var raw = p.getProperty(prop);
-  if (raw == null || raw === '') return { state: 'none', row: 1 };
+  var R0 = (raw == null) ? null : String(raw);
+  if (raw == null || raw === '') return { state: 'none', row: 1, raw: R0 };
   var cur = null;
-  try { cur = JSON.parse(raw); } catch (e) { return { state: 'broken', row: 1 }; }
-  if (!cur || typeof cur !== 'object' || !_lbWsIsInt(cur.row, -1e12, 1e12)) return { state: 'broken', row: 1 };
-  if (cur.row < 1 || cur.row > last) return { state: 'range', row: 1 };
-  if (cur.row === 1) return { state: 'ok', row: 1 };
-  if (typeof cur.k !== 'string') return { state: 'broken', row: 1 };
-  if (_lbWsCellKey(sh.getRange(cur.row, 1).getValue()) !== cur.k) return { state: 'moved', row: 1 };
-  return { state: 'ok', row: cur.row };
+  try { cur = JSON.parse(raw); } catch (e) { return { state: 'broken', row: 1, raw: R0 }; }
+  if (!cur || typeof cur !== 'object' || !_lbWsIsInt(cur.row, -1e12, 1e12)) return { state: 'broken', row: 1, raw: R0 };
+  if (cur.row < 1 || cur.row > last) return { state: 'range', row: 1, raw: R0 };
+  if (cur.row === 1) return { state: 'ok', row: 1, raw: R0 };
+  if (typeof cur.k !== 'string') return { state: 'broken', row: 1, raw: R0 };
+  if (_lbWsCellKey(sh.getRange(cur.row, 1).getValue()) !== cur.k) return { state: 'moved', row: 1, raw: R0 };
+  return { state: 'ok', row: cur.row, raw: R0 };
 }
-function _lbWsCursorSave(p, prop, sh, row) {
-  p.setProperty(prop, JSON.stringify({ row: row, k: row >= 2 ? _lbWsCellKey(sh.getRange(row, 1).getValue()) : '' }));
+//   カーソルを保存する予定を作る（シートの読みはここ＝ロックの外）。実際に書くのは _lbWsCommit（前進のみ・リセットは読んだときから変わっていなければ）
+function _lbWsCursorPlan(plans, prop, sh, row, readState) {
+  plans[prop] = { row: row, k: row >= 2 ? _lbWsCellKey(sh.getRange(row, 1).getValue()) : '', reset: readState.state !== 'ok', raw: readState.raw };
 }
 //   本体（UserLock の中）。返り値は固定の語
 //   ★3つの段に分け、それぞれ独立の try/catch（関門② 再審6回目）：①消去 ②送信 ③掃き出し。どの段が例外でも他の段は必ず走る。
@@ -5337,7 +5350,11 @@ function _lbWsRun(who, startedAt, budget) {
   if (last < 2) return 'empty';
   var p = PropertiesService.getScriptProperties();
   var nowMs = Date.now();
+  var baseRaw = p.getProperty(LB_WS.STAT_PROP);   // ★読んだときの生の値（書く直前に読み直した生の値と同じなら、他の実行は書いていない）
   var st = _lbWsStatRead(last);
+  var base = JSON.parse(JSON.stringify(st));
+  base._raw = (baseRaw == null) ? null : String(baseRaw);   // ★読んだときの状態（書く直前に読み直したものと比べて、他の実行が変えた所を巻き戻さない）
+  var plans = {};
   var counts = {};
   function bump(k, n) { counts[k] = (counts[k] || 0) + (n || 1); }
   if (st._resets) bump('cursor_reset', st._resets);
@@ -5347,7 +5364,7 @@ function _lbWsRun(who, startedAt, budget) {
     var f = st.phaseFail[ph] || { n: 0 };
     st.phaseFail[ph] = { n: (Number(f.n) || 0) + 1, type: _lbErrType(e), at: nowMs };
   }
-  var statOut = {};
+  var statOut = null;   // 報告できた数（null＝報告していない）
   var res = 'erased';
   var ec = { state: 'none', row: 1 }, eRow = 1;
 
@@ -5389,9 +5406,9 @@ function _lbWsRun(who, startedAt, budget) {
       }
       if (!eStop && eEnd < last) { eStop = 'more'; bump('scan_more'); }
     }
-    if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorSave(p, LB_WS.ERASE_PROP, sh, eRow);
+    if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorPlan(plans, LB_WS.ERASE_PROP, sh, eRow, ec);
     if (eStop === '' || eStop === 'fresh') st.fullScanAt = nowMs;
-  } catch (eE) { phaseFail('erase', eE); }
+  } catch (eE) { if (eE && eE.lbLeaseLost) throw eE; phaseFail('erase', eE); }   // ★将来、借りる印の中で呼ぶときのため（I-H21）
 
   // ---- ② 送る役 ----
   try {
@@ -5402,7 +5419,7 @@ function _lbWsRun(who, startedAt, budget) {
       var sRow = sc.row;
       if (sc.state !== 'ok') {
         sRow = eRow;
-        if (sc.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; st.sendResetWhy = { why: sc.state, at: nowMs }; _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, sRow); sendOk = false; }
+        if (sc.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; st.sendResetWhy = { why: sc.state, at: nowMs }; _lbWsCursorPlan(plans, LB_WS.CURSOR_PROP, sh, sRow, sc); sendOk = false; }
       }
       if (sendOk) {
         if (sRow < eRow) sRow = eRow;
@@ -5422,7 +5439,7 @@ function _lbWsRun(who, startedAt, budget) {
         var so = _lbWsStatOut(st, counts);
         if (toSend.length || Object.keys(so).length) {
           var pr = _lbWsPost({ items: toSend, drain: who, build: LB_WS_BUILD, stat: so });
-          if (pr && pr.ok) { for (var a = 0; a < pr.acked.length; a++) acked[String(pr.acked[a])] = true; statOut = null; }
+          if (pr && pr.ok) { for (var a = 0; a < pr.acked.length; a++) acked[String(pr.acked[a])] = true; statOut = so; }   // 報告した数（書くときに引く）
         }
         var adv = sRow, stopped = false;
         for (var q = 0; q < plan.length; q++) {
@@ -5436,11 +5453,11 @@ function _lbWsRun(who, startedAt, budget) {
           if (stopped) break;
           adv = pl.row;
         }
-        if (adv !== sc.row || sc.state !== 'ok') _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, adv);
+        if (adv !== sc.row || sc.state !== 'ok') _lbWsCursorPlan(plans, LB_WS.CURSOR_PROP, sh, adv, sc);
         res = stopped ? 'partial' : 'done';
       }
     }
-  } catch (eS) { phaseFail('send', eS); }
+  } catch (eS) { if (eS && eS.lbLeaseLost) throw eS; phaseFail('send', eS); }   // ★将来、借りる印の中で呼ぶときのため（I-H21）
 
   // ---- ③ 掃き出し ----
   try {
@@ -5469,9 +5486,9 @@ function _lbWsRun(who, startedAt, budget) {
       }
       st.sweep = sw;
     }
-  } catch (eW) { phaseFail('sweep', eW); }
+  } catch (eW) { if (eW && eW.lbLeaseLost) throw eW; phaseFail('sweep', eW); }   // ★将来、借りる印の中で呼ぶときのため（I-H21）
 
-  _lbWsFlushStat(counts, st, statOut);
+  _lbWsCommit(base, st, counts, statOut, plans, last);
   return res;
 }
 //   まだ Worker に報告していない数（前回までの残り＋今回）
@@ -5485,26 +5502,73 @@ function _lbWsStatOut(st, counts) {
   return out;
 }
 //   数を LB_WS_STAT に書く（UserLock は呼び出し元が持っている＝直接書く）。statOut が null なら報告済み＝unsent を空に
-function _lbWsFlushStat(counts, st, statOut) {
+//   ★書く直前に読み直し、今回の差分だけを足して書く（ScriptLock は getProperty→検証→合成→setProperty の数ミリ秒だけ・tryLock 500ms）。
+//     顧客の書き込み（_lbTakeWriteLock・I81 は10秒待つ）を待たせるのはこの数ミリ秒だけ。取れなければ差分を捨てて数える（下限値）
+//     ・数：足す（報告できた数は引く）  ・時刻の印：大きい方  ・sweep・eraseFail：読んだときから他の実行が変えていなければ自分の値、
+//       変えていれば sweep は「立てる」を優先（どちらかが立てたら立つ）・eraseFail は相手の値  ・カーソル：前進のみ（大きい方）。
+//       自分がリセットしたカーソルは、読んだときから変わっていなければ書く
+function _lbWsCommit(base, st, counts, reported, plans, last) {
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
+  var got = false;
+  try { got = !!(lock && lock.tryLock(LB_WS.STAT_LOCK_MS)); } catch (e2) { got = false; }
+  if (!got) { _lbWsStatMissNote(); return false; }
   try {
+    var p = PropertiesService.getScriptProperties();
     var nowMs = Date.now();
-    var o = st;   // ★_lbWsStatRead が確かめた状態に、今回の数と印を足して書く（生の値を読み直さない）
-    delete o._resets;
-    o.days = o.days || {};
+    var curRaw = p.getProperty(LB_WS.STAT_PROP);
+    var untouched = (base && '_raw' in base) && String(curRaw == null ? '' : curRaw) === String(base._raw == null ? '' : base._raw);
+    var cur = _lbWsStatRead(last);
+    //   ★他の実行が書いていなければ自分の値をそのまま（検証で入れた初期値の時刻の違いを「相手が変えた」と取り違えない）
+    var same = function (a, b) { return untouched || JSON.stringify(a == null ? null : a) === JSON.stringify(b == null ? null : b); };
+    //   数
     var d = _lbWsDay(nowMs);
+    cur.days = cur.days || {};
     for (var k in counts) {
       if (LB_WS.STAT_KEYS.indexOf(k) < 0) continue;
-      o.days[d] = o.days[d] || {};
-      o.days[d][k] = (Number(o.days[d][k]) || 0) + counts[k];
+      cur.days[d] = cur.days[d] || {};
+      cur.days[d][k] = (Number(cur.days[d][k]) || 0) + counts[k];
     }
-    if (statOut === null) o.unsent = {};
-    else {
-      o.unsent = o.unsent || {};
-      for (var k2 in counts) if (LB_WS.STAT_KEYS.indexOf(k2) >= 0) o.unsent[k2] = (Number(o.unsent[k2]) || 0) + counts[k2];
+    cur.unsent = cur.unsent || {};
+    for (var i = 0; i < LB_WS.STAT_KEYS.length; i++) {
+      var kk = LB_WS.STAT_KEYS[i];
+      var v = (Number(cur.unsent[kk]) || 0) + (Number(counts[kk]) || 0) - (reported ? (Number(reported[kk]) || 0) : 0);
+      if (v > 0) cur.unsent[kk] = v; else delete cur.unsent[kk];
     }
-    o.lockStreak = counts.lock_miss ? (Number(o.lockStreak) || 0) + 1 : 0;
-    _lbWsStatWrite(o);
-  } catch (e) {}
+    //   時刻の印：大きい方
+    var times = ['mismatchAt', 'resetAt', 'fullScanAt'];
+    for (var t = 0; t < times.length; t++) if (Number(st[times[t]]) > (Number(cur[times[t]]) || 0)) cur[times[t]] = st[times[t]];
+    if (st.sendResetWhy && (!cur.sendResetWhy || st.sendResetWhy.at > cur.sendResetWhy.at)) cur.sendResetWhy = st.sendResetWhy;
+    //   段の例外：今回ふえた分だけ足す
+    if (st.phaseFail) {
+      cur.phaseFail = cur.phaseFail || {};
+      for (var ph in st.phaseFail) {
+        var dn = (Number(st.phaseFail[ph].n) || 0) - ((base.phaseFail && base.phaseFail[ph]) ? Number(base.phaseFail[ph].n) || 0 : 0);
+        if (dn > 0) cur.phaseFail[ph] = { n: ((cur.phaseFail[ph] && Number(cur.phaseFail[ph].n)) || 0) + dn, type: st.phaseFail[ph].type, at: st.phaseFail[ph].at };
+      }
+    }
+    //   連続失敗の回数
+    if (same(cur.eraseFail, base.eraseFail)) cur.eraseFail = st.eraseFail || null;
+    //   掃き出し：立てるを優先
+    if (same(cur.sweep, base.sweep)) { if (st.sweep) cur.sweep = st.sweep; }
+    else if (st.sweep && st.sweep.needed === true && !(cur.sweep && cur.sweep.needed === true)) cur.sweep = st.sweep;
+    else if (cur.sweep && cur.sweep.needed === true && st.sweep) cur.sweep.skips = Math.max(Number(cur.sweep.skips) || 0, Number(st.sweep.skips) || 0);
+    cur.lockStreak = counts.lock_miss ? (Number(cur.lockStreak) || 0) + 1 : 0;
+    _lbWsStatWrite(cur);
+    //   カーソル：前進のみ
+    for (var prop in plans) {
+      var pl = plans[prop], raw = p.getProperty(prop);
+      var write = false;
+      if (pl.reset) write = (String(raw == null ? '' : raw) === String(pl.raw == null ? '' : pl.raw));
+      else {
+        var c0 = null; try { c0 = JSON.parse(raw); } catch (e3) { c0 = null; }
+        write = !(c0 && _lbWsIsInt(c0.row, 1, 1e9)) || pl.row > c0.row;
+      }
+      if (write) p.setProperty(prop, JSON.stringify({ row: pl.row, k: pl.k }));
+    }
+    return true;
+  } catch (e4) { return false; }
+  finally { try { lock.releaseLock(); } catch (e5) {} }
 }
 function _lbWsPost(payload) {
   var url = _edgeProp('EDGE_URL'), secret = _edgeProp('EDGE_SECRET');

@@ -157,7 +157,7 @@ function world(opt = {}) {
   src += ['_lbWsOpOf', '_lbWsId', '_lbWsFacts', '_lbMetricsWriteFailNote', 'lbWriteShadowSetOn', 'lbWriteShadowSetOff', '_lbWsOn', '_lbWsDay', '_lbWsIsInt', '_lbWsStatClean',
           '_lbWsStatRead', '_lbWsStatWrite', '_lbWsStatBump', '_lbWsStatEdit', '_lbWsParse', '_lbWsStrip', '_lbWsSame5', '_lbWsRewrite',
           '_lbWsProtectionOf', '_lbWsProtState', '_lbWsPrecheckCore', 'setupMetricsProtection', '_lbWsUnprotect', '_lbWsProtectExpected',
-          '_lbWsNoteUser', '_lbWsTick', '_lbWsCellKey', '_lbWsCursorRead', '_lbWsCursorSave', '_lbWsRun', '_lbWsStatOut', '_lbWsFlushStat', '_lbWsPost', '_lbWsCellMs', '_lbWsDayStartMs',
+          '_lbWsNoteUser', '_lbWsTick', '_lbWsCellKey', '_lbWsCursorRead', '_lbWsCursorPlan', '_lbWsRun', '_lbWsStatOut', '_lbWsCommit', '_lbWsStatMissNote', '_lbWsPost', '_lbWsCellMs', '_lbWsDayStartMs',
           '_lbWsIndependentCheck', '_lbWsFailConsume'].map((n) => pluckFn(PE, n)).join('\n');
   vm.runInContext(src, ctx);
   out._lbDispatch = opt.dispatch || ((params, action, luid) => out.makeReservationLine(luid, params));
@@ -634,6 +634,42 @@ console.log('=== ④-r 乱数：保存状態に壊れた値を数百通り入れ
   ok('④-r2 送る段が例外でも外へ出ず、消す段（期限切れの顧客IDを消す）と掃き出しは走る・phaseFail.send に型名だけ', r !== 'error' && !('cid' in ws(w.st.metrics[0])) && st.phaseFail && st.phaseFail.send && st.phaseFail.send.type === 'TypeError' && st.sweep.needed === false, JSON.stringify([r, st.phaseFail, st.sweep]));
 }
 
+console.log('=== ④-s 2つの実行が同じ旧状態を読んで交互に書く（関門② 再審7回目） ===');
+{
+  const w = world({ props: {} });
+  rowsWith(w, [{ n: 'sa000001' }]);
+  const base0 = { days: {}, unsent: {}, eraseFail: null, sweep: { needed: true, skips: 1, first: Date.now() - H, row: 2, found: 0, laps: 0, from2: true, nextAt: 0 } };
+  w.st.props.LB_WS_STAT = JSON.stringify(base0);
+  const base = w.ctx._lbWsStatRead(2);
+  //   実行A：一周して下ろした・stale 2
+  const stA = JSON.parse(JSON.stringify(base)); stA.sweep = { needed: false, skips: 1, laps: 0, doneAt: Date.now() };
+  //   実行B：新しく1行飛ばした（立てたまま skips 2）・stale 3・write_skip 1
+  const stB = JSON.parse(JSON.stringify(base)); stB.sweep = Object.assign({}, base.sweep, { skips: 2 });
+  w.ctx._lbWsCommit(base, stB, { stale: 3, write_skip: 1 }, null, {}, 2);
+  w.ctx._lbWsCommit(base, stA, { stale: 2 }, null, {}, 2);
+  const st = JSON.parse(w.st.props.LB_WS_STAT);
+  const day = Object.values(st.days)[0] || {};
+  ok('④-s1 ★件数は合算される（stale 3＋2＝5・write_skip 1）', day.stale === 5 && day.write_skip === 1, JSON.stringify(st.days));
+  ok('④-s2 ★相手が立てた掃き出しは、後から書いた下ろしで巻き戻らない（立てるを優先）', st.sweep.needed === true && st.sweep.skips === 2, JSON.stringify(st.sweep));
+  //   報告できた数は引く（相手が足した分は残る）
+  w.ctx._lbWsCommit(w.ctx._lbWsStatRead(2), w.ctx._lbWsStatRead(2), {}, { stale: 5 }, {}, 2);
+  const st2 = JSON.parse(w.st.props.LB_WS_STAT);
+  ok('④-s3 報告できた数だけ unsent から引く', !(st2.unsent && st2.unsent.stale) && st2.unsent.write_skip === 1, JSON.stringify(st2.unsent));
+  //   カーソル：前進のみ
+  w.st.props.LB_WS_ERASE_CURSOR = JSON.stringify({ row: 10, k: 'mx' });
+  w.ctx._lbWsCommit(w.ctx._lbWsStatRead(20), w.ctx._lbWsStatRead(20), {}, null, { LB_WS_ERASE_CURSOR: { row: 6, k: 'my', reset: false, raw: JSON.stringify({ row: 5, k: 'mz' }) } }, 20);
+  ok('④-s4 カーソルは前進のみ（相手が10まで進めていたら6に戻さない）', JSON.parse(w.st.props.LB_WS_ERASE_CURSOR).row === 10);
+  w.ctx._lbWsCommit(w.ctx._lbWsStatRead(20), w.ctx._lbWsStatRead(20), {}, null, { LB_WS_ERASE_CURSOR: { row: 1, k: '', reset: true, raw: '{old' } }, 20);
+  ok('④-s5 自分のリセットは、読んだときから相手が変えていたら書かない', JSON.parse(w.st.props.LB_WS_ERASE_CURSOR).row === 10);
+  w.ctx._lbWsCommit(w.ctx._lbWsStatRead(20), w.ctx._lbWsStatRead(20), {}, null, { LB_WS_ERASE_CURSOR: { row: 1, k: '', reset: true, raw: w.st.props.LB_WS_ERASE_CURSOR } }, 20);
+  ok('④-s6 変わっていなければリセットを書く', JSON.parse(w.st.props.LB_WS_ERASE_CURSOR).row === 1);
+  //   ScriptLock が取れなければ差分を捨てて数える
+  w.st.owner = 'other';
+  const okc = w.ctx._lbWsCommit(base, stA, { stale: 9 }, null, {}, 2);
+  w.st.owner = null;
+  ok('④-s7 ScriptLock が500msで取れなければ差分を捨て、LB_WS_STAT_MISS を数える', okc === false && w.st.props.LB_WS_STAT_MISS === '1' && (Object.values(JSON.parse(w.st.props.LB_WS_STAT).days)[0] || {}).stale === 5);
+}
+
 console.log('=== ④-f 保護 ===');
 {
   const w = world({ triggers: ['lbCalSyncTick', 'dailyHealthCheck'] });
@@ -760,7 +796,9 @@ console.log('=== ⑨ M2：最終更新の時刻は中身の印に入れない（
 console.log('=== ⑦ トリガーを作らない ===');
 {
   const sec = PE.slice(PE.indexOf('// ===== WRITESHADOW:BEGIN ====='), PE.indexOf('// ===== WRITESHADOW:END ====='));
-  ok('⑦ write-shadow の節は newTrigger を呼ばない・ScriptLock を使わない（UserLock だけ）', sec.length > 1000 && !/newTrigger/.test(sec) && !/getScriptLock/.test(sec));
+  const fnsWithScriptLock = (sec.match(/\nfunction (\w+)\([^)]*\) \{[\s\S]*?\n\}/g) || []).filter((f) => /getScriptLock/.test(f)).map((f) => f.match(/function (\w+)/)[1]).sort();
+  ok('⑦ write-shadow の節は newTrigger を呼ばない・ScriptLock は LB_WS_STAT の合成（_lbWsStatEdit・_lbWsCommit）の500msだけ', sec.length > 1000 && !/newTrigger/.test(sec)
+     && JSON.stringify(fnsWithScriptLock) === '["_lbWsCommit","_lbWsStatEdit"]' && (sec.match(/tryLock\(LB_WS\.STAT_LOCK_MS\)/g) || []).length === 2 && /STAT_LOCK_MS: 500,/.test(sec), JSON.stringify(fnsWithScriptLock));
 }
 
 console.log(`\n${fail ? '❌' : '✅'} 設計54 write-shadow（GAS）: ${pass} passed / ${fail} failed`);
