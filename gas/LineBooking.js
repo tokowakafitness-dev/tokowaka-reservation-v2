@@ -3125,6 +3125,7 @@ function dailyHealthCheck(dryRunArg) {
     if (wsr.partial) add('ws_partial', '書き込みの比較', 'warn', wsr.partial, '比べる対象と Worker の記録が合わない（欠け ' + wsr.partial + ' 件・' + wsr.partialWhere + '）');
     if (wsr.backlog) add('ws_backlog', '書き込みの比較', 'info', wsr.backlog, '期限で顧客IDだけ消した行・送る側のロックの取りこぼしがある');
     if (wsr.unprotected) add('metrics_unprotected', '書き込みの比較', 'warn', 1, 'booking_metrics の保護が無い・崩れている・行が動いた（送るのを止めています）');
+    if (wsr.eraseStuck) add('ws_erase_stuck', '書き込みの比較', 'warn', wsr.eraseStuck, '顧客IDを消す照合が同じ行で続けて失敗し、その行を飛ばしています（' + (wsr.eraseStuckWhere || '') + '・保護の崩れか不具合の印）');
     if (wsr.protectBlocked) add('metrics_protect_blocked', '書き込みの比較', 'warn', 1, '書き手が同じアカウントか確かめられず、保護を置きませんでした');
     if (wsr.writeFail) {
       add('metrics_write_fail', '書き込みの比較', 'warn', wsr.writeFail, 'booking_metrics に書けなかった（' + wsr.writeFailWhy + '）。印つきの保護を外して元に戻します');
@@ -3302,7 +3303,7 @@ var LB_TRIAGE = {
   //     lbSelfHeal の修理ではない（LB_HEAL_KEYS・I-H12 は変えない）
   ws_danger: ['B', '書き込みの比較'], ws_not_running: ['B', '書き込みの比較'], ws_partial: ['B', '書き込みの比較'],
   metrics_unprotected: ['B', '書き込みの比較'], metrics_protect_blocked: ['B', '書き込みの比較'],
-  metrics_write_fail: ['B', '書き込みの比較'], ws_check_fail: ['AB', '書き込みの比較'],
+  metrics_write_fail: ['B', '書き込みの比較'], ws_check_fail: ['AB', '書き込みの比較'], ws_erase_stuck: ['B', '書き込みの比較'],
   ws_backlog: ['info', '書き込みの比較']
 };
 function _lbTriage(key) {

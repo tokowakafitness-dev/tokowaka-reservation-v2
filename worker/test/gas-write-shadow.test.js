@@ -434,6 +434,45 @@ console.log('=== ④-n 消す役と送る役のカーソルを分ける（関門
   ok('④-n8 次の回から続きを読み、いずれ全部消える', !w.st.metrics.some((x) => 'cid' in ws(x)), String(runs));
 }
 
+console.log('=== ④-o 恒久的に照合に失敗する1行（関門② 再審3回目） ===');
+{
+  const w = world({ props: {} });
+  rowsWith(w, [{ n: 'oa000001', t: Date.now() - 5 * H }, { n: 'oa000002', t: Date.now() - 4 * H }, { n: 'oa000003', t: Date.now() - 3 * H }]);
+  const sh = w.ctx._lbSheet('booking_metrics');
+  const orig = sh.getRange;
+  //   2行目（oa000001）だけ、1〜6列目を読み直すたびに1列目が違って見える＝照合が毎回失敗する
+  w.out._lbSheet = (n) => (n !== 'booking_metrics' ? null : { getLastRow: sh.getLastRow, getProtections: sh.getProtections, getRange: (r, c, nr, nc) => {
+    const g = orig(r, c, nr, nc);
+    if (r === 2 && nr === 1 && nc === 6) return { getValues: () => { const v = g.getValues(); v[0][0] = 'x' + Math.random(); return v; }, setValue: g.setValue, getValue: g.getValue };
+    return g; } });
+  const cidLeft = () => w.st.metrics.map((r) => ('cid' in ws(r)) ? 1 : 0).join('');
+  w.ctx._lbWsTick('TICK', Date.now()); const a1 = cidLeft();
+  w.ctx._lbWsTick('TICK', Date.now()); const a2 = cidLeft();
+  w.ctx._lbWsTick('TICK', Date.now()); const a3 = cidLeft();
+  const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
+  ok('④-o1 1・2回目はその行で止まる（後続の顧客IDは残る）', a1 === '111' && a2 === '111', a1 + ' ' + a2);
+  ok('④-o2 ★3回目でその行を飛ばし、後続の期限切れの顧客IDが消える（飛ばした行だけ残る）', a3 === '100', a3);
+  ok('④-o3 飛ばした行は 行番号・回数・最初の時刻 だけで残る（顧客IDなし）', Array.isArray(st.eraseSkipped) && st.eraseSkipped.length === 1 && st.eraseSkipped[0].row === 2 && st.eraseSkipped[0].n === 3 && st.eraseSkipped[0].first > 0 && JSON.stringify(st.eraseSkipped).indexOf('C54') < 0, JSON.stringify(st.eraseSkipped));
+  //   照合が通るようになれば（保護が戻った等）次の回にやり直して消え、一覧から外れる
+  w.out._lbSheet = (n) => (n === 'booking_metrics' ? sh : null);
+  w.ctx._lbWsTick('TICK', Date.now());
+  const st2 = JSON.parse(w.st.props.LB_WS_STAT || '{}');
+  ok('④-o4 照合が通るようになれば、飛ばした行もやり直して顧客IDが消え一覧から外れる', cidLeft() === '000' && (st2.eraseSkipped || []).length === 0, cidLeft() + JSON.stringify(st2.eraseSkipped));
+  const wd = makeWorld({ data: { ws: { danger: 0, notRunning: 0, partial: 0, backlog: 0, unprotected: 0, protectBlocked: 0, writeFail: 0, failSeen: 0, eraseStuck: 1, eraseStuckWhere: 'row2×3' } } });
+  hrun(wd, 'dailyHealthCheck');
+  ok('④-o5 日次点検は ws_erase_stuck（B）を出す', incOf(wd, 'ws_erase_stuck').length === 1 && incOf(wd, 'ws_erase_stuck')[0].cls === 'B');
+}
+{
+  //   カーソルの保存で例外が出ても、数と印（LB_WS_STAT）は書かれる
+  const w = world({ props: {} });
+  rowsWith(w, [{ n: 'ob000001', t: Date.now() - 5 * H }]);
+  const sp = w.out.PropertiesService.getScriptProperties;
+  w.out.PropertiesService.getScriptProperties = () => { const o = sp(); const set = o.setProperty; return Object.assign({}, o, { setProperty: (k, v) => { if (/CURSOR/.test(k)) throw new Error('quota'); return set(k, v); } }); };
+  w.ctx._lbWsTick('TICK', Date.now());
+  const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
+  ok('④-o6 カーソルの保存が例外でも、統計（stale の数）は書かれる（finally）', JSON.stringify(st.days || {}).indexOf('"stale":1') >= 0, JSON.stringify(st));
+}
+
 console.log('=== ④-f 保護 ===');
 {
   const w = world({ triggers: ['lbCalSyncTick', 'dailyHealthCheck'] });

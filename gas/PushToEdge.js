@@ -5290,6 +5290,20 @@ function _lbWsRun(who, startedAt, budget) {
   var prot = _lbWsProtState(sh);
   var sendOk = _lbWsOn() && prot.ok && _edgeEnabled();
 
+  var prevStat = _lbWsStatRead();
+  try {
+  // ---- 0. 前に飛ばした行をやり直す（照合が通れば顧客IDを消して一覧から外す）----
+  var skipped = (prevStat.eraseSkipped || []).slice(0, 20), keep = [];
+  for (var sk = 0; sk < skipped.length; sk++) {
+    var e0 = skipped[sk];
+    if (!timeLeft() || !(e0.row >= 2 && e0.row <= last)) { keep.push(e0); continue; }
+    var v0 = sh.getRange(e0.row, 1, 1, 6).getValues()[0], o0 = _lbWsParse(v0[5]);
+    if (!o0 || o0.n !== e0.nn || !o0.cid) { if (o0 && o0.n === e0.nn && !o0.cid) continue; keep.push(e0); continue; }   // 顧客IDが消えていれば外す
+    if (_lbWsCellKey(v0[0]) === e0.k && _lbWsRewrite(sh, e0.row, v0, o0.n, _lbWsStrip(o0, o0.sent === 1 ? 'sent' : 'stale')) === 'ok') continue;
+    e0.n = (Number(e0.n) || 0) + 1; keep.push(e0);
+  }
+  st.eraseSkipped = keep;
+
   // ---- 1. 消す役 ----
   var ec = _lbWsCursorRead(p, LB_WS.ERASE_PROP, sh, last);
   if (ec.state !== 'ok') { st.resetAt = nowMs; if (ec.state !== 'none') { bump('cursor_reset'); st.mismatchAt = nowMs; } }
@@ -5307,7 +5321,20 @@ function _lbWsRun(who, startedAt, budget) {
       var age = nowMs - Number(o.t || 0);
       if (Number(o.t) > 0 && age <= LB_WS.STALE_MS) { eStop = 'fresh'; break; }   // ★ここから先は全部もっと新しい
       var rw = _lbWsRewrite(sh, row, ev[i], o.n, _lbWsStrip(o, 'stale'));
-      if (rw !== 'ok') { bump(rw === 'skip' ? 'write_skip' : 'write_conflict'); eStop = 'verify'; break; }   // ★確かめられないまま進めない
+      if (rw !== 'ok') {
+        bump(rw === 'skip' ? 'write_skip' : 'write_conflict');
+        //   ★同じ行（行番号＋1列目）で3回続けて照合に失敗したら、その行を飛ばして先へ進む（関門② 再審3回目）。
+        //     飛ばした行は行番号・回数・最初の時刻・n（乱数）だけを残し、毎回やり直す。日次点検が ws_erase_stuck で人に見せる
+        var fk = _lbWsCellKey(ev[i][0]);
+        var ef = (prevStat.eraseFail && prevStat.eraseFail.row === row && prevStat.eraseFail.k === fk) ? prevStat.eraseFail : { row: row, k: fk, n: 0, first: nowMs };
+        ef.n = (Number(ef.n) || 0) + 1;
+        if (ef.n >= 3) {
+          st.eraseSkip = st.eraseSkip || [];
+          st.eraseSkip.push({ row: row, k: fk, nn: o.n, n: ef.n, first: ef.first });
+          st.eraseFail = null; eRow = row; continue;
+        }
+        st.eraseFail = ef; eStop = 'verify'; break;   // ★確かめられないまま進めない（3回までは止まる）
+      }
       bump('stale'); eRow = row;
     }
     if (!eStop && eEnd < last) { eStop = 'more'; bump('scan_more'); }
@@ -5361,8 +5388,11 @@ function _lbWsRun(who, startedAt, budget) {
       res = stopped ? 'partial' : 'done';
     }
   }
-  _lbWsFlushStat(counts, st, statOut);
   return res;
+  } finally {
+    //   ★カーソルの保存などで例外が出ても、数と印は必ず書く（関門② 再審3回目）
+    _lbWsFlushStat(counts, st, (typeof statOut === 'undefined') ? {} : statOut);
+  }
 }
 //   まだ Worker に報告していない数（前回までの残り＋今回）
 function _lbWsStatOut(st, counts) {
@@ -5383,6 +5413,8 @@ function _lbWsFlushStat(counts, st, statOut) {
     if (st.resetAt) o.resetAt = st.resetAt;
     if (st.fullScanAt) o.fullScanAt = st.fullScanAt;
     if (st.sendResetWhy) o.sendResetWhy = { why: st.sendResetWhy, at: nowMs };
+    if ('eraseFail' in st) o.eraseFail = st.eraseFail;
+    if (st.eraseSkipped || st.eraseSkip) o.eraseSkipped = (st.eraseSkipped || o.eraseSkipped || []).concat(st.eraseSkip || []).slice(-20);
     o.days = o.days || {};
     var d = _lbWsDay(nowMs);
     for (var k in counts) {
@@ -5488,6 +5520,8 @@ function lbWriteShadowDailyCheck(nowMs) {
   if (_lbWsProtectExpected(st) && !prot.ok) r.unprotected = 1;
   if (st.mismatchAt && nowMs - Number(st.mismatchAt) <= 26 * 3600000) r.unprotected = 1;
   if (st.blockedAt && nowMs - Number(st.blockedAt) <= 26 * 3600000) r.protectBlocked = 1;
+  r.eraseStuck = (st.eraseSkipped || []).length;
+  if (r.eraseStuck) r.eraseStuckWhere = st.eraseSkipped.slice(0, 5).map(function (x) { return 'row' + x.row + '×' + x.n; }).join(',');
   var f = null;
   try { f = JSON.parse(p.getProperty(LB_WS.FAIL_PROP) || 'null'); } catch (eF) { f = null; }
   if (f && Number(f.n) > 0) { r.writeFail = Number(f.n); r.failSeen = Number(f.n); r.writeFailWhy = 'recorded:' + String(f.type || 'Error') + '/' + String(f.kind || ''); }

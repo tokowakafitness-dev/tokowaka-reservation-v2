@@ -66,7 +66,7 @@ datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_r
 ## 記録だけ（info・案件にしない）（8）
 cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・member_nocontract（●）・resv_future・transfer_seen
 
-## P1 で足した key（5）＋設計54 S1a で足した key（7）
+## P1 で足した key（5）＋設計54 S1a で足した key（8）
 | key | 区分 | 何を見るか |
 |---|---|---|
 | health_skipped | B | 点検・修理が重なって見送られた（借りる印・design-self-heal-P1 §2-1）。オーナーへのメールにも載る |
@@ -78,14 +78,15 @@ cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・
 | ws_not_running | B | 設計54：LB_WS_ON が on で比べる対象（booking_metrics の6列目つきの行）があるのに Worker の記録が0件 |
 | ws_partial | B | 設計54：op×時間帯で比べる対象と Worker の記録が合わない（95%未満） |
 | ws_backlog | 記録 | 設計54：期限（2時間）で顧客IDだけ消した行・送る側のロックの取りこぼしが続いた |
+| ws_erase_stuck | B | 設計54：顧客IDを消す照合が同じ行で3回続けて失敗し、その行を飛ばした（保護の下では起きない＝保護の崩れか不具合の印）。行番号と回数だけ。飛ばした行は毎回やり直す |
 | metrics_unprotected | B | 設計54：booking_metrics の保護が無い・崩れた・行が動いた（送る側は止まる） |
 | metrics_protect_blocked | B | 設計54：書き手が同じアカウントか確かめられず保護を置かなかった |
 | metrics_write_fail | B | 設計54：booking_metrics に書けなかった（失敗の記録 LB_METRICS_WRITE_FAIL か、台帳の前日の確定と outcome の比較）。**日次点検の段の中で印つきの保護を外して元に戻す**（「元に戻す」なので A の条件に当たるが、lbSelfHeal の修理ではなく点検の段で行うため区分は B。LB_HEAL_KEYS・I-H12 は変えない） |
 
-## 数え（89）
+## 数え（90）
 A 2 ＋ B へ移した 13 ＋ A→B 14 ＋ B 25 ＋ B（名前）8 ＋ C 6 ＋ 記録 8 ＝ **76**（抜き出した74 key ＋ `_ppKey` の2種）。
 ＋ P1 で足した 5（2026-11-24 に heal_save_fail・selfheal_watch_fail を足した）＝ 81。
-＋ 設計54 S1a で足した 8（表の7・A→B の ws_check_fail）＝ **89**（2026-11-24）。
+＋ 設計54 S1a で足した 9（表の8・A→B の ws_check_fail）＝ **90**（2026-11-24・ws_erase_stuck は関門② 再審3回目）。
 子の点検（calslots・karte_ai・contract_input）が出す細かい項目は未分類＝P1 で足す。
 
 ## 未確認
