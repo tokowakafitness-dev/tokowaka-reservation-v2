@@ -66,17 +66,18 @@ datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_r
 ## 記録だけ（info・案件にしない）（8）
 cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・member_nocontract（●）・resv_future・transfer_seen
 
-## P1 で足した key（4）
+## P1 で足した key（5）
 | key | 区分 | 何を見るか |
 |---|---|---|
 | health_skipped | B | 点検・修理が重なって見送られた（借りる印・design-self-heal-P1 §2-1）。オーナーへのメールにも載る |
 | selfheal_stale | B | lbSelfHeal が26時間以上完走していない（モード off 以外）。オーナーへのメールにも載る |
 | selfheal_practice_long | 記録 | 練習モードが14日を超えた |
 | heal_save_fail | B | 前回までの点検が要約・台帳・完走の印を保存できなかった（LB_HEALTH_SAVE_LAST・newer 以外。2026-11-24 空の incidents タブで初回から黙っていたため）。従来の悪化メールに「自己修理の台帳に保存できませんでした（理由: …）」で載る |
+| selfheal_watch_fail | B | 「自己修理の見張り」の段そのものが例外で落ちた（見送り・保存の失敗・修理の心拍を確かめられていない。2026-11-24 関門②）。例外の文は出さない |
 
-## 数え（80）
+## 数え（81）
 A 2 ＋ B へ移した 13 ＋ A→B 14 ＋ B 25 ＋ B（名前）8 ＋ C 6 ＋ 記録 8 ＝ **76**（抜き出した74 key ＋ `_ppKey` の2種）。
-＋ P1 で足した 4（2026-11-24 に heal_save_fail を足した）＝ **80**。
+＋ P1 で足した 5（2026-11-24 に heal_save_fail・selfheal_watch_fail を足した）＝ **81**。
 子の点検（calslots・karte_ai・contract_input）が出す細かい項目は未分類＝P1 で足す。
 
 ## 未確認

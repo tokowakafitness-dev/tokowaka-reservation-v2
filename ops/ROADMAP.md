@@ -27,7 +27,7 @@
   LINE 通知を応答の後ろへ（lbNotifyDeferSetOn）＝入れたかは未確認                ⬜
   会員が自分のカルテを見る（MEMBER_KARTE=off）                                  ⬜
   自己修理 P1（練習モード）＝★初回から台帳の保存に失敗して黙っていた（空の incidents タブ）
-    → 直し（GAS 版 2026-11-24a・claude/roadmap-1124・未 push）✅ 11/24／関門② → GAS 反映 ⬜ ★オーナー 🔄
+    → 直し（GAS 版 2026-11-24b・claude/roadmap-1124・未 push）✅ 11/24／関門② → GAS 反映 ⬜ ★オーナー 🔄
   止めたもの：連続ルール（10/26 オーナー判断で off・コードは残す）
 
 いちばん大きい残り：書き込みの遅さ（予約 約17秒・変更 約27秒）
@@ -51,9 +51,10 @@
   └ 直し（GAS 版 2026-11-24a・検査 self-heal-ledger.test.js・I-H32〜I-H34）          ✅ 11/24（claude/roadmap-1124・未 push）
       空のタブは印を確かめて見出しを書いて使う／保存の失敗は翌日の点検が heal_save_fail で悪化メールに載せる
       ／CEO が作業依頼 remaining {healStatus} で要約・DONE・台帳を自分で読める
+  └ 関門②（Codex）の指摘3件（中）を直す（GAS 版 2026-11-24b・I-H35）                ✅ 11/24
   └ 関門②（Codex）                                                               🔄 ■ いまここ ■
   └ GAS 反映1回（オーナー）                                                        ⬜ ★オーナー
-  └ 反映の翌朝：remaining {healStatus} で 版 2026-11-24a・header_repaired=true・DONE が点検の時刻 を確かめる ⬜ CEO
+  └ 反映の翌朝：remaining {healStatus} で 版 2026-11-24b・header_repaired=true・DONE が点検の時刻 を確かめる ⬜ CEO
   └ practice を1週間：incidents の would_attempts・last_action を読む              ⬜
   └ 作業依頼で SELF_HEAL_MODE=on（CEO）・関門③                                     ⬜
   戻し方：SELF_HEAL_MODE=off（即時・反映不要。修理も通知も止まる。要約・台帳は書き続ける）

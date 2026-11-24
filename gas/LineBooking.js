@@ -2324,7 +2324,7 @@ function refreshContractForApp(lineUserId) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-24a 自己修理 P1：空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2449,7 +2449,12 @@ function dailyHealthCheck(dryRunArg) {
       }
     }
     _done('自己修理の見張り');
-  } catch (eSh) { _bad(); }
+  } catch (eSh) {
+    if (eSh && eSh.lbLeaseLost) throw eSh;   // 印を失った＝以降の副作用をせずに終える（外側で受ける・I-H21）
+    _bad();
+    //   ★見張りの段そのものが落ちたことを外に出す（関門②・2026-11-24）。例外の文は出さない（I-H1）。_done は付けない（今どおり）
+    add('selfheal_watch_fail', '定期処理', 'warn', 1, '自己修理の見張り（見送り・保存の失敗・修理の心拍）の点検そのものが失敗しました: ' + String((eSh && eSh.name) || 'Error'));
+  }
 
   _step('会員データ');
   // ---- 会員データ（消化ペースの集計と同時に取る＝二度手間を避ける）----
@@ -3162,7 +3167,8 @@ function dailyHealthCheck(dryRunArg) {
     try { _hcSaved = _lbHealthSave(issues, _hcCheckId, _hcChecked, _hcG, _hcSkipPrev); }
     catch (eHs) { _hcSaved = { saved: false, why: 'exception' }; Logger.log('要約の保存に失敗: ' + String((eHs && eHs.name) || 'Error')); }
     Logger.log('自己修理 P1 の要約: ' + JSON.stringify(_hcSaved));
-    try { _lbHealthSaveNote(_hcSaved, _hcCheckId, _hcG); } catch (eSn) {}   // ★黙らない：次の点検が heal_save_fail で知らせる（I-H33）
+    try { _lbHealthSaveNote(_hcSaved, _hcCheckId, _hcG); }   // ★黙らない：次の点検が heal_save_fail で知らせる（I-H33）
+    catch (eSn) { Logger.log('保存の結果を残せませんでした: ' + String((eSn && eSn.name) || 'Error')); }
   }
   return { stamp: stamp, issues: issues, worsened: worsened.length, notified: (!dryRun && worsened.length > 0),
            checkId: _hcCheckId, checked: _hcChecked.slice(), saved: _hcSaved };
@@ -3205,6 +3211,7 @@ var LB_HEAL = {
   PRACTICE_FROM_PROP: 'LB_SELFHEAL_PRACTICE_FROM',
   DIGEST_DATE_PROP: 'LB_OWNER_DIGEST_DATE',
   WOULD_WAKE_PROP: 'LB_SQUAD_WOULD_WAKE',
+  DONE_FUTURE_MS: 5 * 60000,              // これより先の DONE は壊れている（保存の失敗を解除しない・関門②）
   SAVE_LAST_PROP: 'LB_HEALTH_SAVE_LAST',   // 最後の保存の結果 {saved, why, check_id, header_repaired, repairs}（2026-11-24・I-H32/I-H33）
   LEASE_MS: 35 * 60000,                   // ★どの実行上限（30分）よりも長い。段ごと・副作用ごとに延ばす
   LEASE_FUTURE_MAX_MS: 2 * 3600000,       // これより先の期限は壊れた印
@@ -3265,6 +3272,7 @@ var LB_TRIAGE = {
   //   P1 で足した見張り（振り分け表の「P1 で足した key」）
   health_skipped: ['B', '自己修理の見張り'], selfheal_stale: ['B', '自己修理の見張り'],
   heal_save_fail: ['B', '自己修理の見張り'],   // 2026-11-24：要約・台帳・完走の印を保存できなかった（I-H33）
+  selfheal_watch_fail: ['B', '自己修理の見張り'],   // 2026-11-24：見張りの段そのものが落ちた（関門②）
   selfheal_practice_long: ['info', '自己修理の見張り']
 };
 function _lbTriage(key) {
@@ -3303,7 +3311,8 @@ var LB_CN_WHY_FACT = { no_sheet: 'missing', header_mismatch: 'mismatch', read_fa
 var LB_FACT_EXCEPTION_KEYS = ['cancel_notes_check_fail', 'pace_fail', 'datahealth_fail', 'orphan_fail', 'metrics_fail', 'notify_retry_read_fail',
   'consec_read_fail', 'shadow_sweep_read_fail', 'trigger_check_fail', 'pending_payment_check_fail', 'dualwrite_check_fail',
   'calslots_check_fail', 'contract_input_check_fail', 'd1_allow_unreadable',
-  'edge_defer_check_fail', 'notify_defer_check_fail', 'autobook_check_fail', 'lock_count_check_fail', 'karte_ai_check_fail'];
+  'edge_defer_check_fail', 'notify_defer_check_fail', 'autobook_check_fail', 'lock_count_check_fail', 'karte_ai_check_fail',
+  'selfheal_watch_fail'];
 //   いまの詳細に氏名が入る key（要約へは ids_unavailable か会員番号だけ）
 var LB_FACT_NAME_KEYS = ['member_broken', 'member_nocontract', 'resv_dup_ev', 'resv_dup_slot', 'resv_unlinked',
   'cal_missing', 'cal_orphan', 'cal_missing_tr', 'cal_orphan_tr', 'cal_manual'];
@@ -3339,6 +3348,7 @@ var LB_OWNER_MSG = {
   selfheal_stale: '自己修理（lbSelfHeal）が26時間以上完走していません。lbNudgeDaily（10時）のトリガーと実行ログを確かめてください。',
   health_skipped: '日次点検・自己修理が重なって見送られました。続くなら Script Properties の LB_HEALTH_LEASE を確かめてください。',
   heal_save_fail: '自己修理の台帳（incidents）に保存できませんでした。自己修理が動いていません。CEO が確かめます。',
+  selfheal_watch_fail: '自己修理の見張りの点検が失敗しました。見送り・保存の失敗・修理の心拍を確かめられていません。CEO が確かめます。',
   _escalated: '自己修理で直せませんでした（3回試した・上限に近い・設定が無い のいずれか）。CEO が確かめます。',
   _unknown: '点検の段が途中で失敗したため、直ったかどうか判定できていません。',
   _other: '点検の項目が開いたままです。'
@@ -3573,10 +3583,12 @@ function _lbHealthSave(issues, checkId, checked, g, skipPrev) {
 
 //   保存の結果を残す（2026-11-24・I-H33）。★newer（新しい点検が保存済み）は失敗ではないので書かない。
 //     印を失った回（g.dead）は書かない＝見送りは LB_HEALTH_SKIP が数える（health_skipped）。
-//     DONE の後なので延長の失敗を SKIP に数えない（noSkip）。書けなくても、読む側が DONE と突き合わせるので古い失敗では鳴らない
+//     ★DONE を書いた回（saved:true）だけ延長の失敗を SKIP に数えない（noSkip・完走は確定済み）。書けなくても、読む側が DONE と突き合わせるので古い失敗では鳴らない。
+//     ★DONE を書いていない回（saved:false）は noSkip にしない（関門②・2026-11-24）：延長できなければ LB_HEALTH_SKIP に数え、翌日 health_skipped が鳴る
+//       （SKIP にも SAVE_LAST にも残らない＝保存の失敗がまた黙る、を作らない）
 function _lbHealthSaveNote(saved, checkId, g) {
   if (!saved || saved.why === 'newer') return false;
-  if (!_lbLeaseOk(g, true)) return false;
+  if (!_lbLeaseOk(g, saved.saved === true)) return false;
   var p = PropertiesService.getScriptProperties();
   var prev = {}; try { prev = JSON.parse(p.getProperty(LB_HEAL.SAVE_LAST_PROP) || '{}') || {}; } catch (e) { prev = {}; }
   var rep = !!saved.header_repaired, n0 = Number(prev.repairs);
@@ -3589,6 +3601,8 @@ function _lbHealthSaveNote(saved, checkId, g) {
   return true;
 }
 //   前回までの保存が失敗しているか。★後で保存できた（DONE ≥ 記録の check_id）なら失敗ではない。
+//     ★ただし DONE を信じるのは「有限・正・いま＋5分以下」かつ「要約の check_id === DONE・completed === true」のときだけ
+//       （関門②・2026-11-24：壊れた未来の DONE が失敗を隠さない）。DONE が数でない・0以下・未来なら broken で鳴らす。
 //     壊れた記録は broken（0 とみなさない）。一覧に無い理由は other（自由な文字を通さない）
 function _lbHealthSaveFailRead() {
   var raw = '';
@@ -3598,9 +3612,14 @@ function _lbHealthSaveFailRead() {
   try { o = JSON.parse(raw); } catch (e2) { return { fail: true, why: 'broken' }; }
   if (!o || typeof o !== 'object') return { fail: true, why: 'broken' };
   if (o.saved === true) return { fail: false, why: '' };
-  var done = Number(_lbProp(LB_HEAL.DONE_PROP) || 0), cid = Number(o.check_id);
-  if (isFinite(cid) && done && done >= cid) return { fail: false, why: '' };
-  return { fail: true, why: (LB_SAVE_WHY.indexOf(String(o.why)) >= 0) ? String(o.why) : 'other' };
+  var why = (LB_SAVE_WHY.indexOf(String(o.why)) >= 0) ? String(o.why) : 'other';
+  var rawDone = _lbProp(LB_HEAL.DONE_PROP);
+  if (rawDone == null || rawDone === '') return { fail: true, why: why };   // まだ一度も保存できていない
+  var done = Number(rawDone), cid = Number(o.check_id);
+  if (!isFinite(done) || done <= 0 || done > Date.now() + LB_HEAL.DONE_FUTURE_MS) return { fail: true, why: 'broken' };
+  var sum = null; try { sum = JSON.parse(_lbProp(LB_HEAL.STATUS_PROP) || 'null'); } catch (e3) { sum = null; }
+  if (isFinite(cid) && done >= cid && sum && Number(sum.check_id) === done && sum.completed === true) return { fail: false, why: '' };
+  return { fail: true, why: why };
 }
 
 // ---------- 案件台帳（§5） ----------
@@ -3821,7 +3840,7 @@ function _lbHealNotify(sum, g) {
   for (var d = 0; d < rows.length; d++) {
     var rw = rows[d], kk = String(rw[C('key')]), ss = String(rw[C('status')]);
     if (!_lbIncOpen(ss) || LB_HEAL_LINE_KEYS.indexOf(kk) >= 0) continue;
-    if (ss === 'owner' || ss === 'escalated' || ss === 'unknown' || kk === 'selfheal_stale' || kk === 'health_skipped' || kk === 'heal_save_fail') {
+    if (ss === 'owner' || ss === 'escalated' || ss === 'unknown' || kk === 'selfheal_stale' || kk === 'health_skipped' || kk === 'heal_save_fail' || kk === 'selfheal_watch_fail') {
       lines.push('・' + _lbHealMsg(kk, ss, items[kk]));
     }
   }

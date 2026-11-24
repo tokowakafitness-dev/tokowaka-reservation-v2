@@ -5,6 +5,7 @@
 //   入口から通す：dailyHealthCheck（本物）→ _lbHealthSave → 台帳。作業依頼は本物の _ejRun('remaining', {healStatus}) から。
 //   I-H32 空のタブ（中身が何も無い）だけは、印を確かめてから見出しを書いて使う。1行でも中身がある・見出しが違うなら書かない
 //   I-H33 保存できなかった（newer 以外）ことを LB_HEALTH_SAVE_LAST に残し、次の点検が heal_save_fail として従来の悪化メールに載せる
+//   I-H35 「自己修理の見張り」の段そのものの例外を selfheal_watch_fail で出す（例外の文は出さない・_done は付けない）
 //   I-H34 作業依頼 remaining {healStatus} は列挙・数・日時だけを返す（氏名・会員番号・自由文を返さない・読むだけ）
 //   ★値はすべて架空
 import { readFileSync } from 'node:fs';
@@ -107,6 +108,7 @@ console.log('=== I-H33 保存できなかったことを黙らない ===');
   const w = makeWorld();
   w.props.LB_HEALTH_SAVE_LAST = JSON.stringify({ v: 1, saved: false, why: 'header_mismatch', check_id: w.now - 2 * D, at: w.now - 2 * D });
   w.props.LB_HEALTH_DONE = String(w.now - D);
+  w.props.LB_HEALTH_STATUS = JSON.stringify({ v: 1, check_id: w.now - D, completed: true, checked: [], items: [] });
   const r = run(w, 'dailyHealthCheck');
   ok('I-H33-11 後で保存できていれば（DONE ≥ 記録の check_id）古い失敗で鳴らさない', !r.issues.some((x) => x.key === 'heal_save_fail'), JSON.stringify(r.issues.map((x) => x.key)));
 }
@@ -126,6 +128,54 @@ console.log('=== I-H33 保存できなかったことを黙らない ===');
   const w = makeWorld({ sheets: { incidents: makeSheet('incidents', [['x']]) } });
   run(w, 'dailyHealthCheck', true);
   ok('I-H33-14 dry-run は保存の結果を書かない', saveLast(w) === null);
+}
+
+console.log('=== I-H33 関門②の直し（2026-11-24） ===');
+{
+  //   保存に失敗し（見出し違い）、保存の結果を残す直前の印の確認だけが失敗 → SKIP に数え、翌日 health_skipped が鳴る
+  const w = makeWorld({ sheets: { incidents: makeSheet('incidents', [['id', 'key', 'ちがう見出し']]) } });
+  w.hooks.setProperty = (k) => { if (k === 'LB_HEALTH_SINCE') w.lockBusy = true; };
+  const r1 = run(w, 'dailyHealthCheck');
+  const sk = JSON.parse(w.props.LB_HEALTH_SKIP || '{}');
+  ok('I-H33-15 ★保存失敗＋保存の結果の印の確認だけ失敗 → LB_HEALTH_SKIP に数える（黙らない）',
+     r1.saved && r1.saved.saved === false && r1.saved.why === 'header_mismatch' && saveLast(w) === null && sk.count >= 1 && sk.why === 'lock_busy', JSON.stringify([r1.saved, w.props.LB_HEALTH_SKIP]));
+  delete w.hooks.setProperty; w.lockBusy = false; w.now += D;
+  const r2 = run(w, 'dailyHealthCheck');
+  ok('I-H33-16 ★翌日 health_skipped が鳴る（悪化メールに載る）', r2.issues.some((x) => x.key === 'health_skipped') && hcMails(w).some((m) => /見送られた回/.test(m.body)),
+     JSON.stringify(r2.issues.map((x) => x.key)));
+}
+{
+  const fail = (done, status) => {
+    const w = makeWorld();
+    w.props.LB_HEALTH_SAVE_LAST = JSON.stringify({ v: 1, saved: false, why: 'header_mismatch', check_id: w.now - 2 * D, at: w.now - 2 * D });
+    w.props.LB_HEALTH_DONE = String(typeof done === 'function' ? done(w.now) : done);
+    if (status) w.props.LB_HEALTH_STATUS = JSON.stringify(status(w.now));
+    const it = run(w, 'dailyHealthCheck').issues.find((x) => x.key === 'heal_save_fail');
+    return it ? it.safe.facts[0] : null;
+  };
+  const st = (d) => (now) => ({ v: 1, check_id: d(now), completed: true, checked: [], items: [] });
+  const fut = (now) => now + 10 * D;
+  ok('I-H33-17 ★壊れた未来の DONE は失敗を隠さない（broken）', fail(fut, st(fut)) === 'broken', String(fail(fut, st(fut))));
+  ok('I-H33-18 ★数でない DONE は broken', fail('abc') === 'broken', String(fail('abc')));
+  ok('I-H33-19 0以下の DONE は broken', fail('-5') === 'broken');
+  const past = (now) => now - D;
+  ok('I-H33-20 ★DONE ≥ check_id でも要約の check_id と合わなければ解除しない', fail(past, (now) => ({ v: 1, check_id: now - 3 * D, completed: true, items: [] })) === 'header_mismatch');
+  ok('I-H33-21 要約が completed でなければ解除しない', fail(past, (now) => ({ v: 1, check_id: now - D, completed: false, items: [] })) === 'header_mismatch');
+  ok('I-H33-22 陰性の対照：DONE・要約が揃えば解除する', fail(past, st(past)) === null);
+}
+{
+  //   見張りの段そのものが落ちた → selfheal_watch_fail（例外の文は出さない・段は checked に付かない）
+  const w = makeWorld();
+  const c = makeCtx(w);
+  const real = c.PropertiesService.getScriptProperties;
+  c.PropertiesService.getScriptProperties = () => { const o = real(); const g0 = o.getProperty; o.getProperty = (k) => { if (k === 'LB_SELFHEAL_DONE') throw new Error(FAKE.name + ' ' + FAKE.phone); return g0(k); }; return o; };
+  const r = c.dailyHealthCheck();
+  const it = r.issues.find((x) => x.key === 'selfheal_watch_fail');
+  ok('I-H35-1 ★見張りの段の例外 → selfheal_watch_fail（B・warn）', it && it.severity === 'warn' && c._lbTriage('selfheal_watch_fail').cls === 'B', JSON.stringify(r.issues.map((x) => x.key)));
+  ok('I-H35-2 例外の文（架空の氏名・電話）は出さない', it && it.detail.indexOf(FAKE.name) < 0 && it.detail.indexOf(FAKE.phone) < 0 && JSON.stringify(w.sheets.health_status.data).indexOf(FAKE.name) < 0
+     && (w.props.LB_HEALTH_STATUS || '').indexOf(FAKE.name) < 0, it && it.detail);
+  ok('I-H35-3 段は checked に付かない（今どおり）', r.checked.indexOf('自己修理の見張り') < 0 && r.checked.length > 0, JSON.stringify(r.checked));
+  ok('I-H35-4 要約の facts は exception だけ', JSON.stringify((status(w).items.find((x) => x.k === 'selfheal_watch_fail') || {}).f) === '["exception"]');
 }
 
 console.log('=== I-H34 CEO が作業依頼で読める（heal_status） ===');
