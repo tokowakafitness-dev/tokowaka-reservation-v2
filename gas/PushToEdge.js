@@ -5278,15 +5278,16 @@ function _lbWsRun(who, startedAt, budget) {
       bump('cursor_reset');
       sendOk = false;
       st.mismatchAt = nowMs;
-      startRow = Math.max(2, last - LB_WS.READ_MAX + 1);
+      startRow = 2; st.resetAt = nowMs;
     }
-  } else if (!cur) {
-    startRow = Math.max(2, last - LB_WS.READ_MAX + 1);   // 初めて：直近から
   } else {
-    bump('cursor_reset'); sendOk = false; st.mismatchAt = nowMs;
-    startRow = Math.max(2, last - LB_WS.READ_MAX + 1);
+    //   ★カーソルが無い（初めて）・壊れている・範囲の外：**先頭（2行目）から**1回500行ずつ前へ進める（関門② 中）。
+    //     末尾から始めると、それより古い行の顧客IDが永久に消えない（I84）。6列目の無い古い行は素通りなので軽い。
+    //     壊れている・範囲の外は位置の前提が崩れた＝送らない
+    if (cur) { bump('cursor_reset'); sendOk = false; st.mismatchAt = nowMs; }
+    startRow = 2; st.resetAt = nowMs;
   }
-  if (startRow > last) { _lbWsFlushStat(counts, st, null); return 'idle'; }
+  if (startRow > last) { st.fullScanAt = nowMs; _lbWsFlushStat(counts, st, {}); return 'idle'; }
   var endRow = Math.min(last, startRow + LB_WS.READ_MAX - 1);
   if (endRow < last) bump('scan_more');
   var vals = sh.getRange(startRow, 1, endRow - startRow + 1, 6).getValues();
@@ -5340,6 +5341,8 @@ function _lbWsRun(who, startedAt, budget) {
     var t1 = sh.getRange(adv, 1).getValue();
     p.setProperty(LB_WS.CURSOR_PROP, JSON.stringify({ row: adv, t: (t1 instanceof Date) ? 'd' + t1.getTime() : String(t1 == null ? '' : t1) }));
   }
+  //   ★先頭から読み直した後、一度でも最終行まで片づけたことを残す（それまでは古い行に顧客IDが残りうる）
+  if (adv >= last) st.fullScanAt = nowMs;
   _lbWsFlushStat(counts, st, statOut);
   return stopped ? 'partial' : 'done';
 }
@@ -5359,6 +5362,8 @@ function _lbWsFlushStat(counts, st, statOut) {
     var nowMs = Date.now();
     var o = _lbWsStatRead();
     if (st.mismatchAt) o.mismatchAt = st.mismatchAt;
+    if (st.resetAt) o.resetAt = st.resetAt;
+    if (st.fullScanAt) o.fullScanAt = st.fullScanAt;
     o.days = o.days || {};
     var d = _lbWsDay(nowMs);
     for (var k in counts) {
@@ -5571,6 +5576,8 @@ function lbWsPrecheckText() {
   var f = null; try { f = JSON.parse(PropertiesService.getScriptProperties().getProperty(LB_WS.FAIL_PROP) || 'null'); } catch (eF) {}
   out.push('9. booking_metrics に書けなかった数: ' + (f ? (Number(f.n) || 0) + '（型 ' + String(f.type || '') + '）' : '0'));
   out.push('10. LB_WS_ON: ' + (_lbWsOn() ? 'on' : 'off'));
+  var st0 = _lbWsStatRead();
+  out.push('11. 先頭から読み直した後に最終行まで片づけたか: ' + (st0.resetAt ? (Number(st0.fullScanAt || 0) >= Number(st0.resetAt) ? 'true' : 'false（まだ途中）') : '（まだ一度も走っていない）'));
   return out.join('\n');
 }
 //   作業依頼 remaining {writeShadow}：Worker の status と送る側の数（件数と分布だけ）

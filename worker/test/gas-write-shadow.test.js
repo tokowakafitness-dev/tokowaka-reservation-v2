@@ -152,7 +152,8 @@ function world(opt = {}) {
   let src = pluckVar(LB, 'LB_WP') + pluckVar(LB, 'LB_WP_CODES') + pluckVar(PE, 'LB_WS') + pluckVar(PE, 'LB_WS_BUILD') + pluckVar(PE, 'LB_WS_CORE_CHANNELS')
     + 'var _LB_WP = null;\nvar _LB_WS = null;\nvar _LB_WRITE_CUST = null;\nvar _LB_NOTIFY_HOLD = null;\n' + writeLockSrc(LB);
   src += ['handleLineGet', '_lbWpStart', '_lbWpMark', '_lbWpCode', '_lbWpRow', '_lbWpStagesOf', '_lbWpValidRow', '_lbWpFinish',
-          'makeReservationLine', '_lbReserveCore', '_lbReserveCoreImpl', '_lbLogOutcome'].map((n) => pluckFn(LB, n)).join('\n');
+          'makeReservationLine', '_lbReserveCore', '_lbReserveCoreImpl', '_lbLogOutcome', 'changeReservationLine'].map((n) => pluckFn(LB, n)).join('\n');
+  src += pluckVar(LB, 'MAP_COL');
   src += ['_lbWsOpOf', '_lbWsId', '_lbWsFacts', '_lbMetricsWriteFailNote', 'lbWriteShadowSetOn', 'lbWriteShadowSetOff', '_lbWsOn', '_lbWsDay',
           '_lbWsStatRead', '_lbWsStatWrite', '_lbWsStatBump', '_lbWsStatEdit', '_lbWsParse', '_lbWsStrip', '_lbWsSame5', '_lbWsRewrite',
           '_lbWsProtectionOf', '_lbWsProtState', '_lbWsPrecheckCore', 'setupMetricsProtection', '_lbWsUnprotect', '_lbWsProtectExpected',
@@ -197,6 +198,36 @@ console.log('=== ② どこで決まったか ===');
   reserveVia(w, { trainerId: 'T1', startISO: future() });
   const x = ws(w.st.metrics[0]);
   ok('④-c BUSY の行は at=busy・code=BUSY（Worker は x_busy・母数から外す）', x && x.at === 'busy' && x.code === 'BUSY', JSON.stringify(x));
+}
+
+console.log('=== ①-c 変更の実入口（handleLineGet → changeReservationLine → 芯） ===');
+function changeWorld(o = {}) {
+  const w = world(o);
+  const oldStart = Date.now() + 3 * DAY;
+  const row = [new Date(oldStart), NAME, 'C5400000000001', LUID, 'T1', 'テスト トレーナー', 'confirmed', '', 'Rold0001', 'line', '', 'S1', 'evOld', '通常', 1];
+  w.st.ledger = row;
+  const sheet = { getLastRow: () => 2, getLastColumn: () => 15,
+    getRange: (r, c, nr, nc) => ({ getValues: () => [row.slice()], getValue: () => row[c - 1], setValue: (v) => { row[c - 1] = v; } }) };
+  const base = w.out._lbSheet;
+  w.out._lbSheet = (n) => (n === 'line_reservations' ? sheet : base(n));
+  w.out.getCustomerByLine = () => ({ row: 2, data: (() => { const d = new Array(20).fill(''); d[w.ctx.MAP_COL.AUTH_STATE - 1] = 'verified'; return d; })() });
+  w.out.getTrainerByLine = () => null;
+  w.out._lbParseResvDate = (v) => new Date(v);
+  w.out._lbIsFreeCancelWindow = () => true;
+  w.out._lbContractTypeOf = () => '月額';
+  w.out.SpreadsheetApp.flush = () => {};
+  w.out._lbDispatch = (params, action, luid) => (action === 'line_changeReservation' ? w.ctx.changeReservationLine(luid, params.reservationId, params.newStartISO) : null);
+  return { w, oldStart, row };
+}
+{
+  const { w, oldStart, row } = changeWorld();
+  const r = w.ctx.handleLineGet({ action: 'line_changeReservation', idToken: 'x', reservationId: 'Rold0001', newStartISO: future() });
+  const x = ws(w.st.metrics[0]);
+  ok('①-c1 変更の成功：6列目は op=change・ok=1・変更前の予約ID（xr）と開始（ex）・自分の新しい ID を持つ', r.success === true && x && x.op === 'change' && x.ok === 1 && x.xr === 'Rold0001' && x.ex === oldStart && x.rid && x.eb && x.et, JSON.stringify([r, x]));
+  const { w: w2, row: row2 } = changeWorld({ b1Busy: true });
+  const r2 = w2.ctx.handleLineGet({ action: 'line_changeReservation', idToken: 'x', reservationId: 'Rold0001', newStartISO: future() });
+  const x2 = ws(w2.st.metrics[0]);
+  ok('①-c2 変更の失敗（B1 埋まり）：6列目は ok=0・at=b1・xr を持つ／旧行は confirmed に戻る（補償は今のまま）', r2.success === false && x2 && x2.ok === 0 && x2.at === 'b1' && x2.xr === 'Rold0001' && row2[6] === 'confirmed', JSON.stringify([r2, x2, row2[6]]));
 }
 
 console.log('=== ③ 6列目の中身 ===');
@@ -332,6 +363,20 @@ console.log('=== ④-d〜④-k 送る側 ===');
   ok('④-k4 書く前の照合が合わない → 書かずにその行でカーソルが止まる', ws(w3.st.metrics[0]).stale === undefined && !w3.st.props.LB_WS_CURSOR, JSON.stringify([w3.st.metrics[0][5], w3.st.props.LB_WS_CURSOR]));
 }
 
+console.log('=== ④-m カーソルが無い・壊れている → 先頭から（古い行の顧客IDも必ず消す・関門② 中） ===');
+for (const [label, cursor] of [['無い', undefined], ['壊れた JSON', '{oops'], ['範囲の外', JSON.stringify({ row: 99999, t: 'x' })]]) {
+  const w = world({ props: cursor === undefined ? {} : { LB_WS_CURSOR: cursor } });
+  const list = [];
+  for (let i = 0; i < 600; i++) list.push({ n: 'mm' + String(i).padStart(6, '0'), t: Date.now() - 5 * H + i * 1000 });
+  rowsWith(w, list);
+  let runs = 0;
+  while (runs < 5 && w.st.metrics.some((x) => ws(x) && 'cid' in ws(x))) { w.ctx._lbWsTick('TICK', Date.now()); runs++; }
+  const left = w.st.metrics.filter((x) => ws(x) && 'cid' in ws(x)).length;
+  const st = JSON.parse(w.st.props.LB_WS_STAT || '{}');
+  ok(`④-m カーソルが${label}：数回（500行ずつ）で600件の期限切れの顧客IDが全部消える・最終行まで片づけた印（fullScanAt ≥ resetAt）`,
+     left === 0 && runs <= 2 && st.fullScanAt >= st.resetAt && st.resetAt > 0, JSON.stringify({ left, runs, resetAt: st.resetAt, fullScanAt: st.fullScanAt }));
+}
+
 console.log('=== ④-f 保護 ===');
 {
   const w = world({ triggers: ['lbCalSyncTick', 'dailyHealthCheck'] });
@@ -433,7 +478,26 @@ console.log('=== ⑨ M2：最終更新の時刻は中身の印に入れない（
   ok('⑨-1 updatedAt だけが違う送り物は中身の印が同じ（unchanged のまま＝枠の押し出しを増やさない）',
      ctx._calsyncHash([Object.assign({ updatedAt: 1 }, base)]) === ctx._calsyncHash([Object.assign({ updatedAt: 999 }, base)]));
   const bp = pluckFn(PE, 'buildCalSyncPayload');
-  ok('⑨-2 最終更新は LB_WS_ON が on のときだけ・トレーナーの 出勤・休憩・ブロック だけに足す', /_wsLu && cals\[c\]\.role === 'trainer' && \(cls\.reason === 'shift' \|\| cls\.reason === 'break' \|\| cls\.reason === 'block'\)/.test(PE) && /getLastUpdated\(\)/.test(PE) && /var _wsLu = \(typeof _lbWsOn === 'function'\) && _lbWsOn\(\);/.test(bp));
+  const runBuild = (on) => {
+    let calls = 0;
+    const mkEv = (title) => ({ getTitle: () => title, getStartTime: () => new Date(Date.now() + DAY), getEndTime: () => new Date(Date.now() + DAY + H),
+      getId: () => 'id-' + title, isAllDayEvent: () => false, getLastUpdated: () => { calls++; return new Date(Date.now() - 60000); } });
+    const c2 = { Date, Math, String, Number, isFinite, Object, Array, JSON,
+      PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'LB_WS_ON' && on ? 'on' : null) }) },
+      CalendarApp: { getCalendarById: () => ({ getEvents: () => [mkEv('出勤'), mkEv('休憩'), mkEv('ブロック'), mkEv('[RESERVED] x')] }) },
+      _lbBookingHorizonEnd: () => new Date(Date.now() + 30 * DAY),
+      _calsyncCalendars: () => [{ calendarId: 'tcal', role: 'trainer', trainerId: 'T1' }, { calendarId: 'b1', role: 'capacity_b1', trainerId: null }],
+      _calsyncClassify: (role, t) => (role !== 'trainer' ? { effect: 'room_busy', reason: 'room' } : t === '出勤' ? { effect: 'shift', reason: 'shift' } : t === '休憩' ? { effect: 'busy', reason: 'break' } : t === 'ブロック' ? { effect: 'busy', reason: 'block' } : { effect: 'busy', reason: 'reserved' }),
+      _calsyncUse1F: () => false, _lbOwnerSlotWindow: () => null, LB_CALSYNC_RULE_VERSION: 1, _calsyncHash: () => 'h' };
+    vm.createContext(c2);
+    vm.runInContext(pluckFn(PE, '_lbWsOn') + pluckVar(PE, 'LB_WS') + bp, c2);
+    const out = c2.buildCalSyncPayload();
+    return { calls, withU: out.events.filter((e) => e.updatedAt != null).map((e) => e.reason) };
+  };
+  const off = runBuild(false), onR = runBuild(true);
+  ok('⑨-2 ★LB_WS_ON が未設定なら getLastUpdated を1回も呼ばない（実行で数える）', off.calls === 0 && off.withU.length === 0, JSON.stringify(off));
+  ok('⑨-3 on なら トレーナーの 出勤・休憩・ブロック の3件だけ（予約・B1 には足さない）', onR.calls === 3 && JSON.stringify(onR.withU.sort()) === '["block","break","shift"]', JSON.stringify(onR));
+  ok('⑨-4（旧）最終更新を足す条件の形', /_wsLu && cals\[c\]\.role === 'trainer' && \(cls\.reason === 'shift' \|\| cls\.reason === 'break' \|\| cls\.reason === 'block'\)/.test(PE) && /getLastUpdated\(\)/.test(PE) && /var _wsLu = \(typeof _lbWsOn === 'function'\) && _lbWsOn\(\);/.test(bp));
 }
 
 console.log('=== ⑦ トリガーを作らない ===');
