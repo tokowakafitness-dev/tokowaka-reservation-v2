@@ -456,6 +456,8 @@ console.log('=== ④-o 恒久的に照合に失敗する1行（関門② 再審3
   ok('④-o3b 照合が通らない行が残る間は掃き出しが下りず、周回を重ねる', st.sweep.laps >= 1, JSON.stringify(st.sweep));
   //   照合が通るようになれば（保護が戻った等）次の回にやり直して消え、一覧から外れる
   w.out._lbSheet = (n) => (n === 'booking_metrics' ? sh : null);
+  { const s0 = JSON.parse(w.st.props.LB_WS_STAT); ok('④-o4a 残った周の後は次の周の開始を1時間あける（nextAt）', s0.sweep.nextAt > Date.now() + 50 * 60000, JSON.stringify(s0.sweep));
+    s0.sweep.nextAt = Date.now() - 1; w.st.props.LB_WS_STAT = JSON.stringify(s0); }   // 1時間たった
   w.ctx._lbWsTick('TICK', Date.now());
   const st2 = JSON.parse(w.st.props.LB_WS_STAT || '{}');
   ok('④-o4 照合が通るようになれば、掃き出しが残りを消し、一周して0件なら印が下りる', cidLeft() === '000' && st2.sweep && st2.sweep.needed === false, cidLeft() + JSON.stringify(st2.sweep));
@@ -484,7 +486,7 @@ console.log('=== ④-p 掃き出し・連続失敗の回数（関門② 再審4�
   for (let i = 0; i < 5; i++) { const o = ws(w.st.metrics[i]); delete o.cid; o.stale = 1; w.st.metrics[i][5] = 'ws1' + JSON.stringify(o); }
   const lastRow = w.st.metrics.length + 1;
   w.st.props.LB_WS_ERASE_CURSOR = JSON.stringify({ row: lastRow, k: 'm' + parse(w.st.metrics[lastRow - 2][0]).getTime() });
-  w.st.props.LB_WS_STAT = JSON.stringify({ sweep: { needed: true, skips: 25, first: Date.now() - H, row: 2, found: 0, laps: 0 } });
+  w.st.props.LB_WS_STAT = JSON.stringify({ sweep: { needed: true, skips: 25, first: Date.now() - H, row: 2, found: 0, laps: 0, from2: true } });
   w.ctx._lbWsTick('TICK', Date.now());
   const st = JSON.parse(w.st.props.LB_WS_STAT);
   ok('④-p1 ★飛ばした行が25件 → 掃き出しで全部消え、一周して0件なら sweep が下りる（件数の上限なし）',
@@ -516,6 +518,57 @@ console.log('=== ④-p 掃き出し・連続失敗の回数（関門② 再審4�
   w.ctx._lbWsTick('TICK', Date.now());
   const n4 = JSON.parse(w.st.props.LB_WS_STAT).eraseFail;
   ok('④-p3 カーソルのリセットでも回数は消える（壊れたカーソル → 2行目から・n=1）', n4 && n4.n === 1, JSON.stringify(n4));
+}
+
+console.log('=== ④-q 掃き出しのカーソルの検証・専用の上限（関門② 再審5回目） ===');
+for (const [label, row] of [['範囲の外 99999', 99999], ['小数 2.5', 2.5], ['文字', 'x']]) {
+  const w = world({ props: {} });
+  rowsWith(w, [{ n: 'qa000001', t: Date.now() - 5 * H }, { n: 'qa000002', t: Date.now() - 5 * H }]);
+  const lastRow = 3;
+  //   消去カーソルは最後まで進んでいて、顧客IDが残った行がある（掃き出しが要る）
+  w.st.props.LB_WS_ERASE_CURSOR = JSON.stringify({ row: lastRow, k: 'm' + parse(w.st.metrics[1][0]).getTime() });
+  w.st.props.LB_WS_STAT = JSON.stringify({ sweep: { needed: true, skips: 1, first: Date.now() - H, row, found: 0, laps: 0, from2: true } });
+  const r = w.ctx._lbWsTick('TICK', Date.now());
+  const st = JSON.parse(w.st.props.LB_WS_STAT);
+  ok(`④-q1 掃き出しのカーソルが${label} → 2行目へ戻し、例外にならず、その周では下ろさない`, r !== 'error' && st.sweep.needed === true && st.sweep.from2 === true && st.sweep.row === 2, JSON.stringify([r, st.sweep]));
+  w.ctx._lbWsTick('TICK', Date.now());
+  const st2 = JSON.parse(w.st.props.LB_WS_STAT);
+  ok(`④-q2 （${label}）次の周は2行目から読み始めて最後まで読み、残り0なので下りる`, st2.sweep.needed === false && !w.st.metrics.some((x) => 'cid' in ws(x)), JSON.stringify(st2.sweep));
+}
+{
+  //   恒久失敗の1行と未送の行：送信が毎回進む（掃き出しは送る役の後・専用の上限）
+  const w = world({ props: { LB_WS_ON: 'on' } }); protectOk(w);
+  rowsWith(w, [{ n: 'qb000001', t: Date.now() - 5 * H }, { n: 'qb000002', t: Date.now() - 4 * H }, { n: 'qb000003', t: Date.now() - 3 * H }]);
+  const sh = w.ctx._lbSheet('booking_metrics'), orig = sh.getRange;
+  w.out._lbSheet = (n) => (n !== 'booking_metrics' ? null : { getLastRow: sh.getLastRow, getProtections: sh.getProtections, getRange: (r, c, nr, nc) => {
+    const g = orig(r, c, nr, nc);
+    if (r === 2 && nr === 1 && nc === 6) return { getValues: () => { const v = g.getValues(); v[0][0] = 'x' + Math.random(); return v; }, setValue: g.setValue, getValue: g.getValue };
+    return g; } });
+  const sentPerRun = [];
+  for (let k = 0; k < 5; k++) {
+    rowsWith(w, [{ n: 'qc' + String(k).padStart(6, '0') }]);   // 毎回1件ずつ新しい行が増える
+    const before = w.st.posts.length;
+    w.ctx._lbWsTick('TICK', Date.now());
+    sentPerRun.push(w.st.posts.slice(before).reduce((a, x) => a + x.body.items.length, 0));
+  }
+  const st = JSON.parse(w.st.props.LB_WS_STAT);
+  ok('④-q3 ★恒久失敗の1行があっても、送信は毎回進む（毎回の新しい行が送られる）', sentPerRun.every((x) => x >= 1), JSON.stringify(sentPerRun));
+  ok('④-q4 掃き出しは立ったまま（ws_erase_stuck の元）・残った周の後は次の周を1時間あける', st.sweep && st.sweep.needed === true && st.sweep.nextAt > Date.now(), JSON.stringify(st.sweep));
+}
+
+{
+  //   掃き出しの専用の上限（20秒）：Date.now() のたびに1秒進む時計で、600行の掃き出しが1回で20秒分（約20行）までに止まる
+  let tt = Date.now();
+  class FakeDate extends Date { static now() { tt += 1000; return tt; } }
+  const w = world({ props: {}, Date: FakeDate });
+  const list = [];
+  for (let i = 0; i < 600; i++) list.push({ n: 'qd' + String(i).padStart(6, '0'), t: Date.now() - 5 * H });
+  rowsWith(w, list);
+  w.st.props.LB_WS_ERASE_CURSOR = JSON.stringify({ row: 601, k: 'm' + parse(w.st.metrics[599][0]).getTime() });
+  w.st.props.LB_WS_STAT = JSON.stringify({ sweep: { needed: true, skips: 1, first: Date.now() - H, row: 2, found: 0, laps: 0, from2: true } });
+  w.ctx._lbWsTick('TICK', tt);
+  const st = JSON.parse(w.st.props.LB_WS_STAT);
+  ok('④-q5 ★掃き出しは1回20秒の専用の上限で止まる（送る役の予算を使い切らない）', st.sweep.row > 2 && st.sweep.row < 40, JSON.stringify(st.sweep));
 }
 
 console.log('=== ④-f 保護 ===');

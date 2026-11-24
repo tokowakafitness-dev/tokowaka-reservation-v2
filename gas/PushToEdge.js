@@ -5007,6 +5007,7 @@ var LB_WS = {
   READ_MAX: 500, SEND_MAX: 50,
   AFTER_BUDGET_MS: 4 * 60000, TICK_BUDGET_MS: 3 * 60000, LOCK_MS: 1000,
   USER_RECHECK_MS: 6 * 3600000,
+  SWEEP_BUDGET_MS: 20000,                  // 掃き出しの1回の上限（送る役の後・500行まで）
   //   6列目に載せてよい鍵（これ以外は載せない・検査 ③ が固定）
   KEYS: ['n', 'op', 'ok', 'code', 'at', 'cid', 'rid', 'xr', 'eb', 'et', 'tid', 's', 'e', 'ex', 'att', 'pk', 'cm', 't', 'sent', 'stale', 'too_long'],
   //   GAS の「どこで決まったか」（_lbReserveCoreImpl の _LB_WS.at）。Worker の WS_GAS_AT と同じ集合（検査で突き合わせる）
@@ -5322,8 +5323,8 @@ function _lbWsRun(who, startedAt, budget) {
         if (ef.n >= 3) {
           //   ★飛ばした行は覚えない。「掃き出し」を立て、専用の走査が2行目から最後まで残りを探して消す（件数の上限なし・行の移動に強い）
           var sw0 = prevStat.sweep || {};
-          st.sweep = { needed: true, skips: (Number(sw0.skips) || 0) + 1, first: sw0.needed ? (sw0.first || nowMs) : nowMs,
-                       row: sw0.needed ? (Number(sw0.row) || 2) : 2, found: sw0.needed ? (Number(sw0.found) || 0) : 0, laps: sw0.needed ? (Number(sw0.laps) || 0) : 0 };
+          st.sweep = sw0.needed ? Object.assign({}, sw0, { skips: (Number(sw0.skips) || 0) + 1 })
+                                : { needed: true, skips: (Number(sw0.skips) || 0) + 1, first: nowMs, row: 2, found: 0, laps: 0, from2: true, nextAt: 0 };
           eRow = row; efPrev = null; continue;
         }
         st.eraseFail = ef; eStop = 'verify'; break;   // ★確かめられないまま進めない（3回までは止まる）
@@ -5334,32 +5335,6 @@ function _lbWsRun(who, startedAt, budget) {
   }
   if (eRow !== ec.row || ec.state !== 'ok') _lbWsCursorSave(p, LB_WS.ERASE_PROP, sh, eRow);
   if (eStop === '' || eStop === 'fresh') st.fullScanAt = nowMs;   // 2時間超の顧客IDは消去カーソルの手前に残っていない
-
-  // ---- 1b. 掃き出し（消す役が行を飛ばしたときだけ）----
-  //   2行目から最終行まで1回500行ずつ・残り時間つきで進み、2時間超の顧客IDが残る行を照合つきで消す（失敗した行はその回は飛ばすだけ）。
-  //   最後まで読んで残りが0なら下ろす、残っていれば2行目からもう一周（laps）
-  var sw = st.sweep || (prevStat.sweep && prevStat.sweep.needed ? JSON.parse(JSON.stringify(prevStat.sweep)) : null);
-  if (sw && sw.needed && timeLeft()) {
-    var sFrom = Math.max(2, Math.min(Number(sw.row) || 2, last + 1));
-    var sTo = Math.min(last, sFrom + LB_WS.READ_MAX - 1), sAt = sFrom;
-    if (sFrom <= last) {
-      var swv = sh.getRange(sFrom, 1, sTo - sFrom + 1, 6).getValues();
-      for (var w2 = 0; w2 < swv.length; w2++) {
-        if (!timeLeft()) break;
-        var o3 = _lbWsParse(swv[w2][5]);
-        sAt = sFrom + w2 + 1;
-        if (!o3 || !o3.cid || !(nowMs - Number(o3.t || 0) > LB_WS.STALE_MS)) continue;
-        var rw3 = _lbWsRewrite(sh, sFrom + w2, swv[w2], o3.n, _lbWsStrip(o3, 'stale'));
-        if (rw3 === 'ok') bump('stale'); else { sw.found = (Number(sw.found) || 0) + 1; bump(rw3 === 'skip' ? 'write_skip' : 'write_conflict'); }
-      }
-    }
-    sw.row = sAt;
-    if (sAt > last) {   // 一周した
-      if (!(Number(sw.found) > 0)) sw = { needed: false, skips: sw.skips, first: sw.first, doneAt: nowMs, laps: sw.laps };
-      else { sw.laps = (Number(sw.laps) || 0) + 1; sw.row = 2; sw.found = 0; }
-    }
-    st.sweep = sw;
-  }
 
   // ---- 2. 送る役 ----
   var res = 'erased';
@@ -5406,6 +5381,39 @@ function _lbWsRun(who, startedAt, budget) {
       if (adv !== sc.row || sc.state !== 'ok') _lbWsCursorSave(p, LB_WS.CURSOR_PROP, sh, adv);
       res = stopped ? 'partial' : 'done';
     }
+  }
+  // ---- 3. 掃き出し（消す役が行を飛ばしたときだけ・送る役の後・専用の上限 20秒かつ500行）----
+  //   2行目から最終行まで、2時間超の顧客IDが残る行を照合つきで消す（失敗した行はその回は飛ばすだけ）。
+  //   ★一周の判定は「2行目から読み始めて最終行まで読んだ」とき（from2）だけ。そのときだけ残り0で下ろす。
+  //   ★カーソル sw.row は整数かつ 2〜last+1 でなければ 2 へ戻し、その周は下ろさない（from2=false）。
+  //   ★残りが0にならなかった周の後は、次の周の開始を1時間あける（恒久失敗の1行で毎回全シートを読まない）
+  var sw = st.sweep || (prevStat.sweep && prevStat.sweep.needed ? JSON.parse(JSON.stringify(prevStat.sweep)) : null);
+  if (sw && sw.needed && timeLeft() && !(Number(sw.nextAt) > nowMs)) {
+    var swT0 = Date.now();
+    var r0 = sw.row;
+    if (!(typeof r0 === 'number' && Math.floor(r0) === r0 && r0 >= 2 && r0 <= last + 1)) { sw.row = 2; sw.found = 0; sw.from2 = false; bump('cursor_reset'); }
+    var sFrom = sw.row;
+    var sTo = Math.min(last, sFrom + LB_WS.READ_MAX - 1), sAt = sFrom;
+    if (sFrom <= last) {
+      var swv = sh.getRange(sFrom, 1, sTo - sFrom + 1, 6).getValues();
+      for (var w2 = 0; w2 < swv.length; w2++) {
+        if (!timeLeft() || Date.now() - swT0 >= LB_WS.SWEEP_BUDGET_MS) break;
+        var o3 = _lbWsParse(swv[w2][5]);
+        sAt = sFrom + w2 + 1;
+        if (!o3 || !o3.cid || !(nowMs - Number(o3.t || 0) > LB_WS.STALE_MS)) continue;
+        var rw3 = _lbWsRewrite(sh, sFrom + w2, swv[w2], o3.n, _lbWsStrip(o3, 'stale'));
+        if (rw3 === 'ok') bump('stale'); else { sw.found = (Number(sw.found) || 0) + 1; bump(rw3 === 'skip' ? 'write_skip' : 'write_conflict'); }
+      }
+    }
+    sw.row = sAt;
+    if (sAt > last) {   // 最終行まで読んだ
+      if (sw.from2 === true && !(Number(sw.found) > 0)) sw = { needed: false, skips: sw.skips, first: sw.first, doneAt: nowMs, laps: sw.laps };
+      else {
+        if (sw.from2 === true) { sw.laps = (Number(sw.laps) || 0) + 1; sw.nextAt = nowMs + 3600000; }   // 残った周の後は1時間あける
+        sw.row = 2; sw.found = 0; sw.from2 = true;
+      }
+    }
+    st.sweep = sw;
   }
   return res;
   } finally {
