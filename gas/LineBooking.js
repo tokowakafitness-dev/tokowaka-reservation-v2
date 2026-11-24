@@ -3578,7 +3578,7 @@ function _lbHealthSave(issues, checkId, checked, g, skipPrev) {
   _lbHealthSkipConsume(skipPrev && skipPrev.count);
   _lbHealWouldWake(inc);
   var notified = null;
-  try { notified = _lbHealNotify(sum, g); } catch (eN) { notified = { error: String((eN && eN.name) || 'Error') }; }
+  try { notified = _lbHealNotify(sum, g); } catch (eN) { notified = { error: _lbErrType(eN) }; }
   return { saved: true, opened: inc.opened.length, fixed: inc.fixed.length, unknown: inc.unknown.length, notified: notified,
            header_repaired: !!inc.header_repaired };
 }
