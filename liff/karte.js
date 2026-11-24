@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-24d 種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-24e 取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2932,7 +2932,7 @@
       dec = res.pending.map(function () { return null; });
       ui = res.pending.map(function (p) { return { name: (p.parsed && p.parsed.exercise) || '', open: false }; });
       if (!res.items.length && !res.pending.length) { res = null; err = '読み取れる行がありませんでした。'; draw(); return; }
-      if (!res.pending.length) { place(); return; }
+      if (!res.pending.length && !dateNote()) { place(); return; }   // 設計56：日付について言うことがあれば確認画面で止める
       draw();
       var first = out.querySelector(tlike ? '.k-imptguide' : '.k-impcard'); if (first) { try { first.scrollIntoView({ block: 'center' }); } catch (e) {} }
     }
@@ -3147,19 +3147,29 @@
       return hit;
     }
     //   下書きへ入れる（5-3）。空なら日付をメモの日付に。種目があれば、日付が違えば入れない・同じ（または日付の行が無い）なら2択
+    //   設計56（CEO 判断）：取り込みで記録の日付を変えるのは、下書きが完全に空（種目・社内メモ・お客様へ・次回まで が全部空）のときだけ。
+    //     少しでも中身があれば日付は変えない（メモの日付が違っても止めない・違うことだけを確認画面に出す）
+    function draftEmpty(T) {
+      if (!T) return true;
+      var m = (T.member && typeof T.member === 'object') ? T.member : {};
+      return !(T.items || []).length && !String(T.memo || '').trim() && !String(m.message || '').trim() && !(Array.isArray(m.todo) && m.todo.some(function (x) { return String(x || '').trim(); }));
+    }
+    function dateNote() {   // 確認画面に出す1行（無ければ null）
+      var rdate = res ? res.date : null; if (!rdate) return null;
+      var T = draftNow(), cdate = T ? T.sessionDate : today();
+      if (rdate === cdate) return null;
+      return draftEmpty(T) ? '記録の日付を ' + md(rdate) + ' にします（メモの日付）' : 'メモの日付（' + md(rdate) + '）と記録の日付（' + md(cdate) + '）が違います';
+    }
     function place() {
       var T = draftNow();
       if (T && (T.pending || T.mpending || T.memoPending)) { err = '前回の保存の結果を確かめるまで取り込めません。'; draw(); return; }
-      if (T && (T.items || []).length) {
-        if (res && res.date && res.date !== T.sessionDate) { err = '入力中の記録は ' + md(T.sessionDate) + ' です。' + md(res.date) + ' のメモは、いまの記録を保存してから取り込んでください。'; draw(); return; }
-        ask = true; draw(); return;
-      }
+      if (T && (T.items || []).length) { ask = true; draw(); return; }
       commit();
     }
     function commit() {
       var T = draftNow();
       if (T && (T.pending || T.mpending || T.memoPending)) { err = '前回の保存の結果を確かめるまで取り込めません。'; ask = false; draw(); return; }
-      var wasEmpty = !T || !(T.items || []).length;
+      var wasEmpty = draftEmpty(T);   // 設計56：中身が少しでもあれば記録の日付は変えない
       if (!T) T = { v: 1, tid: tid, cid: cid, sessionDate: today(), items: [], reqId: newReqId(), pending: null, at: Date.now() };
       var rdate = res ? res.date : null;
       if (wasEmpty && rdate) T.sessionDate = rdate;
@@ -3199,7 +3209,7 @@
         + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
         + (b.nSet ? 'セットのメモ ' + b.nSet + '件は、そのセットのメモに入れました。' : '')
         + (mNew ? 'お客様に見える欄に ' + (b.members.length + b.todos.length) + '件入れました（保存するとお客様に見えます）。' : '')
-        + (rdate ? '' : (pendingB ? 'AIの下書きを ' + md(T.sessionDate) + ' の記録に入れました。' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。')) };
+        + (rdate ? (rdate !== T.sessionDate ? '記録の日付は ' + md(T.sessionDate) + ' のままです（メモの日付は ' + md(rdate) + '）。' : '') : (pendingB ? 'AIの下書きを ' + md(T.sessionDate) + ' の記録に入れました。' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。')) };
       res = null; rv = null; pendingB = null; dec = []; ui = [];
       goBack();
     }
@@ -3571,6 +3581,8 @@
       if (rv && !ask) { drawReview(); return; }   // 設計49：AI の下書き v2
       if (res) {
         var ns = 0, nd = 0; res.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
+        var dn = dateNote();
+        if (dn) out.appendChild(el('div', { class: 'k-impdate', role: 'status', style: 'background:#fbefd9;border-radius:10px;padding:8px 10px;font-size:14px;font-weight:700;color:#5c3a05;', text: dn }));
         out.appendChild(el('div', { class: 'k-impsum', style: 'font-weight:700;', text: (res.ai ? 'AIの下書き' : res.date ? md(res.date) : '日付の行なし') + '・' + res.items.length + '種目・本セット' + ns + (nd ? '（ドロップ' + nd + '）' : '') + (res.pending.length ? '　確かめが必要 ' + res.pending.length + '件' : '') }));
       }
       if (ask) {
@@ -3602,7 +3614,7 @@
         }
         res.pending.forEach(function (p, j) { out.appendChild(card(p, j)); });
       }
-      if (res && res.pending.length && !err && !tlike) {
+      if (res && (res.pending.length || dateNote()) && !err && !tlike) {
         var go = el('button', { type: 'button', class: 'k-btn k-impput', text: '記録の画面に入れる', onclick: function () { if (allDecided()) place(); } });
         if (!allDecided()) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
         bar.appendChild(go);

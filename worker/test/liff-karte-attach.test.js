@@ -235,6 +235,7 @@ for (const [label, name, type, want] of [
   ok('T8-1 ★貼ってあった字を消さずに後ろへ足す', TA(w).value === '9/18\nスクワット\n30×10 50×10' && MSG(w).textContent.includes('貼ってあった文字の後ろに'), JSON.stringify(TA(w).value));
   ok('T8-2 入れたら前の読み取り結果を捨てる（貼ったときと同じ）', hadErr && !R(w).textContent.includes('読み取れる行がありませんでした'));
   btn(R(w), '読み取る').click(); await settle();
+  const go8 = btn(R(w), '記録の画面に入れる'); if (go8) { go8.click(); await new Promise((r) => setTimeout(r, 40)); await settle(); }   // 設計56：記録の日付をメモの日付にするときは確認画面で1回止まる
   ok('T8-3 以後は「読み取る」がそのまま使える（記録の画面へ入る）', !R(w).querySelector('textarea[aria-label="メモを貼る"]') && R(w).textContent.includes('スクワット'));
 }
 
