@@ -4686,9 +4686,10 @@ function testLbRegistrationReadiness() {
 // ★GASエディタから：下の 氏名 を書き換えて実行→その会員の残数内訳・不正フラグをログ出力（読み取りのみ）。
 //   「残数が反映されない」原因（契約行なし／migrationGap／割当器ok=false／消化計上ズレ）を切り分ける。
 // 「本人端末で残数が出ない」を診断：customer_line_map行(lineUserId/電話/認証/担当・同名複数も検出)＋契約フォームの電話有無。
-//   GASエディタで下の氏名を書き換えて実行。selfRegisterが電話照合で失敗していないか等の切り分けに使う。
-function debugMemberLink() {
-  var 氏名 = '鈴木義堂';   // ← 確認したい会員名に書き換えて実行
+//   GASエディタでは一時的な関数から debugMemberLink(氏名) と引数で渡して実行（コードに実名を書かない・決定0164）。selfRegisterが電話照合で失敗していないか等の切り分けに使う。
+function debugMemberLink(fullName) {
+  var 氏名 = String(fullName || '');   // ★実在の氏名をコードに書かない（決定0164）。GAS エディタから呼ぶときは debugMemberLink('姓 名') ではなく、一時的な関数から引数で渡す
+  if (!氏名) { Logger.log('debugMemberLink: 名前を引数で渡してください'); return; }
   var target = _lbNormName(氏名);
   Logger.log('=== メンバー紐付け診断: ' + 氏名 + ' ===');
   var sh = _lbSheet(LINE_BOOKING.MAP_SHEET);
