@@ -242,7 +242,7 @@ async function openForm(w) {
   return root;
 }
 async function withSet(w, root) {
-  kbtn(root, '過去の記録から写す').click(); await settle();
+  root.querySelector('button.k-pickgo').click(); await settle();
   kbtn(root, '重量・回数ごと写す').click(); await pop(); await settle();
   root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
 }

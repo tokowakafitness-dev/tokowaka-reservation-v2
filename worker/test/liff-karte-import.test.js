@@ -89,7 +89,7 @@ async function openForm(w) {
 }
 async function openImport(w) {
   await openForm(w);
-  btn(R(w), 'メモから取り込む').click(); await settle();
+  R(w).querySelector('button.k-impgo').click(); await settle();
 }
 function paste(w, text) { const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text; ta.dispatchEvent(new w.Event('input', { bubbles: true })); return ta; }
 const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter((c) => c.dataset.kind === kind)[i];
@@ -99,10 +99,12 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const { w, sent } = boot();
   let ops = 0;
   await openForm(w);
-  btn(R(w), 'メモから取り込む').click(); ops++; await settle();
+  R(w).querySelector('button.k-impgo').click(); ops++; await settle();
   ok('M1-0 取り込みの画面（専用の画面・履歴は trimport）', R(w).querySelector('.k-entrytitle').textContent === 'メモから取り込む' && w.history.state.sub === 'trimport');
   paste(w, P1); ops++;
   btn(R(w), '読み取る').click(); ops++; await nav();
+  //   設計56（CEO 判断）：日付の文だけでは確認画面で止めない＝記録の画面に戻った直後の上の1行で知らせる
+  ok('M1-0b ★空の下書き×日付のあるメモ：記録の画面の上に「記録の日付をメモの 9/18 にしました」', (R(w).querySelector('.k-trform .k-impdate') || {}).textContent === '記録の日付をメモの 9/18 にしました', (R(w).querySelector('.k-impdate') || {}).textContent);
   ok('M1-1 決定待ちが無ければそのまま記録の画面へ戻る・7種目', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && draftOf(w).items.length === 7, R(w).textContent.slice(0, 200));
   {
     //   取り込んだ直後（保存して下書きが消える前）の保存領域にも原文が無い
@@ -177,19 +179,64 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   ok('M3-3 9/18 の1種目だけ入る', d.sessionDate === '2026-09-18' && d.items.length === 1 && d.items[0].exercise === 'スクワット', JSON.stringify(d.items));
 }
 
-// ================= M4 下書きと日付が違う→入れない／日付の行が無い→2択→後ろに足す =================
+// ================= M4 下書きと日付が違う（設計56：中身があれば日付は変えず、違うことだけ出す）／日付の行が無い→2択→後ろに足す =================
 {
   const { w } = boot({ ls: draftLS([{ exercise: 'ベンチプレス', sets: [{ w: '40', r: '10', done: false }] }], { sessionDate: '2026-11-01' }) });
   await openImport(w);
   paste(w, '9/18\nスクワット\n50×10');
   btn(R(w), '読み取る').click(); await settle();
-  ok('M4-1 ★日付が違えば入れない（入力中の記録は 11/1）', R(w).textContent.includes('入力中の記録は 11/1 です') && draftOf(w).items.length === 1 && draftOf(w).sessionDate === '2026-11-01');
+  const dn = R(w).querySelector('.k-impdate');
+  ok('M4-1 ★中身のある下書き：確認画面に「メモの日付（9/18）と記録の日付（11/1）が違います」だけ（止めない・日付は変えない）', !!dn && dn.textContent === 'メモの日付（9/18）と記録の日付（11/1）が違います' && !R(w).textContent.includes('いまの記録を保存してから') && draftOf(w).sessionDate === '2026-11-01', dn && dn.textContent);
+  const go1 = btn(R(w), '記録の画面に入れる'); if (go1 && !go1.disabled) { go1.click(); await settle(); }
+  const add1 = btn(R(w), 'いまの入力の後ろに足す'); if (add1) { add1.click(); await nav(); }
+  const d1 = draftOf(w);
+  ok('M4-1b ★後ろに足しても記録の日付は 11/1 のまま', d1.items.length === 2 && d1.items[1].exercise === 'スクワット' && d1.sessionDate === '2026-11-01', JSON.stringify(d1));
+}
+{
+  const { w } = boot({ ls: draftLS([{ exercise: 'ベンチプレス', sets: [{ w: '40', r: '10', done: false }] }], { sessionDate: '2026-11-01' }) });
+  await openImport(w);
   paste(w, 'スクワット\n60×8');
   btn(R(w), '読み取る').click(); await settle();
   ok('M4-2 日付の行が無い→画面の中で2択（後ろに足す／やめる）・ダイアログなし', !!btn(R(w), 'いまの入力の後ろに足す') && !!btn(R(w), 'やめる') && w.confirms === 0 && draftOf(w).items.length === 1);
   btn(R(w), 'いまの入力の後ろに足す').click(); await nav();
   const d = draftOf(w);
   ok('M4-3 後ろに足す（置き換えない・日付はそのまま）', d.items.length === 2 && d.items[0].exercise === 'ベンチプレス' && d.items[1].exercise === 'スクワット' && d.sessionDate === '2026-11-01', JSON.stringify(d));
+}
+// ---- M4-4 種目は無いが社内メモがある下書き：日付は変えない（設計56 CEO 判断） ----
+{
+  const { w } = boot({ ls: draftLS([], { sessionDate: '2026-11-01', memo: '既存のメモ' }) });
+  await openImport(w);
+  paste(w, '9/18\nスクワット\n50×10');
+  btn(R(w), '読み取る').click(); await settle();
+  const dn = R(w).querySelector('.k-impdate');
+  ok('M4-4 ★社内メモだけある下書き：記録の画面の上に「違います」の1行（日付を変えたとは言わない）', !!dn && !!dn.closest('.k-trform') && dn.textContent === 'メモの日付（9/18）と記録の日付（11/1）が違います', dn && dn.textContent);
+  const go = btn(R(w), '記録の画面に入れる'); if (go && !go.disabled) { go.click(); await nav(); }
+  const d = draftOf(w);
+  ok('M4-4 ★入れても記録の日付は 11/1 のまま・社内メモも残る', d.sessionDate === '2026-11-01' && d.memo.indexOf('既存のメモ') === 0 && d.items.some((x) => x.exercise === 'スクワット'), JSON.stringify(d));
+}
+// ---- M4-5 お客様へだけある下書きも同じ ----
+{
+  const { w } = boot({ ls: draftLS([], { sessionDate: '2026-11-01', member: { message: '既存のお客様へ', todo: ['', '', ''], tags: [] } }) });
+  await openImport(w);
+  paste(w, '9/18\nスクワット\n50×10');
+  btn(R(w), '読み取る').click(); await settle();
+  const go = btn(R(w), '記録の画面に入れる'); if (go && !go.disabled) { go.click(); await nav(); }
+  ok('M4-5 ★お客様へだけある下書き：記録の日付は 11/1 のまま', draftOf(w).sessionDate === '2026-11-01');
+}
+// ---- M4-6 完全に空の下書き：記録の日付をメモの日付にする（確認画面で明示） ----
+{
+  const { w } = boot({ ls: draftLS([], { sessionDate: '2026-11-01' }) });
+  await openImport(w);
+  paste(w, '9/18\nスクワット\n50×10');
+  btn(R(w), '読み取る').click(); await settle();
+  const dn = R(w).querySelector('.k-impdate');
+  ok('M4-6 ★完全に空の下書き：確認画面で止めず、記録の画面の上に「記録の日付をメモの 9/18 にしました」', !!dn && !!dn.closest('.k-trform') && dn.textContent === '記録の日付をメモの 9/18 にしました', dn && dn.textContent);
+  const go = btn(R(w), '記録の画面に入れる'); if (go && !go.disabled) { go.click(); await nav(); }
+  ok('M4-6 ★入れると記録の日付が 9/18 になる', draftOf(w).sessionDate === '2026-09-18', draftOf(w).sessionDate);
+  btn(R(w), '休憩タイマー').click(); await settle();
+  R(w).querySelector('.k-entryhead .k-back').click(); await nav();
+  const b2 = btn(R(w), '記録の入力（途中）を開く'); if (b2) { b2.click(); await settle(); }
+  ok('M4-6 日付の1行は取り込みの直後だけ（開き直したら出さない）', !R(w).querySelector('.k-trform .k-impdate'));
 }
 
 // ================= M5（I57）取り込んだ✓は全部 false・そのまま保存→送られない =================
@@ -223,7 +270,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const pend = { payload: { customerId: 'C1', sessionDate: '2026-11-05', items: [{ exercise: 'スクワット', sets: [{ weight: 40, reps: 10 }] }] }, reqId: 'kpend0001' };
   const { w } = boot({ ls: draftLS([], { pending: pend }) });
   await openForm(w);
-  ok('M7-1 ★送った結果待ち（pending）の画面に「メモから取り込む」は出ない', R(w).textContent.includes('前回の保存の結果を確かめられませんでした') && !btn(R(w), 'メモから取り込む'));
+  ok('M7-1 ★送った結果待ち（pending）の画面に「メモから取り込む」は出ない', R(w).textContent.includes('前回の保存の結果を確かめられませんでした') && !R(w).querySelector('button.k-impgo'));
   w.KarteUI.open('C1', '会員', 'training', { kind: 'sub', sub: 'trimport' }); await settle();
   ok('M7-2 取り込みの画面を直接開いても取り込めない（案内だけ）', R(w).textContent.includes('前回の保存の結果を確かめるまで取り込めません') && !R(w).querySelector('textarea[aria-label="メモを貼る"]'));
 }
@@ -293,7 +340,7 @@ const S32 = { schema: 32 };
 {
   const { w } = boot({ cfg: S32 });
   await openForm(w);
-  ok('M13 ★32 なら「メモから取り込む」を出さない・補助などの欄も出さない', !btn(R(w), 'メモから取り込む') && !R(w).textContent.includes('メモ・補助'));
+  ok('M13 ★32 なら「メモから取り込む」を出さない・補助などの欄も出さない', !R(w).querySelector('button.k-impgo') && !R(w).textContent.includes('メモ・補助'));
 }
 {
   const { w, sent } = boot({ cfg: S32, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '40', r: '10', done: true, assist: '3' }] }]) });
@@ -363,14 +410,14 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
 {
   const { w } = boot({ cfg: { sessions: [S_NEW] }, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '10', r: '1', done: false }] }]) });
   await openForm(w);
-  btn(R(w), '過去の記録から写す').click(); await settle();
+  R(w).querySelector('button.k-pickgo').click(); await settle();
   btn(R(w), '重量・回数ごと写す').click(); await nav();
   const d = draftOf(w);
   eq('M20-1 ★新しい回：同じ名前の2つの ord は2つの種目（下書きの同じ名前にも混ぜない）・ドロップの形は写す・補助/無理やりは写さない・数字の無い種目はそのまま', d.items.map((x) => [x.exercise, x.sets.map((s) => [String(s.w), String(s.r), s.done, s.assist || null, s.forced || null, (s.drops || []).map((q) => q.w + 'x' + q.r).join()]), x.doneOnly === undefined ? null : x.doneOnly]),
     [['スクワット', [['10', '1', false, null, null, '']], null], ['スクワット', [['60', '10', false, null, null, ''], ['100', '3', false, null, null, '']], null], ['ベンチプレス', [['40', '10', false, null, null, '']], null], ['スクワット', [['50', '8', false, null, null, '30x10']], null], ['プランク', [], false]]);
   const e = boot({ cfg: { sessions: [S_OLD] }, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '10', r: '1', done: false }] }]) });
   await openForm(e.w);
-  btn(R(e.w), '過去の記録から写す').click(); await settle();
+  R(e.w).querySelector('button.k-pickgo').click(); await settle();
   btn(R(e.w), '重量・回数ごと写す').click(); await nav();
   const d2 = draftOf(e.w);
   ok('M20-2 ★古い回：今までどおり下書きの同じ名前に足す', d2.items.length === 1 && d2.items[0].sets.length === 2 && String(d2.items[0].sets[1].w) === '80', JSON.stringify(d2.items));
@@ -425,7 +472,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   ok('M23-2 ★pending を解く・下書き（種目・セット・補助の印）を残す・次は新しい送信番号', d && !d.pending && d.items.length === 1 && d.items[0].sets[0].assist === '3' && d.reqId !== 'kfixedreq0001');
   w.cfg.schema = 32;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
-  ok('M23-3 その後 karteSchema 32 で読み直すと取り込みのボタンが消える', !btn(R(w), 'メモから取り込む') && !!R(w).querySelector('.k-marks'));
+  ok('M23-3 その後 karteSchema 32 で読み直すと取り込みのボタンが消える', !R(w).querySelector('button.k-impgo') && !!R(w).querySelector('.k-marks'));
   w.cfg.schema = 33; w.cfg.add = null;
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   btn(R(w), '保存する').click(); await settle();

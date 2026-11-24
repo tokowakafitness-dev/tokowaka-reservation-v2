@@ -68,7 +68,7 @@ async function openImport(w) {
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const b = btn(R(w), '＋ 今日の記録') || btn(R(w), '記録の入力（途中）を開く');
   if (b && !R(w).classList.contains('k-entry')) { b.click(); await settle(); }
-  btn(R(w), 'メモから取り込む').click(); await settle();
+  R(w).querySelector('button.k-impgo').click(); await settle();
 }
 const utf8 = (s) => new Uint8Array(Buffer.from(s, 'utf8'));
 //   ファイルを選ぶ：ボタンを押す（入力を開く）→ 選んだファイルを入れて change

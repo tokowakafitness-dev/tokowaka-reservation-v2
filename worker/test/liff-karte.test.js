@@ -367,7 +367,7 @@ const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.text
 //   前回の内容から始める＝「過去の記録から写す」画面（前回の日が最初から選ばれている）→「重量・回数ごと写す」（2026-11-05 モック K3/K3b）
 const draftOf = (w) => JSON.parse(w.localStorage.getItem('karte_tr_draft_v1:T1:C1') || 'null');
 async function fromPrev(root) {
-  btn(root, '過去の記録から写す').click(); await settle();
+  root.querySelector('button.k-pickgo').click(); await settle();
   btn(root, '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
 }
 {
@@ -969,7 +969,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   const root = w.document.getElementById('karteRoot');
   btn(root, '＋ 今日の記録').click(); await settle();
   ok('18-0 ★今日の記録は専用の画面（ネイビーの見出し・名前と日付・下のタブは隠す）', root.classList.contains('k-entry') && root.querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && / 様 ／ \d+\/\d+\(.\)/.test(root.querySelector('.k-entrydate').textContent) && w.getComputedStyle(root.querySelector('.k-tabs')).display === 'none');
-  btn(root, '過去の記録から写す').click(); await settle();
+  root.querySelector('button.k-pickgo').click(); await settle();
   const cards = () => [...root.querySelectorAll('button.k-pick')];
   const items = () => (draftOf(w) || { items: [] }).items;
   ok('18-1 ★写す画面は専用の画面・新しい順・部位が付く・前回の日が最初から選ばれている', root.querySelector('.k-entrytitle').textContent === '過去の記録から写す' && w.history.state.sub === 'trpick' && cards().length === 2 && cards()[0].textContent.includes('10/29') && cards()[0].getAttribute('aria-pressed') === 'true' && cards()[0].textContent.includes('背中') && cards()[1].textContent.includes('脚・尻'), cards().map((x) => x.textContent).join(' | '));
@@ -977,7 +977,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   ok('18-2 写さずに戻ると今日の記録の画面・何も足さない', w.history.state.sub === 'trform' && items().length === 0);
   await fromPrev(root);
   ok('18-3 ★写すと今日の記録の画面に戻り、前回（10/29）の重量・回数が入る（✓は外れた状態）', w.history.state.sub === 'trform' && JSON.stringify(items()) === JSON.stringify([{ exercise: 'ラットプルダウン', sets: [{ w: 30, r: 12, done: false }, { w: 30, r: 10, done: false }] }]), JSON.stringify(items()));
-  btn(root, '過去の記録から写す').click(); await settle();
+  root.querySelector('button.k-pickgo').click(); await settle();
   [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === '脚・尻').click(); await settle();
   ok('18-4 部位で絞れる（絞った先の最初の日が選ばれる）', cards().length === 1 && cards()[0].textContent.includes('10/25') && cards()[0].getAttribute('aria-pressed') === 'true');
   btn(root, '種目だけ写す').click(); await pop(); await settle();
@@ -989,7 +989,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   const date = root.querySelector('input.k-dateover');
   date.value = '2026-10-28'; date.dispatchEvent(new w.Event('change', { bubbles: true })); await settle();
   ok('18-7 見出しの日付を押して変えられる（見出しの表示も変わる）', root.querySelector('.k-entrydate').textContent.includes('10/28(水) ▾'));
-  btn(root, '過去の記録から写す').click(); await settle();
+  root.querySelector('button.k-pickgo').click(); await settle();
   ok('18-8 ★記録の日付より後の日は出さない（10/28 の記録に 10/29 を写さない）', cards().length === 1 && cards()[0].textContent.includes('10/25'), cards().map((x) => x.textContent).join(' | '));
   w.KarteUI.close && w.KarteUI.close();
 }

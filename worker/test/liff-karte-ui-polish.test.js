@@ -85,13 +85,11 @@ const shown = (w, e) => !!e && w.getComputedStyle(e).display !== 'none';
 //   ✎ を押すとセットに memoOpen（画面の開閉の印）が付く＝中身の比べ合わせからは外す
 const itemsOf = (w) => JSON.stringify((draftOf(w) || { items: [] }).items, (k, v) => (k === 'memoOpen' ? undefined : v));
 
-// ================= U1 種目が空のときの案内 =================
+// ================= U1 種目が空のときの案内（設計56 で「どう始めますか？」の3つのボタンに置き換え） =================
 for (const [label, sessions] of [['過去の記録なし', []], ['過去の記録あり', HIST]]) {
   const { w } = boot({ sessions });
   await openRecord(w);
-  const m = [...R(w).querySelectorAll('.k-msg')].map((x) => x.textContent).find((t) => t.includes('始めてください')) || '';
-  const quoted = [...m.matchAll(/「([^」]+)」/g)].map((x) => x[1]);
-  ok('U1 ★' + label + '：案内の「」の中は、画面に実在するボタンの名前だけ', quoted.length >= 1 && quoted.every((q) => !!btn(R(w), q)), m);
+  ok('U1 ★' + label + '：空のときは「どう始めますか？」と始め方のボタン（案内の文で存在しないボタンを指さない）', R(w).querySelector('.k-start').textContent.includes('どう始めますか？') && !![...R(w).querySelectorAll('.k-start button')].find((b) => b.textContent === '手動で入れる'));
   ok('U1 ' + label + '：「前回の内容で始める」（存在しないボタン）を言わない', !R(w).textContent.includes('前回の内容で始める'));
 }
 
@@ -244,7 +242,7 @@ for (const [label, sessions] of [['過去の記録なし', []], ['過去の記�
 }
 
 // ================= U6 取り込みの画面のボタンの強弱 =================
-async function openImport(w) { await openRecord(w); btn(R(w), 'メモから取り込む').click(); await settle(); }
+async function openImport(w) { await openRecord(w); R(w).querySelector('button.k-impgo').click(); await settle(); }
 {
   const { w } = boot({ aiDraft: true, aiConsent: 'agreed' });
   await openImport(w);

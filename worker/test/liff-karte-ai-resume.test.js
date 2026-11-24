@@ -103,7 +103,7 @@ async function openImport(w) {
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const b = btn(R(w), '＋ 今日の記録') || btn(R(w), '記録の入力（途中）を開く');
   if (b && !R(w).classList.contains('k-entry')) { b.click(); await settle(); }
-  btn(R(w), 'メモから取り込む').click(); await settle();
+  R(w).querySelector('button.k-impgo').click(); await settle();
 }
 function paste(w, text) { const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text; ta.dispatchEvent(new w.Event('input', { bubbles: true })); return ta; }
 async function toReview(w) { await openImport(w); paste(w, TRANSCRIPT); btn(R(w), 'AIで振り分ける').click(); await settle(); }
@@ -156,7 +156,7 @@ const now0 = Date.now();
   type(w, field(w, 'hearing'), '睡眠は5時間くらい');
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   { const b0 = btn(R(w), '＋ 今日の記録') || btn(R(w), '記録の入力（途中）を開く'); if (b0 && !R(w).classList.contains('k-entry')) { b0.click(); await settle(); } }
-  ok('U10 ★記録の画面のボタンが「メモから取り込む（振り分けの途中あり）」', !!R(w).querySelector('button.k-impgo') && R(w).querySelector('button.k-impgo').textContent === 'メモから取り込む（振り分けの途中あり）', (R(w).querySelector('button.k-impgo') || {}).textContent);
+  ok('U10 ★記録の画面の取り込みのボタンに「（振り分けの途中あり）」（設計56：0件は「メモ・音声から」・1件以上は「＋ 音声・メモを追加で取り込む」）', !!R(w).querySelector('button.k-impgo') && /^(メモ・音声から|＋ 音声・メモを追加で取り込む)（振り分けの途中あり）$/.test(R(w).querySelector('button.k-impgo').textContent), (R(w).querySelector('button.k-impgo') || {}).textContent);
   R(w).querySelector('button.k-impgo').click(); await settle();
   ok('U1 ★取り込み画面に帯（時刻・件数）・続ける／捨てて最初から（44px）・保存しない項目の一般の文だけ', !!band(w) && /前回の振り分けが途中です（\d\d:\d\d・種目4・セット/.test(band(w).textContent) && band(w).textContent.includes('保存しない項目があります') && !/体のことの言葉/.test(band(w).textContent) && /min-height:\s*44px/.test(band(w).querySelector('.k-airgo').style.cssText) && /min-height:\s*44px/.test(band(w).querySelector('.k-airdrop').style.cssText), band(w) && band(w).textContent);
   band(w).querySelector('.k-airgo').click(); await settle();
