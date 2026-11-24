@@ -103,10 +103,9 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   ok('M1-0 取り込みの画面（専用の画面・履歴は trimport）', R(w).querySelector('.k-entrytitle').textContent === 'メモから取り込む' && w.history.state.sub === 'trimport');
   paste(w, P1); ops++;
   btn(R(w), '読み取る').click(); ops++; await nav();
-  //   設計56（CEO 判断）：記録の日付をメモの日付に変えるときは、決定待ちが無くても確認画面で明示して止める（＋1操作）
-  ok('M1-0b ★空の下書き×日付のあるメモ：確認画面に「記録の日付を 9/18 にします（メモの日付）」', (R(w).querySelector('.k-impdate') || {}).textContent === '記録の日付を 9/18 にします（メモの日付）');
-  btn(R(w), '記録の画面に入れる').click(); ops++; await nav();
-  ok('M1-1 決定待ちが無ければ「記録の画面に入れる」で記録の画面へ戻る・7種目', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && draftOf(w).items.length === 7, R(w).textContent.slice(0, 200));
+  //   設計56（CEO 判断）：日付の文だけでは確認画面で止めない＝記録の画面に戻った直後の上の1行で知らせる
+  ok('M1-0b ★空の下書き×日付のあるメモ：記録の画面の上に「記録の日付をメモの 9/18 にしました」', (R(w).querySelector('.k-trform .k-impdate') || {}).textContent === '記録の日付をメモの 9/18 にしました', (R(w).querySelector('.k-impdate') || {}).textContent);
+  ok('M1-1 決定待ちが無ければそのまま記録の画面へ戻る・7種目', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && draftOf(w).items.length === 7, R(w).textContent.slice(0, 200));
   {
     //   取り込んだ直後（保存して下書きが消える前）の保存領域にも原文が無い
     const st0 = storeText(w.localStorage) + storeText(w.sessionStorage);
@@ -119,7 +118,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   ok('M1-3 全部✓・実施したを押し切った（残りなし）', !R(w).querySelector('button.k-allchk') && !R(w).querySelector('button.k-donechk[aria-pressed="false"]'));
   btn(R(w), '保存する').click(); ops++; await settle();
   const tr = adds(sent);
-  ok('M1-4 ★§5-5 の例：12操作（設計56 で日付の明示に1操作を足した）・確かめのダイアログなし', ops === 12 && w.confirms === 0, `ops=${ops} confirms=${w.confirms}`);
+  ok('M1-4 ★§5-5 の例：11操作・確かめのダイアログなし', ops === 11 && w.confirms === 0, `ops=${ops} confirms=${w.confirms}`);
   eq('M1-5 ★送られた本文が §3-3 の形で P1 の構造（印の無い鍵は送らない）', tr.length === 1 ? { d: tr[0].sessionDate, items: tr[0].items } : null, { d: '2026-09-18', items: [
     { exercise: '腸腰筋ストレッチ', sets: [], doneOnly: true }, { exercise: 'アーチスクワット', sets: [], doneOnly: true },
     { exercise: 'フロアアブ', sets: [{ weight: 0, reps: 10 }, { weight: 10, reps: 10, drops: [{ weight: 0, reps: 10 }] }, { weight: 10, reps: 10, drops: [{ weight: 0, reps: 10 }] }] },
@@ -210,7 +209,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   paste(w, '9/18\nスクワット\n50×10');
   btn(R(w), '読み取る').click(); await settle();
   const dn = R(w).querySelector('.k-impdate');
-  ok('M4-4 ★社内メモだけある下書き：「違います」と出し、日付を変えるとは言わない', !!dn && dn.textContent === 'メモの日付（9/18）と記録の日付（11/1）が違います', dn && dn.textContent);
+  ok('M4-4 ★社内メモだけある下書き：記録の画面の上に「違います」の1行（日付を変えたとは言わない）', !!dn && !!dn.closest('.k-trform') && dn.textContent === 'メモの日付（9/18）と記録の日付（11/1）が違います', dn && dn.textContent);
   const go = btn(R(w), '記録の画面に入れる'); if (go && !go.disabled) { go.click(); await nav(); }
   const d = draftOf(w);
   ok('M4-4 ★入れても記録の日付は 11/1 のまま・社内メモも残る', d.sessionDate === '2026-11-01' && d.memo.indexOf('既存のメモ') === 0 && d.items.some((x) => x.exercise === 'スクワット'), JSON.stringify(d));
@@ -231,9 +230,13 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   paste(w, '9/18\nスクワット\n50×10');
   btn(R(w), '読み取る').click(); await settle();
   const dn = R(w).querySelector('.k-impdate');
-  ok('M4-6 ★完全に空の下書き：確認画面に「記録の日付を 9/18 にします（メモの日付）」', !!dn && dn.textContent === '記録の日付を 9/18 にします（メモの日付）', dn && dn.textContent);
+  ok('M4-6 ★完全に空の下書き：確認画面で止めず、記録の画面の上に「記録の日付をメモの 9/18 にしました」', !!dn && !!dn.closest('.k-trform') && dn.textContent === '記録の日付をメモの 9/18 にしました', dn && dn.textContent);
   const go = btn(R(w), '記録の画面に入れる'); if (go && !go.disabled) { go.click(); await nav(); }
   ok('M4-6 ★入れると記録の日付が 9/18 になる', draftOf(w).sessionDate === '2026-09-18', draftOf(w).sessionDate);
+  btn(R(w), '休憩タイマー').click(); await settle();
+  R(w).querySelector('.k-entryhead .k-back').click(); await nav();
+  const b2 = btn(R(w), '記録の入力（途中）を開く'); if (b2) { b2.click(); await settle(); }
+  ok('M4-6 日付の1行は取り込みの直後だけ（開き直したら出さない）', !R(w).querySelector('.k-trform .k-impdate'));
 }
 
 // ================= M5（I57）取り込んだ✓は全部 false・そのまま保存→送られない =================
@@ -242,7 +245,6 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   await openImport(w);
   paste(w, P1);
   btn(R(w), '読み取る').click(); await nav();
-  btn(R(w), '記録の画面に入れる').click(); await nav();   // 設計56：日付をメモの日付にするので確認画面で1回止まる
   const d = draftOf(w);
   ok('M5-1 ★取り込んだセットの✓は全部 false・数字の無い種目の「実施した」も false・「メモから」の印', d.items.every((it) => it.sets.every((s) => s.done === false) && it.doneOnly !== true && it.fromMemo === true) && R(w).querySelectorAll('.k-frommemo').length === 7);
   btn(R(w), '保存する').click(); await settle();

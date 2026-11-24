@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-24e 取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-24f 取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2932,7 +2932,7 @@
       dec = res.pending.map(function () { return null; });
       ui = res.pending.map(function (p) { return { name: (p.parsed && p.parsed.exercise) || '', open: false }; });
       if (!res.items.length && !res.pending.length) { res = null; err = '読み取れる行がありませんでした。'; draw(); return; }
-      if (!res.pending.length && !dateNote()) { place(); return; }   // 設計56：日付について言うことがあれば確認画面で止める
+      if (!res.pending.length) { place(); return; }   // 設計56（CEO 判断）：日付の文だけでは止めない（記録の画面の上の1行で知らせる）
       draw();
       var first = out.querySelector(tlike ? '.k-imptguide' : '.k-impcard'); if (first) { try { first.scrollIntoView({ block: 'center' }); } catch (e) {} }
     }
@@ -3170,6 +3170,7 @@
       var T = draftNow();
       if (T && (T.pending || T.mpending || T.memoPending)) { err = '前回の保存の結果を確かめるまで取り込めません。'; ask = false; draw(); return; }
       var wasEmpty = draftEmpty(T);   // 設計56：中身が少しでもあれば記録の日付は変えない
+      var cdate0 = T ? T.sessionDate : today();
       if (!T) T = { v: 1, tid: tid, cid: cid, sessionDate: today(), items: [], reqId: newReqId(), pending: null, at: Date.now() };
       var rdate = res ? res.date : null;
       if (wasEmpty && rdate) T.sessionDate = rdate;
@@ -3209,7 +3210,9 @@
         + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
         + (b.nSet ? 'セットのメモ ' + b.nSet + '件は、そのセットのメモに入れました。' : '')
         + (mNew ? 'お客様に見える欄に ' + (b.members.length + b.todos.length) + '件入れました（保存するとお客様に見えます）。' : '')
-        + (rdate ? (rdate !== T.sessionDate ? '記録の日付は ' + md(T.sessionDate) + ' のままです（メモの日付は ' + md(rdate) + '）。' : '') : (pendingB ? 'AIの下書きを ' + md(T.sessionDate) + ' の記録に入れました。' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。')) };
+        + (rdate ? '' : (pendingB ? 'AIの下書きを ' + md(T.sessionDate) + ' の記録に入れました。' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。')) };
+      //   設計56（CEO 判断）：日付は記録の画面に戻った直後の上の1行で知らせる（次の描き直しまで）
+      if (rdate && rdate !== cdate0) trImportMsg.date = wasEmpty ? '記録の日付をメモの ' + md(rdate) + ' にしました' : 'メモの日付（' + md(rdate) + '）と記録の日付（' + md(cdate0) + '）が違います';
       res = null; rv = null; pendingB = null; dec = []; ui = [];
       goBack();
     }
@@ -3614,7 +3617,7 @@
         }
         res.pending.forEach(function (p, j) { out.appendChild(card(p, j)); });
       }
-      if (res && (res.pending.length || dateNote()) && !err && !tlike) {
+      if (res && res.pending.length && !err && !tlike) {
         var go = el('button', { type: 'button', class: 'k-btn k-impput', text: '記録の画面に入れる', onclick: function () { if (allDecided()) place(); } });
         if (!allDecided()) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
         bar.appendChild(go);
@@ -3722,6 +3725,7 @@
     if (restored) note.textContent = '入力の途中を戻しました（' + fmtDate(D.at) + '）。この端末に最大24時間残ります。';
     //   メモから取り込んだ直後の1行（メモリにだけある件数の案内・原文は持たない）
     if (trImportMsg && trImportMsg.cid === cid) { note.textContent = trImportMsg.text; note.style.cssText = 'margin-bottom:8px;font-size:14px;font-weight:700;color:var(--k-acc);background:var(--k-acc-l);border-radius:10px;padding:8px 10px;'; }
+    if (trImportMsg && trImportMsg.cid === cid && trImportMsg.date) c.appendChild(el('div', { class: 'k-impdate', role: 'status', style: 'background:#fbefd9;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:14px;font-weight:700;color:#5c3a05;', text: trImportMsg.date }));   // 設計56：取り込みの日付の1行
     trImportMsg = null;
 
     //   日付は見出しに出す（モック K3）。見出しの日付を押すと端末の日付ピッカーで変えられる
