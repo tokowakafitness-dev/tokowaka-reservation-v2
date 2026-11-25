@@ -488,8 +488,9 @@ setEnv(V2);
   ok('V2-34 ★改行を入れても400字以内なら入れる', r3.draft.member_message.includes('\n【次回に向けて】') && r3.draft.member_message.length <= 400, String(r3.draft.member_message.length));
   const r4 = await run({ member_message: '【今日の内容】' + body(383) + '【よくできた点】ok' });   // 7＋383＋8＋2＝空白なし 400字ちょうど → 改行を足すと 401
   ok('V2-34 ★改行を足すと400字を超えるなら入れない（1行のまま・切らない）', r4.status === 200 && !r4.draft.member_message.includes('\n') && r4.draft.member_message.length === 400, String(r4.draft.member_message.length));
-  const r5 = await run({ member_message: '【今日の内容】甲野 一郎さんと' + body(370) + ' 【次回に向けて】x' });
-  ok('V2-34 ★名前を伏せた後の文字数で決める（伏せて増えた結果 400 を超えるなら改行しない）', r5.status === 200 && (r5.draft.member_message.length <= 400 ? r5.draft.member_message.includes('\n') : !r5.draft.member_message.includes('\n')) && !r5.draft.member_message.includes('甲野'), String(r5.draft.member_message.length));
+  //   伏せる前は 400 字（空白→改行でも 400 で収まる）・架空の登録トレーナー名を伏せると字数が増えて 400 を超える → 改行は入れない（mask の前に整えると改行が入ったまま超える）
+  const r5 = await run({ member_message: '【今日の内容】' + body(378) + '乙川 二郎 【次回に向けて】x' });
+  ok('V2-34 ★名前を伏せた後の文字数で決める（伏せて400を超えたら改行しない）', r5.status === 200 && !r5.draft.member_message.includes('乙川') && !r5.draft.member_message.includes('\n') && r5.draft.member_message.length > 400, JSON.stringify([r5.draft.member_message.length, r5.draft.member_message.includes('\n')]));
   const r6 = await run({ member_todo: ['ストレッチ 2分', 'ストレッチ、2分。', 'スクワット×10'] });
   ok('V2-34 ★次回までに：空白と句読点だけ違うものは後ろを落とす・×などの記号は区別する', JSON.stringify(r6.draft.member_todo) === JSON.stringify(['ストレッチ 2分', 'スクワット×10']), JSON.stringify(r6.draft.member_todo));
   const { dedupeTodo, layoutMemberMessage } = await import('../src/routes/karte-ai-v2.js');
