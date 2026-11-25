@@ -64,6 +64,19 @@ export function trainingExtOn(env, who) {
   const list = String((env && env.KARTE_TRAINING_EXT_TRAINERS) || '').split(',').map((x) => x.trim()).filter((x) => x !== '');
   return list.indexOf(tid) >= 0;
 }
+/**
+ * 保存したトレーニングの記録を直す（設計58・k_editTraining）を受け付けるか。判定はこの1か所だけ（trainingExtOn と同じ形）
+ *   KARTE_TRAINING_EDIT が厳密に 'on'＝全員／厳密に 'allow'＝KARTE_TRAINING_EDIT_TRAINERS に trainer_id が完全一致の人だけ。それ以外は偽
+ */
+export function trainingEditOn(env, who) {
+  const mode = String((env && env.KARTE_TRAINING_EDIT) || '');
+  if (mode === 'on') return true;
+  if (mode !== 'allow') return false;
+  const tid = String((who && who.trainerId) || '');
+  if (!tid) return false;
+  const list = String((env && env.KARTE_TRAINING_EDIT_TRAINERS) || '').split(',').map((x) => x.trim()).filter((x) => x !== '');
+  return list.indexOf(tid) >= 0;
+}
 /** 応答に載せる窓口の版。切替が偽なら32（画面は新しい項目を出さない・送らない）、真なら33 */
 export function karteSchemaFor(env, who) {
   return trainingExtOn(env, who) ? KARTE_SCHEMA : KARTE_SCHEMA_BASE;
@@ -300,6 +313,7 @@ function replay(prev, hash, alt) {
  * spec = { action, customerId, payload, plan(now) → { stmts:[{sql,args}], result:{…}（安全な項目だけ）, resultSql?:'…' } }
  *   altPayloads?：保存済みの行と照合してもよい旧い形のハッシュの元（保存するのは常に payload のハッシュ・設計38 §3-4）
  *   extUsed?   ：トレーニングの新しい項目を使っている（切替が偽なら replay の後・回数の前に 409・設計38 §3-7）
+ *   editGate?  ：保存した記録を直す要求（設計58）。KARTE_TRAINING_EDIT が偽なら replay の後・回数の前に 409（何も書かない）
  */
 async function runWrite(c, spec) {
   const { env, who, body } = c;
@@ -320,6 +334,12 @@ async function runWrite(c, spec) {
   if (spec.extUsed && !trainingExtOn(env, who)) {
     await logAccess(env, who, spec.customerId, spec.section, spec.action, 'denied', crid);
     return err('TRAINING_EXT_OFF', 409);
+  }
+
+  //   ①-3 記録を直す受付（設計58 §3-3）。★replay より後・回数より前（ext と同じ考え方）
+  if (spec.editGate && !trainingEditOn(env, who)) {
+    await logAccess(env, who, spec.customerId, spec.section, spec.action, 'denied', crid);
+    return err('TRAINING_EDIT_OFF', 409);
   }
 
   //   ② 回数（本体とは別の先行 batch。通ったら1回を消費し、本体が失敗しても戻さない）
@@ -752,6 +772,33 @@ function trainingHashItems(items) {
   });
 }
 
+/**
+ * 1回の記録の子の行（種目の並び・本セット・付加・ドロップ）の文を組む。k_addTraining と k_editTraining（設計58）が同じものを使う
+ *   親の指し方：本セットの INSERT の直後に、その回の最大の set_id（＝直前に入れた行）を引く。
+ *   見えなければ MAX は NULL＝付加・ドロップの NOT NULL で batch 全体が失敗する（黙って誤った親を指さない・設計38 §3-1・§11-1）
+ */
+export function trainingRows(sid, tr) {
+  let nSets = 0, nDrops = 0;
+  for (const it of tr.items) for (const s of it.sets) { nSets++; nDrops += s.drops.length; }
+  const parent = `FROM karte_tr_sets WHERE session_id = ?`;
+  const rows = [];
+  tr.items.forEach((it, i) => {
+    const ord = i + 1;
+    rows.push(S(`INSERT INTO karte_tr_exercises (session_id, ord, exercise, done_only) VALUES (?, ?, ?, ?)`, sid, ord, it.exercise, it.done_only));
+    for (const x of it.sets) {
+      rows.push(S(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps, note)
+                   VALUES (?, ?, ?, ?, ?, ?)`, sid, it.exercise, x.set_no, x.weight_kg, x.reps, x.note));
+      rows.push(S(`INSERT INTO karte_tr_set_ext (set_id, session_id, ord, assist_reps, forced)
+                   SELECT MAX(set_id), ?, ?, ?, ? ${parent}`, sid, ord, x.assist_reps, x.forced, sid));
+      for (const dp of x.drops) {
+        rows.push(S(`INSERT INTO karte_tr_drops (set_id, drop_seq, weight_kg, reps, assist_reps, forced)
+                     SELECT MAX(set_id), ?, ?, ?, ?, ? ${parent}`, dp.drop_seq, dp.weight_kg, dp.reps, dp.assist_reps, dp.forced, sid));
+      }
+    }
+  });
+  return { rows, nSets, nDrops };
+}
+
 async function addTraining(c) {
   const cid = cidOf(c.body);
   if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
@@ -776,26 +823,7 @@ async function addTraining(c) {
   const oldOk = !tr.extUsed && new Set(names).size === names.length;
   const oldSets = [];
   for (const it of tr.items) for (const s of it.sets) oldSets.push({ exercise: it.exercise, set_no: s.set_no, weight_kg: s.weight_kg, reps: s.reps, note: s.note });
-  let nSets = 0, nDrops = 0;
-  for (const it of tr.items) for (const s of it.sets) { nSets++; nDrops += s.drops.length; }
-  //   親の指し方：本セットの INSERT の直後に、その回の最大の set_id（＝直前に入れた行）を引く。
-  //   見えなければ MAX は NULL＝付加・ドロップの NOT NULL で batch 全体が失敗する（黙って誤った親を指さない・設計38 §3-1・§11-1）
-  const parent = `FROM karte_tr_sets WHERE session_id = ?`;
-  const rows = [];
-  tr.items.forEach((it, i) => {
-    const ord = i + 1;
-    rows.push(S(`INSERT INTO karte_tr_exercises (session_id, ord, exercise, done_only) VALUES (?, ?, ?, ?)`, sid, ord, it.exercise, it.done_only));
-    for (const x of it.sets) {
-      rows.push(S(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps, note)
-                   VALUES (?, ?, ?, ?, ?, ?)`, sid, it.exercise, x.set_no, x.weight_kg, x.reps, x.note));
-      rows.push(S(`INSERT INTO karte_tr_set_ext (set_id, session_id, ord, assist_reps, forced)
-                   SELECT MAX(set_id), ?, ?, ?, ? ${parent}`, sid, ord, x.assist_reps, x.forced, sid));
-      for (const dp of x.drops) {
-        rows.push(S(`INSERT INTO karte_tr_drops (set_id, drop_seq, weight_kg, reps, assist_reps, forced)
-                     SELECT MAX(set_id), ?, ?, ?, ?, ? ${parent}`, dp.drop_seq, dp.weight_kg, dp.reps, dp.assist_reps, dp.forced, sid));
-      }
-    }
-  });
+  const { rows, nSets, nDrops } = trainingRows(sid, tr);
   return runWrite(c, {
     action: 'k_addTraining', section: 'training', customerId: cid,
     payload: { v: 2, cid, date, items: trainingHashItems(tr.items), member },
@@ -844,6 +872,89 @@ async function deleteTraining(c) {
             WHERE session_id = ? AND deleted_at IS NULL`, now, tid, now, sid),
       ],
       result: { sessionId: sid, deleted: true },
+    }),
+  });
+}
+
+// ================================================================ 保存した記録を直す（設計58）
+/**
+ * k_editTraining の本体の文（設計58 §3-4）。★純粋な関数＝検査が文を1つだけ差し替えて本物の SQLite に流せる（T5）
+ *   置き換え：新しい session を作り（顧客・作者・作成時刻は古い行から写す）・子の行を入れ・古い session を論理削除し・
+ *   「お客様へ」の枚を新しい session に付け替える。1つの batch ＝全部か無か。前の版は論理削除した行として残る
+ *   引数：{ old, rev, sid（新しい id）, cid（古い行から読んだ顧客）, tid, now, date, tr（normalizeTraining の結果）, who }
+ *   返す値：{ stmts, nSets, nDrops }
+ */
+export function editTrainingStmts(a) {
+  const { old, rev, sid, cid, tid, now, date, tr, who } = a;
+  const { rows, nSets, nDrops } = trainingRows(sid, tr);
+  const stmts = [
+    // 1〜4 見張り：生きている・作者本人かオーナー・rev・顧客が実在
+    G.rowLive('karte_tr_sessions', 'session_id', old),
+    G.author('karte_tr_sessions', 'session_id', old, 'author_trainer_id', who),
+    G.rev('karte_tr_sessions', 'session_id', old, rev),
+    G.target(cid),
+    // 5 監査：中身は入れない（中身は論理削除した古い行に残る）
+    S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at, reason)
+       SELECT 'karte_tr_sessions', session_id, rev, json_object('replaced_by', ?, 'session_date', session_date), ?, ?, 'edit'
+         FROM karte_tr_sessions WHERE session_id = ?`, sid, tid, now, old),
+    // 6 新しい session：顧客・作者・作成時刻は古い行から（要求から取らない＝別の顧客に付かない・同じ日の並びが変わらない）
+    S(`INSERT INTO karte_tr_sessions (session_id, customer_id, session_date, author_trainer_id, rev, created_at)
+       SELECT ?, customer_id, ?, author_trainer_id, 1, created_at FROM karte_tr_sessions
+        WHERE session_id = ? AND rev = ? AND deleted_at IS NULL`, sid, date, old, Number(rev)),
+    // 7 見張り：6 が0行なら子の行だけが入らないように全体を戻す
+    S(`INSERT INTO karte_guard (state) SELECT 1 WHERE NOT EXISTS (
+         SELECT 1 FROM karte_tr_sessions WHERE session_id = ? AND customer_id = ? AND deleted_at IS NULL)`, sid, cid),
+    // 8 子の行（k_addTraining と同じ）
+    ...rows,
+    // 9 古い版を論理削除
+    S(`UPDATE karte_tr_sessions SET deleted_at = ?, deleted_by = ?, rev = rev + 1
+        WHERE session_id = ? AND rev = ? AND deleted_at IS NULL`, now, tid, old, Number(rev)),
+    // 10 見張り：9 が0行なら全体を戻す
+    S(`INSERT INTO karte_guard (state) SELECT 1 WHERE NOT EXISTS (
+         SELECT 1 FROM karte_tr_sessions WHERE session_id = ? AND deleted_at = ? AND rev = ?)`, old, now, Number(rev) + 1),
+    // 11 「お客様へ」を新しい session に付け替える（日付も合わせる）。rev を上げる＝開いていた「直す」は 409 で読み直し
+    S(`UPDATE karte_member_notes SET session_id = ?, session_date = ?, rev = rev + 1, updated_at = ?, updated_by = ?
+        WHERE session_id = ? AND deleted_at IS NULL`, sid, date, now, tid, old),
+    // 12 見張り：古い・新しい session を指す生きた枚が、生きた session（同じ顧客・同じ日付）を指していなければ戻す
+    S(`INSERT INTO karte_guard (target) SELECT 1 FROM karte_member_notes m
+        WHERE m.session_id IN (?, ?) AND m.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM karte_tr_sessions s
+                           WHERE s.session_id = m.session_id AND s.customer_id = m.customer_id
+                             AND s.session_date = m.session_date AND s.deleted_at IS NULL)`, old, sid),
+    // 13 形の見張り（k_addTraining と同じ）
+    G.trShape(sid, { sets: nSets, drops: nDrops, exercises: tr.items.length }),
+  ];
+  return { stmts, nSets, nDrops };
+}
+
+async function editTraining(c) {
+  const b = c.body, L = KARTE_LIMITS;
+  //   ★顧客と「お客様へ」は受け取らない（顧客・作者は古い行から・お客様への中身は k_saveMemberNote が正本）
+  if (has(b, 'customerId') || has(b, 'member')) return err('BAD_REQUEST', 400, 'SHAPE');
+  const old = String(b.sessionId || '');
+  const r = old ? await c.env.DB.prepare('SELECT customer_id, author_trainer_id FROM karte_tr_sessions WHERE session_id = ?').bind(old).first() : null;
+  const cid = r ? String(r.customer_id) : '';
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const rev = b.rev;
+  if (!Number.isInteger(rev) || rev <= 0) return err('BAD_REQUEST', 400, 'rev');
+  let tr;
+  try {
+    if (!isPastOrToday(b.sessionDate)) throw new RangeError('BAD_DATE');
+    tr = normalizeTraining(b.items);
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  if (tr.total > L.TOTAL_SETS) return err('TOTAL_SETS', 400);
+  const tid = String(c.who.trainerId || '');
+  const override = c.who.role === 'owner' && String(r.author_trainer_id || '') !== tid;
+  const sid = newId();
+  const date = String(b.sessionDate);
+  return runWrite(c, {
+    action: 'k_editTraining', section: override ? 'training_owner_override' : 'training', customerId: cid,
+    payload: { v: 1, sid: old, rev, date, items: trainingHashItems(tr.items) },
+    extUsed: tr.extUsed,
+    editGate: true,
+    plan: (now) => ({
+      stmts: editTrainingStmts({ old, rev, sid, cid, tid, now, date, tr, who: c.who }).stmts,
+      result: { sessionId: sid, rev: 1, replaced: old },
     }),
   });
 }
@@ -1333,7 +1444,8 @@ async function training(c) {
     ).bind(...(before ? [cid, before] : [cid])).all();
     const sessions = ss.results || [];
     const aiConsent = await aiConsentFor(c.env, c.who, cid);   // 設計44：画面の補助（関門は k_aiDraft の中）
-    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, sessions: [], best: [] };   // ★空でも版を返す
+    const trainingEdit = trainingEditOn(c.env, c.who);   // 設計58：［編集］を出すか（真偽値だけ）
+    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit, sessions: [], best: [] };   // ★空でも版を返す
     //   ★3つの表（種目の並び・付加・ドロップ）は生きた session の id を通してだけ読む（設計38 I70）
     const ids = sessions.map((x) => x.session_id);
     const ph = ids.map(() => '?').join(',');
@@ -1379,7 +1491,7 @@ async function training(c) {
       }
       for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
     }
-    return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent,   // 設計39：AI の振り分けのボタンを出すか（真偽値だけ）
+    return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit,   // 設計39・設計58：AI の振り分けのボタンを出すか（真偽値だけ）
              sessions: sessions.map((x) => (exBy[x.session_id]
                ? { ...x, sets: by[x.session_id] || [], exercises: exBy[x.session_id] }
                : { ...x, sets: by[x.session_id] || [] })), best };
@@ -1587,6 +1699,7 @@ export const KARTE_HANDLERS = {
   k_deleteNote: deleteNote,
   k_addTraining: addTraining,
   k_deleteTraining: deleteTraining,
+  k_editTraining: editTraining,
   k_addMeasurement: addMeasurement,
   k_deleteMeasurement: deleteMeasurement,
   k_saveGoalLine: saveGoalLine,

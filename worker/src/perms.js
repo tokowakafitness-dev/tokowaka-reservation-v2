@@ -99,6 +99,8 @@ const TABLE = {
   'k_deleteNote':       ['trainer'],
   'k_addTraining':      ['trainer'],
   'k_deleteTraining':   ['trainer'],
+  //   保存した記録を直す（設計58）。isKarteWrite に当たる名前（edit）＝Origin・トークン1時間の守り。切替 KARTE_TRAINING_EDIT
+  'k_editTraining':     ['trainer'],
   'k_addMeasurement':   ['trainer'],
   'k_deleteMeasurement':['trainer'],
   'k_saveGoalLine':     ['trainer'],
