@@ -450,6 +450,31 @@ setEnv(V2);
 }
 
 {
+  //   V2-33 設計61：お客様へのふり返りの組み立て。語の有無でなく「5. の1行の中に、この順で在る」ことを見る（位置で守る）
+  const { AI_SYSTEM_V2 } = await import('../src/routes/karte-ai-v2.js');
+  const line5 = AI_SYSTEM_V2.split('\n').filter((l) => l.startsWith('5. member_message＝'));
+  ok('V2-33 5. の行は1行だけ', line5.length === 1, String(line5.length));
+  const l5 = line5[0] || '';
+  const marks = ['（400字まで）', 'です・ます調', '①今日行った主な内容', '②よくできた点', '要約して入れる', '引用しない', '③次回に向けて意識すること', '根拠が無い項目は省き', '空文字にする', '文字起こしに無いことは書かない', '話した数字だけ', '体の状態', '書かない（caution にだけ書く）', 'member_todo＝', 'トレーナーが頼んだ・勧めたことだけ'];
+  const at = marks.map((m) => l5.indexOf(m));
+  const inOrder = at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1]));
+  ok('V2-33 ★構成①②③・出典・体の状態を書かない・todo の出典が5. の行の中にこの順で在る', inOrder, marks.map((m, i) => m + '@' + at[i]).join(' '));
+  ok('V2-33 ★体の状態の禁止は member_todo より前（member_message の規則として在る）', l5.indexOf('体の状態') >= 0 && l5.indexOf('体の状態') < l5.indexOf('member_todo＝'));
+  //   長いふり返りに健康語が1語でもあれば、文は丸ごと caution へ（欄は空・お客様に出る側へ残さない）
+  setEnv(V2);
+  const longMsg = '今日はスクワットとベンチプレスを行いました。スクワットは膝の向きを意識でき、フォームが安定してきました。途中で腰に違和感があると話されたので重さを控えました。次回はお尻を引く動きを意識しましょう。';
+  reply = () => ({ draft: Object.assign(okDraft(), { member_message: longMsg, caution: [] }) });
+  const r = await call({ client_ai_format: 2 });
+  ok('V2-33 ★長いふり返りに健康語 → member_message は空', r.status === 200 && r.draft.member_message === '', JSON.stringify(r.draft && r.draft.member_message));
+  ok('V2-33 ★移した文は caution に全文で在る（トレーナーには見える）', r.draft && r.draft.caution.includes(longMsg), JSON.stringify(r.draft && r.draft.caution));
+  const okMsg = '今日はスクワットを行いました。膝の向きを意識でき、フォームが安定してきました。次回はお尻を引く動きを意識しましょう。';
+  reply = () => ({ draft: Object.assign(okDraft(), { member_message: okMsg, caution: [] }) });
+  const r2 = await call({ client_ai_format: 2 });
+  ok('V2-33 健康語が無ければ member_message はそのまま返る', r2.status === 200 && r2.draft.member_message === okMsg, JSON.stringify(r2.draft && r2.draft.member_message));
+  reply = null;
+}
+
+{
   //   関門② 1・2・3：同じ根拠が何か所にもある／inferred の自重／unclear の根拠
   setEnv(V2);
   const S = (weight_kg, reps, basis, evidence, extra) => Object.assign({ weight_kg, bodyweight: false, reps, basis, evidence, unsure: '', note: '' }, extra || {});
