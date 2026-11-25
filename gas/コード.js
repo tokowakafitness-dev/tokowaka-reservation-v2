@@ -192,6 +192,10 @@ var LB_SLOTS_BUILT_AT_LOCAL = 0;
 //     （読み終えの時刻では、書き込みより前に読み始めて後に読み終えた枠を新しいと取り違える）
 var LB_SLOTS_READ_START_LOCAL = 0;
 
+//   ★この実行で buildAvailableSlots が読んだ出勤とカレンダーが読めなかったトレーナー（設計57）。
+//     日次点検の「翌月の空き枠の見張り」が、同じ読みを使い回して出勤の日数を数えるためだけに持つ（顧客へ出す値には使わない）。
+var LB_SLOTS_READ_LOCAL = null;
+
 function buildAndCacheSlots() {
   var _readStart = Date.now();
   var slots = buildAvailableSlots();
@@ -386,11 +390,13 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
   var trainerShifts   = {};
   var trainerReserved = {};
   var trainerEvTitled = {};   // 連続ルール（on のときだけ）
+  var _readUnread = [];       // 設計57：カレンダーが読めなかったトレーナー
 
   for (var t = 0; t < CALENDAR_IDS.TRAINERS.length; t++) {
     var tr  = CALENDAR_IDS.TRAINERS[t];
     var cal = CalendarApp.getCalendarById(tr.email);
     if (!cal) {
+      _readUnread.push(String(tr.id));   // 設計57：読めなかった（0日とは数えない）
       Logger.log('カレンダー取得失敗: ' + tr.name);
       trainerShifts[tr.id]   = [];
       trainerReserved[tr.id] = [];
@@ -416,6 +422,7 @@ function buildAvailableSlots(excludeStartMs, nowMsOpt) {
     Logger.log(tr.name + ': 出勤可能=' + shifts.length + '件 / 予約済=' + reserved.length + '件');
   }
 
+  LB_SLOTS_READ_LOCAL = { shifts: trainerShifts, unread: _readUnread };   // 設計57：読んだものを渡すだけ（枠の計算は変えない）
   _wlap('トレーナーgetEvents(3名)');
   var allSlots  = [];
   var sessionMs = SETTINGS.SESSION_MINUTES * 60000;

@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
 import { pluckFnFrom as pluckFn, pluckVarFrom as pluckVar } from './_gas-lock-src.js';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -15,6 +16,8 @@ const GAS = process.env.GAS_DIR || join(ROOT, 'gas');
 export const LB = readFileSync(join(GAS, 'LineBooking.js'), 'utf8');
 export const NUDGE = readFileSync(join(GAS, 'Nudge.js'), 'utf8');
 const ALLOC = readFileSync(join(GAS, 'Allocate.js'), 'utf8');
+const CODE = readFileSync(join(GAS, 'コード.js'), 'utf8');   // 設計57：枠の計算 buildAvailableSlots とその部品
+const BR = createRequire(import.meta.url)(join(GAS, 'BookingRules.js'));   // 締め切りの判定（module.exports を持つ）
 
 //   自己修理の塊（本物のソースの区切りで切る）
 export function healBlock(src = LB) {
@@ -137,9 +140,34 @@ export function makeCtx(w) {
     } });
     return b;
   };
+  //   ---- 設計57：カレンダーの身代わり（枠の計算 buildAvailableSlots は本物を動かす）----
+  //   既定＝「いまの翌月に B の出勤（10:00〜20:00）が毎日（1〜28日）」。w.data.nmo で上書きする
+  //     { events: { B: [{title, start, end}], B1: [...] }, calNull: ['C'], calDelayMs: 1本の読みにかかる ms }   ★公開シートは身代わりを置かない（読んだら落ちる）
+  const nmoDefaultShifts = () => {
+    const j = new Date(w.now + JST), y = j.getUTCFullYear(), m = j.getUTCMonth() + 1;   // 翌月（JST）
+    const out = [];
+    for (let d = 1; d <= 28; d++) out.push({ title: '出勤', start: Date.UTC(y, m, d, 10 - 9, 0), end: Date.UTC(y, m, d, 20 - 9, 0) });
+    return out;
+  };
+  const nmo = () => w.data.nmo || {};
+  const nmoCal = (id) => {
+    const o = nmo(), tid = String(id).replace('cal-', '').toUpperCase();
+    if ((o.calNull || []).indexOf(tid) >= 0) return null;
+    const evs = o.events ? (o.events[tid] || []) : (tid === 'B' ? nmoDefaultShifts() : []);
+    return { getEvents: (from, to) => { w.calReads = (w.calReads || []).concat([[tid, from.getTime(), to.getTime()]]);
+      if (o.calDelayMs) w.now += o.calDelayMs;   // 遅いカレンダー（読むたびに時計を進める）
+      return evs.filter((e) => e.start < to.getTime() && (e.end || e.start + 3600000) > from.getTime())
+        .map((e) => ({ getTitle: () => e.title, getStartTime: () => new FD(e.start), getEndTime: () => new FD(e.end || e.start + 3600000) })); } };
+  };
   const ctx = {
     String, Number, isNaN, isFinite, Math, JSON, Object, Array, RegExp, Error, Date: FD, parseInt,
-    SETTINGS: { TIMEZONE: 'Asia/Tokyo', SPREADSHEET_ID: 'x' },
+    SETTINGS: { TIMEZONE: 'Asia/Tokyo', SPREADSHEET_ID: 'x', SESSION_MINUTES: 60, TRIAL_SESSION_MINUTES: 90, PICKER_STEP_MINUTES: 15 },
+    //   設計57：翌月の空き枠の見張り。トレーナーは架空の記号だけ（A は非表示＝オーナーと同じ形）
+    CALENDAR_IDS: { CAPACITY_B1: 'cal-b1', TRAINERS: [{ id: 'A', name: 'A', email: 'cal-a', hidden: true }, { id: 'B', name: 'B', email: 'cal-b' }, { id: 'C', name: 'C', email: 'cal-c' }] },
+    //   ★公開シートは読まない（設計57 関門② 再審）。開いたら数えて落とす
+    SpreadsheetApp: { openById: hook('openById', () => { throw new Error('公開シートを開いてはいけない'); }) },
+    CalendarApp: { getCalendarById: hook('getCalendarById', (id) => nmoCal(id)) },
+    _lbBookingCfg: BR._lbBookingCfg, _lbBookingOpen: BR._lbBookingOpen,
     LINE_BOOKING: { TRAINER_SHEET: 'trainer_master', MAP_SHEET: 'customer_line_map' },
     TR_COL: { LINE_USER_ID: 1, TRAINER_ID: 2, NAME: 3, ROLE: 4, ACTIVE: 5, NAME_EN: 6 },
     Logger: { log: () => {} },
@@ -201,6 +229,11 @@ export function makeCtx(w) {
     LB.slice(LB.indexOf('\nvar LB_CN = {'), LB.indexOf('\n//   見出しの確認。', LB.indexOf('\nvar LB_CN = {'))),
     pluckFn(LB, '_lbCnReady'), pluckFn(LB, '_lbCnHealth'), pluckFn(LB, 'setupCancelNotesSheet'),
     pluckFn(LB, 'dailyHealthCheck'), pluckFn(LB, 'runHealthCheckDryRun'),
+    pluckFn(LB, '_lbBookingHorizonEnd'), pluckVar(LB, 'LB_NMO'), pluckFn(LB, '_lbNextMonthRange'), pluckFn(LB, '_lbNextMonthOpenRead'),
+    pluckFn(LB, 'lbNextMonthOpenCheck'), pluckFn(CODE, 'isShiftEvent'),
+    //   枠の計算は本物（コード.js）。書き込み（buildAndCacheSlots・writeToSpreadsheet）は取り込まない
+    pluckVar(CODE, 'LB_SLOTS_READ_LOCAL'), pluckFn(CODE, 'buildAvailableSlots'), pluckFn(CODE, '_lbSubtractIntervals'),
+    pluckFn(CODE, '_lbMakeSlot'), pluckFn(CODE, '_lbIsBusyTitle'), pluckFn(LB, '_lbOwnerSlotWindow'), pluckFn(LB, '_lbInOwnerWindow'),
     healBlock(),
   ].join('\n');
   vm.runInContext(src, ctx);

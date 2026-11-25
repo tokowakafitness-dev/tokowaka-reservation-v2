@@ -1,5 +1,5 @@
 # 予約システム 点検項目の振り分け（保全部隊の手当表の元）
-最終更新：2026-11-23（第3版：P1 の実装で足した見張り3つ・このリポジトリへ写した。第2版：A を 15→2 に絞った・P1 設計 関門①2回目。初版は`gas/LineBooking.js` の `dailyHealthCheck` の `add()` 76個を機械で抜き出して振り分け）
+最終更新：2026-11-25（第4版：設計57 の翌月の空き枠の見張り4つを足した。第3版 2026-11-23：P1 の実装で足した見張り3つ・このリポジトリへ写した。第2版：A を 15→2 に絞った・P1 設計 関門①2回目。初版は`gas/LineBooking.js` の `dailyHealthCheck` の `add()` 76個を機械で抜き出して振り分け）
 
 > ★**この表が正本**（会社側の同名の文書は案内だけ・CEO 裁定 2026-11-23）。`gas/LineBooking.js` の `LB_TRIAGE` と1対1（`worker/test/self-heal-triage.test.js` が機械で突き合わせる・I-H10）。
 > 　どちらかを変えたら両方を同じ変更で直す。表に無い key は B として扱う（段は add した時の段）。
@@ -25,9 +25,9 @@ P1 設計（`design-self-heal-P1.md` 第5版・関門①4回目で条件付き�
 | gen_behind_stuck / gen_write_behind / gen_behind_no_time / gen_write_behind_no_time | `lbDwEnsureQueued` に渡す会員番号の出どころが無い |
 | reminder_stale・notify_retry_stalled・pace_fail・shadow_sweep_stale / shadow_sweep_expired / shadow_sweep_short | 手当ての関数の副作用が未確認。確かめて A に上げるのは P1 の後 |
 
-## A→B　点検そのものが失敗した（15）
+## A→B　点検そのものが失敗した（16）
 1回だけ点検をやり直す。続けて失敗したらコードの不具合として B。
-datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_read_fail・shadow_sweep_read_fail・trigger_check_fail・pending_payment_check_fail・dualwrite_check_fail・calslots_check_fail・karte_ai_check_fail・contract_input_check_fail・cancel_notes_check_fail・d1_allow_unreadable・ws_check_fail
+datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_read_fail・shadow_sweep_read_fail・trigger_check_fail・pending_payment_check_fail・dualwrite_check_fail・calslots_check_fail・karte_ai_check_fail・contract_input_check_fail・cancel_notes_check_fail・d1_allow_unreadable・ws_check_fail・next_month_check_fail
 
 ## B　部隊が判断する・名前は要らない（25）
 | key | 何を見るか |
@@ -66,7 +66,7 @@ datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_r
 ## 記録だけ（info・案件にしない）（8）
 cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・member_nocontract（●）・resv_future・transfer_seen
 
-## P1 で足した key（5）＋設計54 S1a で足した key（8）
+## P1 で足した key（5）＋設計54 S1a で足した key（8）＋設計57 で足した key（3）
 | key | 区分 | 何を見るか |
 |---|---|---|
 | health_skipped | B | 点検・修理が重なって見送られた（借りる印・design-self-heal-P1 §2-1）。オーナーへのメールにも載る |
@@ -82,11 +82,15 @@ cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・
 | metrics_unprotected | B | 設計54：booking_metrics の保護が無い・崩れた・行が動いた（送る側は止まる） |
 | metrics_protect_blocked | B | 設計54：書き手が同じアカウントか確かめられず保護を置かなかった |
 | metrics_write_fail | B | 設計54：booking_metrics に書けなかった（失敗の記録 LB_METRICS_WRITE_FAIL か、台帳の前日の確定と outcome の比較）。**日次点検の段の中で印つきの保護を外して元に戻す**（「元に戻す」なので A の条件に当たるが、lbSelfHeal の修理ではなく点検の段で行うため区分は B。LB_HEAL_KEYS・I-H12 は変えない） |
+| next_month_slots_none | B | 設計57：25日以降、日次点検の中で枠の計算（buildAvailableSlots・書き込みなし）を翌月だけで呼び、顧客向け（非表示でない）トレーナーの空き枠のある日が0日。出勤のある日数（トレーナーの記号ごと）を並べる。facts は no_shift（出勤も0日＝入れ忘れの見込み）／not_covered（出勤はあるのに枠が0＝予定名か予約・ブロックで埋まっている）。手当ては出勤の入力の確認（トレーナーへの連絡）＝顧客の枠に直結するので B |
+| next_month_slots_unknown | B | 設計57：顧客向けトレーナーのカレンダーが1本でも読めない（読んだ記録が無いも同じ）・日次点検の時間が足りない＝判定できない（0日とは言わない）。facts は cal_unreadable／no_time |
+| next_month_open | 記録 | 設計57：25日以降、翌月の顧客向けの枠のある日数（件数＝日数）と出勤のある日数。案件にしない |
 
 ## 数え（90）
 A 2 ＋ B へ移した 13 ＋ A→B 14 ＋ B 25 ＋ B（名前）8 ＋ C 6 ＋ 記録 8 ＝ **76**（抜き出した74 key ＋ `_ppKey` の2種）。
 ＋ P1 で足した 5（2026-11-24 に heal_save_fail・selfheal_watch_fail を足した）＝ 81。
-＋ 設計54 S1a で足した 9（表の8・A→B の ws_check_fail）＝ **90**（2026-11-24・ws_erase_stuck は関門② 再審3回目）。
+＋ 設計54 S1a で足した 9（表の8・A→B の ws_check_fail）＝ 90（2026-11-24・ws_erase_stuck は関門② 再審3回目）。
+＋ 設計57 で足した 4（表の3・A→B の next_month_check_fail）＝ **94**（2026-11-25）。
 子の点検（calslots・karte_ai・contract_input）が出す細かい項目は未分類＝P1 で足す。
 
 ## 未確認
