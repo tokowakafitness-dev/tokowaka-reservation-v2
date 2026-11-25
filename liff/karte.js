@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-24g 同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-25f 保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -333,9 +333,9 @@
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}',
     //   ---- 設計38：メモから取り込む・補助/無理やり/ドロップ/実施
     //   畳んだ種目の行：開くボタンの右に「全部✓」「実施した」（1種目1タップで確かめる）
-    '#karteRoot .k-exline{display:flex;align-items:stretch;gap:8px;margin-bottom:10px;}',
+    '#karteRoot .k-exline{display:flex;align-items:center;gap:6px;margin-bottom:10px;}',   // 2026-11-25 オーナー：つまみは左・全部✓は右・どちらも小さく（行の高さに伸ばさない）
     '#karteRoot .k-exline .k-excol{margin-bottom:0;flex:1;min-width:0;}',
-    '#karteRoot .k-allchk{min-width:64px;min-height:44px;padding:0 10px;border-radius:12px;border:1.5px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-size:14px;font-weight:700;font-family:inherit;white-space:nowrap;}',
+    '#karteRoot .k-allchk{flex:none;min-width:44px;min-height:44px;padding:0 6px;border-radius:10px;border:1px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap;}',
     '#karteRoot .k-donechk{min-width:48px;min-height:48px;padding:0 12px;border-radius:12px;font-size:15px;font-weight:700;font-family:inherit;white-space:nowrap;background:#fff;color:#5b6661;border:1px solid #8692a6;}',
     '#karteRoot .k-donechk[aria-pressed=true]{background:#243b66;color:#fff;border-color:#243b66;}',
     '#karteRoot .k-frommemo{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--k-gold-l);color:#6b5427;white-space:nowrap;}',
@@ -501,12 +501,15 @@
   //     ★印（REAUTH_KEY）は新しいトークンで書けたときに消す（doneWrite）。印が効いているあいだにまた古ければ案内（入力は端末に残る）
   function reauth(draft) {
     //   ★トレーニングの送信中に別の顧客を開いていたら、読み直さない（その顧客の画面を奪わない・下書きの pending は端末に残る）
-    if (draft && draft.kind === 'training' && draft.customerId && draft.customerId !== cur.customerId) return Promise.resolve({ success: false, code: 'BAD_RESPONSE' });
+    if (draft && (draft.kind === 'training' || draft.kind === 'trainingEdit') && draft.customerId && draft.customerId !== cur.customerId) return Promise.resolve({ success: false, code: 'BAD_RESPONSE' });
     try {
       if (!reauthMarked()) {
         sessionStorage.setItem(REAUTH_KEY, String(Date.now()));
-        var isTr = !!(draft && draft.kind === 'training');
-        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ customerId: isTr ? draft.customerId : cur.customerId, name: '', tab: (draft && draft.tab) || (isTr ? 'training' : cur.tab), draft: isTr ? (draft.ex ? { kind: 'training', ex: draft.ex } : { kind: 'training' }) : (draft || null), at: Date.now() }));   // ★氏名は残さない（どの画面も・開き直したら概要から取る）。トレーニングの中身は下書き（localStorage）にある
+        var isTr = !!(draft && (draft.kind === 'training' || draft.kind === 'trainingEdit'));
+        //   設計58：直す画面からの退避は kind:'trainingEdit' と直す元の session_id（読み直したら直す画面に戻る＝今日の記録の画面を開かない）
+        var trD = !isTr ? null : (draft.kind === 'trainingEdit' ? { kind: 'trainingEdit', sid: String(draft.sid || '') } : { kind: 'training' });
+        if (trD && draft.ex) trD.ex = draft.ex;
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ customerId: isTr ? draft.customerId : cur.customerId, name: '', tab: (draft && draft.tab) || (isTr ? 'training' : cur.tab), draft: isTr ? trD : (draft || null), at: Date.now() }));   // ★氏名は残さない（どの画面も・開き直したら概要から取る）。トレーニングの中身は下書き（localStorage）にある
         try { if (window.liff && typeof liff.logout === 'function' && typeof liff.isInClient === 'function' && liff.isInClient() === false) liff.logout(); } catch (e) {}
         reloadPage();
         return new Promise(function () {});
@@ -601,6 +604,7 @@
   function navState() { return (window.history && history.state && history.state.karte) ? history.state : null; }
   function navPush(st, mode) {
     gripCancel();   // 設計53 関門②：画面を移るときは動かしている途中のつまみを捨てる
+    edDisposeCur();   // 設計58：直す画面の購読を外す（戻る・進む・別の画面でも必ずここを通る）
     if (mode === 'none' || nav.restoring || !window.history || !history.pushState) return;
     var curSt = navState();
     try {
@@ -637,7 +641,7 @@
     nav.i = st.i; nav.restoring = true;
     try {
       if (st.board) openBoard(null, null, 'none');
-      else open(st.cid, st.cid === cur.customerId ? cur.name : '', st.tab, st.sub ? { kind: 'sub', sub: st.sub, navMode: 'none' } : null, 'none');
+      else open(st.cid, st.cid === cur.customerId ? cur.name : '', st.tab, st.sub ? { kind: 'sub', sub: st.sub, sid: st.sid, navMode: 'none' } : null, 'none');   // sid＝直す画面（設計58）
     } finally { nav.restoring = false; }
     if (st.scroll) restoreScroll(st.scroll, st);
   }
@@ -719,6 +723,7 @@
     return root;
   }
   function close() {
+    edDisposeCur();   // 設計58
     cur.pickPlace = null;   // 設計55 関門②：種目の欄の帯の位置合わせは記録の画面の間だけ
     gripCancel();
     restStop();
@@ -1390,15 +1395,55 @@
   function lsGet(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  //   ---- 設計58：保存した記録を直す。下書きは今日の下書きと別の鍵（トレーナー×顧客に1つ・24時間）
+  //     ★今日の下書き（karte_tr_draft_v1）は直す画面では読まない・書かない・消さない（I87）
+  var TR_EDIT_PREFIX = 'karte_tr_edit_v1:';
+  var ED_EVT = 'karte-edit-draft';
+  function edKey(tid, cid) { return TR_EDIT_PREFIX + String(tid || '') + ':' + String(cid || ''); }
+  function edRaw(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  /** 直す下書きを書く・消す（next が null なら消す）のはここだけ。書いた後に同じ document へも通知する（storage は書いた window に届かない・§4-8） */
+  function edStore(k, next, src) {
+    var oldRaw = edRaw(k), ok = true;
+    if (next == null) lsDel(k); else ok = lsSet(k, next);
+    if (!ok) return false;
+    try { document.dispatchEvent(new CustomEvent(ED_EVT, { detail: { key: k, oldValue: oldRaw, newValue: edRaw(k), sourceFormId: src || '' } })); } catch (e) {}
+    return true;
+  }
+  //   いま開いている直す画面の後始末（購読を外す）。navPush・close から必ず呼ぶ
+  function edDisposeCur() { var f = cur.edDispose; cur.edDispose = null; if (typeof f === 'function') { try { f(); } catch (e) {} } }
+  /** その回が新しい鍵を「値として」使っているか（k_training は新しい形の回の全セットに assist_reps:null・forced:false・drops:[] を返す＝鍵の有無では決めない） */
+  function sessUsesExt(x) {
+    if (!x) return false;
+    if (Array.isArray(x.exercises) && x.exercises.some(function (e) { return e && e.doneOnly === true; })) return true;
+    return (x.sets || []).some(function (st) { return st.assist_reps != null || st.forced === true || (Array.isArray(st.drops) && st.drops.length > 0); });
+  }
+  /** k_training の1回 → 直す下書きの items（§4-4）。記録済みのセットは ✓ 済み（I57 の例外・I88）。印の無い鍵は作らない */
+  function sessToItems(x) {
+    function setOf(st, isDrop) {
+      var o = { w: isBw(st.weight_kg) ? '' : st.weight_kg, r: String(st.reps) };
+      if (!isDrop) { o.done = true; if (st.note) o.note = String(st.note); }
+      if (st.assist_reps != null) o.assist = st.assist_reps;
+      if (st.forced === true) o.forced = true;
+      if (!isDrop && Array.isArray(st.drops) && st.drops.length) o.drops = st.drops.map(function (d) { return setOf(d, true); });
+      return o;
+    }
+    return exOrder(x).groups.map(function (g) {
+      var it = { exercise: String(g.exercise), sets: g.sets.map(function (st) { return setOf(st, false); }) };
+      if (g.doneOnly === true && !g.sets.length) it.doneOnly = true;
+      return it;
+    });
+  }
+  /** 「変更はありません」を見分けるための、送る中身の形（日付＋buildPayload） */
+  function edBase(date, items) { return JSON.stringify({ d: String(date || ''), items: buildPayload(items) }); }
   //   期限切れの下書きを実際に消す（開くたび）
   function purgeTrDrafts() {
     try {
       var dead = [];
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf(TR_DRAFT_PREFIX) === 0) { var v = lsGet(k); if (!v || Date.now() - Number(v.at || 0) > TR_DRAFT_TTL) dead.push(k); }
+        if (k && (k.indexOf(TR_DRAFT_PREFIX) === 0 || k.indexOf(TR_EDIT_PREFIX) === 0)) { var v = lsGet(k); if (!v || Date.now() - Number(v.at || 0) > TR_DRAFT_TTL) dead.push(k); }
       }
-      dead.forEach(lsDel);
+      dead.forEach(function (k) { if (k.indexOf(TR_EDIT_PREFIX) === 0) edStore(k, null, 'purge'); else lsDel(k); });   // 直す下書きは通知つき（開いている画面が気づく）
     } catch (e) {}
     purgeAiReviews();   // 設計51
   }
@@ -2094,7 +2139,7 @@
    */
   function makeGrip(o) {
     var b = el('button', { type: 'button', class: 'k-grip', 'data-idx': String(o.index), 'aria-label': o.label + 'の順番を変える（上下の矢印キーでも動かせます）', 'data-nodirty': '1',
-      style: 'min-width:44px;min-height:44px;flex:none;border:1px solid #c9ced8;border-radius:10px;background:#fff;color:#5b6577;font-size:20px;line-height:1;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;', text: '≡' });
+      style: 'min-width:44px;min-height:44px;flex:none;border:0;border-radius:10px;background:transparent;color:#8692a6;font-size:18px;line-height:1;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;', text: '≡' });
     b.onkeydown = function (e) {
       var k = e.key, to = k === 'ArrowUp' ? o.index - 1 : k === 'ArrowDown' ? o.index + 1 : null;
       if (to == null) return;
@@ -2208,7 +2253,10 @@
       cur.trSchema = r.karteSchema;   // 指導メモのタグを送ってよいか（今日の記録の中の指導メモ）
       cur.aiDraft = r.aiDraft === true;   // 設計39：AI の振り分けのボタンを出すか（Worker の切替が開き鍵があるときだけ真）
       cur.aiConsent = typeof r.aiConsent === 'string' ? r.aiConsent : 'unknown';   // 設計44：その会員の録音・AI の同意（画面の補助。関門は Worker）
+      cur.trEdit = r.trainingEdit === true;   // 設計58：［編集］を出すか（Worker の切替。古い Worker は鍵が無い＝出さない）
       var sessions = r.sessions || [];
+      //   設計58：直す画面（ログインの取り直し・戻る・進むから）
+      if (draft && (draft.kind === 'trainingEdit' || (draft.kind === 'sub' && draft.sub === 'tredit'))) { trainingEditSub(box, sessions, String(draft.sid || ''), draft.navMode, draft.kind === 'trainingEdit' ? draft.ex : null); return; }
       //   ★今日の記録は専用の画面（2026-11-05 モックどおり）。読み直し後の復元・戻る/進むでも専用画面を開き直す
       if (draft && (draft.kind === 'training' || (draft.kind === 'sub' && draft.sub === 'trform'))) { trainingSub(box, sessions, draft.navMode, draft.kind === 'training' ? draft.ex : null); return; }
       if (draft && draft.kind === 'sub' && draft.sub === 'trpick') { trPickSub(sessions, draft.navMode); return; }
@@ -2218,6 +2266,9 @@
       if (d0 && !(d0.pending || d0.memoPending || (d0.items || []).length || String(d0.memo || '').trim())) d0 = null;
       box.appendChild(el('button', { class: 'k-btn', text: d0 ? '記録の入力（途中）を開く' : '＋ 今日の記録', onclick: function () { trainingSub(box, sessions); } }));
       if (d0) box.appendChild(el('div', { class: 'k-sub', text: '入力の途中の記録があります（この端末に最大24時間残ります）。' }));
+      //   設計58：直しかけがあれば知らせる（自動では開かない）
+      var e0 = lsGet(edKey((window.state && state.trainerId) || '', cur.customerId));
+      if (e0 && e0.editOf && e0.cid === cur.customerId) box.appendChild(el('button', { type: 'button', class: 'k-btn out k-edresume', text: md(e0.sessionDate) + ' の記録を直している途中です（開く）', onclick: function () { trainingEditSub(box, sessions, String(e0.editOf)); } }));
       trainingViews(box, sessions);
       //   開き直したら入力の途中に戻す（従来どおり）。ただし戻る・進むで来たときは開かない
       if (d0 && !viaNav) trainingSub(box, sessions);
@@ -2246,6 +2297,39 @@
     entryHead('今日の記録を入れる', 'トレーニングの画面に戻る');
     box.appendChild(trainingForm(sessions, exRestore));
   }
+  //   設計58：保存した記録を直す（記録の画面を「この日の記録を直す」モードで開く。新しい画面は作らない）
+  function trainingEditSub(box, sessions, sid, mode, exRestore) {
+    navPush({ cid: cur.customerId, tab: 'training', sub: 'tredit', sid: sid }, mode);
+    box.innerHTML = '';
+    var x = (sessions || []).filter(function (s) { return String(s.session_id) === String(sid); })[0] || null;
+    var tid = String((window.state && state.trainerId) || ''), cid = cur.customerId, cname = cur.name, k = edKey(tid, cid);
+    if (!x) {
+      //   置き換え済み・削除済み（戻る・進む・直しかけの［開く］から）。送らない
+      entryHead('記録を直す', 'トレーニングの画面に戻る');
+      box.appendChild(msg('この記録はもうありません（直した結果が保存されたか、ほかで消されています）。日別の記録で確かめてください。'));
+      var E = lsGet(k);
+      if (E && String(E.editOf) === String(sid)) box.appendChild(el('button', { class: 'k-btn out k-danger k-eddiscard', text: '直しかけを破棄する', onclick: function () {
+        var cur0 = lsGet(k); if (cur0 && String(cur0.editOf) === String(sid)) edStore(k, null, 'sub');
+        open(cid, cname, 'training', null, 'replace');
+      } }));
+      box.appendChild(el('button', { class: 'k-btn out', text: '日別の記録を見る', onclick: function () { cur.wantDayView = cid; open(cid, cname, 'training', null, 'replace'); } }));
+      return;
+    }
+    entryHead(mdw(x.session_date) + ' の記録を直す', 'トレーニングの画面に戻る');
+    box.appendChild(trainingForm(sessions, exRestore, { edit: x }));
+  }
+  /** 日別の記録の［編集］：別の日の直しかけがあれば片づけてから開く（§4-3） */
+  function startEdit(box, sessions, x) {
+    var tid = String((window.state && state.trainerId) || ''), cid = cur.customerId, k = edKey(tid, cid);
+    var E = lsGet(k);
+    if (E && String(E.editOf) !== String(x.session_id)) {
+      if (E.pending) { window.alert(md(E.sessionDate) + ' の記録の直しの結果を確かめるまで、ほかの日は直せません。直しかけを開いて確かめてください。'); return; }
+      if (!window.confirm(md(E.sessionDate) + ' の直しかけを破棄して、この日を直しますか？')) return;
+      edStore(k, null, 'start');
+    }
+    trainingEditSub(box, sessions, String(x.session_id));
+  }
+
   //   過去の記録から写す（専用の画面・モック K3b）：前回の日を最初から選んでおく＝「写す画面を開く→写す」の2タップで前回から始められる
   //   ★写した結果は端末の下書きに書いてから記録の画面に戻る（下書きの仕組みをそのまま使う）
   function partsOf(sess) { var m = {}, out = []; function add(name) { var pt = partOf(name); if (!m[pt]) { m[pt] = 1; out.push(pt); } } (sess.sets || []).forEach(function (x) { add(x.exercise); }); if (isNewSess(sess)) sess.exercises.forEach(function (x) { if (x && x.exercise) add(x.exercise); }); return out; }
@@ -3644,18 +3728,102 @@
     }
     draw();
   }
-  function trainingForm(sessions, exRestore) {
+  //   opts.edit＝直す元の回（設計58）。あれば「この日の記録を直す」モード：下書きは別の鍵・送るのは k_editTraining だけ
+  function trainingForm(sessions, exRestore, opts) {
     var c = el('div', { class: 'k-trform' });
     var tid = String((window.state && state.trainerId) || ''), cid = cur.customerId, cname = cur.name;
+    var EX = opts && opts.edit ? opts.edit : null, EDIT = !!EX;
     //   ★鍵・顧客・名前はフォームを作った時点で固定する（送信中に別の顧客を開いても、その顧客の下書きを触らない・関門②）
-    var draftKey = TR_DRAFT_PREFIX + tid + ':' + cid;
+    var draftKey = EDIT ? edKey(tid, cid) : TR_DRAFT_PREFIX + tid + ':' + cid;
     var sending = false;
     function same() { return String((window.state && state.trainerId) || '') === tid && cur.customerId === cid; }
+    //   ログインの取り直しの退避（直す画面は直す画面に戻る・§4-7）
+    function trTag(extra) {
+      var t = EDIT ? { kind: 'trainingEdit', customerId: cid, sid: String(EX.session_id) } : { kind: 'training', customerId: cid };
+      if (extra) Object.keys(extra).forEach(function (k) { t[k] = extra[k]; });
+      return t;
+    }
     var D = lsGet(draftKey);
     if (D && (D.tid !== tid || D.cid !== cid || D.v !== 1)) D = null;
+    //   ---- 設計58 §4-8：直す下書きの持ち主（formId）と世代（ver）。後から開いた入力の画面が持ち主になる
+    var formId = newReqId(), edFrozen = false, edDisposed = false, edReadOnly = false, edSent = '', edNote = '';
+    if (EDIT) {
+      if (D && String(D.editOf) !== String(EX.session_id)) { c.appendChild(msg('ほかの日の記録を直している途中です。日別の記録から開き直してください。', true)); return c; }
+      if (D && !D.pending && Number(D.editRev) !== Number(EX.rev)) { edNote = 'ほかの端末で記録が変わっていたため、直しかけを破棄して最新の記録から開きました。'; D = null; }
+    }
     var restored = !!D;
+    if (EDIT && !D) {
+      D = { v: 1, tid: tid, cid: cid, mode: 'edit', editOf: String(EX.session_id), editRev: Number(EX.rev), sessionDate: String(EX.session_date),
+            items: sessToItems(EX), reqId: newReqId(), pending: null, at: Date.now(), owner: formId, ver: 0 };
+      D.base = edBase(D.sessionDate, D.items);
+    }
     if (!D) D = { v: 1, tid: tid, cid: cid, sessionDate: today(), items: [], reqId: newReqId(), pending: null, at: Date.now() };
-    function save() { D.at = Date.now(); var ok = lsSet(draftKey, D); if (!ok && note) note.textContent = 'この端末に下書きを残せません（保存するまで画面を閉じないでください）。'; return ok; }
+    if (EDIT) {
+      if (D.pending) edReadOnly = true;   // ★送り直しの画面は持ち主を取らない・何も書かない（§4-8）
+      else { D.owner = formId; D.ver = Number(D.ver || 0) + 1; D.at = Date.now(); if (!edStore(draftKey, D, formId)) { D.ver -= 1; } }   // このフォームの最初の書き込み（例外はこの1回だけ）
+    }
+    /** 直す下書きを書く：持ち主が自分・世代が同じときだけ（違えば凍結して書かない） */
+    function edSave() {
+      if (edFrozen || edDisposed || edReadOnly) return true;   // ★凍結・後始末の後は何も書かない（画面はもう使えない）
+      var st = lsGet(draftKey);
+      if (!st || st.owner !== formId || Number(st.ver) !== Number(D.ver)) { edFreeze('ほかの画面で変わりました。開き直してください。'); return true; }
+      D.ver = Number(D.ver) + 1; D.at = Date.now();
+      if (!edStore(draftKey, D, formId)) { D.ver -= 1; return false; }
+      return true;
+    }
+    function save() {
+      if (EDIT) { var ok1 = edSave(); if (!ok1 && note) note.textContent = 'この端末に下書きを残せません（保存するまで画面を閉じないでください）。'; return ok1; }
+      D.at = Date.now(); var ok = lsSet(draftKey, D); if (!ok && note) note.textContent = 'この端末に下書きを残せません（保存するまで画面を閉じないでください）。'; return ok;
+    }
+    //   凍結：このフォームを止め、理由と次の操作を出す（書かない・送らない）。購読も外す
+    function edFreeze(text, dayLink) {
+      if (edFrozen || edDisposed) return;
+      edFrozen = true; edDispose();
+      if (saveBtn && saveBtn.parentNode && saveBtn.classList.contains('k-hsave')) saveBtn.parentNode.removeChild(saveBtn);
+      try { if (picker) setPicker(false); } catch (e) {}
+      c.classList.remove('k-pickpad'); cur.pickPlace = null;
+      c.innerHTML = '';
+      c.appendChild(el('div', { class: 'k-caution k-edfrozen' }, [el('div', { class: 'k-h', text: text })]));
+      if (dayLink) c.appendChild(el('button', { class: 'k-btn out', text: '日別の記録を確かめる', onclick: function () { cur.wantDayView = cid; open(cid, cname, 'training', null, 'replace'); } }));
+      c.appendChild(el('button', { class: 'k-btn out', text: '開き直す', onclick: function () { open(cid, cname, 'training', null, 'replace'); } }));
+    }
+    //   購読（ほかのタブ＝storage・同じタブ＝通知）。自分の書き込みの通知は無視する
+    function edOnChange(key, oldRaw, newRaw, src) {
+      if (edDisposed || edFrozen || key !== draftKey || (src && src === formId)) return;
+      if (!c.isConnected) { edDispose(); return; }
+      if (newRaw == null) {
+        var ov = null; try { ov = oldRaw ? JSON.parse(oldRaw) : null; } catch (e) { ov = null; }
+        var pr = ov && ov.pending ? String(ov.pending.reqId || '') : '';
+        //   ★ほかの画面では成功と言い切らない（鍵が消える理由は成功・破棄・期限切れの3つ・§4-8）
+        if (pr && (pr === edSent || (D.pending && pr === String(D.pending.reqId)))) edFreeze('この直しは別の画面で片づきました（保存または破棄）。日別の記録で確かめてください。', true);
+        else edFreeze('ほかの画面で変わりました。開き直してください。');
+        return;
+      }
+      var nv = null; try { nv = JSON.parse(newRaw); } catch (e) { nv = null; }
+      if (edReadOnly) {
+        //   送り直しの画面：pending の有無か reqId が変わったときだけ作り直す（owner・ver だけの変化は無視＝連鎖しない）
+        var was = D.pending ? String(D.pending.reqId) : '', now = nv && nv.pending ? String(nv.pending.reqId) : '';
+        if (was !== now && !sending) { edDispose(); open(cid, cname, 'training', { kind: 'trainingEdit', customerId: cid, sid: String(EX.session_id), navMode: 'replace' }, 'replace'); }
+        return;
+      }
+      if (sending) return;   // 送信中は結果の処理に任せる（入力欄は止めてある）
+      if (!nv || nv.owner !== formId || Number(nv.ver) !== Number(D.ver)) edFreeze('ほかの画面で変わりました。開き直してください。');
+    }
+    function onStorage(e) { if (e && e.key === draftKey) edOnChange(e.key, e.oldValue, e.newValue, ''); }
+    function onEdEvt(e) { var d = e && e.detail; if (d) edOnChange(d.key, d.oldValue, d.newValue, d.sourceFormId); }
+    function edDispose() {
+      if (edDisposed) return;
+      edDisposed = true;
+      try { window.removeEventListener('storage', onStorage); document.removeEventListener(ED_EVT, onEdEvt); } catch (e) {}
+      if (cur.edDispose === edDispose) cur.edDispose = null;
+    }
+    if (EDIT) {
+      edDisposeCur();
+      window.addEventListener('storage', onStorage);
+      document.addEventListener(ED_EVT, onEdEvt);
+      cur.edDispose = edDispose;
+    }
+    function rOn() { return !EDIT && restOn(); }   // ★直す画面では休憩タイマーを数えない
     //   設計53：種目の並べ替え。開いている種目・休憩の帯は同じ種目に付いたまま（添字を付け替える）。送信中・送った結果待ちは動かさない
     var udFor = -1, moveMsg = '';
     function canReorder() { return !sending && !D.pending && D.items.length > 1; }
@@ -3682,16 +3850,22 @@
 
     //   ---- 送ったが応答が分からない（pending）＝編集させない
     if (D.pending) {
-      c.appendChild(el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: '前回の保存の結果を確かめられませんでした' }),
+      c.appendChild(el('div', { class: 'k-caution' }, [el('div', { class: 'k-h', text: EDIT ? '記録を直した結果を確かめられませんでした' : '前回の保存の結果を確かめられませんでした' }),
         msg('通信が途中で切れた可能性があります。同じ内容で送り直しても、二重には記録されません。'),
         el('div', { style: 'font-size:13px;', text: md(D.pending.payload.sessionDate) + '・' + D.pending.payload.items.map(function (it) { return it.exercise + ' ' + (it.doneOnly === true ? '実施' : it.sets.length + 'セット'); }).join('・') }),
         D.pending.payload.member ? el('div', { class: 'k-sub', text: 'お客様に見える欄も一緒に送ります（同じ内容）' }) : null]));
-      c.appendChild(el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { send(D.pending.payload, D.pending.reqId); } }));
+      c.appendChild(el('button', { class: 'k-btn', text: '同じ内容で送り直す', onclick: function () { if (EDIT) sendEdit(D.pending.payload, D.pending.reqId); else send(D.pending.payload, D.pending.reqId); } }));
       c.appendChild(el('button', { class: 'k-btn out', text: '日別の記録を確かめる', onclick: function () { cur.wantDayView = cid; goBack(); } }));   // ★お客様に紐づける（別のお客様に持ち越さない・関門②）   // 専用画面→トレーニングの画面に戻って日別を開く
-      c.appendChild(el('button', { class: 'k-btn out k-danger', text: '破棄して入れ直す', onclick: function () {
+      var discardBtn = c.appendChild(el('button', { class: 'k-btn out k-danger', text: '破棄して入れ直す', onclick: function () {
         if (!window.confirm('送り直さずに破棄しますか？（記録されていたかは「日別の記録を確かめる」で見られます）')) return;
+        if (EDIT) {   // ★保存されている pending が画面に出しているものと同じときだけ消す（ほかで片づいていたら触らない）
+          var st0 = lsGet(draftKey);
+          if (st0 && st0.pending && String(st0.pending.reqId) === String(D.pending.reqId)) edStore(draftKey, null, formId);
+          edDispose(); open(cid, cname, 'training', null, 'replace'); return;
+        }
         lsDel(draftKey); open(cid, cname, 'training', null, 'replace');
       } }));
+      if (EDIT) discardBtn.textContent = '送り直さずに破棄';   // 設計58：直す画面は「入れ直す」ではない
       return c;
     }
     //   ---- お客様に見える欄だけを送ったが応答が分からない（mpending）＝編集させない（トレーニングの pending と同じ扱い）
@@ -3723,11 +3897,14 @@
       } }));
       return c;
     }
-    if (restored) note.textContent = '入力の途中を戻しました（' + fmtDate(D.at) + '）。この端末に最大24時間残ります。';
+    if (restored) note.textContent = (EDIT ? '直しかけを戻しました（' : '入力の途中を戻しました（') + fmtDate(D.at) + '）。この端末に最大24時間残ります。';
+    if (EDIT && edNote) note.textContent = edNote;
+    //   設計58：直す画面の案内（ダイアログは増やさない＝1行で知らせる）
+    if (EDIT) c.appendChild(el('div', { class: 'k-edhint', role: 'note', style: 'background:#edf2fb;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:14px;color:var(--k-acc);', text: '保存すると、お客様の画面の数字も変わります。お客様に見える欄は「お客様の見え方」から直せます。日付を変えると、この日のお客様に見える欄も同じ日に移ります。' }));
     //   メモから取り込んだ直後の1行（メモリにだけある件数の案内・原文は持たない）
-    if (trImportMsg && trImportMsg.cid === cid) { note.textContent = trImportMsg.text; note.style.cssText = 'margin-bottom:8px;font-size:14px;font-weight:700;color:var(--k-acc);background:var(--k-acc-l);border-radius:10px;padding:8px 10px;'; }
-    if (trImportMsg && trImportMsg.cid === cid && trImportMsg.date) c.appendChild(el('div', { class: 'k-impdate', role: 'status', style: 'background:#fbefd9;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:14px;font-weight:700;color:#5c3a05;', text: trImportMsg.date }));   // 設計56：取り込みの日付の1行
-    trImportMsg = null;
+    if (!EDIT && trImportMsg && trImportMsg.cid === cid) { note.textContent = trImportMsg.text; note.style.cssText = 'margin-bottom:8px;font-size:14px;font-weight:700;color:var(--k-acc);background:var(--k-acc-l);border-radius:10px;padding:8px 10px;'; }
+    if (!EDIT && trImportMsg && trImportMsg.cid === cid && trImportMsg.date) c.appendChild(el('div', { class: 'k-impdate', role: 'status', style: 'background:#fbefd9;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:14px;font-weight:700;color:#5c3a05;', text: trImportMsg.date }));   // 設計56：取り込みの日付の1行
+    if (!EDIT) trImportMsg = null;   // 設計58：直す画面は取り込みの案内を使わない（今日の記録の画面に残す）
 
     //   日付は見出しに出す（モック K3）。見出しの日付を押すと端末の日付ピッカーで変えられる
     var d = field('日付', D.sessionDate, 'date'); d.el.max = today(); d.el.setAttribute('data-nodirty', '1');
@@ -3744,6 +3921,7 @@
     c.appendChild(dateWarn);
     function drawDateWarn() {
       dateWarn.innerHTML = '';
+      if (EDIT) { dateWarn.style.display = 'none'; return; }   // 設計58：直す画面は過去の日が普通＝日付を変えても「今日にする」を出さない
       if (!D.sessionDate || D.sessionDate === today()) { dateWarn.style.display = 'none'; return; }
       dateWarn.style.cssText = 'display:flex;align-items:center;gap:8px;background:#fbefd9;border-radius:10px;padding:6px 6px 6px 12px;margin:0 0 8px;';
       dateWarn.appendChild(el('span', { style: 'flex:1;min-width:0;font-size:14px;font-weight:700;color:#5c3a05;', text: '日付が ' + mdw(D.sessionDate) + ' のままです' }));
@@ -3779,7 +3957,7 @@
     }
     var restRow = el('div', { style: 'display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 8px;' }, [restTg]);
     drawRestTg();
-    c.appendChild(restRow);
+    if (!EDIT) c.appendChild(restRow);   // 直す画面は休憩タイマーを出さない
     var restBar = el('div', { class: 'k-restbar', style: 'display:none;' });   // ★見た目は CSS の .k-restbar（inline に display を2つ書くと後の flex が勝ち、空の帯が出ていた）
     rest.box = restBar;   // ★置き場所は draw() が決める：✓を押したセットの真下（無ければ一覧の先頭＝空なので見えない）
     //   ★休憩中に上の「記録の入力」をもう一度押すと、この欄ごと作り直される。この時点の欄はまだ画面に無い（返してから置かれる）ので、
@@ -3863,7 +4041,7 @@
       }
       D.openEi = u.openEi;
       //   消したことで休憩が止まり、その後に新しく数え始めていない＝続きから
-      if (!rest.endAt && u.rest.endAt && u.rest.pos && restOn()) { rest.endAt = u.rest.endAt; rest.buzzed = u.rest.buzzed; rest.pos = u.rest.pos; }
+      if (!rest.endAt && u.rest.endAt && u.rest.pos && rOn()) { rest.endAt = u.rest.endAt; rest.buzzed = u.rest.buzzed; rest.pos = u.rest.pos; }
       if (!save()) window.alert('この端末に下書きを残せません（保存するまで画面を閉じないでください）。');
       draw();
       if (rest.endAt && !rest.buzzed && !rest.iv) rest.iv = setInterval(restTick, 500);
@@ -3897,7 +4075,7 @@
           //   ★畳んだままでも1タップで確かめられる（設計38 §5-5：例のメモが11操作）。印の無い今までの下書きでは何も足さない
           var side = allChkBtn(it) || doneBtn(it);
           var gp = D.items.length > 1 ? trGrip(it, ei) : null;   // 設計53
-          var rowC = (!side && !gp) ? colBtn : el('div', { class: 'k-exline' }, [colBtn, side, gp]);
+          var rowC = (!side && !gp) ? colBtn : el('div', { class: 'k-exline' }, [gp, colBtn, side]);
           rowC.setAttribute('data-ei', String(ei));
           list.appendChild(rowC);
           if (udFor === ei) list.appendChild(gripUpDown(it.exercise, ei, D.items.length, reorderItems));
@@ -3910,13 +4088,13 @@
         var blk = el('div', { style: 'border:1px solid ' + (warn ? '#f5c9bb' : 'var(--k-line)') + ';border-radius:12px;padding:10px;margin-bottom:10px;background:' + (warn ? '#fff7f4' : '#fff') + ';' });
         //   設計56：見出しの種目名・部位の部分を押すと閉じる（畳んだ行を押すと開く＝同じ場所で開閉）。［外す］［≡］はこのボタンの外＝押しても開閉しない
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
+          D.items.length > 1 ? trGrip(it, ei) : null,   // 2026-11-25 オーナー：つまみは左端（畳んだ行と同じ位置）
           el('button', { type: 'button', class: 'k-exhead', 'aria-expanded': 'true', 'aria-label': it.exercise + 'を閉じる', onclick: function () { D.openEi = -1; save(); draw(); } }, [
             el('span', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
             it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
             el('span', { class: 'k-tag', text: partOf(it.exercise) }),
             el('span', { class: 'k-sub k-exfold', 'aria-hidden': 'true', style: 'font-size:16px;', text: '⌄' })]),
-          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { rmEx(ei); } }),   // 設計55：直後に元に戻せる
-          D.items.length > 1 ? trGrip(it, ei) : null]));   // 設計53：つまみは右端
+          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { rmEx(ei); } })]));   // 設計55：直後に元に戻せる
         blk.setAttribute('data-ei', String(ei));
         if (udFor === ei) blk.appendChild(gripUpDown(it.exercise, ei, D.items.length, reorderItems));
         //   「全部✓」は見出しの「外す」から離し、前回の行の右に置く（押し間違えて種目を消さない・設計38 §5-4）
@@ -3930,7 +4108,7 @@
           if (uNow && uNow.kind === 'set' && uNow.ei === ei && uNow.si === si) { blk.appendChild(undoBar(uNow)); uPlaced = true; }
           var chk = el('button', { type: 'button', 'aria-pressed': s.done ? 'true' : 'false', 'aria-label': (si + 1) + 'セット目を実施済みにする',
             style: 'min-width:44px;min-height:44px;border-radius:12px;font-size:18px;font-weight:700;' + (s.done ? 'background:#243b66;color:#fff;border:1px solid #243b66;' : 'background:#fff;color:#8692a6;border:1px solid #8692a6;'),
-            text: '✓', onclick: function () { var go = !s.done && restOn(); s.done = !s.done; if (go) rest.pos = { ei: ei, si: si }; save(); draw(); if (go) restStart(restSecondsFor(it.exercise)); } });   // ★タイマーなしなら数えない
+            text: '✓', onclick: function () { var go = !s.done && rOn(); s.done = !s.done; if (go) rest.pos = { ei: ei, si: si }; save(); draw(); if (go) restStart(restSecondsFor(it.exercise)); } });   // ★タイマーなしなら数えない
           blk.appendChild(el('div', { class: 'k-setrow' }, [
             el('span', { class: 'k-setno', style: 'color:var(--k-sub);font-size:15px;font-weight:700;text-align:center;', text: String(si + 1) }),
             numInput(s.w, 'kg', (si + 1) + 'セット目の重量', function (v) { s.w = v; }),
@@ -3966,7 +4144,7 @@
               extPanel(it, s, ei, si),
               el('button', { type: 'button', class: 'k-btn out small k-danger k-setdel2', 'aria-label': (si + 1) + 'セット目を消す', style: 'margin-top:6px;', text: 'このセットを消す', onclick: function () { rmSet(ei, si); } })]));
           }
-          if (restOn() && rest.pos && rest.pos.ei === ei && rest.pos.si === si) { blk.appendChild(restBar); placed = true; }   // ★休憩の帯は✓を押したセットの真下（2026-11-05 オーナー：スクロールが煩わしい）
+          if (rOn() && rest.pos && rest.pos.ei === ei && rest.pos.si === si) { blk.appendChild(restBar); placed = true; }   // ★休憩の帯は✓を押したセットの真下（2026-11-05 オーナー：スクロールが煩わしい）
         });
         if (uNow && uNow.kind === 'set' && uNow.ei === ei && !uPlaced) { blk.appendChild(undoBar(uNow)); uPlaced = true; }   // 最後のセットを消した
         //   セットを足す＝直前のセットを複製（✓は外す）
@@ -3978,7 +4156,7 @@
         } });
         //   休憩の秒数はこの種目に覚える。★設計55：「＋ セット」と同じ行に置く（終了音は上部に1つ）。タイマーなしなら秒数は出さない
         var rs = null;
-        if (restOn()) {
+        if (rOn()) {
           rs = el('select', { 'data-nodirty': '1', 'aria-label': it.exercise + 'の休憩の秒数', style: 'flex:none;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 8px;font-size:16px;background:#fff;' });
           REST_CHOICES.forEach(function (v) { var o = el('option', { value: String(v), text: '休憩 ' + v + '秒' }); if (v === restSecondsFor(it.exercise)) o.selected = true; rs.appendChild(o); });
           rs.onchange = function () { setRestSecondsFor(it.exercise, rs.value); };
@@ -3987,7 +4165,7 @@
         list.appendChild(blk);
       });
       if (uNow && !uPlaced) list.appendChild(undoBar(uNow));   // 最後の種目を外した
-      if (!placed && restOn()) list.insertBefore(restBar, list.firstChild);
+      if (!placed && rOn()) list.insertBefore(restBar, list.firstChild);
       else if (!placed && restBar.parentNode) restBar.parentNode.removeChild(restBar);   // ✓のセットが無い・消えた：一覧の先頭（数えていれば見える・空なら隠れる）
       drawStart();   // 設計56：種目が0件なら上に始め方の3つ・1件以上なら下に追加の取り込みと前回から写す
       var t = totalSets(D.items), rec = 0;
@@ -4060,7 +4238,7 @@
         if (regBusy) return;
         regBusy = true; draw();
         var reqId = it.regReq || (it.regReq = newReqId()); save();
-        kWrite('k_saveExercise', { name: name, part: rp }, reqId, { kind: 'training', customerId: cid }).then(function (w) {
+        kWrite('k_saveExercise', { name: name, part: rp }, reqId, trTag()).then(function (w) {
           regBusy = false;
           if (w && w.success) { exMaster[name] = rp; delete it.regPart; delete it.regReq; save(); if (same()) draw(); return; }
           if (!w || w.code === 'BAD_RESPONSE') { if (same()) { window.alert('部位の保存の結果を確かめられませんでした。もう一度「登録する」を押してください（二重にはなりません）。'); draw(); } return; }
@@ -4091,10 +4269,11 @@
     }
     var addExBtn = el('button', { type: 'button', class: 'k-btn out', text: '＋ 種目を足す', 'aria-expanded': 'false', onclick: function () { setPicker(picker.style.display === 'none'); } });
     c.appendChild(addExBtn);
-    var picker = exercisePicker(sessions, function (names) { addExercises(names); setPicker(false); }, cid, exRestore && exRestore.cid === cid ? exRestore : null);
+    var picker = exercisePicker(sessions, function (names) { addExercises(names); setPicker(false); }, cid, exRestore && exRestore.cid === cid ? exRestore : null, trTag);
     var moreBox = el('div', { class: 'k-more' });   // 設計56：種目が1件以上のとき「＋ 種目を足す」の下（種目の欄はその間に開く）
     function impLabel(first) { return (first ? 'メモ・音声から' : '＋ 音声・メモを追加で取り込む') + (airHas ? '（振り分けの途中あり）' : ''); }
     function drawStart() {
+      if (EDIT) { startBox.innerHTML = ''; moreBox.innerHTML = ''; addExBtn.style.display = ''; return; }   // 直す画面：写す・取り込み・AI は今日の下書きに書く＝出さない（I87）
       var empty = !D.items.length, pOpen = picker.style.display !== 'none';
       startBox.innerHTML = ''; moreBox.innerHTML = '';
       addExBtn.style.display = (empty && !pOpen) ? 'none' : '';   // 0件のときは「手動で入れる」が同じ役（種目の欄を開いたら閉じるために出す）
@@ -4134,6 +4313,8 @@
     cur.pickPlace = function () { if (pickBar.isConnected) placePick(); };
     c.appendChild(picker);
     c.appendChild(moreBox);
+    //   設計58：直す画面には社内メモ・お客様に見える欄を出さない（作るだけで画面に置かない＝c をいったん外の箱に向ける）
+    var cMain = c; if (EDIT) c = el('div');
     //   指導メモ（2026-11-05 モック K3：セッション中にそのまま書く）。社内メモ＝既存の指導メモ（k_addNote）にそのまま残す
     //   ★書きかけは記録の下書き（D.memo）に残す＝セットと同じく画面を離れても消えない。「お客様へ」は第2弾（保存先を作る）
     if (!D.memoReqId) D.memoReqId = newReqId();
@@ -4197,6 +4378,7 @@
       mLabel('次回までに（' + MEMBER_MAX.todo + 'つまで）'), todoBox,
       mLabel('日のタグ（' + MEMBER_MAX.tags + 'つまで）'), dayTags,
       el('div', { class: 'k-note-hint', style: 'margin:0;', text: '保存するとお客様の画面にそのまま出ます。痛み・診断・社内のことは書かない' })]));
+    c = cMain;   // 設計58：ここから先は画面に置く
     //   指導メモを送る。★結果が確定するまで、本文と送信番号を記録の下書き（D.memoPending）に残す（関門② High×3）
     //     ・結果が分からない（通信切れ・応答が読めない）＝同じ送信番号で「同じ内容で送り直す」＝二重にならない
     //     ・送信中に別のお客様を開いても、元のお客様の下書きに残る（鍵は開いた時点で固定）
@@ -4330,9 +4512,81 @@
         back();
       }, unknown);
     }
+    //   ---- 設計58：直す画面の送信（k_editTraining だけ）。中身は sessionId・rev・sessionDate・items（customerId・member は載せない）
+    //     結果の処理は持ち主を見ない：保存されている pending.reqId が送った reqId と同じときだけ鍵を消す・pending を解く（§4-8）
+    function sendEdit(payload, reqId) {
+      if (sending || edFrozen || edDisposed) return;
+      if (!schemaOk({ karteSchema: cur.trSchema })) { window.alert(SCHEMA_MSG); return; }
+      if (usesExt(payload) && !extOk()) { window.alert(EXT_SCHEMA_MSG); return; }
+      if (!same() || D.tid !== tid || D.cid !== cid || String(payload.sessionId) !== String(D.editOf) || payload.customerId !== undefined) { window.alert('開いているお客様が変わったため送りませんでした。カルテを開き直してください。'); return; }
+      if (needReauthBeforeSend()) { if (!edReadOnly) save(); reauth(trTag()).then(function (w) { if (w && w.code === 'STALE' && same()) window.alert(errText(w)); }); return; }
+      var st = lsGet(draftKey);
+      if (edReadOnly) {   // 送り直し：保存されている pending が画面に出しているものと同じときだけ
+        if (!st || !st.pending || String(st.pending.reqId) !== String(reqId)) { edFreeze('この直しは別の画面で片づきました（保存または破棄）。日別の記録で確かめてください。', true); return; }
+      } else {
+        if (!st || st.owner !== formId || Number(st.ver) !== Number(D.ver)) { edFreeze('ほかの画面で変わりました。開き直してください。'); return; }
+        D.pending = { payload: payload, reqId: reqId };
+        if (!save() || edFrozen) { D.pending = null; if (!edFrozen) window.alert('この端末に送信の控えを残せないため、送りませんでした（ブラウザの保存領域を確かめてください）。'); return; }
+      }
+      sending = true; edSent = String(reqId);
+      Array.prototype.forEach.call(c.querySelectorAll('button,input,select,textarea'), function (x) { x.disabled = true; });
+      saveBusy();
+      function ui() { return !edDisposed && !edFrozen && same(); }   // ★後始末・凍結の後は画面を触らない（結果の処理だけ行う）
+      function reopenEdit() { if (ui()) { edDispose(); open(cid, cname, 'training', { kind: 'trainingEdit', customerId: cid, sid: String(D.editOf), navMode: 'replace' }, 'replace'); } }
+      function unknown() { sending = false; if (ui()) { window.alert('通信の結果を確かめられませんでした。「同じ内容で送り直す」から送ってください。'); reopenEdit(); } }
+      kWrite('k_editTraining', payload, reqId, trTag()).then(function (w) {
+        if (!w || w.code === 'BAD_RESPONSE') { unknown(); return; }
+        sending = false;
+        var cur0 = lsGet(draftKey), mine = !!(cur0 && cur0.pending && String(cur0.pending.reqId) === String(reqId));
+        if (w.success) {
+          if (mine) edStore(draftKey, null, formId);
+          if (!ui()) return;
+          edDispose();
+          var n = 0; payload.items.forEach(function (x) { n += x.sets.length; });
+          if (saveBtn && saveBtn.classList.contains('k-hsave') && saveBtn.parentNode) saveBtn.parentNode.removeChild(saveBtn);
+          leaveForm(); c.innerHTML = '';
+          c.appendChild(el('div', { class: 'k-h k-eddone', text: '直しました' }));
+          c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:8px;', text: md(payload.sessionDate) + '・' + payload.items.length + '種目・' + n + 'セット（お客様の画面にも出ます）' }));
+          c.appendChild(el('button', { class: 'k-btn out', text: '記録の一覧を見る', onclick: function () { if (same()) open(cid, cname, 'training', null, 'replace'); } }));
+          return;
+        }
+        //   はっきり断られた＝直っていない。保存されている pending が今回のものなら解き、次は新しい送信番号（owner は変えない）
+        if (mine) { cur0.pending = null; cur0.reqId = newReqId(); cur0.ver = Number(cur0.ver || 0) + 1; cur0.at = Date.now(); edStore(draftKey, cur0, formId); }
+        if (!ui()) return;
+        var gone = w.code === 'CONFLICT' || w.code === 'NOT_FOUND';
+        if (gone) window.alert('ほかの端末で直されたか消されています。日別の記録を開き直して確かめてください（直しかけは残っています）。');
+        else if (w.code === 'REQ_REUSED') window.alert('この送信番号は別の内容で使われています。日別の記録を確かめてから、必要なら直し直してください。');
+        else if (w.code === 'TOTAL_SETS') window.alert('1回の記録は合計60セットまでです。');
+        else if (w.code === 'TRAINING_EDIT_OFF') window.alert('記録を直す機能は、いまは使えません（入力は残っています）。');
+        else if (w.code === 'TRAINING_EXT_OFF') window.alert(ERR.TRAINING_EXT_OFF);
+        else if (w.code === 'BAD_REQUEST' && TR_DETAIL[w.detail]) window.alert(TR_DETAIL[w.detail] + '（入力は残っています）');
+        else window.alert(errText(w));
+        if (gone) { edDispose(); open(cid, cname, 'training', null, 'replace'); } else reopenEdit();
+      }, unknown);
+    }
+    function badAssistIn(items) {
+      return items.some(function (it) { return it.sets.some(function (s) {
+        function bad(v) { var t = String(v == null ? '' : v).trim(); return t !== '' && assistOf(t) == null; }
+        return s.done === true && hasR(s) && (bad(s.assist) || (Array.isArray(s.drops) && s.drops.some(function (d) { return hasR(d) && bad(d.assist); })));
+      }); });
+    }
+    function editSave() {
+      if (edFrozen || edDisposed || sending) return;
+      var items = buildPayload(D.items);
+      //   ★全部の ✓ を外した＝送らない（直すで記録を消さない。消すのは［削除］・I88）
+      if (!items.length) { window.alert('記録を全部消すときは、日別の記録の［削除］を使ってください。'); return; }
+      if (badAssistIn(D.items)) { window.alert('補助の回数は1〜100の数で入れてください。'); return; }
+      var n = uncheckedCount(D.items);
+      if (n && !window.confirm('記録されない入力が ' + n + ' セットあります（✓が無い・重量か回数が空）。保存すると、その入力（セットのメモも）は消えます。よいですか？')) return;
+      var total = 0; items.forEach(function (it) { it.sets.forEach(function (st) { total += 1 + (st.drops ? st.drops.length : 0); }); });
+      if (total > TR_TOTAL) { window.alert('1回の記録は合計60セットまでです。'); return; }
+      if (edBase(D.sessionDate, D.items) === D.base) { window.alert('変更はありません。'); return; }
+      sendEdit({ sessionId: String(D.editOf), rev: Number(D.editRev), sessionDate: D.sessionDate, items: items }, D.reqId);
+    }
     //   設計55：保存は見出しの右上（見出しが無いときだけ従来どおり下の帯）。中身・確認・送信は今までと同じ
     saveBtn = el('button', { type: 'button', class: hdr ? 'k-hsave' : 'k-btn', text: '保存する', onclick: function () {
       gripCancel();   // 設計53 関門① 2：動かしている途中の並べ替えは捨ててから送る中身を作る（送る中身と下書きの順を食い違わせない）
+      if (EDIT) { editSave(); return; }   // 設計58：直す画面は k_editTraining だけ
       var items = buildPayload(D.items);
       var memo = String(D.memo || '').trim();
       var mem = memberOf(D.member);
@@ -4375,7 +4629,7 @@
   //   ★「最近の種目」から選んだ名前が共有の一覧に無ければ、選んだ下にその場で部位を選んで登録する欄を出す（ダイアログを増やさない）
   //   ★部位を直すのは「部位を直す」を押してから種目を押す（選ぶ操作と取り違えない）
   //   ★登録の途中でトークンを取り直したら、検索の文字・部位・モード・送信番号を退避して、読み直し後に同じ欄で戻す（restore）
-  function exercisePicker(sessions, onAdd, cid, restore) {
+  function exercisePicker(sessions, onAdd, cid, restore, tagFn) {   // tagFn：ログインの取り直しの退避の形（設計58：直す画面は trainingEdit）
     var cnt = {};
     //   数字の無い種目も数える（設計38・回ごとに名前を1回）
     (sessions || []).forEach(function (s) { var seen = {}; function add(n) { if (n && !seen[n]) { seen[n] = 1; cnt[n] = (cnt[n] || 0) + 1; } } (s.sets || []).forEach(function (x) { add(x.exercise); }); if (isNewSess(s)) s.exercises.forEach(function (x) { if (x) add(x.exercise); }); });
@@ -4387,7 +4641,7 @@
       return out;
     }
     function registered(x) { return EXERCISES.indexOf(x) >= 0 || Object.prototype.hasOwnProperty.call(exMaster, x); }
-    var picked = [], editMode = false, editing = null, editPart = null, newPart = null, busy = false, lastReq = {}, regPart = {};
+    var picked = [], editMode = false, editing = null, editPart = null, newPart = null, busy = false, lastReq = {}, regPart = {}, openPart = null;   // openPart：開いている部位（2026-11-25 オーナー：部位は大きな見出しだけ・押すと中の種目）
     var box = el('div', { class: 'k-card k-picker', style: 'margin-top:8px;background:var(--k-cream);' });
     var q = el('input', { 'data-nodirty': '1', type: 'search', maxlength: String(EX_NAME_MAX), placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
     var editBtn = el('button', { type: 'button', class: 'k-btn out small k-exedit', 'data-nodirty': '1', onclick: function () { editMode = !editMode; editing = null; draw(); } });
@@ -4417,7 +4671,7 @@
       var reqId = lastReq[k] || (lastReq[k] = newReqId());
       var ex = { cid: cid, q: q.value, newPart: newPart, editMode: editMode, editing: editing, editPart: editPart, picked: picked.slice(), name: name, part: part, reqId: reqId, regName: how === 'reg' ? name : '' };
       busy = true; draw();
-      kWrite('k_saveExercise', { name: name, part: part }, reqId, { kind: 'training', customerId: cid, ex: ex }).then(function (w) {
+      kWrite('k_saveExercise', { name: name, part: part }, reqId, tagFn ? tagFn({ ex: ex }) : { kind: 'training', customerId: cid, ex: ex }).then(function (w) {
         busy = false;
         if (w && w.success) { delete lastReq[k]; exMaster[name] = part; done(true); return; }
         if (!w || w.code === 'BAD_RESPONSE') { done(false, '部位の保存の結果を確かめられませんでした。必要なら「部位を直す」からもう一度保存してください。'); return; }
@@ -4538,8 +4792,16 @@
         all.forEach(function (x) { if (recent.indexOf(x) >= 0) return; var p = partKeyOf(x); (groups[p] = groups[p] || []).push(x); });
         PART_KEYS.forEach(function (pk) {
           var g = groups[pk[0]]; if (!g) return;
-          area.appendChild(el('div', { class: 'k-sub k-partgroup', 'data-part': pk[0], style: 'margin:10px 0 6px;font-weight:700;', text: pk[1] }));
-          var p3 = el('div', { class: 'k-pills' }); g.forEach(function (x) { p3.appendChild(chip(x)); }); area.appendChild(p3);
+          //   2026-11-25 オーナー：最近の種目はそのまま並べ、それ以外は部位の見出しだけ。押すと中の種目が開く（もう一度押すと閉じる・開くのは1つだけ）
+          //   ★選んだ種目が閉じた部位に隠れても分かるように、見出しに選んだ数を出す
+          var isOpen = openPart === pk[0], np2 = g.filter(function (x) { return picked.indexOf(x) >= 0; }).length;
+          area.appendChild(el('button', { type: 'button', class: 'k-partgroup', 'data-part': pk[0], 'data-nodirty': '1', 'aria-expanded': isOpen ? 'true' : 'false',
+            style: 'display:flex;align-items:center;gap:8px;width:100%;min-height:48px;margin-top:8px;padding:0 14px;border:1px solid #c9ced8;border-radius:12px;background:' + (isOpen ? 'var(--k-acc-l)' : '#fff') + ';color:var(--k-acc);font-size:16px;font-weight:700;font-family:inherit;text-align:left;',
+            onclick: function () { openPart = isOpen ? null : pk[0]; draw(); } }, [
+            el('span', { style: 'flex:1;min-width:0;', text: pk[1] }),
+            np2 ? el('span', { class: 'k-partpicked', style: 'font-size:12px;', text: np2 + 'つ選択中' }) : null,
+            el('span', { class: 'k-sub', style: 'font-size:13px;', text: g.length + '種目 ' + (isOpen ? '▾' : '›') })]));
+          if (isOpen) { var p3 = el('div', { class: 'k-pills k-partpills', 'data-part': pk[0], style: 'margin-top:8px;' }); g.forEach(function (x) { p3.appendChild(chip(x)); }); area.appendChild(p3); }
         });
       }
       go.textContent = picked.length ? '選んだ ' + picked.length + ' 種目を足す' : '選んだ種目を足す';
@@ -4616,7 +4878,11 @@
           row.appendChild(el('div', { class: 'k-sub', text: '担当 ' + trainerName(x.author_trainer_id) }));
           row.appendChild(exRows(x, true));
           if (String(x.author_trainer_id) === String(state.trainerId) || state._isOwner) {
-            row.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'align-self:flex-start;', text: '削除', onclick: function () {
+            //   設計58：［編集］は切替が開いていて、新しい鍵を値で使う回なら 33 のときだけ（押しても 409 になるだけの回には出さない）
+            var dayBtns = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-self:flex-start;' });
+            if (cur.trEdit === true && (!sessUsesExt(x) || extOk())) dayBtns.appendChild(el('button', { type: 'button', class: 'k-btn out small k-dayedit', style: 'min-height:44px;min-width:88px;margin:0;', text: '編集', onclick: function () { startEdit(cur.body, sessions, x); } }));
+            row.appendChild(dayBtns);
+            dayBtns.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'min-height:44px;margin:0;', text: '削除', onclick: function () {
               if (!window.confirm(x.session_date + ' の記録を削除しますか？')) return;
               kWrite('k_deleteTraining', { sessionId: x.session_id, rev: x.rev }, newReqId()).then(function (w) {
                 if (!w || !w.success) { window.alert(errText(w)); return; }

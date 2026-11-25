@@ -22,6 +22,11 @@
   .btn { display:block; width:100%; min-height:48px; padding:12px 14px; border:1.5px solid var(--pri); border-radius:10px; background:var(--pri); color:#fff; font-size:15px; font-weight:700; margin-top:10px; cursor:pointer; font-family:inherit; }
   .btn:active { background:var(--pri2); }
   .btn:disabled { opacity:.45; }
+  /* 公式LINEへの相談（設計59 改訂2）：a を押しやすいボタンに。空きが無い週は表の上に枠つきで */
+  a.lock-line-btn { box-sizing:border-box; text-align:center; text-decoration:none; line-height:22px; }
+  .lock-line { margin-top:8px; }
+  .lock-line.lock-strong { margin:8px 0; padding:12px; border:1.5px solid var(--acc,#c8a25a); border-radius:10px; background:#fff; }
+  .lock-noslots { font-weight:700; margin:0 0 6px; }
   .btn-outline { background:#fff; color:var(--pri); border:1.5px solid var(--pri); }
   .btn-outline:active { background:var(--pri-l); }
   .btn.btn-danger { background:#fff; color:var(--warn); border:1px solid #e09a86; font-weight:500; }
@@ -304,6 +309,10 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     <div class="msteps"><span class="on"><i>1</i><span data-i18n="step_trainer"></span></span><span class=""><i>2</i><span data-i18n="step_datetime"></span></span><span class=""><i>3</i><span data-i18n="step_confirm"></span></span></div>
     <p class="muted" data-i18n="trainer_prompt">担当トレーナーを選んでください。</p>
     <div id="trainerList"></div>
+    <div id="trainerLineBox" class="lock-line" hidden>
+      <p id="trainerLineNote" class="muted" data-i18n="lock_note"></p>
+      <a id="trainerLineBtn" class="btn btn-outline lock-line-btn" href="https://lin.ee/U8oLJPT" target="_blank" rel="noopener" data-i18n="lock_line_btn">公式LINEで相談する</a>
+    </div>
   </div>
 
   <div id="s-myres" class="screen" hidden>
@@ -320,6 +329,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   <div id="s-week" class="screen" hidden>
     <div class="mhead"><button id="backToTrainer" data-back class="mback" type="button" data-i18n-aria="week_reselect" aria-label="トレーナーを選び直す">←</button><div class="mtt" data-i18n="home_reserve">予約する</div></div>
     <div class="msteps"><span class="done"><i>1</i><span data-i18n="step_trainer"></span></span><span class="on"><i>2</i><span data-i18n="step_datetime"></span></span><span class=""><i>3</i><span data-i18n="step_confirm"></span></span></div>
+    <p id="weekTrainer" class="muted" style="margin:4px 0;" hidden></p>
     <div class="weekbar">
       <button id="prevWeek" data-i18n="week_prev">‹ 前の週</button>
       <span id="weekLabel" style="font-size:13px;font-weight:600;"></span>
@@ -334,6 +344,11 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     </div>
     <div id="gridWrap"></div>
     <p class="muted" style="margin-top:8px;" id="weekHint" data-i18n="week_hint">○ をタップすると予約確認へ進みます。</p>
+    <div id="weekLineBox" class="lock-line" hidden>
+      <p id="weekNoSlots" class="lock-noslots" data-i18n="lock_noslots" hidden></p>
+      <p class="muted" id="weekLineNote" data-i18n="lock_note"></p>
+      <a id="weekLineBtn" class="btn btn-outline lock-line-btn" href="https://lin.ee/U8oLJPT" target="_blank" rel="noopener" data-i18n="lock_line_btn">公式LINEで相談する</a>
+    </div>
     <button id="weekHome" data-back class="btn btn-outline" data-i18n="back_home">← ホームに戻る</button>
   </div>
 
@@ -440,7 +455,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       month_quota:'月{q}回', plus_carry:'＋繰越{c}回', inactive_contract:'現在ご予約いただけない契約状態です。店舗にお問い合わせください。',
       no_balance:'残数情報がありません。', book_here:'ご予約はこちらから承ります。',
       next_open:'{m}月分のご予約を受付中です', next_count:'{m}月は {n} 回 ご利用いただけます',
-      trainer_prompt:'担当トレーナーを選んでください。', back_home:'← ホームに戻る', trainer_badge:'担当', trainer_choose:'選ぶ ›',
+      trainer_prompt:'担当トレーナーを選んでください。', lock_note:'担当以外のトレーナーでのご予約や、ご希望の日時が見つからない場合は、公式LINEのトークでご相談ください。', lock_line_btn:'公式LINEで相談する', lock_noslots:'この週はご予約いただける枠がありません。', back_home:'← ホームに戻る', trainer_badge:'担当', trainer_choose:'選ぶ ›',
       myres_title:'あなたの予約', back:'戻る', sect_upcoming:'今後のご予約', sect_history:'これまでの記録',
       no_upcoming:'今後のご予約はありません。',
       note_free_cancel:'前日17時まで無料でキャンセルできます', note_penalty:'本日以降のため、キャンセルは1回分の消化になります',
@@ -540,7 +555,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       month_quota:'{q}/month', plus_carry:' + {c} carried over', inactive_contract:'Your contract is currently not active for booking. Please contact the studio.',
       no_balance:'No balance information.', book_here:'You can book from here.',
       next_open:'Booking for {m} is now open', next_count:'You can book {n} session(s) in {m}',
-      trainer_prompt:'Please choose your trainer.', back_home:'← Back to home', trainer_badge:'Your trainer', trainer_choose:'Select ›',
+      trainer_prompt:'Please choose your trainer.', lock_note:'To book with a trainer other than your own, or if you can\'t find a time that works, please message us in our official LINE chat.', lock_line_btn:'Ask us on LINE', lock_noslots:'There are no available times this week.', back_home:'← Back to home', trainer_badge:'Your trainer', trainer_choose:'Select ›',
       myres_title:'Your bookings', back:'Back', sect_upcoming:'Upcoming bookings', sect_history:'History',
       no_upcoming:'No upcoming bookings.',
       note_free_cancel:'Free cancellation until 17:00 the day before', note_penalty:'From today onward, cancelling counts as one used session',
@@ -640,7 +655,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       month_quota:'每月{q}次', plus_carry:' + 结转{c}次', inactive_contract:'当前合约状态无法预约。请与门店联系。',
       no_balance:'暂无剩余次数信息。', book_here:'可在此进行预约。',
       next_open:'{m}月的预约已开放', next_count:'{m}月可预约 {n} 次',
-      trainer_prompt:'请选择您的教练。', back_home:'← 返回首页', trainer_badge:'专属', trainer_choose:'选择 ›',
+      trainer_prompt:'请选择您的教练。', lock_note:'如需预约专属教练以外的教练，或找不到合适的日期时间，请通过官方LINE聊天与我们联系。', lock_line_btn:'通过官方LINE咨询', lock_noslots:'本周没有可预约的时段。', back_home:'← 返回首页', trainer_badge:'专属', trainer_choose:'选择 ›',
       myres_title:'我的预约', back:'返回', sect_upcoming:'即将到来的预约', sect_history:'历史记录',
       no_upcoming:'暂无即将到来的预约。',
       note_free_cancel:'可在前一天17点前免费取消', note_penalty:'当天及以后取消将消耗一次',
@@ -740,7 +755,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       month_quota:'每月{q}次', plus_carry:' + 結轉{c}次', inactive_contract:'目前合約狀態無法預約。請與門市聯繫。',
       no_balance:'目前沒有剩餘次數資訊。', book_here:'可在此進行預約。',
       next_open:'{m}月的預約已開放', next_count:'{m}月可預約 {n} 次',
-      trainer_prompt:'請選擇您的教練。', back_home:'← 返回首頁', trainer_badge:'專屬', trainer_choose:'選擇 ›',
+      trainer_prompt:'請選擇您的教練。', lock_note:'如需預約專屬教練以外的教練，或找不到合適的日期時間，請透過官方LINE聊天與我們聯繫。', lock_line_btn:'透過官方LINE諮詢', lock_noslots:'本週沒有可預約的時段。', back_home:'← 返回首頁', trainer_badge:'專屬', trainer_choose:'選擇 ›',
       myres_title:'我的預約', back:'返回', sect_upcoming:'即將到來的預約', sect_history:'歷史紀錄',
       no_upcoming:'目前沒有即將到來的預約。',
       note_free_cancel:'可於前一天17點前免費取消', note_penalty:'當天及之後取消將消耗一次',
@@ -1803,11 +1818,23 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     }).catch(function(e){ state._regBusy = false; btn.disabled=false; btn.textContent=t('reg_submit'); errEl.textContent=t('comm_fail',{msg:e}); errEl.hidden=false; });
   });
 
+  //   ★会員の素の予約は担当だけ（設計59・2026-11-25 オーナー要望）：担当がいて一覧に居れば、選ぶ画面を出さずに担当の週の表へ。
+  //     担当なし・一覧に居ない会員は今までどおり全員。代行・トレーナーの入口（proxyMode・_fromTrainerAdmin）は直行しない
   function loadTrainers(){
+    state._repaint = null;   // 読み込み中の言語切替で前の画面を描き直さない（設計59 §3-4b）
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_getTrainers' }).then(function(res){
       if (!res.success) { showError(t('err_trainers')); return; }
       state._trainersRes = res;
+      var _def = (!state.proxyMode && !state._fromTrainerAdmin) ? String(state.defaultTrainerId || '') : '';
+      var _mine = _def ? (res.trainers || []).filter(function(x){ return x && String(x.id) === _def; })[0] : null;
+      if (_mine) {
+        state.trainerId = _mine.id; state.trainerName = _mine.name; state.weekOffset = 0;
+        state.changeMode=false; state._ownerFreeResId=''; state.changeCustomerId=''; state.transferMode=false; state.excludeStartISO='';
+        state._weekFrom = 'lock';
+        loadSlots();
+        return;
+      }
       renderTrainers();
     }).catch(function(e){ showError(t('comm_fail',{msg:e})); });
   }
@@ -1826,9 +1853,10 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       var nm = document.createElement('span'); nm.className = 'tnm'; nm.textContent = String(tr.name || ''); d.appendChild(nm);
       if (isDefault) { var bd = document.createElement('span'); bd.className = 'tbadge'; bd.textContent = t('trainer_badge'); d.appendChild(bd); }
       var go = document.createElement('span'); go.className = 'tgo'; go.textContent = t('trainer_choose'); d.appendChild(go);
-      d.onclick = function(){ state.trainerId=tr.id; state.trainerName=tr.name; state.weekOffset=0; state.changeMode=false; state._ownerFreeResId=''; state.changeCustomerId=''; state.transferMode=false; state.excludeStartISO=''; loadSlots(); };
+      d.onclick = function(){ state.trainerId=tr.id; state.trainerName=tr.name; state.weekOffset=0; state.changeMode=false; state._ownerFreeResId=''; state.changeCustomerId=''; state.transferMode=false; state.excludeStartISO=''; state._weekFrom='list'; loadSlots(); };
         box.appendChild(d);
     });
+    var _ln = document.getElementById('trainerLineBox'); if (_ln) _ln.hidden = !!(state.proxyMode || state._fromTrainerAdmin);   // 案内文とボタンは会員だけ（設計59 §3-6）
     state._repaint = renderTrainers;
     show('s-trainer');
   }
@@ -2605,6 +2633,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     state.transferMode = false;
     state._fromTrainerAdmin = true;    // 完了・戻り先を担当予約一覧に
     state.weekOffset = 0;
+    state._weekFrom = 'admin';
     loadSlots();                        // 担当トレーナー(state.trainerId)の週グリッドへ
   }
 
@@ -3510,6 +3539,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     state.trainerId = r.trainerId;
     state.trainerName = r.trainerName;
     state.weekOffset = 0;
+    state._weekFrom = 'change';   // 戻るは予約の一覧へ（設計59 §3-4）
     loadSlots();                 // 同トレーナーの週グリッドへ（新しい時間を選ぶ）
   }
 
@@ -3721,11 +3751,13 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     state.trainerId = r.trainerId;
     state.trainerName = r.trainerName;
     state.weekOffset = 0;
+    state._weekFrom = 'transfer';   // 戻るはホームへ（設計59 §3-4）
     loadSlots();                 // 同トレーナーの週グリッドで振替枠を選ぶ（残数は消化せず5,500円）
   }
 
   function loadSlots(){
     state.slotsGen = (state.slotsGen || 0) + 1;   // 裏の取り直し（refreshSlotsQuietly）の古い結果で上書きさせない
+    state._repaint = null;   // 読み込み中の言語切替で前の画面（予約の一覧等）を描き直さない（設計59 §3-4b）
     show('s-loading'); dbg(t('loading'));
     api({ action:'line_getTrainerSlots', trainerId: state.trainerId, excludeStartISO: state.excludeStartISO || '' }).then(function(res){
       if (!res.success) { showError(t('err_slots')); return; }
@@ -3798,6 +3830,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     }
     var wrap = document.getElementById('gridWrap'); wrap.innerHTML = html;
     state._index = index;
+    if (typeof _weekMemberParts === 'function') _weekMemberParts();   // 設計59（週の表だけを取り出す検査では無い）
     Array.prototype.forEach.call(wrap.querySelectorAll('.cell-open'), function(td){
       var slots0 = state._index[td.getAttribute('data-key')];
       if (state.batchMode && slots0 && slots0.length && state.batchSel[slots0[0].startISO]) td.className = 'cell-sel';   // 選択済みをハイライト（週送り後も維持）
@@ -3899,7 +3932,63 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   on('nextWeek', function(){
     if(state.weekOffset < maxWeekOffset(new Date())){ state.weekOffset++; renderWeek(); }
   });
-  on('backToTrainer', function(){ state.changeMode=false; state._ownerFreeResId=''; state.changeCustomerId=''; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false; if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; } show('s-trainer'); });
+  //   週の表の会員向けの部品（設計59）：担当の名前・公式LINEの案内文・戻るの読み上げ名。名前は文字として入れる
+  function _weekMemberParts(){
+    var staff = !!(state.proxyMode || state._fromTrainerAdmin);
+    var from = state._weekFrom || '';
+    var plain = !staff && (from === 'lock' || from === 'list');
+    var wt = document.getElementById('weekTrainer');
+    if (wt) { var showName = !staff && from === 'lock'; wt.hidden = !showName; wt.textContent = showName ? t('cf_trainer_label') + String(state.trainerName || '') : ''; }
+    //   公式LINEへの相談（設計59 改訂2・関門③）：素の予約はいつも。変更・振替は表示中の週に押せる枠が0のときだけ。
+    //   枠が0の週は表の上に枠つきで出す（担当の休職・空きなし等で自力で抜けられない会員を詰ませない）
+    var box = document.getElementById('weekLineBox'), wrap = document.getElementById('gridWrap');
+    if (box && wrap) {
+      var none = wrap.querySelectorAll('.cell-open').length === 0;
+      var show = !staff && (plain || ((from === 'change' || from === 'transfer') && none));
+      box.hidden = !show;
+      var strong = show && none;
+      box.className = 'lock-line' + (strong ? ' lock-strong' : '');
+      var ns = document.getElementById('weekNoSlots'); if (ns) ns.hidden = !strong;
+      var hint = document.getElementById('weekHint');
+      if (strong) { if (box.nextSibling !== wrap) wrap.parentNode.insertBefore(box, wrap); }
+      else if (hint && hint.nextSibling !== box) { hint.parentNode.insertBefore(box, hint.nextSibling); }
+    }
+    var bk = document.getElementById('backToTrainer');
+    if (bk) { var ak = (staff || from === 'list') ? 'week_reselect' : 'back'; bk.setAttribute('data-i18n-aria', ak); bk.setAttribute('aria-label', String(t(ak)).replace(/^←\s*/, '')); }
+  }
+  //   ［公式LINEで相談する］：LINE の中ならミニアプリを閉じてトークへ戻す。外（ブラウザ）や閉じられないときは公式LINE を開く
+  var LINE_OA_URL = 'https://lin.ee/U8oLJPT';   // gas/コード.js SETTINGS.LINE_URL と同じ
+  //   ★closeWindow は例外を投げずに閉じないことがある（関門② 2回目 中）。2回目に押したときは閉じなかった＝リンク（href）のまま開く
+  var _lineTried = false;
+  function _lineConsult(e){
+    var inC = false;
+    try { inC = !!(window.liff && typeof liff.isInClient === 'function' && liff.isInClient()); } catch (_) {}
+    if (!inC || _lineTried) return true;   // a の href（target=_blank）のまま開く
+    if (e && e.preventDefault) e.preventDefault();
+    _lineTried = true;
+    try { liff.closeWindow(); } catch (err) { _openLineOA(); }
+    return false;
+  }
+  //   別タブで開けない（ポップアップを止められて null）ときは、この画面で開く
+  function _openLineOA(){
+    var wnd = null;
+    try { wnd = window.open(LINE_OA_URL, '_blank'); } catch (_) {}
+    if (wnd) { state._lineOpenedBy = 'open'; return; }
+    state._lineOpenedBy = 'location';
+    try { location.href = LINE_OA_URL; } catch (_) {}
+  }
+  on('weekLineBtn', _lineConsult);
+  on('trainerLineBtn', _lineConsult);
+  //   ★会員の戻るは週の表へ来た入口で分ける（設計59 §3-4）。s-trainer に戻すのは一覧から選んだときだけ
+  //     （変更・振替・担当への直行で s-trainer を出すと、空の画面か、前に描いた一覧から担当以外を選べてしまう）
+  on('backToTrainer', function(){
+    var from = state._weekFrom || '';
+    state.changeMode=false; state._ownerFreeResId=''; state.changeCustomerId=''; state.changeReservationId=''; state.transferMode=false; state.proxyMode=false;
+    if (state._fromTrainerAdmin){ state._fromTrainerAdmin=false; loadTrainerReservations(); return; }
+    if (from === 'list') { show('s-trainer'); return; }
+    if (from === 'change' && state._myResRes) { renderMyReservations(); return; }   // 再通信しない（失敗で戻れない画面に落とさない）
+    loadHome();
+  });
 
   // 15分刻みの日：同じ時間帯に複数の開始時刻がある→選ばせる
   function chooseStartTime(slots){
@@ -4288,6 +4377,6 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   boot();
 </script>
 <!-- 顧客カルテ（設計28・トレーナー画面だけ）。全体の変数（idToken・EDGE_URL・state）を使う -->
-<script src="karte.js?v=2026-11-24g"></script>
+<script src="karte.js?v=2026-11-25f"></script>
 </body>
 </html>

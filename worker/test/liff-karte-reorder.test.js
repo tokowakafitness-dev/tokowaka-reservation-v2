@@ -153,6 +153,10 @@ const ITEMS = () => [
   seed(w, ITEMS());
   await openRecord(w);
   ok('S9 ★つまみは種目の数だけ・44px 以上・touch-action:none はつまみだけ', grips(w).length === 3 && grips(w).every((g) => /min-width:\s*44px/.test(g.style.cssText) && /min-height:\s*44px/.test(g.style.cssText) && /touch-action:\s*none/.test(g.style.cssText)) && [...R(w).querySelectorAll('[data-ei]')].every((r) => !/touch-action/.test(r.style.cssText)) && !/touch-action/.test(R(w).style.cssText));
+  //   2026-11-25 オーナー：つまみは左端・全部✓は右端（畳んだ行も開いた種目の見出しも）
+  ok('S10 ★畳んだ行はつまみが先頭・全部✓が末尾', [...R(w).querySelectorAll('.k-exline')].length >= 1 && [...R(w).querySelectorAll('.k-exline')].every((ln) => ln.firstElementChild.classList.contains('k-grip') && (!ln.querySelector('.k-allchk') || ln.lastElementChild.classList.contains('k-allchk'))));
+  ok('S10 ★開いた種目の見出しもつまみが先頭', [...R(w).querySelectorAll('.k-exhead')].every((h) => h.parentElement.firstElementChild.classList.contains('k-grip')));
+  ok('S10 ★行は縦に伸ばさない（align-items:center）・全部✓は小さいが44px', /\.k-exline\{[^}]*align-items:center/.test(FULL) && /\.k-allchk\{[^}]*min-width:44px;min-height:44px/.test(FULL));
   await tap(w, grip(w, 1));
   ok('S2 軽く押すと「上へ／下へ」が出る', !!R(w).querySelector('.k-gripud'));
   btn(R(w).querySelector('.k-gripud'), '上へ').click(); await settle();

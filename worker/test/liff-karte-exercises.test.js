@@ -61,7 +61,10 @@ function boot(responder, o = {}) {
   return { w, sent };
 }
 const btn = (root, t) => [...root.querySelectorAll('button')].find((x) => x.textContent.indexOf(t) === 0);
-const pill = (root, t) => [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === t);
+// 2026-11-25：部位は開閉式の見出し（押すと中の種目）。見えていなければ部位を順に開いて探す
+const kPill = (root, t) => { const f = () => [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === t); let b = f(); if (b) return b; for (const g of [...root.querySelectorAll('button.k-partgroup')]) { const cur = [...root.querySelectorAll('button.k-partgroup')].find((x) => x.getAttribute('data-part') === g.getAttribute('data-part')); if (cur && cur.getAttribute('aria-expanded') !== 'true') cur.click(); b = f(); if (b) return b; } return undefined; };
+const kLabel = (root, t) => { const f = () => [...root.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === t); let b = f(); if (b) return b; for (const g of [...root.querySelectorAll('button.k-partgroup')]) { const cur = [...root.querySelectorAll('button.k-partgroup')].find((x) => x.getAttribute('data-part') === g.getAttribute('data-part')); if (cur && cur.getAttribute('aria-expanded') !== 'true') cur.click(); b = f(); if (b) return b; } return undefined; };
+const pill = kPill;
 const DKEY = 'karte_tr_draft_v1:T1:C1';
 const draftOf = (w) => JSON.parse(w.localStorage.getItem(DKEY) || 'null');
 const storeOf = (s) => { const o = {}; for (let i = 0; i < s.length; i++) o[s.key(i)] = s.getItem(s.key(i)); return o; };
@@ -281,7 +284,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
   btn(R(w), '＋ 今日の記録').click(); await settle();
   btn(R(w), '＋ 種目を足す').click();
   btn(R(w), '部位を直す').click(); await settle();
-  [...R(w).querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'ベンチプレスの部位を直す').click(); await settle();
+  kLabel(R(w), 'ベンチプレスの部位を直す').click(); await settle();
   R(w).querySelector('.k-exeditor button[data-part="arm"]').click(); await settle();
   btn(R(w).querySelector('.k-exeditor'), '保存する').click(); await settle();
   const e = await afterReload(stashOf(w));
@@ -321,7 +324,22 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
   ok('P1-0 トレーニングのタブを開くと共有の一覧を読む', sent.some((x) => x.action === 'k_exercises'));
   btn(R(w), '＋ 今日の記録').click(); await settle();
   btn(R(w), '＋ 種目を足す').click();
-  const groupOf = (name) => { const b = pill(R(w), name); const g = b && b.parentNode.previousElementSibling; return g ? g.textContent : ''; };
+  //   2026-11-25 オーナー：最近の種目はそのまま並べ、部位は見出しだけ（押すと中の種目・もう一度押すと閉じる・選んだ数を見出しに出す）
+  {
+    const P = R(w), hd = () => [...P.querySelectorAll('button.k-partgroup')], chest = () => hd().find((x) => x.getAttribute('data-part') === hd()[0].getAttribute('data-part'));
+    const recentShown = !![...P.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'スクワット');
+    ok('P0-1 ★最初は部位の見出しだけ（中の種目は出ない）・最近の種目は出ている', hd().length >= 2 && hd().every((x) => x.getAttribute('aria-expanded') === 'false') && !P.querySelector('.k-partpills') && recentShown);
+    ok('P0-2 ★見出しは押しやすい（48px）', hd().every((x) => /min-height:\s*48px/.test(x.style.cssText)));
+    const key = hd()[0].getAttribute('data-part');
+    hd()[0].click(); await settle();
+    ok('P0-3 ★押すとその部位の種目だけが開く', P.querySelectorAll('.k-partpills').length === 1 && P.querySelector('.k-partpills').getAttribute('data-part') === key && chest().getAttribute('aria-expanded') === 'true');
+    const first = P.querySelector('.k-partpills button.k-pill'); first.click(); await settle();
+    chest().click(); await settle();
+    ok('P0-4 ★もう一度押すと閉じる・選んだ数が見出しに残る', !P.querySelector('.k-partpills') && /1つ選択中/.test(chest().textContent));
+    hd()[0].click(); await settle(); P.querySelector('.k-partpills button.k-pill.on, .k-partpills button.k-pill[aria-pressed="true"]')?.click(); await settle();
+    hd().forEach((x) => { if (x.getAttribute('aria-expanded') === 'true') x.click(); }); await settle();
+  }
+  const groupOf = (name) => { const b = pill(R(w), name); const g = b && b.parentNode.previousElementSibling; return g ? (g.classList.contains('k-partgroup') ? g.firstElementChild.textContent : g.textContent) : ''; };
   ok('P1-1 ★共有の一覧の種目が出る・部位は一覧の部位（バトルロープ＝体幹）', groupOf('バトルロープ') === '体幹', groupOf('バトルロープ'));
   ok('P1-2 部位なしの種目は「その他」・固定の種目も出る・この方の最近の種目は上の段のまま', groupOf('ケトルベルスイング') === 'その他' && groupOf('ベンチプレス') === '胸' && groupOf('スクワット') === 'この方の最近の種目');
   //   新しい種目：名前を入れる → 部位を選ぶ → 登録して選ぶ
@@ -339,7 +357,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
   //   部位を直す：「部位を直す」→ 種目を押す → 部位 → 保存（選ぶ操作とは別）
   btn(R(w), '＋ 種目を足す').click();
   btn(R(w), '部位を直す').click(); await settle();
-  [...R(w).querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'スクワットの部位を直す').click(); await settle();
+  kLabel(R(w), 'スクワットの部位を直す').click(); await settle();
   const ed = R(w).querySelector('.k-exeditor');
   ok('P3-1 ★部位を直す画面：いまの部位（推定）と7つの部位・保存・やめる（ダイアログを出さない）', !!ed && ed.textContent.includes('いま：脚・尻（種目名からの推定）') && ed.querySelectorAll('button[data-part]').length === 7 && w.confirms === 0);
   saveResp = (b) => ({ success: true, name: b.name, part: b.part });
@@ -362,7 +380,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
   btn(R(w), '「メディシンボール」を').click(); await settle();
   ok('P4-2a 結果が分からなくても今日の記録用に選ぶ・「部位を直す」から送り直すよう案内', w.alerts.some((a) => a.includes('結果を確かめられませんでした') && a.includes('部位を直す')));
   btn(R(w), '部位を直す').click(); await settle();
-  [...R(w).querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'メディシンボールの部位を直す').click(); await settle();
+  kLabel(R(w), 'メディシンボールの部位を直す').click(); await settle();
   btn(R(w).querySelector('.k-exeditor'), '保存する').click(); await settle();
   const mb = sent.filter((x) => x.action === 'k_saveExercise' && x.name === 'メディシンボール');
   ok('P4-2 ★結果が分からないときの送り直しは同じ送信番号（二重にならない）', mb.length === 2 && mb[0].clientReqId === mb[1].clientReqId);
