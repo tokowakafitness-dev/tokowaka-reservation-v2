@@ -147,6 +147,16 @@ function storageEvt(w, oldV, newV) { w.dispatchEvent(new w.StorageEvent('storage
   ok('L26 作者でもオーナーでもなければ出さない', !editBtn(w));
 }
 
+// ================= L20c 変更なしで閉じる：ほかのタブが持ち主を取った直後（イベントがまだ届いていない）＝凍結・ほかの下書きを消さない（関門②） =================
+{
+  const { w, sent } = boot();
+  await startEdit(w, 'S1');
+  const B = Object.assign({}, ed(w), { owner: 'other-form', ver: Number(ed(w).ver) + 1 });
+  w.localStorage.setItem(EKEY, JSON.stringify(B));   // storage イベントは送らない＝古い画面はまだ知らない
+  saveBtn(w).click(); await settle();
+  ok('L20c ★変更なしの保存でも持ち主が違えば凍結（「更新しました」を出さない）', frozen(w) && frozenText(w).includes('ほかの画面で変わりました') && !R(w).querySelector('.k-ednochange') && editsSent(sent).length === 0);
+  ok('L20c ★ほかの画面の直しかけは消さない', w.localStorage.getItem(EKEY) === JSON.stringify(B));
+}
 // ================= L20・L22 中身の写し（値を落とさない・✓ 済みで開く） =================
 {
   const { w, sent } = boot();
