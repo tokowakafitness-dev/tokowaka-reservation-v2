@@ -178,6 +178,18 @@ function storageEvt(w, oldV, newV) { w.dispatchEvent(new w.StorageEvent('storage
   ok('L31b 端末（localStorage・sessionStorage）に会員の名前が残らない', !allStore.includes(NAME));
 }
 
+// ================= L33 直す画面でも種目の行の形は今日の記録の画面と同じ（つまみ左・全部✓右・開いた見出しのつまみは左端） =================
+{
+  const { w } = boot();
+  await startEdit(w, 'S1');
+  const lines = [...R(w).querySelectorAll('.k-exline')];
+  const okLines = lines.length === 3 && lines.every((l) => l.firstElementChild && l.firstElementChild.classList.contains('k-grip') && l.children[1].classList.contains('k-excol'));
+  const withChk = lines.filter((l) => l.querySelector('.k-allchk,.k-donechk'));
+  const head = R(w).querySelector('.k-exhead');
+  ok('L33 ★直す画面の畳んだ行：つまみが左端・その右に種目（全部✓／実施は右端）', okLines && withChk.every((l) => l.lastElementChild.matches('.k-allchk,.k-donechk')), lines.map((l) => [...l.children].map((c) => c.className).join('|')).join(' / '));
+  ok('L33 ★直す画面の開いた種目の見出し：つまみが左端・その右に見出し・外すは右', !!head && head.parentNode.firstElementChild.classList.contains('k-grip') && head.parentNode.lastElementChild.textContent === '外す');
+}
+
 // ================= L23 全部の ✓ を外すと送らない =================
 {
   const { w, sent } = boot();

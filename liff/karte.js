@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-25e 保存した記録を直す（日別の記録の［編集］・設計58）・同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-25f 保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -333,9 +333,9 @@
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}',
     //   ---- 設計38：メモから取り込む・補助/無理やり/ドロップ/実施
     //   畳んだ種目の行：開くボタンの右に「全部✓」「実施した」（1種目1タップで確かめる）
-    '#karteRoot .k-exline{display:flex;align-items:stretch;gap:8px;margin-bottom:10px;}',
+    '#karteRoot .k-exline{display:flex;align-items:center;gap:6px;margin-bottom:10px;}',   // 2026-11-25 オーナー：つまみは左・全部✓は右・どちらも小さく（行の高さに伸ばさない）
     '#karteRoot .k-exline .k-excol{margin-bottom:0;flex:1;min-width:0;}',
-    '#karteRoot .k-allchk{min-width:64px;min-height:44px;padding:0 10px;border-radius:12px;border:1.5px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-size:14px;font-weight:700;font-family:inherit;white-space:nowrap;}',
+    '#karteRoot .k-allchk{flex:none;min-width:44px;min-height:44px;padding:0 6px;border-radius:10px;border:1px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap;}',
     '#karteRoot .k-donechk{min-width:48px;min-height:48px;padding:0 12px;border-radius:12px;font-size:15px;font-weight:700;font-family:inherit;white-space:nowrap;background:#fff;color:#5b6661;border:1px solid #8692a6;}',
     '#karteRoot .k-donechk[aria-pressed=true]{background:#243b66;color:#fff;border-color:#243b66;}',
     '#karteRoot .k-frommemo{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--k-gold-l);color:#6b5427;white-space:nowrap;}',
@@ -2139,7 +2139,7 @@
    */
   function makeGrip(o) {
     var b = el('button', { type: 'button', class: 'k-grip', 'data-idx': String(o.index), 'aria-label': o.label + 'の順番を変える（上下の矢印キーでも動かせます）', 'data-nodirty': '1',
-      style: 'min-width:44px;min-height:44px;flex:none;border:1px solid #c9ced8;border-radius:10px;background:#fff;color:#5b6577;font-size:20px;line-height:1;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;', text: '≡' });
+      style: 'min-width:44px;min-height:44px;flex:none;border:0;border-radius:10px;background:transparent;color:#8692a6;font-size:18px;line-height:1;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;', text: '≡' });
     b.onkeydown = function (e) {
       var k = e.key, to = k === 'ArrowUp' ? o.index - 1 : k === 'ArrowDown' ? o.index + 1 : null;
       if (to == null) return;
@@ -4075,7 +4075,7 @@
           //   ★畳んだままでも1タップで確かめられる（設計38 §5-5：例のメモが11操作）。印の無い今までの下書きでは何も足さない
           var side = allChkBtn(it) || doneBtn(it);
           var gp = D.items.length > 1 ? trGrip(it, ei) : null;   // 設計53
-          var rowC = (!side && !gp) ? colBtn : el('div', { class: 'k-exline' }, [colBtn, side, gp]);
+          var rowC = (!side && !gp) ? colBtn : el('div', { class: 'k-exline' }, [gp, colBtn, side]);
           rowC.setAttribute('data-ei', String(ei));
           list.appendChild(rowC);
           if (udFor === ei) list.appendChild(gripUpDown(it.exercise, ei, D.items.length, reorderItems));
@@ -4088,13 +4088,13 @@
         var blk = el('div', { style: 'border:1px solid ' + (warn ? '#f5c9bb' : 'var(--k-line)') + ';border-radius:12px;padding:10px;margin-bottom:10px;background:' + (warn ? '#fff7f4' : '#fff') + ';' });
         //   設計56：見出しの種目名・部位の部分を押すと閉じる（畳んだ行を押すと開く＝同じ場所で開閉）。［外す］［≡］はこのボタンの外＝押しても開閉しない
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
+          D.items.length > 1 ? trGrip(it, ei) : null,   // 2026-11-25 オーナー：つまみは左端（畳んだ行と同じ位置）
           el('button', { type: 'button', class: 'k-exhead', 'aria-expanded': 'true', 'aria-label': it.exercise + 'を閉じる', onclick: function () { D.openEi = -1; save(); draw(); } }, [
             el('span', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
             it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
             el('span', { class: 'k-tag', text: partOf(it.exercise) }),
             el('span', { class: 'k-sub k-exfold', 'aria-hidden': 'true', style: 'font-size:16px;', text: '⌄' })]),
-          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { rmEx(ei); } }),   // 設計55：直後に元に戻せる
-          D.items.length > 1 ? trGrip(it, ei) : null]));   // 設計53：つまみは右端
+          el('button', { type: 'button', class: 'k-btn out small k-danger', 'aria-label': it.exercise + 'を外す', text: '外す', onclick: function () { rmEx(ei); } })]));   // 設計55：直後に元に戻せる
         blk.setAttribute('data-ei', String(ei));
         if (udFor === ei) blk.appendChild(gripUpDown(it.exercise, ei, D.items.length, reorderItems));
         //   「全部✓」は見出しの「外す」から離し、前回の行の右に置く（押し間違えて種目を消さない・設計38 §5-4）
@@ -4641,7 +4641,7 @@
       return out;
     }
     function registered(x) { return EXERCISES.indexOf(x) >= 0 || Object.prototype.hasOwnProperty.call(exMaster, x); }
-    var picked = [], editMode = false, editing = null, editPart = null, newPart = null, busy = false, lastReq = {}, regPart = {};
+    var picked = [], editMode = false, editing = null, editPart = null, newPart = null, busy = false, lastReq = {}, regPart = {}, openPart = null;   // openPart：開いている部位（2026-11-25 オーナー：部位は大きな見出しだけ・押すと中の種目）
     var box = el('div', { class: 'k-card k-picker', style: 'margin-top:8px;background:var(--k-cream);' });
     var q = el('input', { 'data-nodirty': '1', type: 'search', maxlength: String(EX_NAME_MAX), placeholder: '種目を探す・新しい名前を入れる', 'aria-label': '種目を探す', enterkeyhint: 'search', style: 'width:100%;min-height:44px;border:1px solid #8692a6;border-radius:8px;padding:0 10px;font-size:16px;box-sizing:border-box;' });
     var editBtn = el('button', { type: 'button', class: 'k-btn out small k-exedit', 'data-nodirty': '1', onclick: function () { editMode = !editMode; editing = null; draw(); } });
@@ -4792,8 +4792,16 @@
         all.forEach(function (x) { if (recent.indexOf(x) >= 0) return; var p = partKeyOf(x); (groups[p] = groups[p] || []).push(x); });
         PART_KEYS.forEach(function (pk) {
           var g = groups[pk[0]]; if (!g) return;
-          area.appendChild(el('div', { class: 'k-sub k-partgroup', 'data-part': pk[0], style: 'margin:10px 0 6px;font-weight:700;', text: pk[1] }));
-          var p3 = el('div', { class: 'k-pills' }); g.forEach(function (x) { p3.appendChild(chip(x)); }); area.appendChild(p3);
+          //   2026-11-25 オーナー：最近の種目はそのまま並べ、それ以外は部位の見出しだけ。押すと中の種目が開く（もう一度押すと閉じる・開くのは1つだけ）
+          //   ★選んだ種目が閉じた部位に隠れても分かるように、見出しに選んだ数を出す
+          var isOpen = openPart === pk[0], np2 = g.filter(function (x) { return picked.indexOf(x) >= 0; }).length;
+          area.appendChild(el('button', { type: 'button', class: 'k-partgroup', 'data-part': pk[0], 'data-nodirty': '1', 'aria-expanded': isOpen ? 'true' : 'false',
+            style: 'display:flex;align-items:center;gap:8px;width:100%;min-height:48px;margin-top:8px;padding:0 14px;border:1px solid #c9ced8;border-radius:12px;background:' + (isOpen ? 'var(--k-acc-l)' : '#fff') + ';color:var(--k-acc);font-size:16px;font-weight:700;font-family:inherit;text-align:left;',
+            onclick: function () { openPart = isOpen ? null : pk[0]; draw(); } }, [
+            el('span', { style: 'flex:1;min-width:0;', text: pk[1] }),
+            np2 ? el('span', { class: 'k-partpicked', style: 'font-size:12px;', text: np2 + 'つ選択中' }) : null,
+            el('span', { class: 'k-sub', style: 'font-size:13px;', text: g.length + '種目 ' + (isOpen ? '▾' : '›') })]));
+          if (isOpen) { var p3 = el('div', { class: 'k-pills k-partpills', 'data-part': pk[0], style: 'margin-top:8px;' }); g.forEach(function (x) { p3.appendChild(chip(x)); }); area.appendChild(p3); }
         });
       }
       go.textContent = picked.length ? '選んだ ' + picked.length + ' 種目を足す' : '選んだ種目を足す';
