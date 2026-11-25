@@ -2575,6 +2575,8 @@
   var AI_HH_TEXT = '健康の情報を含む根拠だったため、そのままは使えません';
   var AI_STATUSES = ['match', 'inferred', 'nobasis', 'healthHidden'];
   function rvStr(v) { return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; }
+  //   設計61 改訂2：お客様へは見出しごとの改行を残す（行の中の空白だけまとめる）
+  function rvMsg(v) { return typeof v === 'string' ? v.split('\n').map(function (x) { return x.replace(/\s+/g, ' ').trim(); }).filter(Boolean).join('\n') : ''; }
   //   ---- 設計50：確認の状態（純粋なデータ）。種目は1行の文字（「読み取る」の memoSets で読む）・ほかは欄の文章・お客様の欄は既定オフのチェック
   //     ★orig（AI の判定）は応答から1回だけ作り以後変えない。トレーナーが変えるのは name・line・note・fields・member・off・part だけ
   var RV_FIELDS = [['flow', 'summary'], ['condition', 'condition'], ['coaching', 'coaching'], ['hearing', 'hearing'], ['next', 'next']];   // [欄, scope の種類]
@@ -2611,7 +2613,7 @@
         line: orig.map(function (o) { return rvTok(o, scope); }).join('  '), note: note.join('\n') };
     });
     rv.fields = { flow: lst('summary').join('\n'), condition: lst('condition').join('\n'), coaching: lst('coaching').join('\n'), hearing: lst('hearing').join('\n'), next: lst('next_actions').join('\n') };
-    rv.member = { on: false, message: rvStr(dr.member_message), todo: lst('member_todo').join('\n') };
+    rv.member = { on: false, message: rvMsg(dr.member_message), todo: lst('member_todo').join('\n') };
     rv.caution = lst('caution');
     rv.unclear = (Array.isArray(dr.unclear) ? dr.unclear : []).map(function (u) { return { text: rvStr(u && u.text), evidence: rvStr(u && u.evidence) }; }).filter(function (u) { return u.text; });
     return rv;
