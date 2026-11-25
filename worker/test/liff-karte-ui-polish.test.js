@@ -16,6 +16,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
+// 2026-11-25：部位は開閉式の見出し（押すと中の種目）。見えていなければ部位を順に開いて探す
+const kPill = (root, t) => { const f = () => [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === t); let b = f(); if (b) return b; for (const g of [...root.querySelectorAll('button.k-partgroup')]) { const cur = [...root.querySelectorAll('button.k-partgroup')].find((x) => x.getAttribute('data-part') === g.getAttribute('data-part')); if (cur && cur.getAttribute('aria-expanded') !== 'true') cur.click(); b = f(); if (b) return b; } return undefined; };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
@@ -304,7 +306,7 @@ for (const [label, o] of [['同意なし', { aiDraft: true, aiConsent: 'none' }]
   ok('U8 ★キーパッド中（k-kb）も帯は fixed のまま（ほかの帯の static に負けない）', w.getComputedStyle(pb).position === 'fixed');
   R(w).classList.remove('k-kb');
   ok('U8 下の帯は前に出る（z-index 3）・種目の欄の決定ボタンは帯の中で止まる（76px に浮かせない）', /#karteRoot \.k-savebar\{position:sticky;bottom:0;z-index:3;/.test(SRC) && !/\.k-picker-go\{position:sticky;bottom:76px/.test(SRC) && w.getComputedStyle(go).position !== 'sticky');
-  [...R(w).querySelectorAll('button.k-pill')].find((x) => x.textContent === 'ベンチプレス').click(); await settle();
+  kPill(R(w), 'ベンチプレス').click(); await settle();
   ok('U8 選ぶと押せる・数が出る', go.disabled === false && go.textContent === '選んだ 1 種目を足す', go.textContent);
   go.click(); await settle();
   ok('U8 ★足すと種目の欄が閉じ、下の帯も消える', bars().every((b) => !shown(w, b)) && names(w).length === 4);
