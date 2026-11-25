@@ -96,6 +96,16 @@ KARTE_TRAINING_EXT = "allow"
 #   allow のときに受け付けるトレーナーの trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
 KARTE_TRAINING_EXT_TRAINERS = "A"
 
+# ---- 保存したトレーニングの記録を直す（設計58・k_editTraining）--------------------------
+#   "off"（既定）… k_editTraining は何も書かずに 409 TRAINING_EDIT_OFF。k_training の trainingEdit は false＝画面に［編集］は出ない
+#   "allow"     … KARTE_TRAINING_EDIT_TRAINERS に載ったトレーナーだけ "on" と同じ
+#   "on"        … 全トレーナー（作者本人かオーナーだけが直せるのは切替に関わらず同じ）
+#   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる。値を変えた push は decisions に記録する
+#   ★2026-11-25 CEO 決定（設計58 Q2）：まず allow でオーナーだけ実機確認 → on は別の PR
+KARTE_TRAINING_EDIT = "off"
+#   allow のときに受け付けるトレーナーの trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
+KARTE_TRAINING_EDIT_TRAINERS = ""
+
 # ---- 録音の文字起こしを AI でカルテの下書きにする（設計39・I76）----------------------
 #   "off"（既定）… k_aiDraft は 503 AI_NOT_CONFIGURED。外へ何も送らない・数えない。画面にボタンは出ない
 #   "allow"     … KARTE_AI_DRAFT_TRAINERS に載ったトレーナーだけ使える
