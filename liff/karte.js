@@ -4579,7 +4579,8 @@
     function editNoChange(items) {
       var cur0 = lsGet(draftKey);
       if (cur0 && cur0.pending) { edFreeze('送信の結果を確かめている直しがあります。開き直して確かめてください。'); return; }   // ★送り直し待ちを黙って消さない
-      if (cur0 && cur0.owner === formId) edStore(draftKey, null, formId);   // ★この画面の下書きだけ消す（ほかの画面のものは触らない）
+      if (!cur0 || cur0.owner !== formId || Number(cur0.ver) !== Number(D.ver)) { edFreeze('ほかの画面で変わりました。開き直してください。'); return; }   // ★sendEdit と同じ所有者・世代の確かめ（関門②）
+      edStore(draftKey, null, formId);   // この画面の下書きだけ消す
       edDispose();
       var n = 0; items.forEach(function (x) { n += x.sets.length; });
       if (saveBtn && saveBtn.classList.contains('k-hsave') && saveBtn.parentNode) saveBtn.parentNode.removeChild(saveBtn);
