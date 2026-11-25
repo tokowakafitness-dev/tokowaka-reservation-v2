@@ -1843,12 +1843,13 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     var res = state._trainersRes || { trainers: [] };
     var box = document.getElementById('trainerList'); box.innerHTML = '';
     var trainers = (res.trainers || []).slice();
-    var defId = state.defaultTrainerId || '';
-    if (defId) trainers.sort(function(a,b){ return (b.id===defId?1:0) - (a.id===defId?1:0); });   // 担当を先頭に
+    //   代行のときは代行する顧客の担当（設計60）、会員のときは本人の担当。型の違いで外れないよう文字で比べる
+    var defId = String((state.proxyMode ? state.proxyDefaultTrainerId : state.defaultTrainerId) || '');
+    if (defId) trainers.sort(function(a,b){ return (String(b.id)===defId?1:0) - (String(a.id)===defId?1:0); });   // 担当を先頭に（他は元の並びのまま）
     trainers.forEach(function(tr){
       var d = document.createElement('div');
       d.className = 'trainer';
-      var isDefault = (defId && tr.id === defId);
+      var isDefault = !!(defId && String(tr.id) === defId);
       var av = document.createElement('span'); av.className = 'tav'; av.textContent = String(tr.name || '').slice(0, 1); d.appendChild(av);
       var nm = document.createElement('span'); nm.className = 'tnm'; nm.textContent = String(tr.name || ''); d.appendChild(nm);
       if (isDefault) { var bd = document.createElement('span'); bd.className = 'tbadge'; bd.textContent = t('trainer_badge'); d.appendChild(bd); }
@@ -2504,7 +2505,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     });
     if (_cId) {
       var add = document.createElement('button'); add.className = 'btn btn-outline'; add.textContent = '＋ 予約を代行'; add.setAttribute('aria-label', 'この方の予約を代行');
-      add.onclick = function(){ startProxyReservation(_cId, name); };
+      add.onclick = function(){ startProxyReservation(_cId, name, _proxyDefaultOf(_cId)); };
       top2.appendChild(add);   // 上の「カルテを開く」の隣（モック P2）
       // チケット補充（枚数1〜／単価はトレーナー入力・必須／有効期限は任意＝空なら今日＋⌈枚数/2⌉ヶ月・購入パックごと独立）
       var rw = document.createElement('div'); rw.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
@@ -2562,6 +2563,12 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     }
   }
   // 予約の代行（トレーナーが顧客の代わりに新規予約）— まずトレーナー選択（#4：担当を選べる。鈴木が沖担当で代行等）→週グリッド
+  //   代行する顧客の担当（設計60）：顧客一覧（line_getTrainerReservations の customers）の defaultTrainerId だけを使う。
+  //   ★鍵が無い（GAS の応答・Worker で顧客の写しが古い）＝分からない → '' ＝担当の印を出さない。予約の trainerId から推定しない（担当と違いうる）
+  function _proxyDefaultOf(customerId){
+    var c = (state._trainerCustomers || []).filter(function(x){ return x && String(x.customerId) === String(customerId); })[0];
+    return (c && typeof c.defaultTrainerId === 'string') ? c.defaultTrainerId : '';
+  }
   function startProxyReservation(customerId, name, defaultTrainerId){
     state.proxyMode = true;
     state.proxyCustomerId = customerId;
@@ -2570,7 +2577,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     state.excludeStartISO = '';
     state._fromTrainerAdmin = true;
     state.weekOffset = 0;
-    state.defaultTrainerId = defaultTrainerId || state.defaultTrainerId || '';   // 顧客の担当を先頭表示（変更可）
+    //   ★顧客の担当は代行専用の値に入れる。state.defaultTrainerId（会員本人の担当・直行の判定に使う）は触らない。
+    //     前の顧客・本人の値を引き継がない（分からなければ空＝印なし）
+    state.proxyDefaultTrainerId = String(defaultTrainerId || '');
     loadTrainers();   // トレーナー選択画面へ（カードのonclickがtrainerId確定→loadSlots・proxyMode保持）
   }
   on('tadminReload', function(){ loadTrainerReservations(); });

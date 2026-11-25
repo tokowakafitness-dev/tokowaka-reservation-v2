@@ -174,9 +174,9 @@ export async function compatTrainerReservations({ env, who, body, ctx }) {
   // 担当の顧客＋担当が決まっていない顧客（オーナーは全員）
   const scope = customerScopeSql(who);
   const custSql = owner
-    ? `SELECT customer_id, name FROM customers
+    ? `SELECT customer_id, name, default_trainer_id FROM customers
         WHERE contract_status IS NULL OR contract_status <> '退会' ORDER BY name`
-    : `SELECT customer_id, name FROM customers
+    : `SELECT customer_id, name, default_trainer_id FROM customers
         WHERE ${scope.where} AND (contract_status IS NULL OR contract_status <> '退会')
         ORDER BY name`;
   const resvSql = owner
@@ -226,9 +226,14 @@ export async function compatTrainerReservations({ env, who, body, ctx }) {
     _sort: r.start_at,
   }));
 
-  const customers = (custs.results || []).map((c) => ({
-    customerId: String(c.customer_id), name: String(c.name || ''),
-  }));
+  //   ★担当（customer_line_map の E列 trainer_id の写し＝PushToEdge の default_trainer_id）。代行のトレーナー選びで先頭に出す（設計60）。
+  //     顧客の写しが古いときは載せない（鍵ごと無い＝画面は「分からない」＝担当の印を出さない）。誤った人を担当と見せない
+  const custFresh = !(await listTooOld(env, 'customers'));
+  const customers = (custs.results || []).map((c) => {
+    const o = { customerId: String(c.customer_id), name: String(c.name || '') };
+    if (custFresh) o.defaultTrainerId = String(c.default_trainer_id || '');
+    return o;
+  });
 
   return { trainerName: who.name, reservations, customers };
 }
