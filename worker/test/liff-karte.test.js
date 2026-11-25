@@ -14,6 +14,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
+// 2026-11-25：部位は開閉式の見出し（押すと中の種目）。見えていなければ部位を順に開いて探す
+const kPill = (root, t) => { const f = () => [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === t); let b = f(); if (b) return b; for (const g of [...root.querySelectorAll('button.k-partgroup')]) { const cur = [...root.querySelectorAll('button.k-partgroup')].find((x) => x.getAttribute('data-part') === g.getAttribute('data-part')); if (cur && cur.getAttribute('aria-expanded') !== 'true') cur.click(); b = f(); if (b) return b; } return undefined; };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../..');
@@ -331,7 +333,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
   w.KarteUI.open('C1', '会員', 'notes'); await settle();
   const r = w.document.getElementById('karteRoot');
   [...r.querySelectorAll('button')].find((x) => x.textContent === '＋ メモを書く').click(); await settle();
-  [...r.querySelectorAll('button.k-pill')].find((x) => x.textContent === '食事').click();
+  kPill(r, '食事').click();
   r.querySelectorAll('textarea')[0].value = 'x';
   [...r.querySelectorAll('button')].find((x) => x.textContent === '保存する').click();
   await settle();
@@ -472,8 +474,8 @@ async function fromPrev(root) {
   btn(root, '＋ 種目を足す').click();
   const txt = root.textContent;
   ok('10-18 この方の最近の種目が出る', txt.includes('この方の最近の種目'));
-  [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'スクワット').click();
-  [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'ベンチプレス').click();
+  kPill(root, 'スクワット').click();
+  kPill(root, 'ベンチプレス').click();
   btn(root, '選んだ 2 種目を足す').click(); await settle();
   const it19 = (draftOf(w) || { items: [] }).items;
   ok('10-19 ★まとめて足す・その種目の前回の値を1セット目に入れる（前回なしは空）', it19.length === 2 && String(it19[0].sets[0].w) === '40' && it19[1].sets[0].w === '', JSON.stringify(it19));
@@ -691,7 +693,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   w.KarteUI.open('C1', '会員', 'summary'); await settle();
   const root = w.document.getElementById('karteRoot');
   btn(root, 'ヒアリングを').click(); await settle();
-  [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === 'ダイエット').click();
+  kPill(root, 'ダイエット').click();
   w.history.back(); await new Promise((r) => setTimeout(r, 30)); await settle();
   ok('13-8 ★入力中に戻ろうとしたら確かめ、やめたらその画面に留まる', asked === 1 && root.textContent.includes('ヒアリングを保存'));
 }
@@ -978,7 +980,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   await fromPrev(root);
   ok('18-3 ★写すと今日の記録の画面に戻り、前回（10/29）の重量・回数が入る（✓は外れた状態）', w.history.state.sub === 'trform' && JSON.stringify(items()) === JSON.stringify([{ exercise: 'ラットプルダウン', sets: [{ w: 30, r: 12, done: false }, { w: 30, r: 10, done: false }] }]), JSON.stringify(items()));
   root.querySelector('button.k-pickgo').click(); await settle();
-  [...root.querySelectorAll('button.k-pill')].find((x) => x.textContent === '脚・尻').click(); await settle();
+  kPill(root, '脚・尻').click(); await settle();
   ok('18-4 部位で絞れる（絞った先の最初の日が選ばれる）', cards().length === 1 && cards()[0].textContent.includes('10/25') && cards()[0].getAttribute('aria-pressed') === 'true');
   btn(root, '種目だけ写す').click(); await pop(); await settle();
   ok('18-5 ★種目だけ写す＝数字は空・いまの記録の後ろに足す（置き換えない）', items().map((x) => x.exercise).join(',') === 'ラットプルダウン,スクワット,ヒップスラスト' && items()[1].sets[0].w === '' && items()[0].sets[0].w === 30, JSON.stringify(items()));
