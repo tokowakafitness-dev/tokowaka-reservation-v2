@@ -66,7 +66,7 @@ export const AI_SYSTEM_V2 = [
   '   sets：行ったセットを1つずつ全部書く（1種目10セット・全体60セットまで。同じ重さの繰り返しも省かない）。weight_kg＝重さ（分からなければ null）／bodyweight＝重りを使わない種目なら true（このとき weight_kg は null）／reps＝回数（分からなければ null）／basis＝数字が文字起こしにあれば said、推論なら inferred／evidence＝根拠の部分を文字起こしの文字のまま80字まで（聞き違い・言い間違いも直さずに写す）／unsure＝迷った理由（120字まで・無ければ空）／note＝そのセットの備考（200字まで）。',
   '3. caution（20件まで・各200字）：痛み・違和感・怪我・診断・服薬・発熱だけ。体の不調はここ以外に書かない。睡眠・生活リズム・疲れは caution に書かない。',
   '4. condition＝種目に結びつかない状態（10件まで）／coaching＝全体の指導の要点（20件まで）／hearing＝指導に関係する生活・食事・睡眠・仕事・目標（20件まで）。この3つは各200字まで。next_actions＝次回やること（5件まで・各100字・合計500字まで）。',
-  '5. member_message＝今日のふり返り（400字まで）。お客様の画面にそのまま出る、トレーナーからお客様への語りかけ。です・ます調で、①今日行った主な内容 ②よくできた点・伸びた点（トレーナーが伝えた言葉は要約して入れる。発言をかぎかっこで引用しない） ③次回に向けて意識すること、の順に書く。根拠が無い項目は省き、どれも書けなければ空文字にする（一般的な励ましで埋めない）。文字起こしに無いことは書かない。重さ・回数は文字起こしで話した数字だけ。体の状態（痛み・違和感・怪我・体調など）は書かない（caution にだけ書く）。member_todo＝次回までにしてほしいこと（3件まで・各60字）。トレーナーが頼んだ・勧めたことだけ。',
+  '5. member_message＝今日のふり返り（400字まで）。お客様の画面にそのまま出る、トレーナーからお客様への語りかけ（です・ます調）。見出しをこの順で付けて書く：【今日の内容】今日行った主な内容 【よくできた点】よくできた点・伸びた点（トレーナーが伝えた言葉は要約して入れる。発言をかぎかっこで引用しない） 【次回に向けて】次のセッションで意識すること。各見出しは1〜2文。根拠が無い見出しは見出しごと省き、どれも書けなければ空文字にする（一般的な励ましで埋めない）。同じ要点は1回だけ書き、言い換えて繰り返さない。文字起こしに無いことは書かない。重さ・回数は文字起こしで話した数字だけ。体の状態（痛み・違和感・怪我・体調など）は書かない（caution にだけ書く）。member_todo＝次回までにしてほしいこと（3件まで・各60字）。トレーナーが頼んだ・勧めたことだけ。【次回に向けて】と同じ内容は書かない。',
   '6. unclear（10件まで）：どこにも入らない不明点（text 120字まで）とその根拠（evidence＝文字起こしの文字のまま80字まで）。',
   '書かない：雑談（遊び・誘い・予定・趣味・旅行の話を含む）・政治・宗教・思想信条・性的指向・家族の事情・第三者の話。人名は書かず「お客様」「トレーナー」「〔人〕」と書く。',
 ].join('\n');
@@ -183,6 +183,26 @@ export { BadOutput as BadOutputV2 };
 const bad = () => { throw new BadOutput('AI_BAD_OUTPUT'); };
 const nfkc = (s) => String(s == null ? '' : s).normalize('NFKC');
 const squash = (s) => nfkc(s).replace(/\s+/g, ' ').trim();
+//   設計61 改訂2：お客様へのふり返りの3つの見出しのうち、実際に現れた2つ目以降の前に改行を入れる（ほかの【】は触らない）。
+//     改行を入れると max を超えるなら入れない（1行のまま返す＝画面が字数を出して保存を止める・切らない）
+export const MEMBER_HEADS = ['今日の内容', 'よくできた点', '次回に向けて'];
+const MEMBER_HEAD_RE = new RegExp(' ?【(' + MEMBER_HEADS.join('|') + ')】 ?', 'g');
+export function layoutMemberMessage(t, max) {
+  const s = String(t || '');
+  let n = 0;
+  const laid = s.replace(MEMBER_HEAD_RE, (m, h, off) => {
+    n += 1;
+    const head = '【' + h + '】';
+    if (n === 1) return (off > 0 && m.startsWith(' ') ? ' ' : '') + head;
+    return '\n' + head;
+  });
+  return laid.length <= max ? laid : s;
+}
+//   設計61 改訂2：次回までにの重複は、空白と句読点（Unicode の P）を除いた形が同じものを後ろから落とす。記号（×・+ 等）・英字の大小は区別したまま
+export function dedupeTodo(arr) {
+  const seen = new Set();
+  return arr.filter((t) => { const k = t.replace(/[\s\p{P}]+/gu, ''); if (seen.has(k)) return false; seen.add(k); return true; });
+}
 function one(v, max) { if (v == null) return ''; if (typeof v !== 'string') bad(); const t = squash(v); if (t.length > max) bad(); return t; }
 function list(v, maxN, maxLen) {
   if (!Array.isArray(v)) bad();
@@ -326,7 +346,7 @@ export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
   const next = list(raw.next_actions, L.NEXT, L.NEXT_LEN);
   if (next.join('\n').length > L.NEXT_TOTAL) bad();
   let memberMessage = one(raw.member_message, L.MEMBER_MESSAGE);
-  const todo = list(raw.member_todo, L.TODO, L.TODO_LEN);
+  const todo = dedupeTodo(list(raw.member_todo, L.TODO, L.TODO_LEN));   // 設計61 改訂2：同じ形は後ろを落とす（健康語の移動の前）
   if (!Array.isArray(raw.unclear) || raw.unclear.length > L.UNCLEAR) bad();
   const unclear = raw.unclear.map((u) => {
     if (!u || typeof u !== 'object') bad();
@@ -405,7 +425,7 @@ export function validateDraftV2(raw, maskedSquashed, mask, effort, lineMarked) {
       v: 2, effort,
       summary: flow2.map(mask), exercises,
       condition: condition2.map(mask), caution: caution.map(mask), coaching: coaching2.map(mask), hearing: hearing2.map(mask),
-      next_actions: next2.map(mask), member_message: mask(memberMessage), member_todo: todo2.map(mask),
+      next_actions: next2.map(mask), member_message: layoutMemberMessage(mask(memberMessage), L.MEMBER_MESSAGE), member_todo: todo2.map(mask),   // 設計61 改訂2：改行は mask の後・最後の文字数で決める
       unclear: unclear2.map((u) => ({ text: mask(u.text), evidence: mask(u.evidence) })),
     },
     counts: { nEx, nSets, nInf, nNob, nHid, nUnclear: unclear2.length, nSummary: flow2.length },

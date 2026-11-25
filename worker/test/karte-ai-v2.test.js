@@ -455,10 +455,10 @@ setEnv(V2);
   const line5 = AI_SYSTEM_V2.split('\n').filter((l) => l.startsWith('5. member_message＝'));
   ok('V2-33 5. の行は1行だけ', line5.length === 1, String(line5.length));
   const l5 = line5[0] || '';
-  const marks = ['（400字まで）', 'です・ます調', '①今日行った主な内容', '②よくできた点', '要約して入れる', '引用しない', '③次回に向けて意識すること', '根拠が無い項目は省き', '空文字にする', '文字起こしに無いことは書かない', '話した数字だけ', '体の状態', '書かない（caution にだけ書く）', 'member_todo＝', 'トレーナーが頼んだ・勧めたことだけ'];
+  const marks = ['（400字まで）', 'です・ます調', '【今日の内容】今日行った主な内容', '【よくできた点】', '要約して入れる', '引用しない', '【次回に向けて】次のセッションで意識すること', '見出しごと省き', '空文字にする', '同じ要点は1回だけ', '文字起こしに無いことは書かない', '話した数字だけ', '体の状態', '書かない（caution にだけ書く）', 'member_todo＝', 'トレーナーが頼んだ・勧めたことだけ', '【次回に向けて】と同じ内容は書かない'];
   const at = marks.map((m) => l5.indexOf(m));
   const inOrder = at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1]));
-  ok('V2-33 ★構成①②③・出典・体の状態を書かない・todo の出典が5. の行の中にこの順で在る', inOrder, marks.map((m, i) => m + '@' + at[i]).join(' '));
+  ok('V2-33 ★見出し3つ・省き方・重複の禁止・出典・体の状態を書かない・todo の出典と重複の禁止が5. の行の中にこの順で在る', inOrder, marks.map((m, i) => m + '@' + at[i]).join(' '));
   ok('V2-33 ★体の状態の禁止は member_todo より前（member_message の規則として在る）', l5.indexOf('体の状態') >= 0 && l5.indexOf('体の状態') < l5.indexOf('member_todo＝'));
   //   長いふり返りに健康語が1語でもあれば、文は丸ごと caution へ（欄は空・お客様に出る側へ残さない）
   setEnv(V2);
@@ -472,6 +472,29 @@ setEnv(V2);
   const r2 = await call({ client_ai_format: 2 });
   ok('V2-33 健康語が無ければ member_message はそのまま返る', r2.status === 200 && r2.draft.member_message === okMsg, JSON.stringify(r2.draft && r2.draft.member_message));
   reply = null;
+}
+
+{
+  //   V2-34 設計61 改訂2：見出しの前の改行（mask の後・最後の文字数で決める）と次回までにの重複除去。入口（call）から通す
+  setEnv(V2);
+  const run = async (patch) => { reply = () => ({ draft: Object.assign(okDraft(), { caution: [] }, patch) }); const r = await call({ client_ai_format: 2 }); reply = null; return r; };
+  const r1 = await run({ member_message: '【今日の内容】スクワットを行いました。 【よくできた点】膝の向きを意識できました。 【次回に向けて】お尻を引く動きを意識しましょう。' });
+  ok('V2-34 ★2つ目以降の見出しの前に改行・先頭には入れない・見出しの後の空白は詰める', r1.status === 200 && r1.draft.member_message === '【今日の内容】スクワットを行いました。\n【よくできた点】膝の向きを意識できました。\n【次回に向けて】お尻を引く動きを意識しましょう。', JSON.stringify(r1.draft && r1.draft.member_message));
+  const r2 = await run({ member_message: '【よくできた点】膝の向き。 【補足】自宅で。 【次回に向けて】お尻。' });
+  ok('V2-34 ★先頭の区分を省いたとき最初に現れた見出しの前には入れない・【補足】では区切らない', r2.draft.member_message === '【よくできた点】膝の向き。 【補足】自宅で。\n【次回に向けて】お尻。', JSON.stringify(r2.draft.member_message));
+  const body = (n) => 'あ'.repeat(n);
+  const m398 = '【今日の内容】' + body(398 - 7 - 1 - 8) + ' 【次回に向けて】' ;   // 全体 398 字（空白1つを含む）→ 改行に置き換えても 398
+  const r3 = await run({ member_message: m398 });
+  ok('V2-34 ★改行を入れても400字以内なら入れる', r3.draft.member_message.includes('\n【次回に向けて】') && r3.draft.member_message.length <= 400, String(r3.draft.member_message.length));
+  const r4 = await run({ member_message: '【今日の内容】' + body(383) + '【よくできた点】ok' });   // 7＋383＋8＋2＝空白なし 400字ちょうど → 改行を足すと 401
+  ok('V2-34 ★改行を足すと400字を超えるなら入れない（1行のまま・切らない）', r4.status === 200 && !r4.draft.member_message.includes('\n') && r4.draft.member_message.length === 400, String(r4.draft.member_message.length));
+  const r5 = await run({ member_message: '【今日の内容】甲野 一郎さんと' + body(370) + ' 【次回に向けて】x' });
+  ok('V2-34 ★名前を伏せた後の文字数で決める（伏せて増えた結果 400 を超えるなら改行しない）', r5.status === 200 && (r5.draft.member_message.length <= 400 ? r5.draft.member_message.includes('\n') : !r5.draft.member_message.includes('\n')) && !r5.draft.member_message.includes('甲野'), String(r5.draft.member_message.length));
+  const r6 = await run({ member_todo: ['ストレッチ 2分', 'ストレッチ、2分。', 'スクワット×10'] });
+  ok('V2-34 ★次回までに：空白と句読点だけ違うものは後ろを落とす・×などの記号は区別する', JSON.stringify(r6.draft.member_todo) === JSON.stringify(['ストレッチ 2分', 'スクワット×10']), JSON.stringify(r6.draft.member_todo));
+  const { dedupeTodo, layoutMemberMessage } = await import('../src/routes/karte-ai-v2.js');
+  ok('V2-34 dedupeTodo：×の有無は別物・半角全角の句読点は同じ', JSON.stringify(dedupeTodo(['スクワット×10', 'スクワット10', 'a,b', 'a、b'])) === JSON.stringify(['スクワット×10', 'スクワット10', 'a,b']));
+  ok('V2-34 layoutMemberMessage：見出しが無い文は触らない', layoutMemberMessage('今日はよく頑張りました。', 400) === '今日はよく頑張りました。');
 }
 
 {
