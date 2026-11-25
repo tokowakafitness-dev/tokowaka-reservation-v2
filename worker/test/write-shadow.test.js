@@ -282,6 +282,8 @@ console.log('=== ⑩ M2：人が入れた予定が D1 に届くまでの遅れ�
   const rows = env._db.prepare('SELECT kind, cls, tid, delay_ms, window_hits FROM calendar_arrival_log').all().map((r) => Object.assign({}, r));
   ok('⑩-1 差分で入った休憩だけ1行（予約の ✅ は数えない・最終更新が前回の同期より古い出勤は数えない）', r1.success && r2.mode === 'patched' && rows.length === 1 && rows[0].kind === 'add' && rows[0].cls === 'break', JSON.stringify([r1.mode, r2.mode, rows]));
   ok('⑩-2 遅れ＝到着 − 最終更新（約120秒）・窓の当たり1件', rows[0] && rows[0].delay_ms >= 120000 && rows[0].delay_ms < 130000 && rows[0].window_hits === 1, JSON.stringify(rows));
+  //   ★前回の同期を1分前に置く（r2 と r3 が同じ1ミリ秒に入ると noteArrivals の prevCheckedAt < now が偽になり記録されない＝時々落ちていた・2026-11-25）
+  env._db.prepare('UPDATE calendar_active SET checked_at = ? WHERE id = 1').run(Date.now() - 60000);
   const r3 = await send([other, brk, old], 'c'.repeat(64));   // T1 の出勤が消えた
   const rows3 = env._db.prepare("SELECT kind, cls FROM calendar_arrival_log WHERE kind = 'remove'").all().map((r) => Object.assign({}, r));
   ok('⑩-3 出勤が消えたら remove（上限値＝前回の同期から）', r3.mode === 'patched' && rows3.length === 1 && rows3[0].cls === 'shift', JSON.stringify([r3, rows3]));
