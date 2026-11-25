@@ -88,7 +88,8 @@ function deferred() { let res, rej; const p = new Promise((a, b) => { res = a; r
 // 予約の流れを確認画面まで進める
 async function toConfirm(w) {
   $(w, 'homeReserve').click(); await settle();
-  const tr = w.document.querySelector('#trainerList .trainer'); tr.click(); await settle();
+  //   設計59：担当がいて一覧に居る会員は週の表へ直行。一覧が出たとき（担当なし等）だけ先頭を押す
+  if (cur(w) === 's-trainer') { const tr = w.document.querySelector('#trainerList .trainer'); tr.click(); await settle(); }
   const cell = w.document.querySelector('#gridWrap .cell-open'); cell.click(); await settle();
 }
 
@@ -120,13 +121,18 @@ async function toConfirm(w) {
 
 // ================= 2. 予約の流れと送る中身 =================
 {
+  //   トレーナーの一覧は担当なしの会員にだけ出る（設計59）。名前は文字として入る
+  const w = boot({ bootRes: Object.assign({}, HOME, { defaultTrainerId: '' }) }); await settle();
+  $(w, 'homeReserve').click(); await settle();
+  const names = [...w.document.querySelectorAll('#trainerList .tnm')].map((e) => e.textContent);
+  ok('2-2 ★トレーナー名は文字として入る（img が作られない）', !w.document.querySelector('#trainerList img') && names[1] === '<img src=x onerror=alert(1)>次郎', names.join('|'));
+  ok('2-3 担当なしの会員には担当の印が付かない', w.document.querySelectorAll('#trainerList .tbadge').length === 0);
+}
+{
   const w = boot(); await settle();
   const btnRefs = ['homeReserve', 'homeMyRes', 'confirmBtn', 'confirmCancel', 'confirmHome', 'toHome', 'backToTrainer', 'weekHome', 'myResBack', 'doneClose', 'batchToggle'].map((id) => [id, $(w, id)]);
   await toConfirm(w);
-  ok('2-1 ホーム→トレーナー→週→確認をボタンで通れる', cur(w) === 's-confirm', cur(w));
-  const names = [...w.document.querySelectorAll('#trainerList .tnm')].map((e) => e.textContent);
-  ok('2-2 ★トレーナー名は文字として入る（img が作られない）', !w.document.querySelector('#trainerList img') && names[1] === '<img src=x onerror=alert(1)>次郎', names.join('|'));
-  ok('2-3 担当の印は担当のトレーナーだけ', w.document.querySelectorAll('#trainerList .tbadge').length === 1);
+  ok('2-1 ホーム→（担当へ直行）週→確認をボタンで通れる', cur(w) === 's-confirm', cur(w));
   ok('2-4 選択肢の取得は1回', sentOf(w, 'line_getBookingOptions').length === 1);
   ok('2-5 確認に担当と日時が出る', $(w, 'cfTrainer').textContent === '一郎' && $(w, 'cfDatetime').textContent.length > 0);
   ok('2-6 取得が済めば確定を押せる', !$(w, 'confirmBtn').disabled);
