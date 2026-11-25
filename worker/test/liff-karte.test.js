@@ -31,7 +31,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 async function settle() { for (let i = 0; i < 8; i++) await tick(); }
 
 function boot(responder) {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/' });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/' }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   const sent = [];
   w.idToken = 'TOKEN1';
@@ -137,7 +137,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
 }
 {
   //   読み直した後：退避した入力が戻る
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/' });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/' }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   w.sessionStorage.setItem('karte_draft_v1', JSON.stringify({ customerId: 'C1', name: '会員', tab: 'notes', draft: { kind: 'note', data: { sessionDate: '2026-11-03', condition: 'good', body: '戻ってきたメモ', nextPlan: '' } }, at: Date.now() }));
   w.sessionStorage.setItem('karte_reauth', '1');
@@ -172,7 +172,7 @@ ok('1-3 顧客一覧に「カルテの一覧」', /KarteUI\.openBoard\(\)/.test(
 
 {
   //   期限切れの退避は戻さず、読み直し済みの印も消す（残ると次の読み直しが永久に止まる）
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/' });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/' }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   w.sessionStorage.setItem('karte_draft_v1', JSON.stringify({ customerId: 'C1', name: '会員', tab: 'notes', draft: null, at: Date.now() - 31 * 60 * 1000 }));
   w.sessionStorage.setItem('karte_reauth', '1');
@@ -979,20 +979,11 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   ok('18-2 写さずに戻ると今日の記録の画面・何も足さない', w.history.state.sub === 'trform' && items().length === 0);
   await fromPrev(root);
   ok('18-3 ★写すと今日の記録の画面に戻り、前回（10/29）の重量・回数が入る（✓は外れた状態）', w.history.state.sub === 'trform' && JSON.stringify(items()) === JSON.stringify([{ exercise: 'ラットプルダウン', sets: [{ w: 30, r: 12, done: false }, { w: 30, r: 10, done: false }] }]), JSON.stringify(items()));
-  root.querySelector('button.k-pickgo').click(); await settle();
-  kPill(root, '脚・尻').click(); await settle();
-  ok('18-4 部位で絞れる（絞った先の最初の日が選ばれる）', cards().length === 1 && cards()[0].textContent.includes('10/25') && cards()[0].getAttribute('aria-pressed') === 'true');
-  btn(root, '種目だけ写す').click(); await pop(); await settle();
-  ok('18-5 ★種目だけ写す＝数字は空・いまの記録の後ろに足す（置き換えない）', items().map((x) => x.exercise).join(',') === 'ラットプルダウン,スクワット,ヒップスラスト' && items()[1].sets[0].w === '' && items()[0].sets[0].w === 30, JSON.stringify(items()));
-  ok('18-5b 最後に足した種目が開いている', !!root.querySelector('select[aria-label="ヒップスラストの休憩の秒数"]') && !!root.querySelector('button.k-excol[aria-label="ラットプルダウンを開く"]'));
-  for (let k = 0; k < 5; k++) await fromPrev(root);
-  const lat = items().filter((x) => x.exercise === 'ラットプルダウン');
-  ok('18-6 ★同じ種目を何度写しても1つにまとめ・1種目10セットまで（超える分は写さず知らせる）', lat.length === 1 && lat[0].sets.length === 10 && w.alerts.some((m) => m.includes('1種目10セット')), JSON.stringify(lat) + ' ' + w.alerts.join('|'));
+  //   2026-11-25 オーナー：1件以上のときは「＋ 種目を足す」だけ。下の追加の取り込み・前回から写すは出さず、音声は上の1つ（写して足す 18-4〜18-6・18-8 は入口ごと外した）
+  ok('18-4 ★1件以上：下に「前回から写す」「＋ 音声・メモを追加で取り込む」が無い・（この検査は版32＝音声のボタンは版33から）', !root.querySelector('button.k-pickgo') && !root.querySelector('.k-more button') && root.querySelectorAll('button.k-voicelog').length <= 1);
   const date = root.querySelector('input.k-dateover');
   date.value = '2026-10-28'; date.dispatchEvent(new w.Event('change', { bubbles: true })); await settle();
   ok('18-7 見出しの日付を押して変えられる（見出しの表示も変わる）', root.querySelector('.k-entrydate').textContent.includes('10/28(水) ▾'));
-  root.querySelector('button.k-pickgo').click(); await settle();
-  ok('18-8 ★記録の日付より後の日は出さない（10/28 の記録に 10/29 を写さない）', cards().length === 1 && cards()[0].textContent.includes('10/25'), cards().map((x) => x.textContent).join(' | '));
   w.KarteUI.close && w.KarteUI.close();
 }
 {

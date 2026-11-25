@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-25f 保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-25g 休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2104,7 +2104,10 @@
   function restSecondsFor(ex) { var v = Number(restMap()[String(ex || '')]); return REST_CHOICES.indexOf(v) >= 0 ? v : REST_DEFAULT; }
   function setRestSecondsFor(ex, v) { if (REST_CHOICES.indexOf(Number(v)) < 0) return; var m = restMap(); m[String(ex || '')] = Number(v); try { localStorage.setItem('karte_rest_ex', JSON.stringify(m)); } catch (e) {} }
   //   休憩タイマーを使うか（端末に覚える・既定はあり＝今までの動き・2026-11-06 オーナー）。なしなら✓で数えず、帯も秒数・終了音の行も出さない
-  function restOn() { try { return localStorage.getItem('karte_rest_on') !== 'off'; } catch (e) { return true; } }
+  //   2026-11-25 オーナー：画面をシンプルにするため休憩タイマーは一旦出さない（切り替えの行も・✓で数えるのも・種目ごとの秒数も）。
+  //     戻すときは REST_UI を true にするだけ（端末に覚えた あり／なし はそのまま残している）
+  var REST_UI = (typeof window !== 'undefined' && window.__KARTE_REST_UI === true);   // 既定は出さない。検査だけが真にして、戻すときの動きを守り続ける
+  function restOn() { if (!REST_UI) return false; try { return localStorage.getItem('karte_rest_on') !== 'off'; } catch (e) { return true; } }
   function setRestOn(on) { try { localStorage.setItem('karte_rest_on', on ? 'on' : 'off'); } catch (e) {} if (!on) restStop(); }
   function restStart(sec) {
     if (!restOn()) { restStop(); return; }   // ★二重の守り：呼ぶ側が止め忘れても数えない
@@ -3957,7 +3960,7 @@
     }
     var restRow = el('div', { style: 'display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 8px;' }, [restTg]);
     drawRestTg();
-    if (!EDIT) c.appendChild(restRow);   // 直す画面は休憩タイマーを出さない
+    if (!EDIT && REST_UI) c.appendChild(restRow);   // 直す画面は休憩タイマーを出さない・REST_UI が偽なら行ごと出さない（2026-11-25）
     var restBar = el('div', { class: 'k-restbar', style: 'display:none;' });   // ★見た目は CSS の .k-restbar（inline に display を2つ書くと後の flex が勝ち、空の帯が出ていた）
     rest.box = restBar;   // ★置き場所は draw() が決める：✓を押したセットの真下（無ければ一覧の先頭＝空なので見えない）
     //   ★休憩中に上の「記録の入力」をもう一度押すと、この欄ごと作り直される。この時点の欄はまだ画面に無い（返してから置かれる）ので、
@@ -4288,9 +4291,9 @@
         } }));
         return;
       }
-      if (extOk()) moreBox.appendChild(el('button', { type: 'button', class: 'k-btn out k-impgo', style: 'min-height:44px;margin:8px 0 0;', text: impLabel(false), onclick: function () { trImportSub(sessions); } }));
-      if (hasPast) moreBox.appendChild(el('div', { style: 'display:flex;justify-content:center;margin-top:2px;' }, [
-        el('button', { type: 'button', class: 'k-link k-pickgo', style: 'min-height:44px;', text: '前回から写す', onclick: function () { trPickSub(sessions); } })]));
+      //   2026-11-25 オーナー：1件以上のときは「＋ 種目を足す」だけ（下の追加の取り込み・前回から写すは出さない）。
+      //     音声は一番上の［音声でセッションログを残す］1つだけ（取り込みは上書きせず足す＝設計38 のまま）
+      if (extOk()) startBox.appendChild(el('button', { type: 'button', class: 'k-btn k-impgo k-voicelog', style: 'min-height:48px;margin:0 0 10px;', text: '音声でセッションログを残す' + (airHas ? '（振り分けの途中あり）' : ''), onclick: function () { trImportSub(sessions); } }));
     }
     //   設計55：下の帯は「いま開いている操作の確定ボタン」だけ＝種目の欄を開いている間の［選んだ種目を足す］。何も開いていなければ帯を出さない
     var pickBar = el('div', { class: 'k-savebar k-pickbar' });

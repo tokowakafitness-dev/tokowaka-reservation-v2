@@ -35,7 +35,7 @@ const HIST = [{ session_id: 'P1', session_date: '2026-10-25', created_at: 100, a
   { exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }, { exercise: 'スクワット', set_no: 2, weight_kg: 50, reps: 8 }] }];
 
 function boot(o = {}) {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true }); dom.window.__KARTE_REST_UI = o.restUi !== false;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   const sent = [];
   w.idToken = jwt(30);
@@ -234,17 +234,7 @@ async function openPicker(w) { await openRecord(w); btn(R(w), '＋ 種目を足�
   ok('G8b ★写した順はカードの表示と同じ（スクワット → ベンチプレス → スクワット・同名でも結合しない）', JSON.stringify(it.map((x) => x.exercise)) === '["スクワット","ベンチプレス","スクワット"]' && JSON.stringify(shownNames) === JSON.stringify(it.map((x) => x.exercise)), JSON.stringify(it.map((x) => x.exercise)) + ' / ' + JSON.stringify(shownNames));
   ok('G8b ★セットが混ざらない・10セットを超えても落とさない（6・1・6）', it.length === 3 && it[0].sets.length === 6 && it[0].sets.every((x) => x.w === 50) && it[1].sets.length === 1 && it[2].sets.length === 6 && it[2].sets.every((x) => x.w === 60) && !w.alerts.some((m) => m.includes('上限')), JSON.stringify(it.map((x) => x.sets.length)) + ' ' + w.alerts.join('|'));
 }
-// ---- G8c 単一の記録を写すときの挙動は変えない（下書きの同名種目にまとめる） ----
-{
-  const H = [{ session_id: 'S1', session_date: '2026-11-20', created_at: 100, author_trainer_id: 'T1', rev: 1, sets: [{ exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }] }];
-  const { w } = boot({ sessions: H });
-  seed(w, [{ exercise: 'スクワット', sets: [set(40, 10, false)] }]);
-  await openRecord(w);
-  R(w).querySelector('button.k-pickgo').click(); await settle();
-  btn(R(w), '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
-  const it = draftOf(w).items;
-  ok('G8c 単一の記録：今までどおり下書きの同名種目にセットをまとめる', it.length === 1 && it[0].sets.length === 2, JSON.stringify(it));
-}
+// ---- G8c は入口を外した（2026-11-25 オーナー：1件以上のときは前回から写すを出さない）
 {
   const { w } = boot({ sessions: [{ session_id: 'S9', session_date: TODAY, created_at: 1, author_trainer_id: 'T1', rev: 1, sets: [{ exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 10 }] }] });
   await openRecord(w);
@@ -275,25 +265,24 @@ async function openPicker(w) { await openRecord(w); btn(R(w), '＋ 種目を足�
   R(w).querySelector('.k-start button.k-impgo').click(); await settle();
   ok('G9 ★「メモ・音声から」で取り込みの画面へ', R(w).querySelector('.k-entrytitle').textContent === 'メモから取り込む');
 }
-// ---- G10 種目が1件以上：上に出さず、「＋ 種目を足す」の下に追加の取り込みと前回から写す ----
+// ---- G10 種目が1件以上（2026-11-25 オーナー）：下は「＋ 種目を足す」だけ・上に［音声でセッションログを残す］1つ・休憩タイマーの行は出さない ----
 {
-  const { w } = boot({ sessions: HIST_R });
+  const { w } = boot({ sessions: HIST_R, restUi: false });   // 本番と同じ（休憩タイマーを出さない）
   seed(w, ITEMS());
   await openRecord(w);
-  ok('G10 ★1件以上：上の始め方は出さない', !R(w).querySelector('.k-start button'));
-  const more = R(w).querySelector('.k-more');
-  const imp = more && more.querySelector('button.k-impgo'), lk = more && more.querySelector('button.k-pickgo');
-  ok('G10 ★「＋ 種目を足す」の下に「＋ 音声・メモを追加で取り込む」（枠・44px）と小さな「前回から写す」（44px）', !!imp && imp.textContent === '＋ 音声・メモを追加で取り込む' && imp.classList.contains('out') && parseInt(imp.style.minHeight, 10) >= 44 && !!lk && lk.textContent === '前回から写す' && parseInt(lk.style.minHeight, 10) >= 44 && !!(btn(R(w), '＋ 種目を足す').compareDocumentPosition(more) & w.Node.DOCUMENT_POSITION_FOLLOWING));
-  ok('G10 休憩タイマーの行は上に残る', !!btn(R(w), '休憩タイマー') && !!(btn(R(w), '休憩タイマー').compareDocumentPosition(R(w).querySelector('[data-ei="0"]')) & w.Node.DOCUMENT_POSITION_FOLLOWING));
-  lk.click(); await settle();
-  ok('G10 「前回から写す」で写す画面へ', R(w).querySelector('.k-entrytitle').textContent === '過去の記録から写す');
+  const vb = [...R(w).querySelectorAll('button.k-voicelog')];
+  ok('G10 ★1件以上：始め方の3つは出さない・上に［音声でセッションログを残す］が1つ（48px）', !R(w).querySelector('.k-start button.k-startbtn') && vb.length === 1 && vb[0].textContent.indexOf('音声でセッションログを残す') === 0 && parseInt(vb[0].style.minHeight, 10) >= 48 && !!(vb[0].compareDocumentPosition(R(w).querySelector('[data-ei="0"]')) & w.Node.DOCUMENT_POSITION_FOLLOWING));
+  ok('G10 ★下に「＋ 音声・メモを追加で取り込む」「前回から写す」が無い', !R(w).querySelector('.k-more button') && !R(w).querySelector('button.k-pickgo') && !!btn(R(w), '＋ 種目を足す'));
+  ok('G10 ★休憩タイマー・終了音の切り替えは出さない', ![...R(w).querySelectorAll('button')].some((b) => /^(休憩タイマー|終了音)/.test(b.textContent)) && !R(w).querySelector('select[aria-label$="の休憩の秒数"]'));
+  vb[0].click(); await settle();
+  ok('G10 音声のボタンで取り込みの画面へ', !!R(w).querySelector('.k-entrytitle') && R(w).querySelector('.k-entrytitle').textContent !== '今日の記録を入れる');
 }
 // ---- G11 既存の種目・メモ・お客様へがある状態で追加の取り込み → 既存は残り、後ろに足される・記録の画面に戻る ----
 for (const [label, o] of [['AI 無効', { aiDraft: false }], ['同意なし', { aiDraft: true, aiConsent: 'none' }]]) {
   const { w } = boot(Object.assign({ sessions: HIST_R }, o));
   seed(w, [{ exercise: 'ベンチプレス', sets: [set(40, 10, false)] }], { memo: '既存の社内メモ', member: { message: '既存のお客様へ', todo: ['既存の宿題', '', ''], tags: [] } });
   await openRecord(w);
-  R(w).querySelector('.k-more button.k-impgo').click(); await settle();
+  R(w).querySelector('.k-start button.k-voicelog').click(); await settle();
   const an = R(w).querySelector('.k-addnote');
   ok('G11 ' + label + '：取り込みの画面に「いまある内容（種目 1・社内メモ・お客様に見える欄）に足されます。上書きはしません」', !!an && an.textContent === 'いまある内容（種目 1・社内メモ・お客様に見える欄）に足されます。上書きはしません', an && an.textContent);
   ok('G11 ' + label + '：AI のボタンは出ず「読み取る」（従来どおり）', !btn(R(w), 'AIで振り分ける') && !!btn(R(w), '読み取る'));
