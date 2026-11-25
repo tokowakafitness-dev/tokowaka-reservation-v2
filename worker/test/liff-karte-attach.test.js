@@ -29,7 +29,7 @@ const SECRET = '架空の旅行の雑談がここにある';
 const FNAME = '架空録音ファイル名X';
 
 function boot(o = {}) {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   const sent = [];
   w.idToken = jwt(30);

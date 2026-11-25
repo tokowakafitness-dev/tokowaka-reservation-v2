@@ -38,7 +38,7 @@ const BW_HIST = [{ session_id: 'B1', session_date: '2026-11-01', created_at: 300
   { exercise: 'チンニング', set_no: 1, weight_kg: 0, reps: 8, e1rm: 0 }, { exercise: 'チンニング', set_no: 2, weight_kg: 5, reps: 6, e1rm: 6 }] }];
 
 function boot(responder, o = {}) {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   const sent = [];
   for (const [k, v] of Object.entries(o.ls || {})) w.localStorage.setItem(k, v);
@@ -187,7 +187,7 @@ let S1store = null;
   const BOOT_HEAD = '  function fetchBoot(){\n';
   ok('S10-0 本番のスクリプトから fetchBoot の入口が1つ見つかる', ISRC.split(BOOT_HEAD).length === 2);
   ISRC = ISRC.replace(BOOT_HEAD, '  function fetchBoot(){ window.__bootCalls++; return Promise.resolve({ success: false }); }\n  function __realBoot(){\n');
-  const dom = new JSDOM('<!doctype html><html><head><style>' + STYLE + '</style></head>' + BODY + '</html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><html><head><style>' + STYLE + '</style></head>' + BODY + '</html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   const st = w.setTimeout.bind(w); w.setTimeout = (f, ms) => st(f, Math.min(ms || 0, 3));
   w.__bootCalls = 0; w.logins = 0; w.inits = 0; w.alert = () => {}; w.reloaded = 0; w.__karteReload = () => { w.reloaded++; };

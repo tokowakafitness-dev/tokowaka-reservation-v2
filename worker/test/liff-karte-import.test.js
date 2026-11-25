@@ -42,7 +42,7 @@ const S_NEW = { session_id: 'SN', session_date: '2026-11-03', created_at: 300, a
     { exercise: 'スクワット', set_no: 1, weight_kg: 50, reps: 8, e1rm: 63.3, note: null, ord: 3, assist_reps: null, forced: false, drops: [{ weight_kg: 30, reps: 10, assist_reps: null, forced: false }] }] };
 
 function boot(o = {}) {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   const sent = [];
   for (const [k, v] of Object.entries(o.ls || {})) w.localStorage.setItem(k, v);
@@ -408,19 +408,14 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
 
 // ================= M20（高5）copyInto：新しい回は ord ごと・古い回は今までどおり名前で足す =================
 {
-  const { w } = boot({ cfg: { sessions: [S_NEW] }, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '10', r: '1', done: false }] }]) });
+  const { w } = boot({ cfg: { sessions: [S_NEW] } });   // 2026-11-25：前回から写すは種目0件のときだけ＝空の下書きから
   await openForm(w);
   R(w).querySelector('button.k-pickgo').click(); await settle();
   btn(R(w), '重量・回数ごと写す').click(); await nav();
   const d = draftOf(w);
   eq('M20-1 ★新しい回：同じ名前の2つの ord は2つの種目（下書きの同じ名前にも混ぜない）・ドロップの形は写す・補助/無理やりは写さない・数字の無い種目はそのまま', d.items.map((x) => [x.exercise, x.sets.map((s) => [String(s.w), String(s.r), s.done, s.assist || null, s.forced || null, (s.drops || []).map((q) => q.w + 'x' + q.r).join()]), x.doneOnly === undefined ? null : x.doneOnly]),
-    [['スクワット', [['10', '1', false, null, null, '']], null], ['スクワット', [['60', '10', false, null, null, ''], ['100', '3', false, null, null, '']], null], ['ベンチプレス', [['40', '10', false, null, null, '']], null], ['スクワット', [['50', '8', false, null, null, '30x10']], null], ['プランク', [], false]]);
-  const e = boot({ cfg: { sessions: [S_OLD] }, ls: draftLS([{ exercise: 'スクワット', sets: [{ w: '10', r: '1', done: false }] }]) });
-  await openForm(e.w);
-  R(e.w).querySelector('button.k-pickgo').click(); await settle();
-  btn(R(e.w), '重量・回数ごと写す').click(); await nav();
-  const d2 = draftOf(e.w);
-  ok('M20-2 ★古い回：今までどおり下書きの同じ名前に足す', d2.items.length === 1 && d2.items[0].sets.length === 2 && String(d2.items[0].sets[1].w) === '80', JSON.stringify(d2.items));
+    [['スクワット', [['60', '10', false, null, null, ''], ['100', '3', false, null, null, '']], null], ['ベンチプレス', [['40', '10', false, null, null, '']], null], ['スクワット', [['50', '8', false, null, null, '30x10']], null], ['プランク', [], false]]);
+  //   M20-2（古い回を下書きの同じ名前に足す）は入口を外した（2026-11-25：1件以上のときは前回から写すを出さない）
 }
 
 // ================= M21（I71）健康の文・括弧書き・最近の種目の候補 =================

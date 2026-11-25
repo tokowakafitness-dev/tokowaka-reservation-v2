@@ -48,7 +48,7 @@ const S3 = () => ({ session_id: 'S3', session_date: '2026-11-10', created_at: 80
   sets: [{ session_id: 'S3', exercise: 'ベンチプレス', set_no: 1, weight_kg: 30, reps: 10, note: null }, { session_id: 'S3', exercise: 'スクワット', set_no: 1, weight_kg: 40, reps: 10, note: null }] });
 
 function boot(o = {}) {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true }); dom.window.__KARTE_REST_UI = true;   // 休憩タイマーは画面では一旦出さない（2026-11-25）。検査では動きを守り続ける
   const w = dom.window;
   const sent = [];
   w.idToken = jwt(30);
