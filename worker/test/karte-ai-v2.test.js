@@ -455,7 +455,7 @@ setEnv(V2);
   const line5 = AI_SYSTEM_V2.split('\n').filter((l) => l.startsWith('5. member_message＝'));
   ok('V2-33 5. の行は1行だけ', line5.length === 1, String(line5.length));
   const l5 = line5[0] || '';
-  const marks = ['（400字まで）', 'です・ます調', '①今日行った主な内容', '②よくできた点', '要約して入れる', '引用しない', '③次回に向けて意識すること', '文字起こしに無いことは書かない', '話した数字だけ', '体の状態', '書かない（caution にだけ書く）', 'member_todo＝', 'トレーナーが頼んだ・勧めたことだけ'];
+  const marks = ['（400字まで）', 'です・ます調', '①今日行った主な内容', '②よくできた点', '要約して入れる', '引用しない', '③次回に向けて意識すること', '根拠が無い項目は省き', '空文字にする', '文字起こしに無いことは書かない', '話した数字だけ', '体の状態', '書かない（caution にだけ書く）', 'member_todo＝', 'トレーナーが頼んだ・勧めたことだけ'];
   const at = marks.map((m) => l5.indexOf(m));
   const inOrder = at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1]));
   ok('V2-33 ★構成①②③・出典・体の状態を書かない・todo の出典が5. の行の中にこの順で在る', inOrder, marks.map((m, i) => m + '@' + at[i]).join(' '));
