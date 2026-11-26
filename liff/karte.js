@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26g 説明の文を削る（挙動の説明・案内の帯は出さない・毎回は要らない注意は項目の横の「?」に畳む・取り込みの直後は「n種目を入れました」の短い通知・AI のボタンの直下に「外部のAI（Anthropic）へ送ります」の1行・健康の1行はカードの一覧の上に1回・設計65）／2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26h AI の下書きを社内で重ねない（種目のメモ→その種目の1セット目のメモ・「nセット目：」→そのセットのメモ・入らない分は今どおり社内メモ・今日の流れから種目名と数字だけの行を外す・設計66）／2026-11-26g 説明の文を削る（挙動の説明・案内の帯は出さない・毎回は要らない注意は項目の横の「?」に畳む・取り込みの直後は「n種目を入れました」の短い通知・AI のボタンの直下に「外部のAI（Anthropic）へ送ります」の1行・健康の1行はカードの一覧の上に1回・設計65）／2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2755,6 +2755,14 @@
     return o.w + '×' + r;
   }
   /** Worker の draft（v:2）→ 確認の状態 */
+  //   設計66：今日の流れの1行が、トレーニングの記録（種目名・重さ・回数）とつなぎの言葉だけでできているか。名前を除いて残りが空なら真（保守的：別名・言い換えは外さない）
+  var FLOW_FILL = /(?:の順番?で?|順に|実施(?:しました|した)?|行(?:いました|った|う)|やりました|やった|しました|した|最初に|まず|次に|その後|続いて|最後に|から|まで|キロ|kg|KG|ｋｇ|回|セット|レップ|自重|[とをでにへは0-9０-９.．×xX＊*→⇒>＞、。・,，／\/\s()（）:：\-ー〜~])/g;
+  function flowOnlyLog(line, names) {
+    var t = String(line || '');
+    if (!t.trim() || !names.length) return false;
+    names.slice().sort(function (a, b) { return b.length - a.length; }).forEach(function (n) { t = t.split(n).join(' '); });
+    return t.replace(FLOW_FILL, '') === '';
+  }
   function reviewFromDraft(dr, isAuto, scope) {
     scope = scope === 'full' ? 'full' : 'trial';
     var rv = { v: 3, effort: rvStr(dr.effort) };
@@ -2775,7 +2783,10 @@
       return { id: 'e' + ei, name: n0, name0: n0, heard: heard, off: false, part: null, partFor: null, orig: orig,
         line: orig.map(function (o) { return rvTok(o, scope); }).join('  '), note: note.join('\n') };
     });
-    rv.fields = { flow: lst('summary').join('\n'), condition: lst('condition').join('\n'), coaching: lst('coaching').join('\n'), hearing: lst('hearing').join('\n'), next: lst('next_actions').join('\n') };
+    //   設計66：今日の流れは記録に残らないことだけ。AI が種目名・数字だけの行を書いたら確認画面に出す前に外す（見るものと入るものを同じに・迷ったら残す）
+    var flowNames = [];
+    rv.exercises.forEach(function (x) { [x.name, x.heard].forEach(function (n) { n = String(n || '').trim(); if (n && flowNames.indexOf(n) < 0) flowNames.push(n); }); });
+    rv.fields = { flow: lst('summary').filter(function (l) { return !flowOnlyLog(l, flowNames); }).join('\n'), condition: lst('condition').join('\n'), coaching: lst('coaching').join('\n'), hearing: lst('hearing').join('\n'), next: lst('next_actions').join('\n') };
     rv.member = { on: false, message: rvMsg(dr.member_message), todo: lst('member_todo').join('\n') };
     rv.caution = lst('caution');
     rv.unclear = (Array.isArray(dr.unclear) ? dr.unclear : []).map(function (u) { return { text: rvStr(u && u.text), evidence: rvStr(u && u.evidence) }; }).filter(function (u) { return u.text; });
@@ -2852,8 +2863,8 @@
     toks.forEach(function (t) {
       if (t.kind !== 'set') { if (t.kind === 'skip') { var o0 = ex.orig[toks.indexOf(t)]; t.hidden = !!(o0 && o0.status === 'healthHidden' && t.text === '?'); } return; }
       var j = si++, i = pairOf[j];
-      if (renamed) { t.st = 'renamed'; t.src = warn; t.srcEdited = i == null; t.srcRenamed = true; return; }
-      if (i != null) { t.st = ex.orig[i].status; t.src = t.st === 'match' ? null : t.st; t.srcEdited = false; return; }
+      if (renamed) { t.st = 'renamed'; t.src = warn; t.srcEdited = i == null; t.srcRenamed = true; if (i != null) t.oi = i; return; }
+      if (i != null) { t.st = ex.orig[i].status; t.src = t.st === 'match' ? null : t.st; t.srcEdited = false; t.oi = i; return; }   // oi＝元の何番目のセットか（設計66：セットの備考の行き先）
       t.st = 'edited'; t.src = warn; t.srcEdited = !!warn;
     });
     return toks;
@@ -2916,10 +2927,11 @@
       var ns = rvNameState(ex, isAuto), n = exName(ex.name);
       if (ns === 'empty') return;
       if (ns !== 'known' && ns !== 'named' && ns !== 'guessed') throw new Error('RV_OPEN');
-      var sets = [];
+      var sets = [], byOrig = {};
       rvTokens(ex, scope).forEach(function (k) {
         if (k.kind !== 'set') return;
         var o = impSet(k.set);   // ★✓は外して入れる（I57）
+        if (k.oi != null) byOrig[k.oi] = o;
         if (k.src) o.src = k.src;
         if (k.srcEdited) o.srcEdited = true;
         if (k.srcRenamed) o.srcRenamed = true;
@@ -2930,7 +2942,14 @@
       //   設計52：一覧に無い名前は推定の部位で登録の欄（任意）を出す。★名前らしい印（敬称・回目等）の名前は登録の欄を出さない（関門① 4）
       if ((ns === 'named' || ns === 'guessed') && !MEMO_PII_WEAK.test(n)) it.regPart = ns === 'named' ? ex.part : guessPart(n);
       items.push(it);
-      rvLines(ex.note).forEach(function (x) { exMemos.push(n + '：' + x); });
+      //   設計66：種目のメモ → その種目の1セット目のメモ／「nセット目：」→ n 番目のセットのメモ（読み取るの経路の規則とそろえる）。
+      //     入らない（セットが無い・n 番目が無い・200字を超える）ものは今どおり「種目名：」で社内メモへ（黙って捨てない＝I64）
+      rvLines(ex.note).forEach(function (x) {
+        //   「nセット目：」の n は AI が返した元のセットの番号（reviewFromDraft が付けた）＝確認画面で直しても元と対応するセットへ。対応が切れたら社内メモへ
+        var m = /^(\d{1,2})セット目：\s*(.+)$/.exec(x), body = m ? m[2].trim() : x, st = m ? byOrig[Number(m[1]) - 1] : sets[0];
+        var nx = st ? (st.note ? st.note + '・' : '') + body : '';
+        if (st && nx.length <= 200) st.note = nx; else exMemos.push(n + '：' + x);
+      });
     });
     memos = memos.concat(exMemos);
     RV_FIELDS.forEach(function (f) {

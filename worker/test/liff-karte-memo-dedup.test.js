@@ -36,7 +36,8 @@ const DRAFT = () => ({
   next_actions: ['架空の次回：足の倒れ方を確認する'],
   member_message: '【今日の内容】架空のお客様へ', member_todo: ['架空の宿題'], unclear: [],
 });
-const DAY_LINES = ['今日の流れ：架空の流れ：胸から脚へ', 'ベンチプレス：架空の種目メモ：左右差を確認する', '状態：架空の状態', '架空の指導', 'ヒアリング：架空のヒアリング', '次回やること：架空の次回：足の倒れ方を確認する'];
+//   設計66：種目のメモ（ベンチプレス：架空の種目メモ…）は社内メモでなくベンチプレスの1セット目のメモへ入る＝社内メモの行に含めない
+const DAY_LINES = ['今日の流れ：架空の流れ：胸から脚へ', '状態：架空の状態', '架空の指導', 'ヒアリング：架空のヒアリング', '次回やること：架空の次回：足の倒れ方を確認する'];
 const AI_TEXTS = ['架空の流れ', '架空の種目メモ', '架空の状態', '架空の指導', '架空のヒアリング', '架空の次回', '架空のお客様へ', '架空の宿題'];
 
 function boot() {
@@ -105,10 +106,10 @@ async function readAndPlace(w, text) {
   await openRecord(w);
   await voiceAndPlace(w, R(w).querySelector('.k-start button.k-impgo'), { member: true });
   const m1 = memoOf(w), mem1 = JSON.stringify(draftOf(w).member);
-  ok('D1 前提：1回目で社内メモに6行・お客様へ・次回までにが入る', JSON.stringify(lines(m1)) === JSON.stringify(DAY_LINES) && draftOf(w).member.message === '【今日の内容】架空のお客様へ', JSON.stringify([m1, mem1]));
+  ok('D1 前提：1回目で社内メモに5行・お客様へ・次回までにが入る', JSON.stringify(lines(m1)) === JSON.stringify(DAY_LINES) && draftOf(w).member.message === '【今日の内容】架空のお客様へ', JSON.stringify([m1, mem1]));
   await voiceAndPlace(w, R(w).querySelector('button.k-voicelog'), { member: true });
   const d = draftOf(w);
-  ok('D1 ★2回目：社内メモの同じ行は重ねない（6行のまま）', d.memo === m1, JSON.stringify(d.memo));
+  ok('D1 ★2回目：社内メモの同じ行は重ねない（5行のまま）', d.memo === m1, JSON.stringify(d.memo));
   ok('D1 ★2回目：お客様へ・次回までにも重ねない', JSON.stringify(d.member) === mem1, JSON.stringify(d.member));
   ok('D1 種目とセットは今どおり後ろに足す（重ねるかはトレーナーが「後ろに足す」で選んだ）', JSON.stringify(d.items.map((i) => i.exercise)) === JSON.stringify(['ベンチプレス', 'スクワット', 'ベンチプレス', 'スクワット']));
   //   設計65（2026-11-26 オーナー「説明は不要」）：重ねなかった数の説明は出さない（重ねなかった行は社内メモに既にある＝消えていない）。通知は種目の数だけ
@@ -122,7 +123,7 @@ async function readAndPlace(w, text) {
   await voiceAndPlace(w, R(w).querySelector('.k-start button.k-voicelog'), { member: true });
   const d = draftOf(w);
   const want = ['既存だけの行', '架空の指導', 'ヒアリング：架空のヒアリング'].concat(DAY_LINES.filter((l) => l !== '架空の指導' && l !== 'ヒアリング：架空のヒアリング'));
-  ok('D2 ★社内メモ：既存の3行はそのまま・新しい4行だけ足す（同じ2行は1回）', JSON.stringify(lines(d.memo)) === JSON.stringify(want), JSON.stringify(lines(d.memo)));
+  ok('D2 ★社内メモ：既存の3行はそのまま・新しい3行だけ足す（同じ2行は1回）', JSON.stringify(lines(d.memo)) === JSON.stringify(want), JSON.stringify(lines(d.memo)));
   ok('D2 ★お客様へは違う文なので足す・同じ宿題は重ねない', d.member.message === '既存のお客様へ\n【今日の内容】架空のお客様へ' && JSON.stringify(d.member.todo) === JSON.stringify(['架空の宿題', '', '']), JSON.stringify(d.member));
   ok('D2 ★設計65：通知に行き先・重ねなかった行数を書かない', /^\d+種目を入れました$/.test(msgOf(w)) && !/重ねて入れ|文章 \d+行/.test(R(w).textContent), msgOf(w));
 }

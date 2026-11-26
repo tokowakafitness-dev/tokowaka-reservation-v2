@@ -138,7 +138,7 @@ async function pickPart(w, name, part) {   // 設計52：部位はチップ（�
   const hhChip = bc.querySelectorAll('.k-rvchip')[3];
   ok('T2 ★健康の根拠のセットは「体の話を含むため数字を出していません」だけ（健康の語・数字を出さない）', hhChip.textContent.includes('体の話を含むため') && !/痛|kg|\d+×/.test(hhChip.textContent.replace(/^\d+\. /, '')), hhChip.textContent);
   ok('T2 根拠を見る：根拠なしは「見つかりません」・回数不明の推測は「数字が読み取れません」・健康は固定文だけ', /根拠が文字起こしに見つかりません/.test(bc.querySelector('.k-rvev').textContent) && /数字が読み取れません/.test(bc.querySelector('.k-rvev').textContent) && bc.querySelector('.k-rvev').textContent.includes('健康の情報を含む根拠だったため'));
-  ok('T7 欄の初期値が AI の各リスト（1行1項目）・「お客様」を含む行も入っている', field(w, 'flow').value === 'ベンチプレスを50キロから始めた\nスクワットを自重で行った' && field(w, 'coaching').value.split('\n')[0] === 'お客様の肘を張りすぎない' && field(w, 'next').value === '次回はベンチプレスを52.5キロで' && !field(w, 'flow').hasAttribute('readonly'));
+  ok('T7 欄の初期値が AI の各リスト（1行1項目）・「お客様」を含む行も入っている', field(w, 'flow').value === 'ベンチプレスを50キロから始めた' &&   /* 設計66：「スクワットを自重で行った」は種目名・数字・つなぎだけ＝今日の流れから外す */ field(w, 'coaching').value.split('\n')[0] === 'お客様の肘を張りすぎない' && field(w, 'next').value === '次回はベンチプレスを52.5キロで' && !field(w, 'flow').hasAttribute('readonly'));
   ok('T8 ★お客様の画面に出すチェックは既定オフ', R(w).querySelector('.k-rvmemon').checked === false);
   ok('T9 体のこと・AI が分からなかった点は読むだけ（ボタン・入力が無い）', !!R(w).querySelector('.k-rvcau') && !R(w).querySelector('.k-rvcau').querySelector('button,input,textarea') && !!R(w).querySelector('.k-rvunclear') && !R(w).querySelector('.k-rvunclear').querySelector('button,input,textarea'));
   ok('N1 ★一覧に無い種目（架空のスカルクラッシュ改）があっても押せる（設計52：止めない）・部位は推定のチップ・帯に理由が出ない', !put(w).disabled && card(w, 'スカルクラッシュ改').querySelector('.k-rvpart').textContent.includes('（推定）') && !why(w).includes('一覧に無い'), why(w));
@@ -184,8 +184,9 @@ async function pickPart(w, name, part) {   // 設計52：部位はチップ（�
      JSON.stringify(sets('ベンチプレス')) === JSON.stringify([['50', '10', null, false], ['50', '8', 'inferred', false], ['60', '6', 'nobasis', true], ['20', '10', 'nobasis', true], ['45', '6', 'nobasis', true]]), JSON.stringify(sets('ベンチプレス')));
   ok('T3 自重は w が空（I61）・重さ不明だけの種目はセットなしで入る・部位を選んだ種目は regPart', JSON.stringify(sets('スクワット')) === JSON.stringify([['', '15', null, false]]) && JSON.stringify(sets('レッグプレス')) === '[]' && D.items.find((x) => x.exercise === 'スカルクラッシュ改').regPart === 'arm', JSON.stringify(D.items));
   ok('T10 ★下書きのセットの ✓ は全部 false（I57）', D.items.every((it) => it.sets.every((s) => s.done === false)));
-  ok('T7 ★社内メモ：今日の流れ・種目のメモ（セットのメモをまとめた行も）・状態・指導（お客様を含む）・ヒアリング・次回やること',
-     /今日の流れ：ベンチプレスを50キロから始めた スクワットを自重で行った/.test(D.memo) && /ベンチプレス：肩甲骨を寄せる/.test(D.memo) && /ベンチプレス：1セット目：フォーム良い/.test(D.memo) && /状態：睡眠不足で疲れ気味/.test(D.memo) && /\nお客様の肘を張りすぎない/.test(D.memo) && /ヒアリング：睡眠は5時間くらい/.test(D.memo) && /次回やること：次回はベンチプレスを52\.5キロで/.test(D.memo), D.memo);
+  //   設計66：種目のメモとセットの備考は社内メモでなくベンチプレスの1セット目のメモへ（元の1セット目と対応が続いている）
+  ok('T7 ★社内メモ：今日の流れ・状態・指導（お客様を含む）・ヒアリング・次回やること／種目のメモ・セットの備考は1セット目のメモ',
+     /今日の流れ：ベンチプレスを50キロから始めた$/m.test(D.memo) && !/^ベンチプレス：/m.test(D.memo) && D.items.find((x) => x.exercise === 'ベンチプレス').sets[0].note === '肩甲骨を寄せる・フォーム良い' && /状態：睡眠不足で疲れ気味/.test(D.memo) && /\nお客様の肘を張りすぎない/.test(D.memo) && /ヒアリング：睡眠は5時間くらい/.test(D.memo) && /次回やること：次回はベンチプレスを52\.5キロで/.test(D.memo), D.memo);
   ok('T8 ★チェックがオフ＝お客様の欄は下書きに入らない（直した文も）', !(D.member && (D.member.message || (D.member.todo || []).some((t) => t))) && !storeText(w.localStorage).includes('オフのまま直した文'), JSON.stringify(D.member));
   ok('T9 ★下書き・保存領域に体のこと・分からなかった点・根拠・迷った理由が無い', !storeText(w.localStorage).includes('膝が少し痛い') && !storeText(w.localStorage).includes('予告か実施か') && !storeText(w.localStorage).includes(EVID) && !storeText(w.localStorage).includes('予告かもしれない') && !storeText(w.localStorage).includes('60キロで5回'));
   ok('T10 ★記録の画面に保存する直前まで印（推・根拠なしで確定（直した））', !!R(w).querySelector('.k-aisrc-inferred') && [...R(w).querySelectorAll('.k-aisrc-nobasis')].some((x) => x.textContent.includes('根拠なしで確定（直した）')));

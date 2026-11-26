@@ -574,7 +574,8 @@ Object.assign(console, orig);
   const i6 = ls.findIndex((l) => l.startsWith('6. unclear')), iNo = ls.findIndex((l) => l.startsWith('書かない：'));
   ok('V2-34 7. の行は1行・6. の直後・書かないの直前', ls.filter((l) => l.startsWith('7. ')).length === 1 && i7 === i6 + 1 && iNo === i7 + 1, [i6, i7, iNo].join(','));
   const l7 = ls[i7] || '';
-  const marks = ['言い換えて別の欄に繰り返さない', 'その種目の note にだけ書き', 'coaching と summary.flow に重ねない', 'summary.flow＝何をどの順で行ったかだけ', '指導の中身・状態・次回のことは書かない', 'coaching＝種目に結びつかない全体の指導だけ', 'condition・hearing・next_actions もほかの欄と同じことを書かない', '事実そのものは省かない'];
+  //   設計66：種目・重さ・回数・セットの備考は記録にだけ・flow は記録に残らないことだけ・caution も重ねない・お客様の欄は重なってよい
+  const marks = ['言い換えて別の欄に繰り返さない', '種目・重さ・回数・セットの備考はトレーニングの記録（exercises）にだけ書き、summary.flow に重ねない', 'その種目の note にだけ書き', 'coaching と summary.flow に重ねない', 'summary.flow＝記録に残らないことだけ', '指導の中身・状態・次回のことは書かない', 'coaching＝種目に結びつかない全体の指導だけ', 'condition・hearing・next_actions・caution もほかの欄と同じことを書かない', '事実そのものは省かない', 'お客様の画面に出る欄（5.）は社内の欄と重なってよい'];
   const at = marks.map((m) => l7.indexOf(m));
   ok('V2-34 ★欄の持ち場（種目の note・flow・coaching・ほか）と「事実は省かない」が7. の行の中にこの順で在る', at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1])), marks.map((m, i) => m + '@' + at[i]).join(' '));
   ok('V2-34 ★7. は member_message の規則に触れない（お客様の欄の扱いは業務の規則が決まるまで変えない）', l7.indexOf('member') < 0);
@@ -584,6 +585,16 @@ Object.assign(console, orig);
   const r = await call({ client_ai_format: 2 });
   ok('V2-34 指示文を足しても応答の形は今どおり（v:2・summary・exercises・coaching・hearing・next_actions）', r.status === 200 && r.draft && r.draft.v === 2 && Array.isArray(r.draft.summary) && Array.isArray(r.draft.exercises) && Array.isArray(r.draft.coaching) && Array.isArray(r.draft.next_actions), JSON.stringify(r).slice(0, 300));
   reply = null;
+}
+
+{
+  //   V2-35 設計66：今日の流れ＝記録に残らないことだけ・欄の役割（語でなく「その欄の行の中」で見る）
+  const { AI_SYSTEM_V2 } = await import('../src/routes/karte-ai-v2.js');
+  const ls = AI_SYSTEM_V2.split('\n');
+  const l1 = ls.find((l) => l.startsWith('1. summary.flow：')) || '', l4 = ls.find((l) => l.startsWith('4. condition＝')) || '', l2 = ls.find((l) => l.startsWith('   sets：')) || '';
+  ok('V2-35 ★1. の行：記録に残る種目・重さ・回数・備考以外だけ・並べて書かない・無ければ空', ['記録に残る種目・重さ・回数・備考以外のことだけ', 'ストレッチ', '順番を変えた理由', '種目名・重さ・回数を並べて書かない', '無ければ空の配列'].every((m) => l1.includes(m)) && !l1.includes('実施した流れを時系列で'), l1);
+  ok('V2-35 ★4. の行：condition・coaching・hearing・next_actions の持ち場・宿題は member_todo', ['caution に当たらない', '種目に結びつかない全体の指導', 'お客様から聞いた', 'トレーナーがやること', 'お客様への宿題は member_todo'].every((m) => l4.includes(m)), l4);
+  ok('V2-35 セットの備考＝そのセットだけの出来事', l2.includes('そのセットだけの出来事'), l2);
 }
 
 console.log(`karte-ai-v2: ${pass} passed, ${fail} failed`);
