@@ -255,6 +255,16 @@ const band = (w) => (R(w).querySelector('.k-pimp-band') || {}).textContent || ''
   ok('S4 ★メモに残した行は【読めなかった行】の下に原文のまま（数字も文も捨てない）', b && b.note && b.note.body === '【読めなかった行】\nプランク 30秒\n※一部省略', b && JSON.stringify(b.note));
 }
 
+{
+  //   ★関門② 段3 重大：健康の言葉を含む名前の決定待ちは［種目にする］を出さない（種目名へ健康の言葉を入れない）
+  const { w, sent } = boot(wk({ healthImport: true }));
+  await openImport(w);
+  await paste(w, ['=====', '2025/4/12', '膝が痛いのでゆっくり', '20×10、20×8'].join('\n'));
+  const d = await openDay(w, '4/12');
+  const pc = d.querySelector('.k-pimp-pend');
+  ok('S4 ★健康の言葉を含む行は［種目にする］も［メモに残す］も出さない（体の注意へ移す・入れないだけ）', !!pc && !pc.querySelector('.k-pimp-ex') && !pc.querySelector('.k-pimp-cand') && !pc.querySelector('.k-pimp-memo') && !!pc.querySelector('.k-pimp-move'), pc && pc.textContent);
+}
+
 // ================= S5 同じ日の記録・allDates が ok でない =================
 {
   const T = ['=====', '2025/5/1', 'スクワット', '×10', '=====', '2025/5/8', 'スクワット', '×10'].join('\n');
@@ -368,6 +378,17 @@ const band = (w) => (R(w).querySelector('.k-pimp-band') || {}).textContent || ''
   ok('HN8 ★トークンが古いと送らずに止まり［ログインし直す］を出す（自動で読み直さない）', !sent.some((b) => b.action === 'k_importDay') && !!R(w).querySelector('.k-pimp-reauth') && reloaded === 0);
   R(w).querySelector('.k-pimp-reauth').click(); await settle();
   ok('HN8 ★押すと貼った文と一覧を消してから読み直す・保存領域に原文が無い', reloaded === 1 && (!R(w).querySelector('.k-pimp-ta') || R(w).querySelector('.k-pimp-ta').value === '') && !R(w).querySelector('.k-pimp-day') && !/肩甲骨|左膝|ベンチプレス/.test(dump()), dump());
+}
+
+{
+  //   ★関門② 段3 中：bfcache で戻ったら、貼った文だけでなく日の配列・送る帯も消える（見えないまま送れない）
+  const { w, sent } = boot(wk());
+  await openImport(w);
+  await paste(w, SAMPLE);
+  const ev = new w.Event('pageshow'); Object.defineProperty(ev, 'persisted', { value: true });
+  w.dispatchEvent(ev); await settle();
+  ok('HN8 ★bfcache（pageshow の persisted）で貼った文・一覧・送る帯が消える', R(w).querySelector('.k-pimp-ta').value === '' && !R(w).querySelector('.k-pimp-day') && !R(w).querySelector('.k-pimp-send'));
+  ok('HN8 消した後に何も送っていない', !sent.some((b) => b.action === 'k_importDay'));
 }
 
 // ================= S10 上限と段階の読み =================

@@ -3859,7 +3859,7 @@
   var IMP_DIGEST = /^\s*【これまでのまとめ(?:（(\d{4})年(\d{1,2})月〜(\d{4})年(\d{1,2})月）)?[^】]*】\s*$/;
   var IMP_MEMO_HEADS = ['その日の内容', '指導したこと', 'お客様の様子・話したこと'];
   var IMP_PII_WARN = /⚠\s*名前などが残っていました/;
-  var impPageShowOn = false;
+  var impPageShowOn = false, impWipe = null;   // impWipe：いま開いている取り込みの画面のメモリと DOM を全部消す（bfcache で戻ったとき・関門② 段3 中）
   /** 'YYYY/M/D' の行 → 'YYYY-MM-DD'（実在・今日以前）。年が無い・実在しない・未来は null と理由 */
   function impDateOf(line, todayYmd) {
     var m = IMP_DATE.exec(String(line || ''));
@@ -3948,9 +3948,11 @@
     //   ★戻る・bfcache で古い取り込みの画面が出たら空にする（貼った文を残さない・改訂8 関門① 中2）
     if (!impPageShowOn) {
       impPageShowOn = true;
-      window.addEventListener('pageshow', function (e) { if (e && e.persisted) { var t = document.querySelector('.k-pimp-ta'); if (t) { t.value = ''; var l = document.querySelector('.k-pimp-list'); if (l) l.innerHTML = ''; } } });
+      window.addEventListener('pageshow', function (e) { if (e && e.persisted && typeof impWipe === 'function') impWipe(); });
     }
-    function wipe() { S.gen++; S.days = []; S.digests = []; S.pre = []; S.open = {}; ta.value = ''; list.innerHTML = ''; info.innerHTML = ''; }
+    //   ★全部消す＝貼った文・日の配列・決めた結果・送る帯（見えないまま送れる状態を残さない）
+    function wipe() { S.gen++; S.sending = false; S.days = []; S.digests = []; S.pre = []; S.open = {}; S.progress = ''; S.sendErr = ''; S.reauth = false; S.wasRead = false; ta.value = ''; list.innerHTML = ''; info.innerHTML = ''; bar.innerHTML = ''; }
+    impWipe = function () { if (ta.isConnected) { wipe(); draw(); } else impWipe = null; };
     ta.oninput = function () { if (S.sending) return; S.gen++; S.wasRead = false; S.days = []; S.digests = []; S.pre = []; S.stop = ''; draw(); };
 
     // ---- 1日の塊を読む
@@ -4017,7 +4019,8 @@
     }
     function healthIncluded(D) { return healthOn() && D.healthInc !== false; }
     function pendName(p) { return memoName(p && p.parsed ? p.parsed.exercise : ''); }
-    function canEx(p) { var n = pendName(p); return p.kind === 'name' && !!n && n.length <= EX_NAME_MAX && !!(p.parsed && p.parsed.sets && p.parsed.sets.length); }
+    //   ★健康の言葉を含む行は種目にしない（種目名・会員の自己ベストへ健康の言葉を入れない・I55・I71・関門② 段3 重大）
+    function canEx(p) { var n = pendName(p); return p.kind === 'name' && !!n && n.length <= EX_NAME_MAX && !MEMO_HEALTH.test(String(p.text)) && !!(p.parsed && p.parsed.sets && p.parsed.sets.length); }
     function setOut(st) { var o = impSet(st); o.done = true; if (st.note) o.note = st.note; return o; }
     function build(D) {
       var out = { items: [], note: null, health: null, why: '' };
@@ -4154,7 +4157,7 @@
         var pick = function (v) { return function () { D.dec[j] = D.dec[j] === v ? null : v; if (v === 'ex' || String(v).indexOf('c:') === 0) D.pos[j] = parseMemo(String(D.res && D.date ? (+D.date.slice(0, 4)) + '/' + (+D.date.slice(5, 7)) + '/' + (+D.date.slice(8, 10)) + '\n' + D.train : '').split(/\r\n|\r|\n/).slice(0, p.lines[0] - 1).join('\n'), todayYmd, autoKnown, sugg).items.length; draw(); }; };
         if (canEx(p)) {
           bs.push(sbtn('「' + pendName(p) + '」を種目にする', 'k-pimp-ex', pick('ex'), d === 'ex'));
-          (p.candidates || []).forEach(function (cd, ci) { if (cd && cd.name) bs.push(sbtn('「' + cd.name + '」にする', 'k-pimp-cand', pick('c:' + ci), d === 'c:' + ci)); });
+          (p.candidates || []).forEach(function (cd, ci) { if (cd && cd.name && !MEMO_HEALTH.test(String(cd.name))) bs.push(sbtn('「' + cd.name + '」にする', 'k-pimp-cand', pick('c:' + ci), d === 'c:' + ci)); });
         }
         if (!MEMO_HEALTH.test(String(p.text))) bs.push(sbtn('メモに残す', 'k-pimp-memo', pick('memo'), d === 'memo'));
         else if (healthOn()) bs.push(sbtn('体の注意へ移す', 'k-pimp-move', pick('move'), d === 'move'));
