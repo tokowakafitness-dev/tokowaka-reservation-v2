@@ -1,4 +1,316 @@
-# 37 空き枠のお知らせ（前日・前々日に空いた枠）【関門①通過＝改訂4（4周）】
+# 37 空き枠のお知らせ（3日前以降に空いた枠を、過去の予約者へ）【改訂5＝決定0216・2026-11-26】
+
+> ★**優先の順は 改訂5 ＞ 改訂4 ＞ 改訂3 ＞ 改訂2 ＞ 改訂1 ＞ 本文。** 改訂5 は決定0216（オーナー 2026-11-26）で前提が変わったため、
+> 本文〜改訂4 を**置き換える**（下に経緯として残す）。改訂5 に書いていないことで本文〜改訂4 と食い違うものは、改訂5 の方針（最小の面積）に従う。
+
+## 改訂5（2026-11-26・CTO）
+
+### 5-0 何が変わったか（決定0216）
+| | 設計37（〜改訂4） | 改訂5 |
+|---|---|---|
+| 送る相手 | 自分で登録した会員（オプトイン画面） | **登録なし**。同じ曜日・前後1時間に直近8週で2回以上来た会員で残数かチケットがある人。1件のキャンセルにつき最大3名 |
+| 文面 | 「空き」「キャンセル」「先着」を書かない | **「空きました」と書く**。誰がキャンセルしたかは出さない |
+| 対象のキャンセル | 前々日0時〜前日 | **3日前の0時以降**（当日は対象外のまま・§5-19-1） |
+| 0歩目（件数の計測） | 先に数える | **飛ばす**。`list`（送らずに記録）を2週回して実数にする |
+| 段 | list → trainer → on | **off → list → on**（trainer 段は作らない §5-1） |
+| 受け取らない | 画面のスイッチ | **お知らせのボタン「今後このお知らせを受け取らない」**（LINE の postback）＝ `vacancy_optout` に記録 |
+
+★事実の訂正（決定0216 の「材料の cancel_notes が貯まらない」）：`cancel_notes` は**すべての取消**で1行を書く（`cancelReservationLine`・会員/トレーナー/オーナー・理由が無くても）。
+GAS 反映と `setupCancelNotesSheet` は 11/7 に済み（ROADMAP）。貯まらないのは **理由（reason_key）とひとこと** だけ（新しい取消画面 CXL_DEFAULT_ON=false のため）。
+この機能に要る `cancelled_at`・`start_at`・`trainer_id`・`customer_id`・`actor`・`outcome` は 11/7 から貯まっている。
+
+### 5-1 比べた手段（オーナー操作数・戻せるか・変える面積）
+| 手段 | オーナー操作 | 戻し | 面積 | 判定 |
+|---|---|---|---|---|
+| A 設計37（改訂4）のまま：登録画面・送る直前に予約確定の入口の3段を共通の関数に切り出す・状態機械＋lease | GAS 反映1回＋LIFF の公開 | スイッチ | **大**（予約確定 `_lbReserveCoreImpl` と `getTrainerSlots` を切り出す＝予約の経路そのものを触る・LIFF の画面） | 採らない：決定0216 で登録画面が要らなくなった。予約の経路を触る危険が、得るもの（送る直前の数秒の競合を消す）より大きい |
+| B トレーナーに候補だけ知らせ、連絡は人が行う（設計37 の段2） | 同上 | 同上 | 中 | 採らない：決定は「自動で会員へ」。段を増やすと on までが遠くなる |
+| **C（採用）** 自動・登録なし・**判定は既存の入口の関数を呼ぶだけ**（`getTrainerSlots`・`getBookingOptions`・`_lbBookingDeadlineMs`・`_lbCheckTrainerAvailable`）・**予約確定の経路と LIFF は触らない**・受け取らないは LINE のボタン | **GAS 反映1回だけ**（setup 関数なし・トリガーを足さない・Script Properties を画面で足さない） | スイッチ1つ（`LB_VACANCY_MODE` を消す） | 小（Nudge.js に1区画・warmupCache に1行・webhook の postback に1分岐・`_lbPushOnce` に Flex を渡す引数） | ✅ |
+
+C で残る危険：送ってから会員が押すまでの間に枠が埋まる（数秒〜数分）。**予約そのものは予約確定の入口が最後に確かめる**（`_lbReserveCoreImpl` はロックの中で残数・B1・トレーナー・1F を見る）＝**取れない予約が作られることはない**。害は「押したら埋まっていた」の落胆だけ。文面の「ご予約の状況により、お取りいただけない場合がございます」で受ける。
+
+### 5-2 範囲
+- 作る：キャンセルを見つけて相手を選ぶ tick（10分ごとの `warmupCache` の末尾に相乗り）／お知らせの送信（Flex：本文・［予約画面を開く］・［今後このお知らせを受け取らない］）／受け取らないの postback／記録 `vacancy_notice`・`vacancy_optout`／作業依頼の読み取りとスイッチ（list・off だけ）／日次点検の見張り1つ（`vacancy_stale`）
+- **やらない（第2段の候補）**：当日のキャンセル／時間変更（`changeReservationLine`）で空いた旧枠／オーナー（hidden）の枠／トレーナーへの候補の知らせ／LIFF で枠を指定して開く（`?vac=`・未確認の `liff.state` を避ける）／登録画面
+- **触らない**：予約確定（`_lbReserveCoreImpl`）・`getTrainerSlots`・`getBookingOptions`・取消（`cancelReservationLine`）の中身・LIFF（`liff/index.html`）・Worker
+
+### 5-3 倒れる向き
+```
+送ってよいか判定できない（枠・残数・担当・上限・受け取らない・記録が読めない・何通目か）→ 送らない。
+間違ったお知らせ（取れない枠・予約できない人・2通目・夜）は、届かないより悪い（設計17）。
+届いたか分からない（通信の例外）→ 送った扱い。二度と送らない。
+倒れた回数は vacancy_notice の skip（理由ごとの人数）と state で数える（母数＝対象のキャンセルの件数）。
+```
+
+### 5-4 対象のキャンセル（cancel_notes の1行）
+```
+S = 開始（start_at・ms）。D0 = S の日の 0:00（JST）。deadline = _lbBookingDeadlineMs(S)（予約の締め切り・入口と同じ関数）
+MARGIN = 2時間（設計37 §4-2 の推奨。オーナーが決めていない＝安全側の既定 §5-19）
+対象 ＝ 次の全部
+  actor = customer、または actor が trainer/owner で trainer_reason = customer_proxy（改訂1-5。第2段の理由の欄はまだ無い＝いまは会員本人の取消だけ）
+  outcome = free か consumed（どちらも枠は空く。owner_free はオーナーの操作＝上の actor で外れる）
+  D0 − 3日 ≦ cancelled_at < D0             （3日前の0時〜前日。当日は対象外）
+  cancelled_at < deadline − MARGIN
+  res_id・cancelled_at・start_at・trainer_id・customer_id が読める（数でない・空・未来の cancelled_at は対象外）
+  同じ res_id の行が1つだけ（2つ以上は対象外＝取り違えない）
+```
+- 見る範囲：cancel_notes の末尾から最大300行のうち `start_at > いま` かつ `cancelled_at ≥ いま − 4日` の行。
+- 送る時点でも `いま < deadline − MARGIN` を確かめ直す（夜の保留から明けたとき・時間がかかったとき）。過ぎていれば `too_late`。
+- 例：金10:00 の枠 → 締め切り＝木22:00（午前枠）→ 対象＝月0:00〜木20:00 のキャンセル。木20:00 以降は too_late。
+
+### 5-5 送る相手（全部を満たす人を、回数の多い順→最後に来た日が新しい順→顧客IDの順に最大3名）
+| # | 条件 | 正本・関数 | 読めないとき |
+|---|---|---|---|
+| 1 | verified・契約 active・LINE の ID がある | 名簿（`_lbNudgeMembers`・Nudge の `_lbNudgeEligible` と同じ条件） | 名簿が読めない→その tick は誰にも送らない |
+| 2 | キャンセルした本人でない | cancel_notes の customer_id | — |
+| 3 | ★名簿の担当（E列）がその枠のトレーナー、または担当が空 | 名簿 | — |
+| 4 | 直近8週（いま−56日〜いま）に、S と同じ曜日・開始が S の前後60分以内の**来店が2回以上**（担当は問わない） | 台帳の `confirmed` で開始が過去の行（来店＝Nudge・残数の「消化」と同じ。consumed は当日キャンセルが主なので数えない） | 台帳が読めない→送らない |
+| 5 | D0 の日に予約（confirmed か consumed）が無い | 台帳（改訂2-5） | 同上 |
+| 6 | 受け取らないを押していない | `vacancy_optout` | 読めない→送らない |
+| 7 | 上限に当たらない（§5-6） | `nudge_log` | 読めない→送らない |
+| 8 | **その枠を予約できる**：`getBookingOptions(会員の lineUserId, S)` が success で、`hasNormalRoute === true` か `pairRemaining > 0` | 予約画面が選択肢を出すのと同じ関数（残数・チケット・契約） | success でない・例外→その人は外す |
+
+- ★3 は設計59（会員の予約は担当の週の表へ直行・main に入っている）のため。担当が別のトレーナーの会員にお知らせすると、画面からはその枠を取れない（公式LINEの案内に回る）。**決定0216 に無い条件＝オーナーに確かめる（§5-19-2）**。それまでは送らない側（この条件あり）で出す。
+- 8 は人ごとに重い（契約の行を読む）。1〜7 で絞った順に呼び、**1枠につき最大6回**。3名に届いたら止める。
+- 連続ルールは枠の段で効く（`getTrainerSlots` が会員には consecOk の枠だけ返す・I21〜I24。いま連続ルールは off）。
+
+#### 枠の段（相手を選ぶ前・全部を満たさなければ誰にも送らない）
+| 確かめること | 関数 | だめなとき |
+|---|---|---|
+| トレーナーが一覧にいて hidden でない | `_lbTrainerById` | `skip_trainer`（終わり） |
+| 台帳に、同じトレーナーで S と重なる confirmed の予約が無い | 台帳（読む1回） | `filled`（終わり） |
+| **会員に見える枠に S ちょうどがある** | `getTrainerSlots({trainerId}, '')`（lineUserId 空＝会員として扱う＝会員の画面と同じ答え。締め切り済みは `_lbDropClosedSlots` で落ちる） | `wait`（次の tick で見直す・6回で `not_offered`）。失敗の答え→`wait`（判定できない・6回で `unknown`） |
+| トレーナーのカレンダーで今も空いている（出勤の中・予約/休憩/ブロックが無い） | `_lbCheckTrainerAvailable(trainer, S, S+60分)`（予約確定の入口と同じ関数） | false→`filled`（終わり）・例外→`wait` |
+- ★キャッシュの枠（最大660秒）がキャンセルを映すまでは「S が無い」になる＝`wait` で次の tick に回す（6回＝約1時間）。
+
+### 5-6 上限と時間帯（安全側の既定。オーナーが決めていない §5-19-3）
+| | 既定 | 数えるもの（nudge_log） |
+|---|---|---|
+| 1日 | **その日に声かけ・お知らせ（`nudge_` の全種別）を1通でも受け取った人には送らない**＝お知らせは1日1通まで・声かけとも合わせて1日1通 | sent・sending（暦日 JST） |
+| 1週 | お知らせは直近7日で **2通まで** | `nudge_vacancy` の sent・sending |
+| 同じ枠 | 同じ人に二度送らない | 鍵 `vac|{trainerId}|{S}` の sent・sending・**failed**（改訂4-1） |
+| 1枠 | 最大3名 | 鍵 `vac|{trainerId}|{S}` の sent・sending（全員分） |
+| 時間帯 | **9:00〜20:00（JST）だけ送る**。外れたら `wait`（夜の保留）→ 次に時間帯に入った最初の tick で最初から確かめ直す | — |
+| 声かけの後 | `LB_REMIND_ON='1'`（声かけが有効）の日は、**その日の声かけが終わった印**（`LB_NUDGE_DAILY_DONE`＝今日の日付）が出るまで送らない（改訂3-4）。印は lbNudgeDaily が一覧を作り送り終えた後に書く（ロック取れず・記録が読めない・記録に書けない、では書かない） | — |
+- 既存の決まりに合わせた：声かけ（Nudge）は 10時・1人1日1通・sending は送った扱い／前日リマインド（12時）は予約に紐づく連絡なので数えない（nudge_log に載らない）。
+- 声かけの側でも、今日のお知らせを1日1通に数える（`LB_NUDGE_DAILY_CAP_KINDS`＝`LB_NUDGE_ORDER`＋`nudge_vacancy`・改訂1-3）。声かけの優先順位（`LB_NUDGE_ORDER`）には足さない。お知らせは声かけの後にしか出ないので普段は効かないが、追いかけ送信（`lbNudgeCatchUpSend`）と重なったときの砦。
+
+### 5-7 流れ（`warmupCache` の末尾・新しいトリガーは作らない）
+```
+warmupCache
+  ├ _warmupCacheBody（枠の作り直し・今のまま）
+  ├ lbNotifyRetryTick（今のまま）／_lbNotifyDeferDrain（今のまま）
+  └ lbVacancyTick(_wcStart)   ← 1行足す（例外を外に出さない）
+       ・mode を読む（'list' か 'on' だけ。それ以外は何も読まずに終わる）
+       ・LB_VACANCY_LAST に {at, result} を残す（見張り）
+       ・warmupCache の開始から 3分30秒 を過ぎていたら何もしない（result=late）
+       ・同時に1本だけ：LB_VACANCY_LEASE（期限2分）をロック（tryLock 3秒）の中で取る。取れなければ終わり
+       ・使ってよい時間 45秒。1回に扱う枠は最大3つ
+       1. cancel_notes の末尾を読み、§5-4 の対象と、vacancy_notice の終わっていない行を拾う
+       2. 安い判定から：時間帯・声かけの印・締め切り−MARGIN → だめなら wait か too_late（重い読み取りをしない）
+       3. 枠の段（§5-5）
+       4. 相手を選ぶ（名簿・台帳・受け取らない・nudge_log は tick に1回だけ読む）
+       5. list：送らずに「送るはずだった相手（顧客IDの下4桁）と外した理由」を vacancy_notice に書く → listed
+          on  ：§5-8 で1人ずつ送る → sent（だれにも送れなければ no_target）
+       6. vacancy_notice に結果（state・人数・理由ごとの人数・かかった時間・版の印）を書く
+       ・最後に LEASE を放す
+```
+
+### 5-8 送り方（on のときだけ・1人ずつ）
+```
+① 残り時間が5秒未満なら止める（sending を書く前）。枠は wait のまま次の tick へ
+② ScriptLock（tryLock 5秒。取れなければその人は次の tick へ）
+     nudge_log の先頭（LB_NUDGE_LOG_SCAN 行）・vacancy_optout を読み直す
+     その人を再判定：今日1通・週2通・同じ枠（failed も）・1枠3名・受け取らない
+     通れば nudge_log の2行目に 'sending'（種別 nudge_vacancy・鍵 vac|T|S）→ flush
+   ロックを放す（書けなければ送らない）
+③ _lbPushOnce(to, 代わりの文, { messages:[Flex], noInlineRetry:true, purpose:'nudge_vacancy' })   ← ロックの外（I19）
+④ ScriptLock（tryLock 5秒）：先頭50行から「種別・顧客ID・鍵・sending」の行を探して sent／failed に書き換える
+     見つからない・ロックが取れない → sending のまま（送った扱い＝再送しない）
+     通信の例外（uncertain）→ sending のまま
+```
+- `_lbPush`（送り直しの列に積む）は使わない＝`nudge_` は `_lbNqPolicy` で none（I18）。429 は failed（その枠では送り直さない・1日1通に数えない）。
+- 二重送信の防止：①同時に1本（LEASE）②人×枠の鍵（ロックの中で読み直してから sending）③1枠3名もロックの中の数で決める。vacancy_notice の state は記録で、送る権利の正本は nudge_log。
+
+### 5-9 文面（Flex 1通・4言語・敬体・名前を入れない＝Nudge と同じ）
+```
+ご予約のお時間が空きました。
+
+{11月28日(金) 10:00}〜　{トレーナー名}
+（ご予約の受付は {11月27日(木) 22:00} までです）
+
+ご都合が合いましたら、下記よりお待ちしております。
+ご予約の状況により、お取りいただけない場合がございます。
+
+［予約画面を開く］（https://liff.line.me/{LIFF の ID}）
+［今後このお知らせを受け取らない］（postback vac=off）
+```
+- 代わりの文（altText・通知の一覧に出る）：「ご予約のお時間が空きました（{日時}〜）」
+- 「キャンセル」と書かない・誰が・何人・理由を書かない。URL に顧客を指す値を入れない（今の LIFF の入口のまま）。
+- 日時・締め切りは送る瞬間に計算する。トレーナー名は `_lbTrainerNameLang`（en/zh は英語名）。日時は `_lbFmtResvLabel`。
+
+### 5-10 受け取らない（postback）
+- ボタンを押す → LINE が webhook へ postback（`data='vac=off'`）→ `handleLineWebhook` の postback の分岐で **meal-ai より前に** `_lbVacPostback(ev)` へ（`vac=` で始まる時だけ。それ以外は今どおり meal-ai）。
+- 本人は LINE が付けた `ev.source.userId` だけで決める（webhook は whToken で守られている）。名簿で customer_id を引く。無ければ「確認できませんでした」と返して記録しない。
+- `vacancy_optout`（customer_id・opted_out_at・via）に1行。既にあれば足さない。無ければシートを作る（見出しだけ）。返信（reply・無料）：「承知しました。今後、空き枠のお知らせはお送りしません。ご予約・リマインドのご連絡はこれまでどおりお届けします。」
+- 書けなかった → 「恐れ入ります、設定を受け付けられませんでした。お手数ですが、このトークでスタッフにお知らせください。」・booking_metrics に `VAC_OPTOUT_FAIL`。
+- 受け取るに戻す：オーナーがシートの行を消す（いまは画面なし・§5-19-5）。
+
+### 5-11 記録
+**`vacancy_optout`**（GAS のシート・D1 に送らない）：customer_id・opted_out_at（ms）・via。氏名・LINE ID を持たない。行は消さない。
+**`vacancy_notice`**（GAS のシート・1キャンセル1行・行の番号は変わらない＝追記と上書きだけ）：
+| 列 | 中身 |
+|---|---|
+| res_id・trainer_id・start_at・deadline_at・cancelled_at | 枠とキャンセル（cancel_notes から写す。氏名なし） |
+| first_seen_at・updated_at | 見つけた・最後に見た時刻 |
+| state | `wait`／`listed`／`sent`／`no_target`／`too_late`／`filled`／`not_offered`／`unknown`／`not_target`／`skip_trainer` |
+| why | wait・終わりの理由（`night`・`nudge_pending`・`slot_not_yet`・`slot_unknown`・`budget`・`actor`・`window`・`margin`・`bad_row`・`dup_res` 等） |
+| mode | 判定したときの mode（list／on） |
+| attempts | slot_not_yet・slot_unknown の回数（6回で終わり） |
+| eligible_n・sent_n・failed_n・unknown_n | 人数だけ |
+| would | list のとき送るはずだった相手（顧客IDの下4桁・最大3） |
+| skip_json | 外した理由ごとの人数（例 `{"visits":12,"same_day":1,"no_remain":2}`） |
+| elapsed_ms・build | かかった時間・版の印 |
+- 作業依頼：`remaining {vacancy: 日数}` → 件数・state と理由の内訳・送った/送るはずだった人数（名前なし・顧客は下4桁だけ・`_ejScrub` を通す）。`remaining {vacancyMode:'list'|'off'}` → スイッチを list にする／消す（**on にはできない**）。新しい op は足さない（許可一覧3か所を触らない）。
+
+### 5-12 スイッチと段取り
+- `LB_VACANCY_MODE`：厳密に `'list'`／`'on'` だけが効く。未設定・`'ON'`・`'1'`・その他＝何もしない（I-V1）。
+- 切り替え：エディタの関数 `lbVacancySetList()`／`lbVacancySetOn()`／`lbVacancySetOff()`（Off は値を消す）。作業依頼は list と off だけ。
+- 段取り：①GAS 反映（未設定＝何もしない）→ 作業依頼で版の印を確かめる ②CEO が `vacancyMode:'list'` → 2週 → `remaining {vacancy:14}` で件数・送るはずだった人数・理由を見る ③オーナーの端末に見本を送る `lbVacancySample()`（エディタ・オーナーの LINE にだけ・postback は `vac=test`＝記録しない）で Flex の見え方とボタンを確かめる ④関門③ → オーナー承認 → `lbVacancySetOn()`
+
+### 5-13 止まったら誰が気づくか
+- tick は mode が list/on のとき毎回 `LB_VACANCY_LAST`（{at, result}）を書く。切り替えの関数もその時刻を書く（切り替え直後に鳴らさない）。
+- 日次点検に `vacancy_stale`（warn・B）：mode が list/on で、最後の記録が **60分より古い／無い**、または最後の結果が `error`。
+- warmupCache が止まると、送り直しと一緒に止まる＝`notify_retry_stalled` も鳴る（既存）。
+- 送れなかった人数は vacancy_notice の failed_n・unknown_n、作業依頼で見る。
+
+### 5-14 戻し方
+- 即時：`lbVacancySetOff()`（または作業依頼 `vacancyMode:'off'`）＝次の tick から何も読まない・送らない。反映は要らない。
+- コード：warmupCache の1行と webhook の分岐を戻して GAS 反映（シートは残してよい）。
+- nudge_log の `nudge_vacancy` の行は残る（声かけの1日1通の判定に効くのはその日だけ）。
+
+### 5-15 個人情報（どこに出て誰が読めるか）
+| 場所 | 中身 | 読める人 |
+|---|---|---|
+| LINE（会員本人とのトーク） | 日時・トレーナー名・締め切り・LIFF の入口。名前・他の会員・キャンセルした人は入れない | 本人 |
+| `nudge_log` | 送信日時・種別・customer_id・鍵（トレーナーID・開始ms）・結果 | スプレッドシートの編集者（今と同じ） |
+| `vacancy_notice` | res_id・トレーナーID・時刻・人数・下4桁・理由の人数。氏名・LINE ID なし | 同上 |
+| `vacancy_optout` | customer_id・時刻 | 同上 |
+| 作業依頼の結果（公開 repo の番号・読み取りの鍵つき） | 件数・理由・下4桁だけ（`_ejScrub`） | 鍵を持つ人 |
+| Logger | 件数・理由・下4桁だけ | GAS の編集者 |
+| ★既存のシート同士の突き合わせ | vacancy_notice の res_id・時刻 ＋ 予約台帳・cancel_notes → キャンセルした本人が分かる | 今の編集者（権限は広げていない） |
+| 予約・残数の判定の中 | 氏名・LINE ID はメモリの中だけ（送り先に使う） | — |
+
+### 5-16 誤って送る経路と塞ぎ方
+| 経路 | 塞ぎ方 | 検査 |
+|---|---|---|
+| 残数の誤判定（残数0の人へ） | 予約画面と同じ `getBookingOptions`。success でない・例外・形が違えば外す | V-8 |
+| 契約切れ・未認証 | 名簿の active・verified（Nudge と同じ） | V-5 |
+| キャンセルの取り違え（別の枠・別の人を本人として外し損ねる） | res_id が1行だけ・本人は cancel_notes の customer_id・枠は cancel_notes の trainer_id と start_at（台帳を時刻で引き直さない） | V-3 |
+| トレーナーの都合の取消を会員都合と取り違える | actor=customer か customer_proxy の明示だけ | V-2 |
+| 二重送信（同じ人に同じ枠） | 同時に1本（LEASE）＋ロックの中で nudge_log を読み直してから sending＋failed も数える | V-11・V-12 |
+| 1日2通（声かけと） | 声かけの印が出るまで送らない＋今日 nudge_ を受けた人は外す＋声かけ側も nudge_vacancy を数える | V-9・V-10 |
+| 時刻の取り違え（UTC/JST・日付セル） | cancel_notes の時刻は ms の数（数でなければ外す）・暦日と曜日は SETTINGS.TIMEZONE（JST）で切る・nudge_log の日付は `_lbParseResvDate` | V-4・V-13 |
+| 夜に届く | 9〜20時以外は wait | V-9 |
+| 期限の直前に届く | 送る瞬間にも締め切り−2時間を見る | V-4 |
+| 埋まった枠を知らせる | 台帳の重なり・会員に見える枠・送る直前に予約確定と同じ部品の4段（B1・トレーナー・1F・連続ルール＝§5-21-2・5-22-1）。残りは送ってから押すまでの間＝予約確定がロックの中で止める | V-6 |
+| 担当でないトレーナーの枠（画面から取れない） | 担当＝その枠のトレーナーか担当なし | V-5 |
+| 受け取らないを押した人へ | ロックの中で読み直す | V-7 |
+| スイッチの読み違い | 'list'/'on' の完全一致だけ | V-1 |
+
+### 5-17 不変条件（MODEL §3 に足す）
+I-V1 既定は何もしない（'list'/'on' の完全一致だけ）／I-V2 新しいトリガーを作らない（warmupCache の末尾）／I-V3 枠と予約の可否は入口の関数（getTrainerSlots・getBookingOptions・_lbBookingDeadlineMs・_lbCheckTrainerAvailable）／I-V4 送る権利の正本は nudge_log（ロックの中で読み直してから sending・送っている間はロックを持たない）／I-V5 判定できないものは送らない（state と理由で数える）／I-V6 文面に他の会員の行動・名前を出さない／I-V7 対象は 3日前0時〜前日・締め切り−2時間より前・会員本人の取消／I-V8 1日1通（声かけと合わせて）・週2通・同じ枠1回・1枠3名
+
+### 5-18 検査（worker/test/gas-vacancy.test.js・vm で本物のコードを動かす。シート・カレンダー・LINE・時計・ロックは身代わり）
+V-1 mode（未設定・'ON'・'1'・'list'・'on'）／V-2 actor×trainer_reason／V-3 res_id の重複・列の欠け・時刻の不正／V-4 期間の境界（3日前0時の前後・前日23:59・当日0時・締め切り−2時間の前後・送る瞬間の締め切り）／V-5 名簿の条件（未認証・契約切れ・LINE ID なし・担当違い・担当なし）／V-6 枠の段（台帳の重なり・会員の枠に無い→wait→6回で not_offered・カレンダーで埋まり・hidden）／V-7 受け取らない（読み直し）／V-8 残数（getBookingOptions の失敗・選択肢なし・ペアだけ）／V-9 時間帯と声かけの印／V-10 声かけ側が今日のお知らせを数える（入口 lbNudgePlanAll から）／V-11 上限（今日1通・週2通・同じ枠・failed の再送なし・1枠3名・4人目は送らない）／V-12 sending を書いてから送る・書けなければ送らない・例外は sending のまま・結果は鍵で探して書く／V-13 来店の数え方（曜日・前後60分・8週・confirmed だけ）と並び順／V-14 list は1通も送らず nudge_log に書かない／V-15 文面（空きました・キャンセルの字が無い・名前が無い・4言語・Flex の形）／V-16 postback（vac=off で記録・二度目は足さない・会員でない・書けない・meal-ai へ行かない／ほかの postback は meal-ai へ）／V-17 配線（warmupCache を入口から動かして tick に届く・tick の例外が warmupCache を壊さない）／V-18 ログ・作業依頼に氏名・LINE ID・フル ID が無い／V-19 このコードに newTrigger・everyMinutes が無い／V-20 見張り（vacancy_stale）／V-21 作業依頼は on にできない。壊して落ちる：mode の判定・1日1通・担当の条件・sending の順番・list の送信止め・期間の下限。
+
+### 5-19 オーナーに確かめること（決まるまで安全側の既定で出す）
+1. 当日（D0 以降）のキャンセルも対象にするか（既定：対象外＝0139 の指定のまま）
+2. ★担当がいる会員には、担当の枠だけ知らせる（設計59 で担当以外の枠は画面から取れない）でよいか（既定：担当の枠だけ＋担当なしの会員）
+3. 上限：1日1通（声かけと合わせて）・週2通・送る時間 9〜20時・締め切りの2時間前まで（既定）
+4. 来店の数え方：直近8週・同じ曜日・前後60分・2回以上・担当を問わない（決定どおり。ただし 3 で担当の枠に絞られる）
+5. 受け取らないを押した人を戻す手段（既定：オーナーがシートの行を消す）
+6. 文面（§5-9）
+
+### 5-20 未確認（関門③の前に確かめる）
+1. この LINE チャネルの webhook が GAS（whToken つき）に向いていて postback が届くか（meal-ai は postback を受けている＝見込みはある）。→ `lbVacancySample()` の vac=test で確かめる
+2. Flex の見え方（4言語・ボタンの文字の長さ）→ 同上
+3. warmupCache の所要時間に 45秒を足しても6分の制限に余裕があるか（list の段の elapsed_ms と `[warmup]` のログで見る）
+4. `getBookingOptions` 1回の時間（list の段の elapsed_ms）
+
+
+### 5-21 関門① 1周目（Codex・2026-11-26）の反映 ★5-0〜5-20 より優先
+高2・中4・低2・重大0。全部反映した（却下なし）。
+1. **（高）声かけ側の1日1通**：`_lbNudgeLogReadAll` の `out` の初期化と受け付ける種別を `LB_NUDGE_DAILY_CAP_KINDS`（＝`LB_NUDGE_ORDER`＋`nudge_vacancy`）にする。**優先順位・counts・候補・`_lbNudgeSentForRange`・`_lbNudgeFirstOfMonth` は `LB_NUDGE_ORDER` のまま**。V-10 で「お知らせは `_byDay` に入るが counts・候補・追いかけの判定には入らない」を入口（`lbNudgePlanAll`）から固定する。
+2. **（高）送る直前の空き確認**：`_lbCheckTrainerAvailable` はトレーナーのカレンダーだけ（予約確定はさらに B1・1F・連続ルールを見る＝LineBooking.js の B1競合チェック〜連続ルール）。→ 予約確定の入口の中身は変えず、**同じ部品を同じ順で呼ぶ読み取りだけの関数 `_lbVacSlotFreeNow(trainer, start, end)`** を置く：①B1（`[消化]` を除き `_lbEventOverlaps`）②`_lbCheckTrainerAvailable` ③`_lb1FBlockEnabled()` のとき `_lb1FTrainerBusy`＋`_lbOverlapsBusy`（取得失敗は unknown）④連続ルールが on のとき `_lbConsecCheckAt`（unknown は送らない）。返り値 `{ok}`／`{ok:false, reason:'b1'|'trainer'|'f1'|'consec'}`／`{ok:false, unknown:true}`。**人ごとに送る直前（ロックの前）に呼ぶ**。例外は unknown。予約確定と同じ部品を呼んでいることを検査で固定（確定側の4つの呼び出しが今も在ること・こちらの4つの呼び出し）。§5-16・I-V3・V-6 を「予約確定と同じ部品で、ロックの外で確かめる（確定はロックの中で再び確かめる）」に読み替える。残る競合＝確かめてから押すまでの間だけ。
+3. **（中）`LB_NUDGE_DAILY_DONE` の成功条件**：lbNudgeDaily のロックの中で `_lbNudgeSend` の戻り値を受け、`plan.code === 'OK'` かつ戻り値の code が無い（LOG_UNWRITABLE・ALREADY_RUNNING・LOCK_UNAVAILABLE でない）ときに今日の日付を書く。LINE の未達（failed）は妨げない（送る処理は最後まで回っている）。声かけが無効（enabled=false）でも書く。書けなければお知らせは送らない側（印が無い＝nudge_pending）。
+4. **（中）枠のキャッシュの作り直し**：tick は **この warmupCache の中で枠が作られた（または作りたてで省かれた）とき**だけ枠の段に進む＝`LB_SLOTS_BUILT_AT ≥ _wcStart − 35秒`。そうでなければ枠の段に入らず `slots_not_fresh`（wait・回数に数えない）。これで tick の中の `getTrainerSlots` がキャッシュを作り直すのは、キャッシュの保存に失敗した回と連続ルールの切替直後だけになる。tick の所要時間は vacancy_notice の elapsed_ms と LB_VACANCY_LAST に残す。
+5. **（中）個人情報**：§5-15 に追記：氏名・LINE ID は写さないが、**予約台帳・cancel_notes を読める編集者は res_id と時刻からキャンセルした本人を特定できる**（今の権限の範囲）。作業依頼・Logger には res_id・フルの customer_id を出さない（検査 V-18）。
+6. **（中）記録が書けないときの観測**：`LB_VACANCY_LAST` に `{at, result, n}`。result は `ok`／`late`／`busy`（LEASE）／`slots_not_fresh`／`read_fail`／`notice_write_fail`／`log_unwritable`／`lock_busy`／`error`。`vacancy_notice` に書けなかった回は result で残す（成功で上書きしない）。日次点検の `vacancy_stale` は「60分より古い・無い・result が read_fail／notice_write_fail／log_unwritable／error」。作業依頼にも出す。
+7. **（低）nudge_log の日付**：読み方は `_lbNudgeLogReadAll` と同じ（先頭の `'` を外して `_lbParseResvDate`）。Date 型のセルも扱う検査を V-11 に足す。
+8. **（低）postback**：`data === 'vac=off'` と `data === 'vac=test'` の**完全一致だけ**を先に取る。その他は今どおり meal-ai へ。
+- lbNudgeDaily がロックを持っている間、お知らせは5秒で諦めて次の tick へ（`lock_busy` として数える）。
+
+
+### 5-22 関門① 2周目（Codex・2026-11-26）の反映 ★5-21 より優先
+1周目の8件のうち6件は塞がった判定。残り2件と新しい3件（高1・中2・低2）を反映した（却下なし）。
+1. **（高）連続ルールの条件を予約確定と同じに**：予約確定は `custInfo.consecRule === true` かつ契約の種別に「体験」を含まない、かつ `_lbConsecMode() === 'on'` のときだけ `_lbConsecCheckAt` を呼ぶ（LineBooking.js 予約確定の連続ルールの段）。会員が自分で取る予約は `consecRule: true`（makeReservationLine の custInfo）。→ `_lbVacSlotFreeNow(trainer, start, end, member)` は **member.contractType（名簿の F 列）を受け取り**、`_lbConsecMode()==='on'` かつ `contractType` に「体験」を含まないときだけ `_lbConsecCheckAt` を呼ぶ（お知らせの相手は会員本人が取る予約＝consecRule は常に真）。検査：体験の契約の会員は連続ルールで外さない／on でないときは呼ばない。
+2. **（中）枠の鮮度は「この実行で、キャンセルより後に読み始めた枠」で判定**：共有の `LB_SLOTS_BUILT_AT` は使わない。`LB_SLOTS_READ_START_LOCAL`（この実行で buildAvailableSlots がカレンダーを読み始めた時刻・コード.js）を使う。
+   - 0（この実行では作っていない＝作りたてで省いた）→ 枠の段に入らない（`slots_not_fresh`・回数に数えない・次の tick へ）
+   - キャンセルの cancelled_at ≥ 読み始め → その枠は `wait`（`cache_older`・回数に数えない）
+   - cancelled_at < 読み始め のときだけ `getTrainerSlots` の答えを使う。これで「キャンセルを含まない枠」を見て `not_offered` に進むことが無くなる。
+3. **（中）残数は送る直前にも確かめ直す**：人ごとに、送る直前（`_lbVacSlotFreeNow` と同じくロックの前）に `getBookingOptions` をもう一度呼び、§5-5-8 の条件を満たさなければ送らない（`no_remain_late` として数える）。1枠あたりの呼び出しは選ぶ段の最大6回＋送る段の最大3回。
+4. **（低）§5-16 の「埋まった枠を知らせる」行は §5-21-2 の4段（B1・トレーナー・1F〔blockAll を含む〕・連続ルール）に読み替える**（実装はそちら）。
+5. **（低）確かめてから送るまでの競合は残る**：予約確定がロックの中で再び確かめるので取れない予約は作られない。古いお知らせになる可能性だけ（§5-1）。
+
+
+### 5-23 関門① 3周目（Codex・2026-11-26）の反映 ★5-22 より優先
+高2・中3・低2。全部反映した（却下なし）。
+1. **（高）契約の種別は予約確定と同じ導き方**：`makeReservationLine` は `_lbContractTypeOf(氏名) || 名簿の F 列`。`_lbVacSlotFreeNow` に渡す contractType はこれと同じ式で作る（氏名はメモリの中だけ）。
+2. **（高）予約停止のゲート**：予約確定は最初に `_lbBookingGate(customerId, channel)` を通る（LB_BOOKING_FROZEN・LB_ONBOARDING_MODE）。→ 送る直前に人ごとに `_lbBookingGate(customerId, 'line')` を呼び、ok でなければ送らない（`gate` として数える）。`BOOKING_FROZEN` のときはその tick の残りの枠も送らない（wait・`frozen`）。
+3. **（中）枠の鮮度の飢餓**：この実行で枠を作っていない（`LB_SLOTS_READ_START_LOCAL === 0`）のに、安い判定（時間帯・声かけの印・締め切り）を通った枠があり、warmupCache の開始から2分30秒以内なら、**tick が `buildAndCacheSlots()` を1回だけ呼ぶ**（`slots_rebuilt` として数える）。それでも 0 のまま・例外なら `slots_not_fresh`。押し出しと warmupCache の時刻が揃っても毎回止まらない。
+4. **（中）送る段の順番を固定**（§5-8 を置き換え）：
+   ```
+   a. 残り時間（5秒未満なら止める）
+   b. 名簿の行を lineUserId で読み直す（getCustomerByLine）：verified・active・customer_id が同じ・担当の条件・LINE ID が同じ
+   c. _lbBookingGate(customerId,'line')
+   d. getBookingOptions（残数・§5-22-3）
+   e. _lbVacSlotFreeNow（B1・トレーナー・1F・連続ルール）
+   f. ロック：nudge_log・vacancy_optout を読み直し、今日1通・週2通・同じ枠（failed も）・1枠3名・受け取らない → sending を書く → 放す
+   g. 送る（ロックの外）
+   h. ロック：鍵で探して sent／failed（見つからない・取れない・例外は sending のまま）
+   ```
+   a〜e のどれかで外れたら sending を書かない（上限を使わない）。
+5. **（中）名簿の状態の変化**：上の b で送る直前に確かめる。
+6. **（低）cancelled_at < 読み始め は安全側**（カレンダーの削除の後に時刻を書く）＝そのまま。
+7. **（低）§5-15 の表に「予約台帳・cancel_notes を読める編集者は res_id と時刻からキャンセルした本人を特定できる（今の権限の範囲）」の行を足した**。
+
+
+### 5-24 関門① 4周目（Codex・2026-11-26）の反映 ★5-23 より優先
+高2・中2・低2。全部反映した（却下なし）。
+1. **（高）送る瞬間の締め切り・時間帯**：§5-23-4 の f（ロックの中・sending を書く直前）で、`いま < _lbBookingDeadlineMs(S) − MARGIN` と「9:00〜20:00」を確かめ直す。外れていれば sending を書かずに枠を too_late／wait にする。
+2. **（高・中）tick からは `buildAndCacheSlots()` を呼ばない**（§5-23-3 を取り消す）。全枠の計算・キャッシュ・公開シートの書き直しを tick に持ち込まない。飢餓は次の形で塞ぐ：
+   - `buildAndCacheSlots` が今ある `LB_SLOTS_BUILT_AT` の書き込みの隣で、**読み始めた時刻 `LB_SLOTS_READ_START`（ms）も Script Property に残す**（1行・値は数だけ・例外は握る＝今の BUILT_AT と同じ扱い）。
+   - tick は「この実行の `LB_SLOTS_READ_START_LOCAL`（0 でなければ）」、0 なら「`LB_SLOTS_READ_START` の値」を枠の読み始めとし、`cancelled_at < 読み始め` の枠だけ枠の段に進む。押し出し（pushToEdgeSlots）が作った枠も使えるので、warmupCache が省いた回でも止まらない。
+   - 並行した2回の作り直しで、キャッシュが古い読みのまま・Property が新しい読み、になる組み合わせは残る。そのとき起きるのは「S が無い＝wait→not_offered」（送らない側）だけ。逆の向き（埋まっている枠が空いて見える）は e の生の確認（`_lbVacSlotFreeNow`）と台帳で止める。
+   - 読み始めが読めない・数でない → `slots_not_fresh`（送らない・数える）。
+3. **（中）予約停止のゲートを sending の直前へ**：順番を a 残り時間 → b 名簿 → d 残数 → e 空き（4段）→ **c ゲート** → f ロック（締め切り・時間帯・上限・受け取らない → sending）→ g 送る → h 書き戻し、にする。
+4. **（低）公開シート**：tick は公開シートを書かない（2 で buildAndCacheSlots を呼ばないため）。
+
+
+### 5-25 関門① 5周目（Codex・2026-11-26）の反映 ★5-24 より優先 ＝ 通過の条件
+高2・中1。全部反映した（Codex：「この3点を直せば実装に進んでよい」）。
+1. **（高）ゲートはロックの中でも**：f（ロックの中・sending の直前）で締め切り・時間帯と一緒に `_lbBookingGate(customerId,'line')` を確かめ直す。`BOOKING_FROZEN` ならその人だけでなく、その tick の残りの枠も止める（wait・`frozen`）。c（ロックの前）は重い読みを省くための予備。
+2. **（高）締め切りは予約入口と同じ設定で**：すべての締め切りの計算を `_lbBookingDeadlineMs(S, _lbBookingCfg(SETTINGS))` にする（予約確定の `_lbBookingOpen(..., _lbBookingCfg(SETTINGS))` と同じ）。
+3. **（中）途中で止まったときの state**：その枠で1人でも送っていれば（nudge_log の鍵の sent・sending が1以上）、state は `sent` を下げない。止まった理由（`too_late`・`night`・`frozen`・`budget`・`lock_busy`）は why と skip_json に足す。
+   - 3名に届いた → `sent`（終わり）
+   - 3名未満で、締め切り−MARGIN まで時間があり、止まった理由が night・frozen・budget・lock_busy・nudge_pending → `sent_partial`（終わっていない＝次の tick で続き。送った人は鍵で飛ばす・1枠3名は nudge_log の数）
+   - 3名未満で、候補が尽きた → `sent`（終わり・why=`no_more`）
+   - 締め切り−MARGIN を過ぎた → 送っていれば `sent`（why=`too_late`）、送っていなければ `too_late`
+
+---
+
+# 以下は経緯（本文〜改訂4・2026-11-06）。改訂5 が優先する
+
 
 > ★**優先の順は 改訂4 ＞ 改訂3 ＞ 改訂2 ＞ 改訂1 ＞ 本文。** 食い違う所は新しい改訂に従う。
 
