@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-11-23c うながしの最後に自己修理（lbSelfHeal）を相乗り（開始時刻を渡して予算を決める）・日次点検の見張りに「途中で落ちた」（LAST > DONE かつ2時間超・DONE 未設定の間は出さない）と壊れた印のメールを足す（自己修理 P1）';
+var LB_NUDGE_BUILD = '2026-11-26a 設計37 改訂5：1日1通の読み取りに nudge_vacancy を数える（優先順位は変えない）・声かけが終わった印 LB_NUDGE_DAILY_DONE・空き枠のお知らせの区画／2026-11-23c うながしの最後に自己修理（lbSelfHeal）を相乗り（開始時刻を渡して予算を決める）・日次点検の見張りに「途中で落ちた」（LAST > DONE かつ2時間超・DONE 未設定の間は出さない）と壊れた印のメールを足す（自己修理 P1）';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -76,6 +76,9 @@ var LB_NUDGE_KIND = {
 };
 // ★優先順位。同じ日に複数当たったら、この並びで先頭のものだけを送る。
 var LB_NUDGE_ORDER = [LB_NUDGE_KIND.TRANSFER, LB_NUDGE_KIND.MONTH_OPEN, LB_NUDGE_KIND.VISIT_B, LB_NUDGE_KIND.VISIT_A];
+// ★1日1通に数える種別（設計37 改訂5 §5-21-1）。空き枠のお知らせ（nudge_vacancy）も「今日はもう1通」に数える。
+//   優先順位（LB_NUDGE_ORDER）・counts・候補・追いかけの判定には入れない＝声かけの計画は今と同じ
+var LB_NUDGE_DAILY_CAP_KINDS = LB_NUDGE_ORDER.concat(['nudge_vacancy']);
 var LB_NUDGE_LABEL = {
   nudge_transfer:   '① 振替のご案内',
   nudge_month_open: '② 翌月分の解放',
@@ -563,7 +566,7 @@ function _lbNudgeLogSheet() {
 //   結果が sent の行だけ数える＝未達（LINE側で弾かれた）は送ったことにしない＝翌日また試せる。
 function _lbNudgeLogReadAll() {
   var out = {};
-  for (var i = 0; i < LB_NUDGE_ORDER.length; i++) out[LB_NUDGE_ORDER[i]] = {};
+  for (var i = 0; i < LB_NUDGE_DAILY_CAP_KINDS.length; i++) out[LB_NUDGE_DAILY_CAP_KINDS[i]] = {};   // 設計37 改訂5：お知らせも1日1通に数える
   out._byDay = {};        // 'yyyy-MM-dd|customerId' → true（種別をまたいだ1日1通の判定に使う）
   out._readFailed = false;
   try {
@@ -648,7 +651,9 @@ function _lbNudgeMembers() {
       name:         String(r[MAP_COL.NAME - 1] || ''),
       contractStat: String(r[MAP_COL.CONTRACT_STAT - 1] || ''),
       authState:    String(r[MAP_COL.AUTH_STATE - 1] || ''),
-      lang:         _lbNormLang(r[MAP_COL.LANG - 1])
+      lang:         _lbNormLang(r[MAP_COL.LANG - 1]),
+      trainerId:    String(r[MAP_COL.TRAINER_ID - 1] || ''),      // 設計37 改訂5（担当の枠だけ知らせる）
+      contractType: String(r[MAP_COL.CONTRACT_TYPE - 1] || '')    // 同（連続ルールの体験の判定・_lbContractTypeOf が無いとき）
     });
   }
   return out;
@@ -1559,7 +1564,12 @@ function lbNudgeDaily(nowMs) {
         _lbNudgeNoteOpenMiss(_plan.monthKey, Number((_plan.skipped || {}).nextMonthNoPlan || 0));
       }
     } catch (e) { Logger.log('解放日の取りこぼしの記録に失敗: ' + (e && e.message)); }
-    return _lbNudgeSend(_plan, ms, true);   // 第3引数＝ロックは取得済み
+    var _sres = _lbNudgeSend(_plan, ms, true);   // 第3引数＝ロックは取得済み
+    //   ★声かけが終わった印（設計37 改訂5 §5-21-3）。空き枠のお知らせは、声かけが有効な日はこの印が出るまで送らない。
+    //     一覧が作れて（OK）中止の code が無いときだけ書く。LINE の未達（failed）は妨げない。書けなければお知らせが止まる側
+    try { if (_plan && _plan.code === 'OK' && _sres && !_sres.code) PropertiesService.getScriptProperties().setProperty('LB_NUDGE_DAILY_DONE', Utilities.formatDate(new Date(ms), SETTINGS.TIMEZONE, 'yyyy-MM-dd')); }
+    catch (eDone) { Logger.log('声かけの完了の印を書けませんでした（空き枠のお知らせはこの日送りません）'); }
+    return _sres;
   } finally {
     if (lock) { try { lock.releaseLock(); } catch (e) { } }
   }
@@ -1656,3 +1666,679 @@ function _lbNudgePreviewNamedText(nowMs) {
   }
   return out.join('\n');
 }
+
+// ==== VACANCY_BEGIN ====
+// ============================================================
+// 空き枠のお知らせ（設計37 改訂5・決定0216・2026-11-26）
+//   3日前の0時〜前日に会員が自分でキャンセルした枠を、同じ曜日・前後1時間に直近8週で2回以上来た会員
+//   （担当がその枠のトレーナーか担当なし・残数かチケットあり）へ、最大3名まで LINE で知らせる。
+//
+// ★設計の柱（ops/design/37-vacancy-notice.md 改訂5・§5-21〜5-25）
+//   ① 既定は何もしない。LB_VACANCY_MODE が厳密に 'list'（送らずに記録）か 'on'（送る）のときだけ動く。
+//      'on' はオーナー承認（対外発信）。作業依頼からは list と off しかできない。
+//   ② 新しいトリガーを作らない。warmupCache（10分ごと）の末尾に相乗り（トリガー20本の天井・MODEL §7）。
+//   ③ 枠と予約の可否は入口の部品で決める：getTrainerSlots（会員に見える枠）・getBookingOptions（残数）・
+//      _lbBookingDeadlineMs（締め切り）・_lbBookingGate（予約停止）・予約確定と同じ4段（B1・トレーナー・1F・連続ルール）。
+//      予約確定の経路そのものは触らない（確定はロックの中で再び確かめる＝取れない予約は作られない）。
+//   ④ 送る権利の正本は nudge_log。ロックの中で読み直してから 'sending' を書き、ロックを放してから送る（I19）。
+//   ⑤ 判定できないものは送らない。倒れた理由は vacancy_notice の why・skip_json と LB_VACANCY_LAST に数える。
+//   ⑥ 文面に他の会員の行動（誰が・何人・理由）と名前を出さない。ログ・作業依頼には顧客IDの下4桁だけ。
+// ============================================================
+var LB_VACANCY_BUILD = '2026-11-26a 設計37 改訂5：過去の予約者へ自動（登録なし）・3日前以降・最大3名・空きました・受け取らないボタン';
+
+var LB_VAC = {
+  MODE_PROP: 'LB_VACANCY_MODE',
+  LAST_PROP: 'LB_VACANCY_LAST',         // {at, result, n, build}（見張り・§5-13）
+  LEASE_PROP: 'LB_VACANCY_LEASE',       // 同時に1本（期限 ms）
+  READ_START_PROP: 'LB_SLOTS_READ_START', // buildAndCacheSlots が残す「カレンダーを読み始めた時刻」（§5-24）
+  NUDGE_DONE_PROP: 'LB_NUDGE_DAILY_DONE',
+  KIND: 'nudge_vacancy',
+  NOTICE_SHEET: 'vacancy_notice',
+  OPTOUT_SHEET: 'vacancy_optout',
+  NOTICE_HEAD: ['res_id', 'trainer_id', 'start_at', 'deadline_at', 'cancelled_at', 'first_seen_at', 'updated_at', 'state', 'why',
+                'mode', 'attempts', 'eligible_n', 'sent_n', 'failed_n', 'unknown_n', 'would', 'skip_json', 'elapsed_ms', 'build', 'tried'],
+  OPTOUT_HEAD: ['customer_id', 'opted_out_at', 'via'],
+  MARGIN_MS: 2 * 3600000,               // 締め切りの何時間前までに送れれば送るか（§5-4・オーナー未決＝安全側の既定）
+  SEND_FROM_H: 9, SEND_UNTIL_H: 20,     // 送る時間帯（JST・9:00〜20:00）
+  LOOKBACK_DAYS: 3,                     // 3日前の0時から（決定0216）
+  VISIT_WEEKS: 8, VISIT_MIN: 2, VISIT_TOD_MIN: 60,
+  MAX_PER_SLOT: 3, WEEK_MAX: 2,
+  WAIT_MAX: 6,                          // 枠がまだ見えない・判定できない回の上限（約1時間）
+  SLOTS_PER_TICK: 3,
+  CN_SCAN: 300, NOTICE_SCAN: 300,
+  LATE_MS: 3.5 * 60000,                 // warmupCache の開始からこれを過ぎていたら何もしない
+  BUDGET_MS: 45000, SEND_RESERVE_MS: 5000,
+  LEASE_MS: 2 * 60000,
+  LOCK_WAIT_MS: 5000,
+  STALE_MS: 60 * 60000,                 // 日次点検：最後の記録がこれより古ければ止まっている
+  BAD_RESULTS: ['read_fail', 'notice_write_fail', 'log_unwritable', 'error']
+};
+
+// ---- スイッチ（①）----
+function _lbVacMode() {
+  var v = null;
+  try { v = _lbProp(LB_VAC.MODE_PROP); } catch (e) { return 'off'; }
+  return (v === 'list' || v === 'on') ? v : 'off';
+}
+function lbVacancySetList() { return _lbVacSwitch('list'); }
+function lbVacancySetOn()   { return _lbVacSwitch('on'); }   // ★オーナー承認の後にオーナーが押す（対外発信）
+function lbVacancySetOff()  { return _lbVacSwitch('off'); }
+function _lbVacSwitch(mode) {
+  if (mode !== 'list' && mode !== 'on' && mode !== 'off') throw new Error('mode は list / on / off');
+  var p = PropertiesService.getScriptProperties();
+  var before = p.getProperty(LB_VAC.MODE_PROP);
+  if (mode === 'off') p.deleteProperty(LB_VAC.MODE_PROP); else p.setProperty(LB_VAC.MODE_PROP, mode);
+  _lbVacLastNote('mode_set', 0);   // 切り替え直後に見張りを鳴らさない（§5-13）
+  var msg = 'LB_VACANCY_MODE: ' + (before == null ? '（未設定＝何もしない）' : "'" + before + "'") + ' → ' + (mode === 'off' ? '（未設定＝何もしない）' : "'" + mode + "'") + '／版 ' + LB_VACANCY_BUILD;
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- 見張りの記録（§5-13・§5-21-6）----
+function _lbVacLastNote(result, n) {
+  try { PropertiesService.getScriptProperties().setProperty(LB_VAC.LAST_PROP, JSON.stringify({ at: Date.now(), result: String(result), n: Number(n || 0), build: LB_VACANCY_BUILD.slice(0, 11) })); }
+  catch (e) { Logger.log('空き枠のお知らせ：見張りの記録を書けませんでした'); }
+}
+
+// ---- 時刻（JST で切る）----
+function _lbVacDay0(ms) { var p = _lbJstParts(ms); return _lbJstMs(p.y, p.mo, p.d, 0, 0); }
+function _lbVacDow(ms) { var p = _lbJstParts(ms); return new Date(Date.UTC(p.y, p.mo, p.d)).getUTCDay(); }
+function _lbVacTod(ms) { var p = _lbJstParts(ms); return p.h * 60 + p.mi; }
+function _lbVacDayKey(ms) { var p = _lbJstParts(ms); return p.y + '-' + (p.mo < 9 ? '0' : '') + (p.mo + 1) + '-' + (p.d < 10 ? '0' : '') + p.d; }
+function _lbVacInSendHours(ms) { var h = _lbJstParts(ms).h; return h >= LB_VAC.SEND_FROM_H && h < LB_VAC.SEND_UNTIL_H; }
+function _lbVacDeadline(startMs) { return _lbBookingDeadlineMs(startMs, _lbBookingCfg(SETTINGS)); }
+function _lbVacKey(trainerId, startMs) { return 'vac|' + String(trainerId) + '|' + String(startMs); }
+
+// ---- 対象のキャンセルか（§5-4）。返り値 { ok:true } か { ok:false, why } ----
+function _lbVacTargetVerdict(c, nowMs) {
+  if (!c || !c.resId || !c.trainerId || !c.customerId) return { ok: false, why: 'bad_row' };
+  if (!(typeof c.cancelledAt === 'number' && isFinite(c.cancelledAt)) || !(typeof c.startAt === 'number' && isFinite(c.startAt))) return { ok: false, why: 'bad_row' };
+  if (c.cancelledAt > nowMs) return { ok: false, why: 'bad_row' };
+  var proxy = (c.actor === 'trainer' || c.actor === 'owner') && c.trainerReason === 'customer_proxy';
+  if (c.actor === 'customer') { if (c.trainerReason) return { ok: false, why: 'actor' }; }
+  else if (!proxy) return { ok: false, why: 'actor' };
+  if (c.outcome !== 'free' && c.outcome !== 'consumed') return { ok: false, why: 'outcome' };
+  var d0 = _lbVacDay0(c.startAt);
+  var from = d0 - LB_VAC.LOOKBACK_DAYS * 86400000;   // ★JST の暦日で引く（d0 は JST の0時）
+  if (!(c.cancelledAt >= from && c.cancelledAt < d0)) return { ok: false, why: 'window' };
+  if (!(c.cancelledAt < _lbVacDeadline(c.startAt) - LB_VAC.MARGIN_MS)) return { ok: false, why: 'margin' };
+  return { ok: true };
+}
+
+// ---- cancel_notes の末尾から、まだ始まっていない枠の行を読む（列は見出しの名前で引く）----
+//   返り値 null＝読めない（その回は送らない）
+function _lbVacCancelRows(nowMs) {
+  var ready = _lbCnReady();
+  if (!ready.ok) return null;
+  var sh = ready.sheet, last = sh.getLastRow();
+  if (last < 2) return [];
+  var n = Math.min(LB_VAC.CN_SCAN, last - 1);
+  var v = sh.getRange(last - n + 1, 1, n, LB_CN.HEAD.length).getValues();
+  function col(name) { return LB_CN.HEAD.indexOf(name); }
+  var out = [], count = {};
+  for (var i = 0; i < v.length; i++) {
+    var r = v[i];
+    var c = { resId: String(r[col('res_id')] || ''), cancelledAt: r[col('cancelled_at')], startAt: r[col('start_at')],
+              trainerId: String(r[col('trainer_id')] || ''), customerId: String(r[col('customer_id')] || ''),
+              actor: String(r[col('actor')] || ''), outcome: String(r[col('outcome')] || ''), trainerReason: String(r[col('trainer_reason')] || '') };
+    if (c.resId) count[c.resId] = (count[c.resId] || 0) + 1;
+    if (!(typeof c.startAt === 'number' && c.startAt > nowMs)) continue;              // 始まった枠は見ない
+    if (!(typeof c.cancelledAt === 'number' && c.cancelledAt >= nowMs - 4 * 86400000)) continue;
+    out.push(c);
+  }
+  for (var j = 0; j < out.length; j++) if (count[out[j].resId] > 1) out[j].dup = true;   // ★同じ res_id が2行＝取り違えない
+  return out;
+}
+
+// ---- 記録 vacancy_notice（1キャンセル1行・追記と上書きだけ＝行の番号が変わらない）----
+function _lbVacSheet(name, head) {
+  var ss = _lbSs(), sh = ss.getSheetByName(name);
+  if (!sh) { sh = ss.insertSheet(name); sh.getRange(1, 1, 1, head.length).setValues([head]); }
+  return sh;
+}
+function _lbVacNoticeRead(sh) {
+  var last = sh.getLastRow(), map = {};
+  if (last < 2) return map;
+  var n = Math.min(LB_VAC.NOTICE_SCAN, last - 1), start = last - n + 1;
+  var v = sh.getRange(start, 1, n, LB_VAC.NOTICE_HEAD.length).getValues();
+  for (var i = 0; i < v.length; i++) {
+    var o = { row: start + i };
+    for (var k = 0; k < LB_VAC.NOTICE_HEAD.length; k++) o[LB_VAC.NOTICE_HEAD[k]] = v[i][k];
+    if (o.res_id) map[String(o.res_id)] = o;
+  }
+  return map;
+}
+function _lbVacNoticeWrite(sh, rec) {
+  var row = [];
+  for (var k = 0; k < LB_VAC.NOTICE_HEAD.length; k++) { var x = rec[LB_VAC.NOTICE_HEAD[k]]; row.push(x == null ? '' : x); }
+  if (rec.row) sh.getRange(rec.row, 1, 1, row.length).setValues([row]);
+  else { sh.appendRow(row); }
+}
+var LB_VAC_DONE_STATES = { listed: 1, sent: 1, no_target: 1, too_late: 1, filled: 1, not_offered: 1, unknown: 1, not_target: 1, skip_trainer: 1 };
+
+// ---- 受け取らない（§5-10）----
+//   返り値 { set:{customerId:true} } か null（読めない）
+function _lbVacOptoutRead() {
+  try {
+    var sh = _lbSheet(LB_VAC.OPTOUT_SHEET);
+    if (!sh || sh.getLastRow() < 2) return {};
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues(), set = {};
+    for (var i = 0; i < v.length; i++) { var c = String(v[i][0] || ''); if (c) set[c] = true; }
+    return set;
+  } catch (e) { return null; }
+}
+
+// ---- nudge_log を1回で読む（§5-6・読み方は _lbNudgeLogReadAll と同じ）----
+//   byDay[day|cid]＝その日に nudge_ の何かを受けた（sent・sending）
+//   week[cid]＝お知らせの送信時刻（sent・sending）／keyPerson[key|cid]＝同じ枠（sent・sending・failed）／slotCount[key]（sent・sending）
+function _lbVacLogRead() {
+  var out = { byDay: {}, week: {}, keyPerson: {}, slotCount: {}, readFailed: false };
+  try {
+    var sh = _lbSheet(LB_NUDGE_LOG_SHEET);
+    if (!sh || sh.getLastRow() < 2) return out;
+    var n = Math.min(LB_NUDGE_LOG_SCAN, sh.getLastRow() - 1);
+    var v = sh.getRange(2, 1, n, LB_NUDGE_LOG_COLS).getValues();
+    for (var r = 0; r < v.length; r++) {
+      var kind = String(v[r][1] || ''), cid = String(v[r][2] || ''), key = String(v[r][3] || ''), st = String(v[r][4] || '');
+      if (!cid || kind.indexOf('nudge_') !== 0) continue;
+      var raw = v[r][0];
+      var d = (raw && typeof raw.getTime === 'function') ? raw : _lbParseResvDate(String(raw || '').replace(/^'/, ''));
+      var counted = (st === 'sent' || st === 'sending');
+      if (counted && d && isFinite(d.getTime())) out.byDay[_lbVacDayKey(d.getTime()) + '|' + cid] = true;
+      if (kind !== LB_VAC.KIND) continue;
+      if (counted && d && isFinite(d.getTime())) (out.week[cid] = out.week[cid] || []).push(d.getTime());
+      if (key && (counted || st === 'failed')) out.keyPerson[key + '|' + cid] = true;
+      if (key && counted) out.slotCount[key] = (out.slotCount[key] || 0) + 1;
+    }
+  } catch (e) { out.readFailed = true; }
+  return out;
+}
+//   上限に当たるか。当たれば理由、当たらなければ ''
+function _lbVacCapWhy(log, cid, key, nowMs) {
+  if (log.keyPerson[key + '|' + cid]) return 'same_slot';
+  if ((log.slotCount[key] || 0) >= LB_VAC.MAX_PER_SLOT) return 'slot_full';
+  if (log.byDay[_lbVacDayKey(nowMs) + '|' + cid]) return 'daily_cap';
+  var w = log.week[cid] || [], n = 0;
+  for (var i = 0; i < w.length; i++) if (w[i] > nowMs - 7 * 86400000) n++;
+  if (n >= LB_VAC.WEEK_MAX) return 'weekly_cap';
+  return '';
+}
+
+// ---- 台帳を1回で読む（来店・同じ日の予約・枠の重なり）。null＝読めない ----
+function _lbVacResvRead() {
+  var sh = _lbSheet(LINE_BOOKING.RESV_SHEET);
+  if (!sh) return null;
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var v = sh.getRange(2, 1, last - 1, 11).getValues(), out = [];
+  for (var i = 0; i < v.length; i++) {
+    var d = _lbParseResvDate(v[i][0]); if (!d) continue;
+    out.push({ ms: d.getTime(), cid: String(v[i][2] || ''), tid: String(v[i][4] || ''), st: String(v[i][6] || '') });
+  }
+  return out;
+}
+//   同じ曜日・前後60分・直近8週の来店（confirmed で開始が過去）を会員ごとに数える
+function _lbVacVisits(resv, startMs, nowMs) {
+  var dow = _lbVacDow(startMs), tod = _lbVacTod(startMs), from = nowMs - LB_VAC.VISIT_WEEKS * 7 * 86400000, out = {};
+  for (var i = 0; i < resv.length; i++) {
+    var r = resv[i];
+    if (r.st !== 'confirmed' || !r.cid || r.ms >= nowMs || r.ms < from) continue;
+    if (_lbVacDow(r.ms) !== dow || Math.abs(_lbVacTod(r.ms) - tod) > LB_VAC.VISIT_TOD_MIN) continue;
+    var e = out[r.cid] || (out[r.cid] = { n: 0, lastMs: 0 });
+    e.n++; if (r.ms > e.lastMs) e.lastMs = r.ms;
+  }
+  return out;
+}
+
+// ---- 予約確定と同じ部品で「いま空いているか」（§5-21-2・5-22-1）。読み取りだけ ----
+//   返り値 {ok:true} ／ {ok:false, reason} ／ {ok:false, unknown:true}
+function _lbVacSlotFreeNow(trainer, start, end, contractType) {
+  try {
+    var calB1 = CalendarApp.getCalendarById(CALENDAR_IDS.CAPACITY_B1);
+    if (!calB1) return { ok: false, unknown: true };
+    var b1busy = calB1.getEvents(start, end).filter(function (ev) {
+      if (ev.getTitle().indexOf('[消化]') === 0) return false;
+      return _lbEventOverlaps(ev, start.getTime(), end.getTime());
+    });
+    if (b1busy.length > 0) return { ok: false, reason: 'b1' };
+    if (!_lbCheckTrainerAvailable(trainer, start, end, null)) return { ok: false, reason: 'trainer' };
+    if (_lb1FBlockEnabled()) {
+      var f1 = _lb1FTrainerBusy(start, end);
+      if (!f1.ok) return { ok: false, unknown: true };
+      if (_lbOverlapsBusy(f1.trainerBusy[trainer.id] || [], start.getTime(), end.getTime(), null, '') ||
+          _lbOverlapsBusy(f1.blockAll, start.getTime(), end.getTime(), null, '')) return { ok: false, reason: 'f1' };
+    }
+    //   連続ルール：予約確定と同じ条件（会員本人の予約＝consecRule は真・体験の契約は当てない・on のときだけ）
+    if (_lbConsecMode() === 'on' && String(contractType || '').indexOf('体験') < 0) {
+      var cv = _lbConsecCheckAt(trainer, start, end, null);
+      if (cv.unknown) return { ok: false, unknown: true };
+      if (!cv.ok) return { ok: false, reason: 'consec' };
+    }
+    return { ok: true };
+  } catch (e) { return { ok: false, unknown: true }; }
+}
+
+//   予約画面で選べる選択肢が1つ以上あるか（§5-5-8）。
+//   返り値 'yes'／'no'（予約できないと分かった）／'unknown'（判定できない＝その回は送らず、後の回で確かめ直す・関門② 2周目）
+function _lbVacBookable(lineUserId, startMs) {
+  try {
+    var o = getBookingOptions(lineUserId, new Date(startMs).toISOString());
+    if (o && o.success === true) return (o.hasNormalRoute === true || Number(o.pairRemaining) > 0) ? 'yes' : 'no';
+    if (o && (o.code === 'NO_CONTRACT' || o.code === 'NOT_VERIFIED' || o.code === 'NOT_FOUND')) return 'no';
+    return 'unknown';   // REVIEW_REQUIRED・BAD_REQUEST・形が違う
+  } catch (e) { return 'unknown'; }
+}
+
+// ---- 文面（§5-9）----
+var _LB_VAC_MSG = {
+  body: {
+    ja: 'ご予約のお時間が空きました。\n\n{when}〜　{trainer}\n（ご予約の受付は {deadline} までです）\n\nご都合が合いましたら、下記よりお待ちしております。\nご予約の状況により、お取りいただけない場合がございます。',
+    en: 'A session time has become available.\n\n{when} with {trainer}\n(Bookings close at {deadline})\n\nIf the time suits you, we look forward to your booking below.\nDepending on other bookings, it may no longer be available.',
+    zh: '有可预约的时间了。\n\n{when} 起　{trainer}\n（预约截止：{deadline}）\n\n如时间合适，欢迎通过下方预约。\n视预约情况，可能已无法预约，敬请谅解。',
+    'zh-Hant': '有可預約的時間了。\n\n{when} 起　{trainer}\n（預約截止：{deadline}）\n\n如時間合適，歡迎透過下方預約。\n視預約情況，可能已無法預約，敬請見諒。'
+  },
+  alt: { ja: 'ご予約のお時間が空きました（{when}〜）', en: 'A session time has become available ({when})', zh: '有可预约的时间了（{when} 起）', 'zh-Hant': '有可預約的時間了（{when} 起）' },
+  open: { ja: '予約画面を開く', en: 'Open booking', zh: '打开预约页面', 'zh-Hant': '打開預約頁面' },
+  stop: { ja: '今後このお知らせを受け取らない', en: 'Stop these notices', zh: '今后不再接收此通知', 'zh-Hant': '今後不再接收此通知' },
+  optout_ok: { ja: '承知しました。今後、空き枠のお知らせはお送りしません。ご予約・リマインドのご連絡はこれまでどおりお届けします。',
+               en: 'Understood. We will no longer send these availability notices. Booking confirmations and reminders will continue as usual.',
+               zh: '已为您设置。今后将不再发送空位通知。预约及提醒消息将照常发送。',
+               'zh-Hant': '已為您設定。今後將不再發送空位通知。預約及提醒訊息將照常發送。' },
+  optout_fail: { ja: '恐れ入ります、設定を受け付けられませんでした。お手数ですが、このトークでスタッフにお知らせください。',
+                 en: 'Sorry, we could not process your request. Please let our staff know in this chat.',
+                 zh: '抱歉，未能完成设置。请在此聊天中告知工作人员。',
+                 'zh-Hant': '抱歉，未能完成設定。請在此聊天中告知工作人員。' },
+  optout_who: { ja: '恐れ入ります、会員情報を確認できませんでした。お手数ですが、このトークでスタッフにお知らせください。',
+                en: 'Sorry, we could not confirm your membership. Please let our staff know in this chat.',
+                zh: '抱歉，无法确认会员信息。请在此聊天中告知工作人员。',
+                'zh-Hant': '抱歉，無法確認會員資訊。請在此聊天中告知工作人員。' },
+  test: { ja: '（テスト）ボタンを受け付けました。記録はしていません。', en: '(Test) Received. Nothing was recorded.', zh: '（测试）已收到。未作记录。', 'zh-Hant': '（測試）已收到。未作記錄。' }
+};
+function _lbVacMsg(key, lang, vars) {
+  var e = _LB_VAC_MSG[key], l = _lbNormLang(lang);
+  var s = e[l] != null ? e[l] : e.ja;
+  if (vars) s = s.replace(/\{(\w+)\}/g, function (_, k) { return vars[k] != null ? String(vars[k]) : ''; });
+  return s;
+}
+//   Flex 1通。postbackData は 'vac=off'（本番）か 'vac=test'（見本）だけ
+function _lbVacMessage(lang, v, postbackData) {
+  var vars = { when: v.when, trainer: v.trainer, deadline: v.deadline };
+  var body = _lbVacMsg('body', lang, vars), alt = _lbVacMsg('alt', lang, vars);
+  return {
+    text: body, alt: alt,
+    flex: { type: 'flex', altText: alt.slice(0, 400), contents: { type: 'bubble',
+      body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: body, wrap: true, size: 'sm' }] },
+      footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+        { type: 'button', style: 'primary', height: 'sm', action: { type: 'uri', label: _lbVacMsg('open', lang), uri: _lbNudgeLiffUrl() } },
+        { type: 'button', style: 'link', height: 'sm', action: { type: 'postback', label: _lbVacMsg('stop', lang), data: postbackData, displayText: _lbVacMsg('stop', lang) } }
+      ] } } }
+  };
+}
+function _lbVacVars(trainer, startMs, lang) {
+  return { when: _lbFmtResvLabel(new Date(startMs), lang), trainer: _lbTrainerNameLang(trainer.id, trainer.name, lang),
+           deadline: _lbFmtResvLabel(new Date(_lbVacDeadline(startMs)), lang) };
+}
+
+// ============================================================
+// 入口：warmupCache の末尾から（例外を外へ出さない＝warmupCache の結果を変えない）
+// ============================================================
+function lbVacancyTick(wcStartMs) {
+  var mode = _lbVacMode();
+  if (mode === 'off') return { result: 'off' };                     // ★何も読まない・何も書かない
+  var t0 = Date.now();
+  var startMs = (typeof wcStartMs === 'number' && isFinite(wcStartMs)) ? wcStartMs : t0;
+  if (t0 - startMs > LB_VAC.LATE_MS) { _lbVacLastNote('late', 0); return { result: 'late' }; }
+  //   同時に1本（§5-7）
+  var lock = null, got = false;
+  try { lock = LockService.getScriptLock(); got = lock.tryLock(3000); } catch (e) { got = false; }
+  if (!got) { _lbVacLastNote('busy', 0); return { result: 'busy' }; }
+  var leaseId = 'L' + t0 + Math.floor(Math.random() * 1e6);
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var cur = Number(String(p.getProperty(LB_VAC.LEASE_PROP) || '').split('|')[0] || 0);
+    if (cur && cur > t0) { _lbVacLastNote('busy', 0); return { result: 'busy' }; }
+    p.setProperty(LB_VAC.LEASE_PROP, String(t0 + LB_VAC.LEASE_MS) + '|' + leaseId);
+  } catch (eL) { _lbVacLastNote('error', 0); return { result: 'error' }; }
+  finally { try { lock.releaseLock(); } catch (eR) {} }
+  var res;
+  try { res = _lbVacTickBody(mode, startMs, t0); }
+  catch (e) { res = { result: 'error', n: 0 }; Logger.log('空き枠のお知らせで例外: ' + String((e && e.name) || 'Error')); }
+  try {
+    var p2 = PropertiesService.getScriptProperties();
+    if (String(p2.getProperty(LB_VAC.LEASE_PROP) || '').split('|')[1] === leaseId) p2.deleteProperty(LB_VAC.LEASE_PROP);
+  } catch (eD) {}
+  _lbVacLastNote(res.result, res.n);
+  Logger.log('[vacancy] mode=' + mode + ' result=' + res.result + ' n=' + (res.n || 0) + ' ms=' + (Date.now() - t0));
+  return res;
+}
+
+function _lbVacTickBody(mode, wcStartMs, t0) {
+  var nowMs = Date.now();
+  var rows = null;
+  try { rows = _lbVacCancelRows(nowMs); } catch (e) { rows = null; }
+  if (rows === null) return { result: 'read_fail', n: 0 };
+  var nsh = null, notices = null;
+  try { nsh = _lbVacSheet(LB_VAC.NOTICE_SHEET, LB_VAC.NOTICE_HEAD); notices = _lbVacNoticeRead(nsh); }
+  catch (e) { return { result: 'read_fail', n: 0 }; }
+
+  var res = { result: 'ok', n: 0 };
+  var shared = null;   // 名簿・台帳・受け取らない・nudge_log は枠の段に進む枠があるときだけ1回読む
+  var handled = 0;
+  for (var i = 0; i < rows.length && handled < LB_VAC.SLOTS_PER_TICK; i++) {
+    if (Date.now() - t0 > LB_VAC.BUDGET_MS) break;
+    var c = rows[i], prev = notices[c.resId] || null;
+    if (prev && LB_VAC_DONE_STATES[String(prev.state)]) continue;
+    var rec = prev || { res_id: c.resId, first_seen_at: nowMs, attempts: 0 };
+    rec.trainer_id = c.trainerId; rec.start_at = c.startAt; rec.cancelled_at = c.cancelledAt;
+    rec.deadline_at = _lbVacDeadline(c.startAt); rec.updated_at = nowMs; rec.mode = mode; rec.build = LB_VACANCY_BUILD.slice(0, 11);
+    var r1 = _lbVacProcess(mode, c, rec, nowMs, wcStartMs, t0, function () { return shared || (shared = _lbVacShared()); });
+    handled++;
+    res.n += Number(r1.sent || 0) + Number(r1.listed || 0);
+    try { _lbVacNoticeWrite(nsh, rec); } catch (eW) { res.result = 'notice_write_fail'; }
+    if (r1.stopAll) { if (res.result === 'ok') res.result = r1.stopAll; break; }
+  }
+  return res;
+}
+
+//   名簿・台帳・受け取らない・nudge_log（tick に1回）
+function _lbVacShared() {
+  var s = { members: null, resv: null, optout: null, log: null };
+  try { s.members = _lbNudgeMembers(); } catch (e) { s.members = null; }
+  try { s.resv = _lbVacResvRead(); } catch (e) { s.resv = null; }
+  s.optout = _lbVacOptoutRead();
+  s.log = _lbVacLogRead();
+  return s;
+}
+
+//   1つのキャンセルを処理する。rec（vacancy_notice の行）を書き換える。返り値 { sent, listed, stopAll }
+function _lbVacProcess(mode, c, rec, nowMs, wcStartMs, t0, getShared) {
+  var t1 = Date.now(), skip = {};
+  function fin(state, why) { rec.state = state; rec.why = why || ''; rec.elapsed_ms = Date.now() - t1; rec.skip_json = JSON.stringify(skip); }
+  function wait(why, countAttempt) {
+    if (countAttempt) rec.attempts = Number(rec.attempts || 0) + 1;
+    if (countAttempt && rec.attempts >= LB_VAC.WAIT_MAX) return fin(Number(rec.sent_n || 0) > 0 ? 'sent' : (why === 'slot_not_yet' ? 'not_offered' : 'unknown'), why);
+    fin(Number(rec.sent_n || 0) > 0 ? 'sent_partial' : 'wait', why);
+  }
+  //   ---- 対象か（§5-4）----
+  if (c.dup) { fin('not_target', 'dup_res'); return {}; }
+  var tv = _lbVacTargetVerdict(c, nowMs);
+  if (!tv.ok) { fin('not_target', tv.why); return {}; }
+  if (!(nowMs < Number(rec.deadline_at) - LB_VAC.MARGIN_MS)) { fin(Number(rec.sent_n || 0) > 0 ? 'sent' : 'too_late', 'too_late'); return {}; }
+  //   ---- 安い判定（時間帯・声かけの印）----
+  if (!_lbVacInSendHours(nowMs)) { wait('night', false); return {}; }
+  if (_lbProp('LB_REMIND_ON') === '1' && _lbProp(LB_VAC.NUDGE_DONE_PROP) !== _lbVacDayKey(nowMs)) { wait('nudge_pending', false); return {}; }
+  //   ---- 枠の段（§5-5）----
+  var trainer = _lbTrainerById(c.trainerId);
+  if (!trainer || trainer.hidden) { fin('skip_trainer', trainer ? 'hidden' : 'unknown_trainer'); return {}; }
+  var readStart = (typeof LB_SLOTS_READ_START_LOCAL === 'number' && LB_SLOTS_READ_START_LOCAL > 0) ? LB_SLOTS_READ_START_LOCAL : Number(_lbProp(LB_VAC.READ_START_PROP) || 0);
+  if (!(readStart > 0) || !isFinite(readStart)) { wait('slots_not_fresh', false); return {}; }
+  if (!(c.cancelledAt < readStart)) { wait('cache_older', false); return {}; }
+  var sh = getShared();
+  if (sh.members === null || sh.resv === null || sh.optout === null || sh.log.readFailed) { wait('read_fail', false); return { stopAll: 'read_fail' }; }
+  var S = c.startAt, E = S + SETTINGS.SESSION_MINUTES * 60000;
+  for (var q = 0; q < sh.resv.length; q++) {
+    var rr = sh.resv[q];
+    if (rr.st === 'confirmed' && rr.tid === c.trainerId && rr.ms < E && rr.ms + SETTINGS.SESSION_MINUTES * 60000 > S) { fin(Number(rec.sent_n || 0) > 0 ? 'sent' : 'filled', 'ledger'); return {}; }
+  }
+  var slots = null;
+  try { slots = getTrainerSlots({ trainerId: c.trainerId }, ''); } catch (e) { slots = null; }   // lineUserId 空＝会員に見える枠
+  if (!slots || slots.success !== true) { wait('slot_unknown', true); return {}; }
+  var offered = (slots.slots || []).some(function (s) { return new Date(s.startISO).getTime() === S; });
+  if (!offered) { wait('slot_not_yet', true); return {}; }
+
+  //   ---- 相手を選ぶ（§5-5）----
+  var key = _lbVacKey(c.trainerId, S), d0 = _lbVacDay0(S), d1 = d0 + 86400000;
+  var visits = _lbVacVisits(sh.resv, S, nowMs), sameDay = {};
+  for (var k = 0; k < sh.resv.length; k++) {
+    var x = sh.resv[k];
+    if ((x.st === 'confirmed' || x.st === 'consumed') && x.ms >= d0 && x.ms < d1) sameDay[x.cid] = true;
+  }
+  function bump(w) { skip[w] = (skip[w] || 0) + 1; }
+  var cands = [], seen = {}, tried = {};
+  String(rec.tried || '').split(',').forEach(function (t) { if (t) tried[t] = true; });
+  for (var m = 0; m < sh.members.length; m++) {
+    var mb = sh.members[m];
+    if (!mb.customerId || seen[mb.customerId]) continue;
+    seen[mb.customerId] = true;
+    if (mb.authState !== 'verified') { bump('not_verified'); continue; }
+    if (mb.contractStat !== 'active') { bump('not_active'); continue; }
+    if (!mb.lineUserId) { bump('no_line'); continue; }
+    if (mb.customerId === c.customerId) { bump('canceller'); continue; }
+    var vs = visits[mb.customerId];
+    if (!vs || vs.n < LB_VAC.VISIT_MIN) { bump('visits'); continue; }
+    if (mb.trainerId && mb.trainerId !== c.trainerId) { bump('other_trainer'); continue; }
+    if (sameDay[mb.customerId]) { bump('same_day'); continue; }
+    if (sh.optout[mb.customerId]) { bump('opted_out'); continue; }
+    var cw = _lbVacCapWhy(sh.log, mb.customerId, key, nowMs);
+    if (cw) { bump(cw); continue; }
+    if (tried[_lbNudgeMask(mb.customerId)]) { bump('tried'); continue; }   // 前の回で外れると分かった人（下位の候補を塞がない・関門② 2周目）
+    cands.push({ m: mb, n: vs.n, lastMs: vs.lastMs });
+  }
+  cands.sort(function (a, b) { return (b.n - a.n) || (b.lastMs - a.lastMs) || (a.m.customerId < b.m.customerId ? -1 : (a.m.customerId > b.m.customerId ? 1 : 0)); });
+  rec.eligible_n = cands.length;   // 名簿・来店・同じ日・受け取らない・上限を通った人数（残数はこの後）
+  //   ★送った人数の正本は nudge_log（vacancy_notice が書けなかった回があっても取り違えない・関門② 2周目）
+  if (mode === 'on') rec.sent_n = Math.max(Number(rec.sent_n || 0), Number(sh.log.slotCount[key] || 0));
+
+  if (mode === 'list') {
+    //   送らずに「送るはずだった3名」を選ぶ（残数は予約画面と同じ関数）。時間の予算を超えたら次の tick でやり直す
+    var chosen = [];
+    for (var j = 0; j < cands.length && chosen.length < LB_VAC.MAX_PER_SLOT; j++) {
+      if (Date.now() - t0 > LB_VAC.BUDGET_MS - LB_VAC.SEND_RESERVE_MS) { wait('budget', false); return {}; }
+      var bk = _lbVacBookable(cands[j].m.lineUserId, S);
+      if (bk === 'yes') chosen.push(cands[j]); else bump(bk === 'no' ? 'no_remain' : 'remain_unknown');
+    }
+    rec.would = chosen.map(function (x) { return _lbNudgeMask(x.m.customerId); }).join(',');
+    fin(chosen.length ? 'listed' : 'no_target', chosen.length ? '' : 'no_candidate');
+    return { listed: chosen.length };
+  }
+  if (!cands.length) { fin(Number(rec.sent_n || 0) > 0 ? 'sent' : 'no_target', Number(rec.sent_n || 0) >= LB_VAC.MAX_PER_SLOT ? '' : (Number(rec.sent_n || 0) > 0 ? 'no_more' : 'no_candidate')); return {}; }
+
+  //   ---- 送る（§5-23-4・5-24・5-25・関門② 1周目）----
+  //   ★候補を順に1人ずつ確かめて送る。直前に外れた人（名簿・残数・ゲート）は飛ばして次の人へ＝下位の候補を塞がない。
+  //     1枠3名に届くか、候補が尽きるか、止まる（予算・夜・ロック・判定できない）まで
+  var sent = 0, stop = '', stopAll = '', idx = 0, retry = 0;
+  //   下4桁が重なった別の人も飛ばす（送らない側）。60人分まで（セルを太らせない）
+  function addTried(cid) { var t = String(rec.tried || ''); var mk = _lbNudgeMask(cid); if ((',' + t + ',').indexOf(',' + mk + ',') < 0 && t.split(',').length < 60) rec.tried = t ? t + ',' + mk : mk; }
+  for (idx = 0; idx < cands.length; idx++) {
+    if (Number(rec.sent_n || 0) >= LB_VAC.MAX_PER_SLOT) break;
+    var r2 = _lbVacSendOne(cands[idx].m, c, trainer, key, t0);
+    if (r2.sent) { sent++; rec.sent_n = Number(rec.sent_n || 0) + 1; }
+    else if (r2.failed) rec.failed_n = Number(rec.failed_n || 0) + 1;
+    else if (r2.unknown) { rec.unknown_n = Number(rec.unknown_n || 0) + 1; rec.sent_n = Number(rec.sent_n || 0) + 1; }
+    if (r2.skip) bump(r2.skip);
+    if (r2.done) addTried(cands[idx].m.customerId);   // 名簿・残数なし・ゲート＝この枠では次の回も外れる
+    if (r2.retry) retry++;                              // 残数が判定できない＝後の回で確かめ直す
+    if (r2.stop) { stop = r2.stop; if (r2.stopAll) stopAll = r2.stopAll; break; }
+  }
+  var total = Number(rec.sent_n || 0);
+  if (total >= LB_VAC.MAX_PER_SLOT || stop === 'slot_full_now') fin('sent', '');   // 1枠3名に達した（nudge_log の数で決まる）
+  else if (stop === 'filled') fin(total > 0 ? 'sent' : 'filled', 'filled_late');
+  else if (stop === 'too_late') fin(total > 0 ? 'sent' : 'too_late', 'too_late');
+  else if (stop && retry > 0) wait(stop, true);                    // 判定できない人がいた回は止まっても回数を進める（6回で終わり・関門② 3周目）
+  else if (stop) fin(total > 0 ? 'sent_partial' : 'wait', stop);   // night・frozen・budget・lock_busy・slot_unknown → 次の tick で続き
+  else if (retry > 0) wait('remain_unknown', true);                // 判定できない人がいた → 後の回（6回まで）
+  else fin(total > 0 ? 'sent' : 'no_target', total > 0 ? 'no_more' : 'no_candidate');   // 候補を全員確かめ終えた（§5-25-3）
+  return { sent: sent, stopAll: stopAll };
+}
+
+//   1人に送る（§5-23-4 の a〜h）。返り値 { sent | failed | unknown, skip, stop, stopAll }
+function _lbVacSendOne(mb, c, trainer, key, t0) {
+  var S = c.startAt, start = new Date(S), end = new Date(S + SETTINGS.SESSION_MINUTES * 60000);
+  // a. 残り時間
+  if (Date.now() - t0 > LB_VAC.BUDGET_MS - LB_VAC.SEND_RESERVE_MS) return { stop: 'budget' };
+  // b. 名簿を読み直す
+  var rec = null;
+  try { rec = getCustomerByLine(mb.lineUserId); } catch (e) { rec = null; }
+  if (!rec || String(rec.data[MAP_COL.AUTH_STATE - 1]) !== 'verified' || String(rec.data[MAP_COL.CONTRACT_STAT - 1] || '') !== 'active'
+      || String(rec.data[MAP_COL.CUSTOMER_ID - 1] || '') !== mb.customerId) return { skip: 'member_changed', done: true };
+  var tid = String(rec.data[MAP_COL.TRAINER_ID - 1] || '');
+  if (tid && tid !== c.trainerId) return { skip: 'other_trainer', done: true };
+  // d. 残数（送る直前にもう一度）
+  var bk = _lbVacBookable(mb.lineUserId, S);
+  if (bk !== 'yes') return bk === 'no' ? { skip: 'no_remain_late', done: true } : { skip: 'remain_unknown', retry: true };
+  // e. 予約確定と同じ4段
+  var name = String(rec.data[MAP_COL.NAME - 1] || '');
+  var ctype = '';
+  try { ctype = _lbContractTypeOf(name) || String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''); } catch (eC) { ctype = String(rec.data[MAP_COL.CONTRACT_TYPE - 1] || ''); }
+  var fr = _lbVacSlotFreeNow(trainer, start, end, ctype);
+  if (!fr.ok) return fr.unknown ? { stop: 'slot_unknown' } : { stop: 'filled', skip: 'busy_' + fr.reason };
+  // c. 予約停止のゲート（予備）
+  var g0 = _lbBookingGate(mb.customerId, 'line');
+  if (!g0.ok) return (g0.code === 'BOOKING_FROZEN') ? { stop: 'frozen', stopAll: 'frozen' } : { skip: 'gate', done: true };
+  // f. ロックの中：締め切り・時間帯・ゲート・上限・受け取らない → sending
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { lock = null; }
+  if (!lock || !lock.tryLock(LB_VAC.LOCK_WAIT_MS)) return { stop: 'lock_busy' };
+  var claimed = false, wrote = false;
+  try {
+    var now = Date.now();
+    if (!(now < _lbVacDeadline(S) - LB_VAC.MARGIN_MS)) return { stop: 'too_late' };
+    if (!_lbVacInSendHours(now)) return { stop: 'night' };
+    var g = _lbBookingGate(mb.customerId, 'line');
+    if (!g.ok) return (g.code === 'BOOKING_FROZEN') ? { stop: 'frozen', stopAll: 'frozen' } : { skip: 'gate', done: true };
+    var log = _lbVacLogRead();
+    if (log.readFailed) return { stop: 'log_unreadable', stopAll: 'read_fail' };
+    var opt = _lbVacOptoutRead();
+    if (opt === null) return { stop: 'optout_unreadable', stopAll: 'read_fail' };
+    if (opt[mb.customerId]) return { skip: 'opted_out' };
+    var cw = _lbVacCapWhy(log, mb.customerId, key, now);
+    if (cw) return (cw === 'slot_full') ? { stop: 'slot_full_now' } : { skip: cw };
+    try { _lbNudgeLogAppendOne({ kind: LB_VAC.KIND, customerId: mb.customerId, key: key }, now); wrote = true; }
+    catch (eA) { return { stop: 'log_unwritable', stopAll: 'log_unwritable' }; }
+    claimed = true;
+  } finally { try { lock.releaseLock(); } catch (eR) {} }
+  if (!claimed || !wrote) return { stop: 'error' };
+  // g. 送る（ロックの外・I19）
+  var lang = mb.lang || 'ja';
+  var msg = _lbVacMessage(lang, _lbVacVars(trainer, S, lang), 'vac=off');
+  var pr;
+  try { pr = _lbPushOnce(mb.lineUserId, msg.text, { messages: [msg.flex], noInlineRetry: true, purpose: LB_VAC.KIND }); }
+  catch (eP) { pr = { ok: false, code: 'EXCEPTION', uncertain: true }; }
+  // h. 書き戻し（鍵で探す）。届いたか分からない・探せない・ロックが取れない → sending のまま（送った扱い）
+  if (pr && pr.uncertain) return { unknown: true };
+  _lbVacSettle(mb.customerId, key, pr && pr.ok ? 'sent' : 'failed', pr && pr.ok ? '' : String((pr && pr.code) || 'push'));
+  return (pr && pr.ok) ? { sent: true } : { failed: true };
+}
+function _lbVacSettle(cid, key, result, detail) {
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { return; }
+  if (!lock || !lock.tryLock(LB_VAC.LOCK_WAIT_MS)) return;
+  try {
+    var sh = _lbNudgeLogSheet();
+    var n = Math.min(50, sh.getLastRow() - 1);
+    if (n < 1) return;
+    var v = sh.getRange(2, 1, n, LB_NUDGE_LOG_COLS).getValues();
+    for (var i = 0; i < v.length; i++) {
+      if (String(v[i][1]) === LB_VAC.KIND && String(v[i][2]) === String(cid) && String(v[i][3]) === String(key) && String(v[i][4]) === 'sending') {
+        sh.getRange(i + 2, 5, 1, 2).setValues([[result, String(detail || '').slice(0, 200)]]);
+        return;
+      }
+    }
+  } catch (e) { Logger.log('空き枠のお知らせ：結果を書き戻せませんでした（sending のまま＝再送しない）'); }
+  finally { try { lock.releaseLock(); } catch (eR) {} }
+}
+
+// ============================================================
+// 受け取らない（postback・§5-10・§5-21-8）。handleLineWebhook から完全一致のときだけ呼ばれる
+// ============================================================
+function _lbVacIsPostback(ev) {
+  var d = String((ev && ev.postback && ev.postback.data) || '');
+  return d === 'vac=off' || d === 'vac=test';
+}
+function _lbVacPostback(ev) {
+  var uid = String((ev && ev.source && ev.source.userId) || '');
+  var data = String((ev && ev.postback && ev.postback.data) || '');
+  var rec = null;
+  try { rec = uid ? getCustomerByLine(uid) : null; } catch (e) { rec = null; }
+  var lang = rec ? _lbNormLang(rec.data[MAP_COL.LANG - 1]) : 'ja';
+  if (data === 'vac=test') { _lbReply(ev.replyToken, _lbVacMsg('test', lang)); return 'test'; }
+  var cid = rec ? String(rec.data[MAP_COL.CUSTOMER_ID - 1] || '') : '';
+  if (!cid) { _lbReply(ev.replyToken, _lbVacMsg('optout_who', lang)); return 'who'; }
+  try {
+    var sh = _lbVacSheet(LB_VAC.OPTOUT_SHEET, LB_VAC.OPTOUT_HEAD);
+    var have = false;
+    if (sh.getLastRow() >= 2) {
+      var v = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+      for (var i = 0; i < v.length; i++) if (String(v[i][0]) === cid) { have = true; break; }
+    }
+    if (!have) sh.appendRow([sanitizeCell(cid), Date.now(), 'postback']);
+  } catch (eW) {
+    try { _lbLogOutcome('VAC_OPTOUT_FAIL', 'line', ''); } catch (eL) {}
+    _lbReply(ev.replyToken, _lbVacMsg('optout_fail', lang));
+    return 'fail';
+  }
+  _lbReply(ev.replyToken, _lbVacMsg('optout_ok', lang));
+  return 'ok';
+}
+
+// ============================================================
+// 見本（関門③の前・オーナーがエディタで押す）。オーナー（trainer_master の owner）の LINE にだけ送る。postback は vac=test（記録しない）
+// ============================================================
+function lbVacancySample() {
+  var sh = _lbSheet(LINE_BOOKING.TRAINER_SHEET), to = '';
+  if (sh && sh.getLastRow() >= 2) {
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, TR_COL.ACTIVE).getValues();
+    for (var i = 0; i < v.length; i++) if (String(v[i][TR_COL.ROLE - 1]) === 'owner' && v[i][TR_COL.LINE_USER_ID - 1]) { to = String(v[i][TR_COL.LINE_USER_ID - 1]); break; }
+  }
+  if (!to) { Logger.log('オーナーの LINE が trainer_master に見つかりません'); return 'no_owner'; }
+  var tr = CALENDAR_IDS.TRAINERS.filter(function (t) { return !t.hidden; })[0] || CALENDAR_IDS.TRAINERS[0];
+  var S = _lbJstMs(_lbJstParts(Date.now()).y, _lbJstParts(Date.now()).mo, _lbJstParts(Date.now()).d + 2, 10, 0);
+  var out = [];
+  ['ja', 'en'].forEach(function (lang) {
+    var msg = _lbVacMessage(lang, _lbVacVars(tr, S, lang), 'vac=test');
+    var r = _lbPushOnce(to, msg.text, { messages: [msg.flex], noInlineRetry: true, purpose: 'vacancy_sample' });
+    out.push(lang + ':' + (r.ok ? 'ok' : String(r.code)));
+  });
+  Logger.log('見本を送りました（' + out.join(' ') + '）。「今後このお知らせを受け取らない」を押すと（テスト）と返ります');
+  return out.join(' ');
+}
+
+// ============================================================
+// 作業依頼（remaining {vacancy:日数}・{vacancyMode:'list'|'off'}）。名前・LINE ID・フル ID・res_id を出さない
+// ============================================================
+function lbVacancyJobMode(mode) {
+  if (mode !== 'list' && mode !== 'off') return '作業依頼から切り替えられるのは list と off だけです（on はオーナーがエディタで lbVacancySetOn）';
+  return _lbVacSwitch(mode);
+}
+function lbVacancyStatusText(days) {
+  var d = Number(days); if (!(d > 0 && d <= 60)) d = 14;
+  var out = ['===== 空き枠のお知らせ（直近' + d + '日・読み取りだけ）=====', '版: ' + LB_VACANCY_BUILD.slice(0, 11) + '／声かけ ' + LB_NUDGE_BUILD.slice(0, 11),
+             'モード: ' + _lbVacMode() + '／声かけ LB_REMIND_ON=' + (_lbProp('LB_REMIND_ON') === '1' ? '1' : '未設定') + '／声かけの完了の印: ' + (_lbProp(LB_VAC.NUDGE_DONE_PROP) || 'なし')];
+  var last = null; try { last = JSON.parse(_lbProp(LB_VAC.LAST_PROP) || 'null'); } catch (e) { last = 'broken'; }
+  out.push('最後に走った: ' + (last === 'broken' ? '記録が壊れている' : (last ? (Math.round((Date.now() - Number(last.at)) / 60000) + '分前・' + last.result + '・n=' + last.n + '・' + last.build) : 'なし')));
+  var sh = _lbSheet(LB_VAC.NOTICE_SHEET);
+  if (!sh || sh.getLastRow() < 2) { out.push('vacancy_notice: 行なし'); return out.join('\n'); }
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, LB_VAC.NOTICE_HEAD.length).getValues(), from = Date.now() - d * 86400000;
+  function col(n) { return LB_VAC.NOTICE_HEAD.indexOf(n); }
+  var st = {}, why = {}, skip = {}, n = 0, sent = 0, failed = 0, unknown = 0, would = 0, ms = [];
+  for (var i = 0; i < v.length; i++) {
+    if (!(Number(v[i][col('first_seen_at')]) >= from)) continue;
+    n++;
+    var s = String(v[i][col('state')]); st[s] = (st[s] || 0) + 1;
+    var w = String(v[i][col('why')] || ''); if (w) why[w] = (why[w] || 0) + 1;
+    sent += Number(v[i][col('sent_n')] || 0); failed += Number(v[i][col('failed_n')] || 0); unknown += Number(v[i][col('unknown_n')] || 0);
+    var wl = String(v[i][col('would')] || ''); if (wl) would += wl.split(',').length;
+    try { var sj = JSON.parse(String(v[i][col('skip_json')] || '{}')); for (var k in sj) skip[k] = (skip[k] || 0) + Number(sj[k] || 0); } catch (eJ) {}
+    if (Number(v[i][col('elapsed_ms')]) >= 0) ms.push(Number(v[i][col('elapsed_ms')]));
+  }
+  ms.sort(function (a, b) { return a - b; });
+  out.push('キャンセル（見た行）: ' + n + '件', '状態: ' + JSON.stringify(st), '理由: ' + JSON.stringify(why),
+           '送った人数: ' + sent + '（うち届いたか不明 ' + unknown + '）／届かなかった: ' + failed + '／送るはずだった人数（list）: ' + would,
+           '外した理由ごとの人数: ' + JSON.stringify(skip),
+           '1件の処理時間 ms: 中央 ' + (ms.length ? ms[Math.floor(ms.length / 2)] : '-') + '／最大 ' + (ms.length ? ms[ms.length - 1] : '-'));
+  return out.join('\n');
+}
+
+//   日次点検（vacancy_stale・§5-13）。mode が off なら null
+function _lbVacHealth(nowMs) {
+  var mode = _lbVacMode();
+  if (mode === 'off') return null;
+  var last = null;
+  try { last = JSON.parse(_lbProp(LB_VAC.LAST_PROP) || 'null'); } catch (e) { return { bad: 1, text: '空き枠のお知らせ（' + mode + '）の記録が壊れています' }; }
+  if (!last || !(Number(last.at) > 0)) return { bad: 1, text: '空き枠のお知らせ（' + mode + '）が一度も走った記録がありません（warmupCache の末尾から10分ごと）' };
+  var age = nowMs - Number(last.at);
+  if (age > LB_VAC.STALE_MS) return { bad: 1, text: '空き枠のお知らせ（' + mode + '）が ' + Math.round(age / 60000) + '分 走っていません（最後: ' + last.result + '）' };
+  if (LB_VAC.BAD_RESULTS.indexOf(String(last.result)) >= 0) return { bad: 1, text: '空き枠のお知らせ（' + mode + '）の最後の結果が ' + last.result + '（記録が読めない・書けない）' };
+  return { bad: 0, text: '空き枠のお知らせ（' + mode + '）は動いています（最後: ' + last.result + '）' };
+}
+// ==== VACANCY_END ====

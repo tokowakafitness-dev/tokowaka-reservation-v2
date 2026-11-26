@@ -122,7 +122,7 @@ function _ejDateMs(text) {
 //   作業依頼の仕組み自体の版（★反映されたかを毎回の結果で見分けるため）。
 //     2026-10-09、PushToEdge.js の印を上げ忘れたために
 //     「反映済みの変更を未反映だと誤認」した。印は変更のたびに上げる。
-var LB_JOB_BUILD = '2026-11-24b remaining {wsPrecheck}・{writeShadow}・{wsProtect=setup}（設計54 S1a）／2026-11-24a remaining {healStatus}（自己修理 P1 の状態）／2026-11-20a 作業依頼の中の押し出しの記録をロックを放した直後に書く・実行中の印（設計47）';
+var LB_JOB_BUILD = '2026-11-26a remaining {vacancy}・{vacancyMode=list|off}（設計37 改訂5）／2026-11-24b remaining {wsPrecheck}・{writeShadow}・{wsProtect=setup}（設計54 S1a）／2026-11-24a remaining {healStatus}（自己修理 P1 の状態）／2026-11-20a 作業依頼の中の押し出しの記録をロックを放した直後に書く・実行中の印（設計47）';
 
 function _ejRun(op, args) {
   return '[job ' + LB_JOB_BUILD + ']\n' + _ejRunInner(op, args);
@@ -182,6 +182,9 @@ function _ejRunInner(op, args) {
       if (args && args.authAudit) return _ejScrub(_edgeAuthAuditText());
       // キャンセル理由（cancel_notes）の鍵ごと・状態ごとの件数だけ（設計36 改訂1-7・I-C6）。★ひとこと・ID の列は読まない
       if (args && args.cancelNotes) return _ejScrub(cancelNotesCountText());
+      // 空き枠のお知らせ（設計37 改訂5）：vacancy=日数 で件数・状態・理由（名前・res_id・フル ID なし）／vacancyMode は 'list' か 'off' だけ（on はオーナーがエディタで）
+      if (args && args.vacancyMode) return _ejScrub(lbVacancyJobMode(String(args.vacancyMode)));
+      if (args && args.vacancy) return _ejScrub(lbVacancyStatusText(Number(args.vacancy)));
       // 書き込み（予約・取消・変更）の段ごとの所要時間（設計43 A）。数と固定の文字だけ
       if (args && args.writePerf) return _ejScrub(writePerfText());
       // 自己修理 P1 の状態（2026-11-24・I-H34）。要約・完走の印・保存の結果・台帳の行を列挙と日時だけで（読み取りだけ）。

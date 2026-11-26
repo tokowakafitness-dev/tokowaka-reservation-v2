@@ -29,7 +29,7 @@ P1 設計（`design-self-heal-P1.md` 第5版・関門①4回目で条件付き�
 1回だけ点検をやり直す。続けて失敗したらコードの不具合として B。
 datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_read_fail・shadow_sweep_read_fail・trigger_check_fail・pending_payment_check_fail・dualwrite_check_fail・calslots_check_fail・karte_ai_check_fail・contract_input_check_fail・cancel_notes_check_fail・d1_allow_unreadable・ws_check_fail・next_month_check_fail
 
-## B　部隊が判断する・名前は要らない（25）
+## B　部隊が判断する・名前は要らない（26）
 | key | 何を見るか |
 |---|---|
 | booking_error | 予約の内部失敗の理由別件数 |
@@ -39,6 +39,7 @@ datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_r
 | consec_display_miss | 連続ルールの表示の食い違い |
 | register_fail | 会員登録の失敗の理由別（理由だけ・名前なし） |
 | cancel_notes_save_fail / cancel_notes_purge_late | 保存の失敗／古い記録の削除の遅れ（削除は戻せない＝A にしない） |
+| vacancy_stale | 空き枠のお知らせ（設計37 改訂5）が走っていない・記録が読めない/書けない（送る側を止める判断はオーナー・CEO。戻すのは lbVacancySetOff） |
 | both_fail / both_fail_broken / both_fail_overflow | 写しも予約一覧も送れなかった（会員番号で見る） |
 | d1_read_none / dualwrite_too_large / dup_pack_prefix / edge_push_off | D1 の配線・容量（edge_push_off は意図して止めている場合がある） |
 | gen_behind_capacity / shadow_diff / shadow_idle / shadow_incomplete / shadow_sweep_state_broken | D1 と写しの照合 |
@@ -90,7 +91,8 @@ cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・
 A 2 ＋ B へ移した 13 ＋ A→B 14 ＋ B 25 ＋ B（名前）8 ＋ C 6 ＋ 記録 8 ＝ **76**（抜き出した74 key ＋ `_ppKey` の2種）。
 ＋ P1 で足した 5（2026-11-24 に heal_save_fail・selfheal_watch_fail を足した）＝ 81。
 ＋ 設計54 S1a で足した 9（表の8・A→B の ws_check_fail）＝ 90（2026-11-24・ws_erase_stuck は関門② 再審3回目）。
-＋ 設計57 で足した 4（表の3・A→B の next_month_check_fail）＝ **94**（2026-11-25）。
+＋ 設計57 で足した 4（表の3・A→B の next_month_check_fail）＝ 94（2026-11-25）。
+＋ 設計37 改訂5 で足した 1（vacancy_stale）＝ **95**（2026-11-26）。
 子の点検（calslots・karte_ai・contract_input）が出す細かい項目は未分類＝P1 で足す。
 
 ## 未確認

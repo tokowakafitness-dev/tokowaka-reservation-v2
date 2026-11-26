@@ -205,6 +205,10 @@ function buildAndCacheSlots() {
   LB_SLOTS_BUILT_AT_LOCAL = Date.now();
   try { PropertiesService.getScriptProperties().setProperty(LB_SLOTS_BUILT_AT_PROP, String(LB_SLOTS_BUILT_AT_LOCAL)); }
   catch (e) { Logger.log('枠を作った時刻を残せませんでした: ' + (e && e.message)); }
+  //   ★読み始めた時刻も残す（設計37 改訂5 §5-24）。空き枠のお知らせが「キャンセルより後に読んだ枠か」を比べる。
+  //     他の読み手は無い（LB_SLOTS_BUILT_AT の意味は変えない）。書けなければお知らせが slots_not_fresh で送らない側に倒れる
+  try { PropertiesService.getScriptProperties().setProperty('LB_SLOTS_READ_START', String(_readStart)); }
+  catch (e) { Logger.log('枠を読み始めた時刻を残せませんでした: ' + (e && e.message)); }
   var cache = CacheService.getScriptCache();
 
   // 共有キャッシュ（trainer未指定のfallback用）は直近14日のみ（100KB上限対策）
@@ -256,6 +260,8 @@ function warmupCache() {
     try { lbNotifyRetryTick(_wcStart); } catch (eNq) { Logger.log('通知の送り直しで例外: ' + eNq.message); }
     //   ★設計45b：後ろへ回した LINE 通知の2つ目の受け皿（5分より古いもの）。この関数はスイッチで止まらない
     try { _lbNotifyDeferDrain('WARM', LB_NOTIFY_DEFER.BUDGET_MS, LB_NOTIFY_DEFER.WARM_MIN_AGE_MS); } catch (eNd) {}
+    //   ★空き枠のお知らせ（設計37 改訂5）。新しいトリガーは作らずここに相乗り。LB_VACANCY_MODE が list/on のときだけ動く。例外を外へ出さない
+    try { lbVacancyTick(_wcStart); } catch (eVac) { Logger.log('空き枠のお知らせで例外: ' + String((eVac && eVac.name) || 'Error')); }
   }
 }
 

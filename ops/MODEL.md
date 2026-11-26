@@ -113,6 +113,9 @@ D1                      その写し ＋ D1で作った枠・引当
 
 | シート `booking_metrics` の6列目（設計54 S1a） | 行 | `_lbLogOutcome`（`_lbReserveCore` の1回ごとの appendRow に相乗り・`'ws1'`＋JSON・許可した鍵だけ・1,000文字以内）／送る側 `_lbWsRun`（顧客IDを消して `sent:1` か `stale:1` に書き換え・前後で1〜5列目と n を照合） | `_lbWsRun`（一回限りトリガー・5分ごとの同期の最後）・日次点検（母数と独立の検知） | 行は消さない。★顧客IDは送れたら・2時間で消す（スイッチ・保護に関係なく）。予約ID・予定ID・トレーナーID・時刻は残る（台帳と D1 に既にある識別子） |
 | Script Property `LB_WS_ON`／`LB_WS_CURSOR`（送信カーソル）／`LB_WS_ERASE_CURSOR`（消去カーソル）／`LB_WS_STAT`／`LB_METRICS_WRITE_FAIL`（設計54 S1a） | — | 人（切替関数 `lbWriteShadowSetOn/Off`）／送る側（UserLock の中。カーソルは {row, k＝1列目の epoch ミリ秒}）／`_lbMetricsWriteFailNote`（booking_metrics に書けなかったときだけ・ロックなし） | 送る側・日次点検・作業依頼 `remaining {wsPrecheck}`・`{writeShadow}` | STAT は日の数を3日だけ。FAIL は日次点検が見た分を引く |
+| シート `vacancy_notice`（設計37 改訂5） | res_id（1キャンセル1行・追記と上書きだけ） | `lbVacancyTick`（無ければ見出しを書いて作る） | 作業依頼 `remaining {vacancy:日数}`（件数・理由・下4桁だけ） | 消さない。氏名・LINE ID なし（res_id と時刻から台帳で本人は分かる＝今の編集者の範囲） |
+| シート `vacancy_optout`（設計37 改訂5） | customer_id | `_lbVacPostback`（お知らせの「今後受け取らない」ボタン＝webhook の postback `vac=off`・無ければ作る） | `lbVacancyTick`（選ぶ時とロックの中） | 消さない。戻すのは行を消す（オーナー） |
+| Script Property `LB_VACANCY_MODE`／`LB_VACANCY_LAST`／`LB_VACANCY_LEASE`／`LB_NUDGE_DAILY_DONE`／`LB_SLOTS_READ_START`（設計37 改訂5） | — | 人（`lbVacancySetList/On/Off`・作業依頼は list/off）／tick（{at,result,n}）／tick（期限2分）／`lbNudgeDaily`（一覧OK・中止の code なしのときの今日の日付）／`buildAndCacheSlots`（カレンダーを読み始めた ms） | tick・日次点検 vacancy_stale・作業依頼 | 数と固定の語だけ（個人情報なし） |
 | `booking_metrics` のシートの保護（説明 `lb-write-shadow-v1`・設計54） | — | `setupMetricsProtection()`（作業依頼 `{wsProtect:'setup'}`・確かめられる範囲が通ったときだけ・冪等）／`_lbWsUnprotect()`（日次点検が書けなかった事実を見たとき・印つきだけ外す） | 送る側（保護が無ければ送らない）・日次点検 | — |
 | シート `incidents`（自己修理 P1・案件台帳） | id＝`key@check_id` | `_lbIncReflect`（点検の最後・借りる印を持った1本だけ。★完全に空のタブなら `_lbIncRepairEmpty` が見出しを書いて使う＝I-H32）／`_lbSelfHealRun`（attempts・would_attempts・last_action・status）／`_lbHealNotify`（notify_*） | `lbSelfHeal`・CEO（部隊） | 消さない（fixed で閉じる） |
 | Script Property `LB_HEALTH_LEASE`／`LB_HEALTH_SKIP`（自己修理 P1 §2-1） | — | `_lbLeaseAcquire`／`_lbLeaseCheck`／`_lbLeaseRelease`（ScriptLock 300ms の中だけ）／`_lbHealthSkipNote` | 点検・修理・lbNudgeDaily（壊れた印のメール） | 放す・期限35分 |
@@ -265,6 +268,14 @@ trg_alloc_return_pack       同
 | I-C9 | **cancel_notes の見出しが完全一致（14列・順番）しなければ行を書かない**（キャンセルは成立・header_mismatch・CXL_NOTE_HEADER）。キャンセルの経路ではシートを作らない。appendRow はそれだけを内側で囲む | `gas-cancel-reason.test.js` 8-1〜8-9 |
 | I-C10 | **trainer_reason（第2段の鍵）は判定・消化・振替権に使わない**（使い道は設計37 の対象判定だけ）。会員から来たら捨てる | `gas-cancel-reason.test.js` 10-6・10-7 |
 | I-C11 | **台帳を書いた後の処理は「成立後の付け足し」**：その枠のトレーナー／契約上の担当／会員／掃除／記録の5つを独立に囲み、どれが落ちても success:true（例外のログは単位の名前と種類だけ）。その枠のトレーナーには時間予算を見ずに直接（noInlineRetry）、担当と会員は受付から12秒・通知開始から4秒を超えたら `_lbNqDefer` で積む。各通知は一度だけ attempted か deferred に進む（_lbPush を呼んだ通知は外から積まない）。**messageAccepted と会員宛の「お伝えしました」は、保存できて、かつその枠か担当へ送ったか積んだときだけ**。cancel_notes の notified の訂正は時間予算を見ずに毎回（掃除と別の単位） | `gas-cancel-reason.test.js` 6-1〜6-9・7-1〜7-6・13-3〜13-7c |
+| I-V1 | **空き枠のお知らせ（設計37 改訂5）は既定で何もしない。** `LB_VACANCY_MODE` が厳密に `'list'`（送らずに記録）か `'on'`（送る）のときだけ動く。off は何も読まず何も書かない。on はオーナーがエディタで押す（作業依頼は list と off だけ） | `gas-vacancy.test.js` V-1・V-21 |
+| I-V2 | **新しいトリガーを作らない**（`warmupCache` の末尾・送り直しの後に相乗り。例外を warmupCache の外へ出さない） | `gas-vacancy.test.js` V-17・V-19 |
+| I-V3 | **枠と予約の可否は入口の部品で決める**：会員に見える枠＝`getTrainerSlots({trainerId}, '')`・残数＝`getBookingOptions`（選ぶ時と送る直前）・締め切り＝`_lbBookingDeadlineMs(S, _lbBookingCfg(SETTINGS))`・予約停止＝`_lbBookingGate`（ロックの中でも）・空き＝予約確定と同じ4段（B1・トレーナー・1F・連続ルール〔体験の契約は当てない〕）。予約確定の経路は変えない | `gas-vacancy.test.js` V-6・V-8・V-12・V-22 |
+| I-V4 | **送る権利の正本は nudge_log**：ロックの中で nudge_log と vacancy_optout を読み直し、上限を確かめてから 'sending' を書き、ロックを放してから送る（I19）。通信の例外は sending のまま（送った扱い）・429 は failed（同じ枠では送り直さない）。結果は種別・顧客ID・鍵で探して書く。同時に1本（LB_VACANCY_LEASE） | `gas-vacancy.test.js` V-11・V-12 |
+| I-V5 | **判定できないものは送らない**（cancel_notes・台帳・名簿・nudge_log・受け取らないが読めない・枠が判定できない・枠の読み始めがキャンセルより前）。理由は vacancy_notice の why・skip_json と LB_VACANCY_LAST の result に数え、日次点検 vacancy_stale が止まり・読み書きの失敗を出す | `gas-vacancy.test.js` V-6・V-7・V-11・V-20 |
+| I-V6 | **文面に他の会員の行動・名前を出さない**（「空きました」は書く・キャンセル・誰が・何人・理由は書かない）。ログ・記録・作業依頼には顧客IDの下4桁だけ（res_id・フル ID・LINE ID・氏名を出さない） | `gas-vacancy.test.js` V-15・V-18 |
+| I-V7 | **対象は会員本人の取消**（actor=customer、または customer_proxy の明示）で、**3日前の0時 ≦ キャンセル < 当日の0時（JST）かつ締め切り−2時間より前**。送る瞬間にも締め切り−2時間と 9〜20時を確かめる | `gas-vacancy.test.js` V-2・V-4・V-9 |
+| I-V8 | **上限**：その日に nudge_ の何かを受けた人には送らない（声かけと合わせて1日1通・声かけ側も `LB_NUDGE_DAILY_CAP_KINDS` で数える）・お知らせは直近7日で2通・同じ人×同じ枠は1回（failed も）・1枠3名。声かけが有効な日は完了の印（LB_NUDGE_DAILY_DONE）まで送らない | `gas-vacancy.test.js` V-9・V-10・V-11 |
 | I-H1 | **自己修理 P1 の要約（LB_HEALTH_STATUS）・台帳（incidents）・LINE・メール「オーナーにしかできないこと」に、氏名・顧客が書いた文・例外の文・LINE の ID・メール・電話・予定名を入れない**。要約は `add()` の6番目 `safe` だけから作り detail を読まない。文面は固定の文 `LB_OWNER_MSG`（差し込むのは列挙の値・件数・会員番号の末尾4桁だけ）。既存の health_status と悪化メールの detail は今どおり（オーナーだけの場所） | `self-heal-check.test.js` I-H1 |
 | I-H2 | **fixed は「完走した点検で、その key の段が checked にあり、key が無い」ときだけ**。段が checked に無ければ unknown（閉じない）。修理の直後は fixing（閉じるのは次の点検） | `self-heal-check.test.js` I-H2 |
 | I-H3 | **修理（lbSelfHeal）は既存の setup* を呼ばない・トリガーを消さない**（既存の設定関数は「全部消してから作り直す」＝途中で落ちると悪化する） | `self-heal-repair.test.js` I-H3 |
@@ -534,6 +545,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 | 自己修理 P1 | **専用のトリガーは作らない**（lbNudgeDaily に相乗り）。修理で足すのは足した後 18本以下まで（普段の本数を超えない） | 本番は 2026-10-09 時点で18本（設計15） | `skip_near_limit`（escalated） |
 | Script Property 1つの値 | 9KB | 通知の待ち `LB_NOTIFY_PENDING` は 16件・8,000バイト（UTF-8）まで | 超えたら今の経路（応答の前に送る） |
 | LINE通知の送り直し | 1回8件・90秒 | `warmupCache`（10分ごと）の末尾に相乗り。開始3分超なら見送り | 次の10分へ回る |
+| 空き枠のお知らせ（設計37 改訂5） | 1回45秒・枠3つ・1枠3名 | `warmupCache` の末尾（送り直しの後）に相乗り。開始3分30秒超なら見送り | 次の10分へ回る（sent_partial・wait） |
 | GASのバージョン | 200・削除不可（上限は「本数」＝`clasp versions` の件数。GASエディタの「番号」ではない） | 2026-10-06 の確認で 109本（以前ここにあった「188」は番号を本数と読み違えた値）。いまの本数は**未確認**（唯一の出所は GitHub Actions「GASを反映する」のログ）。床だけは分かる：反映ワークフローは残り5本以下で止まる＝直前の反映が成功していれば残り6本以上 | プロジェクト作り直し＝**LIFFのURLが変わる** |
 | GASの実行時間 | 6分 | 押し出しは打ち切り方式 | 途中から再開する作りが必須 |
 | D1の書き込み | 1日10万行 | 差分同期で抑えている | 書き込みが止まる |
