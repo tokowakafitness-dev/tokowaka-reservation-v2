@@ -58,7 +58,7 @@ function boot() {
   w.fetch = async (url, opt) => {
     const body = JSON.parse(opt.body);
     let r;
-    if (body.action === 'k_training') r = { success: true, karteSchema: 33, aiDraft: true, aiConsent: 'agreed', sessions: [], best: [] };
+    if (body.action === 'k_training') r = { success: true, karteSchema: 33, aiDraft: !w.aiOff, aiConsent: 'agreed', sessions: [], best: [] };
     else if (body.action === 'k_exercises') r = { success: true, karteSchema: 33, exercises: [{ name: 'ベンチプレス', part: 'chest' }], truncated: false };
     else if (body.action === 'k_aiDraft') r = { success: true, draft: (w.draftFn || DRAFT)(), model: 'x', build: 'x' };
     else r = { success: true };
@@ -254,6 +254,48 @@ for (const restore of [false, true]) {
   btn(R(w), 'いまの入力の後ろに足す').click(); await nav();
   const d = draftOf(w);
   ok(label + '：★記録の画面に入る・デッドバグは数字なしの種目・メモは社内メモ', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && JSON.stringify(d.items[1]) === JSON.stringify({ exercise: 'デッドバグ', sets: [], fromMemo: true, doneOnly: false }) && d.memo.includes('デッドバグ：架空の体幹のメモ'), JSON.stringify(d.items[1]));
+}
+
+// ---- V10 関門②：直せば解ける理由（お客様に見える欄に入りきらない）は、直したら消える／直しても解けない理由（前回の保存の結果待ち）は残る ----
+{
+  const w = boot();
+  seed(w, [], { member: { message: 'え'.repeat(395), todo: ['', '', ''], tags: [] } });
+  await openRecord(w);
+  await toReview(w, '.k-start button.k-impgo');
+  const cb = R(w).querySelector('input.k-rvmemon'); cb.checked = true; cb.dispatchEvent(new w.Event('change')); await settle();
+  R(w).querySelector('button.k-rvput').click(); await nav();
+  const pe = R(w).querySelector('.k-rvperr');
+  ok('V10 お客様の欄に入りきらない理由が帯と上に出る', !!pe && pe.textContent.indexOf('お客様に見える欄に入りきりません') === 0 && !!R(w).querySelector('.k-msg.bad'), pe && pe.textContent);
+  const m = R(w).querySelector('textarea.k-rvmsg'); m.value = '短'; m.dispatchEvent(new w.Event('input', { bubbles: true })); await settle();
+  ok('V10 ★直したら帯の理由も上の理由も消える・ボタンは押せる', !R(w).querySelector('.k-rvperr') && !R(w).querySelector('.k-msg.bad') && R(w).querySelector('button.k-rvput').disabled === false);
+  R(w).querySelector('button.k-rvput').click(); await nav();
+  ok('V10 押すと入る', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && draftOf(w).member.message === 'え'.repeat(395) + '\n短');
+}
+{
+  const w = boot();
+  await openRecord(w);
+  await toReview(w, '.k-start button.k-impgo');
+  const T = draftOf(w) || { v: 1, tid: 'T1', cid: 'C1', sessionDate: TODAY, items: [], reqId: 'kreq1', pending: null, at: Date.now() };
+  T.memoPending = { date: TODAY, body: '架空', tag: '', reqId: 'm1', withTraining: false, memberSaved: false };
+  w.localStorage.setItem(DKEY, JSON.stringify(T));
+  R(w).querySelector('button.k-rvput').click(); await nav();
+  const f = R(w).querySelector('.k-rvfield[data-field="coaching"]'); f.value = '架空の直した指導'; f.dispatchEvent(new w.Event('input', { bubbles: true })); await settle();
+  const pe = R(w).querySelector('.k-rvperr');
+  ok('V10 ★結果待ちの理由は直しても残る（帯と上）', !!pe && pe.textContent.indexOf('前回の保存の結果を確かめるまで') === 0 && !!R(w).querySelector('.k-msg.bad'));
+}
+// ---- V11 関門②：従来の読み取る経路（AI なし）でも、入れられなかった理由は下の帯に出る ----
+{
+  const w = boot(); w.aiOff = true;
+  seed(w, [{ exercise: 'ラットプルダウン', sets: [] }]);
+  await openRecord(w);
+  R(w).querySelector('.k-start button.k-voicelog').click(); await settle();
+  const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = 'スクワット\n60×8'; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
+  btn(R(w), '読み取る').click(); await settle();
+  const T = draftOf(w); T.memoPending = { date: TODAY, body: '架空', tag: '', reqId: 'm1', withTraining: false, memberSaved: false }; w.localStorage.setItem(DKEY, JSON.stringify(T));
+  btn(R(w), 'いまの入力の後ろに足す').click(); await nav();
+  const pe = R(w).querySelector('.k-rvperr');
+  ok('V11 ★読み取る経路でも理由が下の帯に出る（role=alert）', !!pe && R(w).querySelector('.k-savebar').contains(pe) && pe.getAttribute('role') === 'alert' && pe.textContent.indexOf('前回の保存の結果を確かめるまで取り込めません') === 0, pe && pe.textContent);
+  ok('V11 下書きは変えない', JSON.stringify(draftOf(w).items.map((i) => i.exercise)) === '["ラットプルダウン"]');
 }
 
 console.log(`liff-karte-voice-target: ${pass} passed, ${fail} failed`);

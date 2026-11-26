@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -3087,6 +3087,7 @@
     box.appendChild(wrap); box.appendChild(bar);
     var res = null, dec = [], ui = [], ask = false, err = '', lines0 = [], planOpen = false, tlike = false;   // tlike：設計49 段階0（文字起こしらしい＝カードの前に案内）
     var aiBusy = false, aiGen = 0;   // 設計39：送信中・応答の世代（文字を変えたら古い応答を捨てる）
+    var errSticky = false;   // err が直しても解けない種類（端末に残せない）か（関門② 2周目）
     var rv = null, pendingB = null;   // 設計49：v2 の確認の状態・最後のボタンで組み立てた中身
     //   設計51：一時保存（鍵はトレーナー×お客様）。rvHash＝この rv の元の文字起こしのしるし（無ければ ''）・airUndo＝捨てた直後の中身（メモリだけ）
     var airK = airKey(tid, cid), rvHash = '', airUndo = null, airNote = '', airReused = false;
@@ -3412,7 +3413,7 @@
       if (b.memoMax && String(T.memo || '').length > b.memoMax) { ask = false; err = '社内メモが' + b.memoMax + '字を超えます（' + String(T.memo).length + '字）。どれかを外してください。'; draw(); return; }
       T.openEi = first;
       T.at = Date.now();
-      if (!lsSet(key, T)) { err = 'この端末に下書きを残せないため、入れられませんでした。'; ask = false; draw(); return; }
+      if (!lsSet(key, T)) { err = 'この端末に下書きを残せないため、入れられませんでした。'; errSticky = true; ask = false; draw(); return; }
       if (rv) { lsDel(airK); rvHash = ''; }   // 設計51：記録の画面に入れたら一時保存を消す（続きから出すと二重に入る）
       var ns = 0, nd = 0; b.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
       trImportMsg = { cid: cid, text: 'メモから ' + b.items.length + '種目・' + ns + 'セット' + (nd ? '（ドロップ' + nd + '）' : '') + 'を入れました。✓を付けて保存してください（✓の無いセットは保存されません）。'
@@ -3692,7 +3693,7 @@
       var ni = el('input', { type: 'text', class: 'k-rvname', maxlength: String(EX_NAME_MAX), 'aria-label': '種目名', 'data-nodirty': '1', autocomplete: 'off', style: 'flex:1;min-width:0;min-height:44px;font-size:16px;font-weight:700;' });
       ni.value = ex.name;
       var chips = el('div', { class: 'k-rvchips' }), nbox = el('div', { class: 'k-rvnamest' });
-      ni.oninput = function () { ex.name = ni.value; rvNameBox(ex, nbox); rvChips(ex, chips); rvFoot(); };
+      ni.oninput = function () { ex.name = ni.value; rvNameBox(ex, nbox); rvChips(ex, chips); rvEdited(); };
       c.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [ni,
         el('button', { type: 'button', class: 'k-btn small out k-rvoff', style: 'min-height:44px;margin:0;flex:none;', text: ex.off ? '戻す' : '外す', onclick: function () { ex.off = !ex.off; draw(); } }),
         rv.exercises.length > 1 ? rvGrip(ex) : null]));   // 設計53：つまみは右端
@@ -3702,7 +3703,7 @@
       if (ex.heard) c.appendChild(el('div', { class: 'k-sub k-rvheard', text: '聞こえた言葉：' + ex.heard }));
       var li = el('input', { type: 'text', class: 'k-rvline', inputmode: 'text', 'aria-label': (exName(ex.name) || '種目') + 'のセット', 'data-nodirty': '1', autocomplete: 'off', style: 'width:100%;box-sizing:border-box;min-height:48px;font-size:17px;font-family:ui-monospace,Menlo,monospace;padding:8px 10px;border:2px solid #c9ced8;border-radius:10px;' });
       li.value = ex.line;
-      li.oninput = function () { ex.line = li.value; rvChips(ex, chips); rvFoot(); };
+      li.oninput = function () { ex.line = li.value; rvChips(ex, chips); rvEdited(); };
       c.appendChild(li);
       c.appendChild(chips); rvChips(ex, chips);
       if (ex.orig.length && !rv.restored) {   // 設計51：復元した状態では根拠を見せない（保存していない）
@@ -3712,7 +3713,7 @@
       }
       var ta = el('textarea', { class: 'k-rvexnote', 'aria-label': (exName(ex.name) || '種目') + 'のメモ（社内メモ）', 'data-nodirty': '1', style: RV_TA + 'min-height:64px;' });
       ta.value = ex.note;
-      ta.oninput = function () { ex.note = ta.value; rvFoot(); };
+      ta.oninput = function () { ex.note = ta.value; rvEdited(); };
       c.appendChild(el('label', { class: 'k-sub', text: '種目のメモ（社内メモ・お客様には見えません）' }));
       c.appendChild(ta);
       return c;
@@ -3722,9 +3723,16 @@
       var ta = el('textarea', { class: 'k-rvfield', 'data-field': key, 'aria-label': RV_FIELD_LABEL[key], 'data-nodirty': '1', style: RV_TA + (can ? '' : 'background:#f3f4f6;') });
       if (!can) ta.setAttribute('readonly', 'readonly');
       ta.value = rv.fields[key];
-      ta.oninput = function () { rv.fields[key] = ta.value; rvFoot(); };
+      ta.oninput = function () { rv.fields[key] = ta.value; rvEdited(); };
       return el('div', { class: 'k-rvfieldbox', style: 'display:flex;flex-direction:column;gap:4px;' }, [
         el('div', { style: 'font-weight:700;font-size:14px;', text: RV_FIELD_LABEL[key] + '　' }, [el('span', { class: 'k-sub', text: can ? (key === 'next' ? '社内メモ・トレーナー向け・1行1つ' : '社内メモ・1行1つ') : '見るだけ（試用中のため入れません）' })]), ta]);
+    }
+    //   関門②（Codex・2026-11-26）：入れられなかった理由（err）は、確認の内容を直したら消す（直した後も「入れられませんでした」が残ると押せるボタンと食い違う）
+    //     ★直しても解けない理由（前回の保存の結果待ち・端末に残せない）は消さない（関門② 2周目）
+    function rvEdited() {
+      var T0 = draftNow(), sticky = errSticky || !!(T0 && (T0.pending || T0.mpending || T0.memoPending));
+      if (err && !sticky) { err = ''; var em = out.querySelector('.k-msg.bad'); if (em && em.parentNode === out) out.removeChild(em); }
+      rvFoot();
     }
     function rvFoot() {
       bar.innerHTML = '';
@@ -3781,9 +3789,9 @@
       cb.checked = on;
       cb.onchange = function () { rv.member.on = cb.checked === true; draw(); };
       var mta = el('textarea', { class: 'k-rvmsg', 'aria-label': 'お客様へ', 'data-nodirty': '1', maxlength: '1000', style: RV_TA });
-      mta.value = rv.member.message; mta.oninput = function () { rv.member.message = mta.value; rvFoot(); };
+      mta.value = rv.member.message; mta.oninput = function () { rv.member.message = mta.value; rvEdited(); };
       var tta = el('textarea', { class: 'k-rvtodo', 'aria-label': '次回までに', 'data-nodirty': '1', style: RV_TA });
-      tta.value = rv.member.todo; tta.oninput = function () { rv.member.todo = tta.value; rvFoot(); };
+      tta.value = rv.member.todo; tta.oninput = function () { rv.member.todo = tta.value; rvEdited(); };
       out.appendChild(el('div', { class: 'k-card k-rvmem', style: 'display:flex;flex-direction:column;gap:8px;border:2px solid ' + (on ? 'var(--k-acc)' : '#d7dce5') + ';' }, [
         el('div', { style: 'font-weight:700;', text: 'お客様に見える欄' }),
         el('label', { style: 'display:flex;align-items:center;gap:10px;min-height:44px;font-weight:700;' }, [cb, 'お客様の画面に出す']),
@@ -3799,7 +3807,7 @@
     }
     function placeReview() {
       var b;
-      err = '';
+      err = ''; errSticky = false;
       try { b = reviewBuild(rv, aiScope(), isAuto); } catch (e) { err = 'この内容では入れられません。下の理由を直してください。'; draw(); return; }   // ★下書きは変えない
       if (!b.items.length && !b.memos.length && !b.members.length && !b.todos.length) { err = '入れる項目がありません。'; draw(); return; }
       pendingB = b;
@@ -3808,6 +3816,8 @@
     function draw() {
       gripCancel();   // 設計53 関門②：描き直しで行が消える前に捨てる
       out.innerHTML = ''; bar.innerHTML = '';
+      //   関門②（Codex・2026-11-26）：従来の読み取る経路でも、理由は押したボタンのある下の帯にも出す（AI の確認画面は rvFoot が帯を描き直して同じものを出す）
+      if (err) bar.appendChild(el('div', { class: 'k-rvperr', role: 'alert', style: 'background:#fde8e6;color:#a3341f;border-radius:10px;padding:8px 10px;margin:0 0 6px;font-size:14px;font-weight:700;', text: err }));
       drawResume();   // 設計51
       if (err) out.appendChild(msg(err, true));
       if (rv && !ask) { drawReview(); return; }   // 設計49：AI の下書き v2
