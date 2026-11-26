@@ -27,7 +27,10 @@ export const KARTE_LIMITS = {
   TOKEN_MAX_AGE_S: 3600,   // 2026-11-06 オーナー承認（決定0142）で10分→1時間＝LINE の ID トークンの有効期限。exp は auth.js が別に見る。LIFF は開いたままトークンが新しくならず、10分では施術中に保存できなかった
   RATE_PER_WINDOW: 60,
   WINDOW_MS: 10 * 60 * 1000,
-  NOTE_CHARS: 2000,
+  //   社内メモ（karte_notes.body）の字数。2026-11-26 に 2,000→4,000（設計63）。★本文16KB（BODY_BYTES）に入る上限から決めた：
+  //   日本語は1字3バイト＝4,000字で12KB＋次回やること500字（1.5KB）＋ID トークン（約1.3KB）＋鍵＝約15KB。10,000字は本文16KB を超える（変えるなら BODY_BYTES と一緒）
+  //   ★画面 liff/karte.js の NOTE_MAX と同じ値（karte-memo-limit.test.js が揃っていることを見る）
+  NOTE_CHARS: 4000,
   TEXT_CHARS: 500,
   EXERCISES: 20,
   SETS_PER_EXERCISE: 10,   // ord（その回の何番目の種目か）ごと。同じ名前の2つの種目は別々に数える（設計38）

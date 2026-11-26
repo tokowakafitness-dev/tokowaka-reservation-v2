@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -1602,6 +1602,22 @@
   //   ★DOM・保存領域・通信・console に触れない。原文は呼び出し側のメモリにだけ置く（I63）
   //   autoKnown＝固定の EXERCISES ∪ 共有の種目（自動で種目にしてよい名前）。suggestKnown＝この方の最近の種目（「もしかして」の候補にだけ使う）
   var MEMO_LIMITS = { setsPerOrd: 10, drops: 3, items: 20, total: 60 };
+  //   社内メモの字数（設計63・2026-11-26 に 2,000→4,000）。Worker の KARTE_LIMITS.NOTE_CHARS と同じ値（karte-memo-limit.test.js）。
+  //   ★社内メモを入れる・判定する所は全部これを見る（reviewBuild の memoMax・取り込みのその日のメモ・社内メモの欄の maxlength）
+  var NOTE_MAX = 4000;
+  //   Worker の本文の上限（KARTE_LIMITS.BODY_BYTES）と、送る前に見積もるときに取っておく分（ID トークン・鍵）
+  var BODY_BYTES = 16 * 1024, BODY_RESERVE = 2048;
+  /** UTF-8 のバイト数（TextEncoder の無い所でも同じ数え方） */
+  function utf8Len(s) {
+    s = String(s); var n = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c < 0x80) n += 1; else if (c < 0x800) n += 2;
+      else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length && s.charCodeAt(i + 1) >= 0xdc00 && s.charCodeAt(i + 1) <= 0xdfff) { n += 4; i++; }
+      else n += 3;
+    }
+    return n;
+  }
   var FORCED_WORDS = ['できない', 'できず', '出来ない', 'できなかった', '無理やり', 'むりやり'];   // ★E：いまはこの6語だけ
   //   seg ::= WEIGHT WS* MUL WS* REPS（NFKC の後）。値の範囲は memoW・memoInt で見る（正規表現では丸めない）
   var MEMO_SEG = /(\d+(?:\.\d+)?)(?:\s*kg)?\s*(?:×|x|\*|✕|✖|かける)\s*(\d+)(?:\s*回)?/iy;
@@ -2891,7 +2907,7 @@
       if (m) members.push(m);
       rvLines(rv.member.todo).forEach(function (x) { todos.push(x); });
     }
-    return { items: items, memos: memos, nNote: 0, nSet: 0, blocked: {}, members: members, todos: todos, memoMax: 2000 };
+    return { items: items, memos: memos, nNote: 0, nSet: 0, blocked: {}, members: members, todos: todos, memoMax: NOTE_MAX };
   }
   //   ---- 設計51：確認の途中を端末に一時保存して続きから（当日中かつ24時間以内）・同じ文字起こしは送り直さない
   //     ★保存するのは記録の下書き（karte_tr_draft_v1・24時間）がすでに端末に置いている種類の情報だけ（種目名・1行・AI の判定の状態と数字・欄の文章・お客様の欄）
@@ -3409,7 +3425,7 @@
       T.items = all;
       if (mNew) T.member = mNew;
       if (b.memos.length) T.memo = (String(T.memo || '').trim() ? String(T.memo).replace(/\s+$/, '') + '\n' : '') + b.memos.join('\n');   // 選んだものだけ社内メモの末尾へ
-      //   設計49：社内メモは2,000字まで（Worker も超えたら受けない）。超えるなら入れない（切らない・下書きは変えない）
+      //   設計49・設計63：社内メモは NOTE_MAX 字まで（Worker も超えたら受けない）。超えるなら入れない（切らない・下書きは変えない）
       if (b.memoMax && String(T.memo || '').length > b.memoMax) { ask = false; err = '社内メモが' + b.memoMax + '字を超えます（' + String(T.memo).length + '字）。どれかを外してください。'; draw(); return; }
       T.openEi = first;
       T.at = Date.now();
@@ -4083,11 +4099,14 @@
       var pay = buildPayload(items);
       if (pay.length > MEMO_LIMITS.items || totalSets(items) > MEMO_LIMITS.total) { out.why = '種目・セットの上限（20種目・60セット）を超えます'; return out; }
       var note = impNorm(ml.join('\n'));
-      if (note.length > 2000) { out.why = 'メモが長すぎます（2,000字まで）'; return out; }
+      if (note.length > NOTE_MAX) { out.why = 'メモが長すぎます（' + NOTE_MAX.toLocaleString('en-US') + '字まで）'; return out; }
       var hb = impNorm([D.health].concat(moved).filter(function (x) { return String(x || '').trim(); }).join('\n'));
       if (hb && healthIncluded(D) && hb.length > 2000) { out.why = '体の注意が長すぎます（2,000字まで）'; return out; }
       out.items = pay; out.note = note || null; out.health = hb && healthIncluded(D) ? hb : null; out.healthText = hb;
       if (!pay.length && !out.note && !out.health) out.why = hb ? '入れられる中身がありません（体の注意は入れません）' : '中身がありません';
+      //   設計63：メモ・体の注意・種目を合わせた1日分が Worker の本文16KB を超えるなら、押す前に止める（送ってから「入力が長すぎます」にしない・切らない）
+      //   見積もり＝送る中身（snapshot）の UTF-8 ＋ action・番号の鍵（128）＋ ID トークンの分（BODY_RESERVE）
+      else if (utf8Len(JSON.stringify(snapshot(D, out))) + 128 + BODY_RESERVE > BODY_BYTES) out.why = 'この日は長すぎて1回で送れません（メモか体の注意を短くしてください）';
       return out;
     }
     function snapshot(D, b) {
@@ -4956,7 +4975,7 @@
     if (!D.memoReqId) D.memoReqId = newReqId();
     if (D.memoTag == null) D.memoTag = 'training';
     c.appendChild(el('div', { class: 'k-sub', style: 'letter-spacing:.08em;padding:10px 2px 6px;', text: '指導メモ（セッション中にそのまま書けます）' }));
-    var memoTa = el('textarea', { rows: '3', maxlength: '2000', 'aria-label': '社内メモ', placeholder: '話した内容・やったこと・次回の課題', 'data-nodirty': '1', class: 'k-memo' });
+    var memoTa = el('textarea', { rows: '3', maxlength: String(NOTE_MAX), 'aria-label': '社内メモ', placeholder: '話した内容・やったこと・次回の課題', 'data-nodirty': '1', class: 'k-memo' });
     memoTa.value = D.memo || '';
     memoTa.oninput = function () { D.memo = memoTa.value; save(); };
     var memoTags = el('div', { class: 'k-pills', style: 'gap:6px;' });
@@ -5912,7 +5931,7 @@
     function showDate() { if (hdText) hdText.textContent = (cur.name ? cur.name + ' 様 ／ ' : '') + mdw(d.get() || today()) + ' ▾'; }
     if (hdDate) { d.el.className = 'k-dateover'; d.el.setAttribute('aria-label', 'メモの日付を変える'); hdDate.appendChild(d.el); d.el.addEventListener('change', showDate); showDate(); }
     else c.appendChild(d.row);
-    var body = field('', draftData && draftData.body, 'area', { maxlength: '2000', 'aria-label': '社内メモ', placeholder: '話した内容・やったこと' });
+    var body = field('', draftData && draftData.body, 'area', { maxlength: String(NOTE_MAX), 'aria-label': '社内メモ', placeholder: '話した内容・やったこと' });
     c.appendChild(body.el);
     var tag = pills(TAGS.filter(function (t) { return t[0] !== 'body'; }), draftData && draftData.tag ? [draftData.tag] : [], { single: true });
     c.appendChild(tag.el);

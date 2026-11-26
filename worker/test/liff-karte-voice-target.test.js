@@ -167,7 +167,8 @@ function checkPlaced(label, w, x, exp) {
 // ==== 2026-11-26 16:44 オーナー実機：AI の確認画面で［記録の画面に入れる］を押しても進まない ====
 //   ★入れられない理由（err）は画面の上（out の先頭）だけに出ていて、下の帯で押した人には見えなかった。社内メモの2,000字超えは押してから初めて分かった
 const LONG = TRANSCRIPT + '\n' + 'あ'.repeat(260);   // 一時保存のしるしを作る長さ（AIR_HASH_MIN 以上）
-const LONG_COACH = () => Object.assign(DRAFT(), { coaching: Array.from({ length: 12 }, (_, i) => '架空の長い指導' + i + 'い'.repeat(180)) });
+//   設計63（2026-11-26）：上限を 4,000字に上げた＝指導12件と生活のこと12件（各約190字）で超える
+const LONG_COACH = () => Object.assign(DRAFT(), { coaching: Array.from({ length: 12 }, (_, i) => '架空の長い指導' + i + 'い'.repeat(180)), hearing: Array.from({ length: 12 }, (_, i) => '架空の長い話' + i + 'お'.repeat(180)) });
 const barOf = (w) => R(w).querySelector('.k-savebar');
 const before = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & 4));
 async function toReview(w, entrySel, text) {
@@ -175,28 +176,28 @@ async function toReview(w, entrySel, text) {
   const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text || LONG; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
   btn(R(w), 'AIで振り分ける').click(); await nav();
 }
-// ---- V5 ★長い文字起こし：社内メモが2,000字を超える＝押す前に帯（ボタンの上）に理由・押せない → 文章を短くすると押せて入る ----
+// ---- V5 ★長い文字起こし：社内メモが4,000字を超える＝押す前に帯（ボタンの上）に理由・押せない → 文章を短くすると押せて入る ----
 {
   const w = boot(); w.draftFn = LONG_COACH;
   await openRecord(w);
   await toReview(w, '.k-start button.k-impgo');
   const go = R(w).querySelector('button.k-rvput'), why = R(w).querySelector('.k-rvwhy');
   ok('V5 ★超えるなら押せない', !!go && go.disabled === true);
-  ok('V5 ★理由は帯の中・ボタンの上に「社内メモが2000字を超えます（この下書き n字）」', !!why && barOf(w).contains(why) && before(why, go) && /^社内メモが2000字を超えます（この下書き \d+字）/.test(why.textContent), why && why.textContent);
+  ok('V5 ★理由は帯の中・ボタンの上に「社内メモが4000字を超えます（この下書き n字）」', !!why && barOf(w).contains(why) && before(why, go) && /^社内メモが4000字を超えます（この下書き \d+字）/.test(why.textContent), why && why.textContent);
   const f = R(w).querySelector('.k-rvfield[data-field="coaching"]'); f.value = '架空の短い指導'; f.dispatchEvent(new w.Event('input', { bubbles: true })); await settle();
   const go2 = R(w).querySelector('button.k-rvput');
   ok('V5 短くすると押せる・理由はボタンの下の案内に戻る', go2.disabled === false && before(go2, R(w).querySelector('.k-rvwhy')) && !R(w).querySelector('.k-rvwhy').textContent.includes('超えます'));
   go2.click(); await nav();
-  ok('V5 押すと記録の画面に戻り、短くした文章が社内メモに入る', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && (draftOf(w).memo || '').includes('架空の短い指導') && (draftOf(w).memo || '').length <= 2000);
+  ok('V5 押すと記録の画面に戻り、短くした文章が社内メモに入る', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && (draftOf(w).memo || '').includes('架空の短い指導') && (draftOf(w).memo || '').length <= 4000);
 }
 // ---- V6 いまの社内メモと足して超える＝内訳を出す ----
 {
   const w = boot();
-  seed(w, [{ exercise: 'ラットプルダウン', sets: [] }], { memo: 'う'.repeat(1950) });
+  seed(w, [{ exercise: 'ラットプルダウン', sets: [] }], { memo: 'う'.repeat(3950) });
   await openRecord(w);
   await toReview(w, '.k-start button.k-voicelog');
   const why = R(w).querySelector('.k-rvwhy');
-  ok('V6 ★「いまの社内メモ 1950字＋この下書き n字＝m字」・押せない', R(w).querySelector('button.k-rvput').disabled === true && !!why && /いまの社内メモ 1950字＋この下書き \d+字＝\d+字/.test(why.textContent), why && why.textContent);
+  ok('V6 ★「いまの社内メモ 3950字＋この下書き n字＝m字」・押せない', R(w).querySelector('button.k-rvput').disabled === true && !!why && /いまの社内メモ 3950字＋この下書き \d+字＝\d+字/.test(why.textContent), why && why.textContent);
 }
 // ---- V7 ★押した後に入れられなかった理由は、押したボタンのすぐ上（帯の中・role=alert）に出す ----
 {

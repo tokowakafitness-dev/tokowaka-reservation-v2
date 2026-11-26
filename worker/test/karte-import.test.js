@@ -50,9 +50,9 @@ function textFound(needle) {
   clearRate();
   const st = [];
   for (const b of [{ member: { message: 'x' }, items: ITEMS }, { items: [], note: null }, {}, { sessionDate: future, items: ITEMS }, { sessionDate: '2026-02-30', items: ITEMS },
-                   { note: { body: 'あ'.repeat(2001) } }, { note: { body: '  ' } }, { note: 'x' }, { note: { body: 'x', extra: 1 } }, { health: { body: 'あ'.repeat(2001) } }])
+                   { note: { body: 'あ'.repeat(KARTE_LIMITS.NOTE_CHARS + 1) } }, { note: { body: '  ' } }, { note: 'x' }, { note: { body: 'x', extra: 1 } }, { health: { body: 'あ'.repeat(2001) } }])
     st.push((await imp('U_t1', b)).status);
-  ok('J1 member・空・未来の日・実在しない日・2,001字・空白だけ・形違い・知らない鍵は 400', st.every((x) => x === 400), JSON.stringify(st));
+  ok('J1 member・空・未来の日・実在しない日・上限＋1字・空白だけ・形違い・知らない鍵は 400', st.every((x) => x === 400), JSON.stringify(st));
   const onlyNote = await imp('U_t1', { note: { body: 'メモだけの日' } });
   ok('J1 メモだけの日も入る（session は作らない）', onlyNote.status === 200 && onlyNote.sessionId === null && onlyNote.noteId);
 }
@@ -95,8 +95,8 @@ function textFound(needle) {
   const big = [];
   for (let i = 0; i < 20; i++) big.push({ exercise: '見本種目' + i, sets: Array.from({ length: i < 10 ? 4 : 2 }, (_, k) => ({ weight: 10 + k, reps: 10 })) });
   const total = big.reduce((a, x) => a + x.sets.length, 0);
-  const r = await imp('U_t1', { items: big, note: { body: 'あ'.repeat(2000) } });
-  ok('J5 20種目・60セット・2,000字のメモを1つの batch で入れられる', total === 60 && r.status === 200 && qn(`SELECT COUNT(*) n FROM karte_tr_sets WHERE session_id = ?`, r.sessionId) === 60, JSON.stringify(r));
+  const r = await imp('U_t1', { items: big, note: { body: 'あ'.repeat(KARTE_LIMITS.NOTE_CHARS) } });
+  ok('J5 20種目・60セット・上限（4,000字）のメモを1つの batch で入れられる', total === 60 && r.status === 200 && qn(`SELECT COUNT(*) n FROM karte_tr_sets WHERE session_id = ?`, r.sessionId) === 60, JSON.stringify(r));
 }
 
 // ================= HN1 スイッチ =================
