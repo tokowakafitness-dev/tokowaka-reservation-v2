@@ -77,6 +77,13 @@ export function trainingEditOn(env, who) {
   const list = String((env && env.KARTE_TRAINING_EDIT_TRAINERS) || '').split(',').map((x) => x.trim()).filter((x) => x !== '');
   return list.indexOf(tid) >= 0;
 }
+/**
+ * 過去メモの【体の注意】を karte_health_notes に入れるか（設計62 改訂8 §16-1・I99）。判定はこの1か所だけ
+ *   ★厳密に 'on' のときだけ真。未設定・'off'・打ち間違い・'allow' は偽＝止まる側（同意の文面の確認が済むまで既定は止める）
+ */
+export function healthImportOn(env) {
+  return String((env && env.KARTE_HEALTH_IMPORT) || '') === 'on';
+}
 /** 応答に載せる窓口の版。切替が偽なら32（画面は新しい項目を出さない・送らない）、真なら33 */
 export function karteSchemaFor(env, who) {
   return trainingExtOn(env, who) ? KARTE_SCHEMA : KARTE_SCHEMA_BASE;
@@ -116,7 +123,8 @@ async function aiConsentFor(env, who, cid) {
 
 export function isKarteWrite(action) {
   //   ★k_aiDraft（設計39）は D1 に書かないが、外部へ送り費用がかかる＝Origin の完全一致と iat 1時間の守りを掛ける（runWrite は通らない）
-  return /^k_(save|add|edit|delete|record)/.test(String(action || '')) || String(action || '') === 'k_aiDraft';
+  //   ★設計62 段3：k_importDay（取り込み）も書き込み＝import を足す（I97）
+  return /^k_(save|add|edit|delete|record|import)/.test(String(action || '')) || String(action || '') === 'k_aiDraft';
 }
 
 // ---------------------------------------------------------------- 小さな道具
@@ -342,6 +350,12 @@ async function runWrite(c, spec) {
     return err('TRAINING_EDIT_OFF', 409);
   }
 
+  //   ①-4 体の注意の取り込み（設計62 改訂8 §16-1・I99）。★replay より後・回数より前（ext・edit と同じ考え方）
+  if (spec.healthGate && !healthImportOn(env)) {
+    await logAccess(env, who, spec.customerId, spec.section, spec.action, 'denied', crid);
+    return err('HEALTH_IMPORT_OFF', 409);
+  }
+
   //   ② 回数（本体とは別の先行 batch。通ったら1回を消費し、本体が失敗しても戻さない）
   const win = Math.floor(Date.now() / KARTE_LIMITS.WINDOW_MS) * KARTE_LIMITS.WINDOW_MS;
   try {
@@ -355,6 +369,8 @@ async function runWrite(c, spec) {
   } catch (e) {
     const g = guardOf(e);
     await logAccess(env, who, spec.customerId, spec.section, spec.action, g ? g.log : 'error', crid);
+    //   ★設計62 §6-4：回数の上限には Worker の時計でいつから送れるか（その10分の区切りの終わり）を足す。古い画面は見ない
+    if (g && g.code === 'RATE_LIMITED') return Object.assign(err(g.code, g.status), { retryAt: win + KARTE_LIMITS.WINDOW_MS });
     return g ? err(g.code, g.status) : err('INTERNAL', 500);
   }
 
@@ -521,7 +537,9 @@ async function saveConsent(c) {
         S(`INSERT INTO karte_consent_log (customer_id, kind, state, at, method, recorded_by)
            VALUES (?, 'health', ?, ?, ?, ?)`, cid, state, now, method, tid));
       //   ★撤回は同じ batch で安全面の中身を消す（再同意しても戻らない＝聞き取り直す）
-      if (state === 'revoked') stmts.push(S(`DELETE FROM karte_safety WHERE customer_id = ?`, cid));
+      if (state === 'revoked') stmts.push(S(`DELETE FROM karte_safety WHERE customer_id = ?`, cid),
+        //   ★設計62 改訂8：取り込んだ体の注意も同じ batch で行ごと消す（I48・I99）
+        S(`DELETE FROM karte_health_notes WHERE customer_id = ?`, cid));
       return { stmts, result: { state } };
     },
   });
@@ -939,6 +957,92 @@ async function deleteTraining(c) {
             WHERE session_id = ? AND deleted_at IS NULL`, now, tid, now, sid),
       ],
       result: { sessionId: sid, deleted: true },
+    }),
+  });
+}
+
+// ================================================================ 過去分の取り込み（設計62 段3・I97・I99）
+const IMPORT_KEYS = ['action', 'idToken', 'clientReqId', 'customerId', 'sessionDate', 'items', 'note', 'health'];
+const HEALTH_CHARS = 2000;
+/** { body } だけの形。前後の空白を落として 1〜max 字。null・鍵なしは null。それ以外の形は RangeError */
+function bodyObj(v, max, name) {
+  if (v == null) return null;
+  if (!isObj(v)) throw new RangeError(name);
+  onlyKeys(v, ['body']);
+  const t = typeof v.body === 'string' ? v.body.trim() : '';
+  if (!t || t.length > max) throw new RangeError(name);
+  return t;
+}
+/**
+ * k_importDay：1日分（トレーニング・その日の社内メモ・体の注意）を1つの batch で入れる（全部か無か・I49）
+ *   ★お客様へ（member）など決まった鍵の外は 400。体の注意は KARTE_HEALTH_IMPORT が厳密に on・同意あり のときだけ（I99）
+ *   ★応答・karte_requests.result_json には本文を入れない（id だけ・改訂8 関門① 中1）
+ */
+async function importDay(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const b = c.body, L = KARTE_LIMITS;
+  let tr = null, note = null, health = null;
+  try {
+    for (const k of Object.keys(b)) if (IMPORT_KEYS.indexOf(k) < 0) throw new RangeError('KEY');
+    if (!isPastOrToday(b.sessionDate)) throw new RangeError('BAD_DATE');
+    if (b.items != null && !(Array.isArray(b.items) && b.items.length === 0)) tr = normalizeTraining(b.items);
+    note = bodyObj(b.note, L.NOTE_CHARS, 'NOTE');
+    health = bodyObj(b.health, HEALTH_CHARS, 'HEALTH');
+    if (!tr && !note && !health) throw new RangeError('EMPTY');
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  if (tr && tr.total > L.TOTAL_SETS) return err('TOTAL_SETS', 400);
+  const tid = String(c.who.trainerId || '');
+  const date = String(b.sessionDate);
+  const sid = tr ? newId() : null, nid = note ? newId() : null, hid = health ? newId() : null;
+  const t = tr ? trainingRows(sid, tr) : null;
+  return runWrite(c, {
+    action: 'k_importDay', section: 'import', customerId: cid,
+    payload: { v: 1, cid, date, items: tr ? trainingHashItems(tr.items) : null, note, health },
+    extUsed: !!(tr && tr.extUsed),
+    healthGate: !!health,
+    plan: (now) => ({
+      stmts: [
+        G.target(cid),
+        ...(tr ? [
+          S(`INSERT INTO karte_tr_sessions (session_id, customer_id, session_date, author_trainer_id, rev, created_at)
+             VALUES (?, ?, ?, ?, 1, ?)`, sid, cid, date, tid, now),
+          ...t.rows,
+          G.trShape(sid, { sets: t.nSets, drops: t.nDrops, exercises: tr.items.length }),
+        ] : []),
+        ...(note ? [
+          S(`INSERT INTO karte_notes (note_id, customer_id, session_date, condition, body, next_plan, tag, reasons_json, next_check, author_trainer_id, rev, created_at)
+             VALUES (?, ?, ?, NULL, ?, NULL, 'training', NULL, NULL, ?, 1, ?)`, nid, cid, date, note, tid, now),
+        ] : []),
+        ...(health ? [
+          //   ★健康情報は同意の見張りと、書く文そのものの条件の両方（I48）。どちらかが抜けても書かない
+          G.consent(cid),
+          S(`INSERT INTO karte_health_notes (hnote_id, customer_id, note_date, body, origin, created_by, created_at)
+             SELECT ?, ?, ?, ?, 'import', ?, ?
+              WHERE EXISTS (SELECT 1 FROM karte_consent WHERE customer_id = ? AND kind = 'health' AND state = 'agreed')`, hid, cid, date, health, tid, now, cid),
+        ] : []),
+      ],
+      result: { sessionId: sid, noteId: nid, hnoteId: hid },
+    }),
+  });
+}
+
+/** k_deleteHealthNote：取り込んだ体の注意を行ごと消す（取り込んだ本人かオーナー・同意は問わない・控えに中身を写さない・I99） */
+async function deleteHealthNote(c) {
+  const hid = String(c.body.hnoteId || '');
+  if (!PAGE_ID_RE.test(hid)) return err('BAD_REQUEST', 400, 'hnoteId');
+  const r = await c.env.DB.prepare('SELECT customer_id FROM karte_health_notes WHERE hnote_id = ?').bind(hid).first();
+  const cid = r ? String(r.customer_id) : '';
+  if (!cid || !(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  return runWrite(c, {
+    action: 'k_deleteHealthNote', section: 'safety', customerId: cid, payload: { hid },
+    plan: () => ({
+      stmts: [
+        S(`INSERT INTO karte_guard (target) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM karte_health_notes WHERE hnote_id = ?)`, hid),
+        G.author('karte_health_notes', 'hnote_id', hid, 'created_by', c.who),
+        S(`DELETE FROM karte_health_notes WHERE hnote_id = ?`, hid),
+      ],
+      result: { hnoteId: hid, deleted: true },
     }),
   });
 }
@@ -1916,6 +2020,7 @@ async function trainingAll(c) {
   });
 }
 
+const HEALTH_NOTES_MAX = 100;
 async function safety(c) {
   return readSection(c, 'safety', async (cid) => {
     const r = await c.env.DB.prepare(
@@ -1924,7 +2029,20 @@ async function safety(c) {
         WHERE s.customer_id = ?`
     ).bind(cid).first();
     const k = await c.env.DB.prepare(`SELECT state FROM karte_consent WHERE customer_id = ? AND kind = 'health'`).bind(cid).first();
-    return { karteSchema: karteSchemaFor(c.env, c.who), consent: k ? k.state : 'none', safety: r ? Object.assign({}, r, { pain: parseJsonCol(r.pain_json) || [], pain_json: undefined }) : null };
+    //   設計62 改訂8（I99）：取り込んだ体の注意（日付つき）。同意の JOIN の中だけ・新しい順・上限+1 で truncated。読めなければ null（空配列にしない）
+    let healthNotes = null, healthNotesTruncated = false;
+    try {
+      const hn = await c.env.DB.prepare(
+        `SELECT h.hnote_id, h.note_date, h.body, h.created_by, h.created_at FROM karte_health_notes h
+           JOIN karte_consent k ON k.customer_id = h.customer_id AND k.kind = 'health' AND k.state = 'agreed'
+          WHERE h.customer_id = ? ORDER BY h.note_date DESC, h.created_at DESC, h.hnote_id DESC LIMIT ${HEALTH_NOTES_MAX + 1}`
+      ).bind(cid).all();
+      const rows = (hn && hn.results) || [];
+      healthNotesTruncated = rows.length > HEALTH_NOTES_MAX;
+      healthNotes = rows.slice(0, HEALTH_NOTES_MAX).map((x) => ({ id: x.hnote_id, date: x.note_date, body: x.body, by: x.created_by, at: x.created_at }));
+    } catch (_) { healthNotes = null; }
+    return { karteSchema: karteSchemaFor(c.env, c.who), consent: k ? k.state : 'none', safety: r ? Object.assign({}, r, { pain: parseJsonCol(r.pain_json) || [], pain_json: undefined }) : null,
+             healthNotes, healthNotesTruncated, healthImport: healthImportOn(c.env) };
   });
 }
 
@@ -2117,6 +2235,8 @@ export const KARTE_HANDLERS = {
   k_editNote: editNote,
   k_deleteNote: deleteNote,
   k_saveHistory: saveHistory,
+  k_importDay: importDay,
+  k_deleteHealthNote: deleteHealthNote,
   k_addTraining: addTraining,
   k_deleteTraining: deleteTraining,
   k_editTraining: editTraining,

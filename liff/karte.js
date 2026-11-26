@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -414,6 +414,8 @@
     EXISTS: 'この記録には、すでにお客様に見える欄があります。「お客様の見え方」から直してください。',
     STALE: 'ログインの更新が必要です。LINE から開き直してください（入力内容は端末に残っています）。',
     EX_LIMIT: '種目の登録は500件までです。',
+    HEALTH_IMPORT_OFF: '体の注意の取り込みはいまは止めています。',
+    NO_CRYPTO: 'この端末では送れません（暗号の機能が使えません）。別の端末で開いてください。',
     TRAINING_EXT_OFF: 'この形の保存はまだ使えません（補助・無理やり・ドロップ・数字だけの種目）。入力は残っています。印を外せば保存できます。'
   };
   function errText(r) { return (r && ERR[r.code]) || ('うまくいきませんでした（' + ((r && (r.code || r.detail)) || '通信') + '）'); }
@@ -1110,6 +1112,26 @@
       var c2 = card('健康の情報', []);
       for (var k in f) c2.appendChild(f[k].row);
       box.appendChild(c2);
+      //   設計62 改訂8（I99）：過去分の取り込みで入れた体の注意（日付つき）。読めない（null）は「読めませんでした」・0件は出さない
+      if (r.healthNotes === null && 'healthNotes' in r) box.appendChild(card('取り込んだ体の注意（日付つき）', [msg('読めませんでした（開き直すともう一度読みます）。', true)], 'k-card k-hnotes'));
+      else if (Array.isArray(r.healthNotes) && r.healthNotes.length) {
+        var c3 = card('取り込んだ体の注意（日付つき）', [], 'k-card k-hnotes');
+        r.healthNotes.forEach(function (h) {
+          var row = el('div', { class: 'k-hnote', style: 'border-top:1px solid var(--k-line);padding-top:6px;display:flex;flex-direction:column;gap:4px;' }, [
+            el('div', { class: 'k-sub', text: mdw(h.date) + ' ' + String(h.date || '').slice(0, 4) + '・' + trainerName(h.by) }),
+            el('div', { style: 'white-space:pre-wrap;font-size:14px;', text: h.body })]);
+          if (String(h.by) === String(state.trainerId) || state._isOwner) row.appendChild(el('button', { type: 'button', class: 'k-btn out small k-danger k-hndel', style: 'min-height:44px;margin:0;align-self:flex-start;', text: '削除', onclick: function () {
+            if (!window.confirm('この体の注意を削除しますか？（元に戻せません）')) return;
+            kWrite('k_deleteHealthNote', { hnoteId: h.id }, newReqId(), null).then(function (w) {
+              if (!w || !w.success) { window.alert(errText(w)); return; }
+              safetyForm(box, 'replace');
+            });
+          } }));
+          c3.appendChild(row);
+        });
+        if (r.healthNotesTruncated) c3.appendChild(el('div', { class: 'k-sub', style: 'font-size:12px;', text: '新しい100件だけを表示しています。' }));
+        box.appendChild(c3);
+      }
       redraw();
       var reqId = newReqId();
       box.appendChild(el('button', { class: 'k-btn', text: '保存する', onclick: function () {
@@ -2312,7 +2334,8 @@
       //   ★今日の記録は専用の画面（2026-11-05 モックどおり）。読み直し後の復元・戻る/進むでも専用画面を開き直す
       if (draft && (draft.kind === 'training' || (draft.kind === 'sub' && draft.sub === 'trform'))) { trainingSub(box, sessions, draft.navMode, draft.kind === 'training' ? draft.ex : null); return; }
       if (draft && draft.kind === 'sub' && draft.sub === 'trpick') { trPickSub(sessions, draft.navMode); return; }
-      if (draft && draft.kind === 'sub' && draft.sub === 'trimport') { trImportSub(sessions, draft.navMode); return; }   // 戻る・進む：貼った文字は持っていない（I63）＝空の欄から
+      if (draft && draft.kind === 'sub' && draft.sub === 'trimport') { trImportSub(sessions, draft.navMode); return; }
+      if (draft && draft.kind === 'sub' && draft.sub === 'pastimport') { importSub(sessions, draft.navMode); return; }   // 設計62 段3：戻る・進む＝貼った文は持っていない（I63）＝空の欄から   // 戻る・進む：貼った文字は持っていない（I63）＝空の欄から
       var d0 = lsGet(trKey());
       //   ★「途中」は種目が入っている（または送り直し待ち）ときだけ。開いただけの空の下書きで毎回自動で開かない
       if (d0 && !(d0.pending || d0.memoPending || (d0.items || []).length || String(d0.memo || '').trim())) d0 = null;
@@ -2322,6 +2345,8 @@
       var e0 = lsGet(edKey((window.state && state.trainerId) || '', cur.customerId));
       if (e0 && e0.editOf && e0.cid === cur.customerId) box.appendChild(el('button', { type: 'button', class: 'k-btn out k-edresume', text: md(e0.sessionDate) + ' の記録を直している途中です（開く）', onclick: function () { openEditFresh(box, sessions, String(e0.editOf)); } }));
       trainingViews(box, sessions);
+      //   設計62 段3：過去分の取り込みの入り口（トレーナー画面だけ・一番下＝日々の記録の操作と取り違えない）
+      box.appendChild(el('button', { type: 'button', class: 'k-btn out k-pimp-open', style: 'min-height:44px;margin-top:12px;', text: '過去分の取り込み（スマホのメモから）', onclick: function () { importSub(sessions); } }));
       //   開き直したら入力の途中に戻す（従来どおり）。ただし戻る・進むで来たときは開かない
       if (d0 && !viaNav) trainingSub(box, sessions);
     });
@@ -3824,6 +3849,462 @@
     draw();
   }
   //   opts.edit＝直す元の回（設計58）。あれば「この日の記録を直す」モード：下書きは別の鍵・送るのは k_editTraining だけ
+  // ---------------------------------------------------------------- 過去分の取り込み（設計62 段3・I97・I98・改訂8 §16）
+  //   ★貼った文・日の塊・決めた結果は画面のメモリの中だけ（localStorage・sessionStorage・console・履歴の state に入れない・I63）
+  //   ★外へは何も送らない（端末で読む）。送るのは k_importDay（1日ずつ）と k_saveHistory（まとめ）だけ
+  var IMP_LIM = { chars: 100000, days: 400, lines: 200, page: 50, step: 10 };
+  var IMP_SEP = /^\s*={5,}\s*$/;
+  var IMP_DATE = /^\s*(\d{4})\/(\d{1,2})\/(\d{1,2})\s*(?:\([月火水木金土日]\))?\s*$/;
+  var IMP_HEAD = /^\s*【([^】]{1,40})】\s*(.*)$/;
+  var IMP_DIGEST = /^\s*【これまでのまとめ(?:（(\d{4})年(\d{1,2})月〜(\d{4})年(\d{1,2})月）)?[^】]*】\s*$/;
+  var IMP_MEMO_HEADS = ['その日の内容', '指導したこと', 'お客様の様子・話したこと'];
+  var IMP_PII_WARN = /⚠\s*名前などが残っていました/;
+  var impPageShowOn = false;
+  /** 'YYYY/M/D' の行 → 'YYYY-MM-DD'（実在・今日以前）。年が無い・実在しない・未来は null と理由 */
+  function impDateOf(line, todayYmd) {
+    var m = IMP_DATE.exec(String(line || ''));
+    if (!m) return { date: null, err: 'noyear' };
+    var v = memoReal(Number(m[1]), Number(m[2]), Number(m[3]));
+    if (!v) return { date: null, err: 'bad' };
+    if (v > todayYmd) return { date: null, err: 'future' };
+    return { date: v, err: null };
+  }
+  /**
+   * 貼った文を塊に切る（設計62 §6-3・I98）：=====の行と、年/月/日の日付の行の両方で切る。
+   *   返す値：{ pre: [行], blocks: [{ kind:'day'|'digest', lines:[行] }] }。最初の区切りより前は前置き（黙って捨てない）
+   */
+  function impSplit(text) {
+    var lines = String(text == null ? '' : text).split(/\r\n|\r|\n/);
+    var pre = [], blocks = [], cur = null, seenSep = false;
+    lines.forEach(function (ln) {
+      if (IMP_SEP.test(ln)) { cur = null; seenSep = true; return; }
+      if (IMP_DATE.test(ln) || (cur === null && seenSep && ln.trim() !== '')) {
+        if (IMP_DIGEST.test(ln)) { cur = { kind: 'digest', lines: [ln] }; blocks.push(cur); return; }
+        if (cur && cur.kind === 'digest' && !IMP_DATE.test(ln)) { cur.lines.push(ln); return; }
+        if (cur === null || IMP_DATE.test(ln)) { cur = { kind: 'day', lines: [ln] }; blocks.push(cur); return; }
+      }
+      if (cur) cur.lines.push(ln); else if (!seenSep && IMP_DIGEST.test(ln)) { cur = { kind: 'digest', lines: [ln] }; blocks.push(cur); } else pre.push(ln);
+    });
+    blocks.forEach(function (b) { while (b.lines.length && !String(b.lines[b.lines.length - 1]).trim()) b.lines.pop(); });
+    return { pre: pre.filter(function (x) { return x.trim() !== ''; }), blocks: blocks };
+  }
+  /** 見出しで振り分ける：{ train:[行], memo:[行]（見出しつき）, health:[行] }。体の注意の節は memo に入れない */
+  function impSections(lines) {
+    var train = [], memo = [], health = [], sec = null;
+    lines.forEach(function (ln) {
+      var h = IMP_HEAD.exec(ln);
+      if (h) {
+        sec = h[1].trim() === '体の注意' ? 'health' : 'memo';
+        if (sec === 'memo') memo.push('【' + h[1].trim() + '】' + (h[2] ? h[2] : ''));
+        else if (h[2] && h[2].trim()) health.push(h[2].trim());
+        return;
+      }
+      if (sec === null) { train.push(ln); return; }
+      if (!String(ln).trim()) return;
+      (sec === 'health' ? health : memo).push(String(ln).replace(/\s+$/, ''));
+    });
+    return { train: train, memo: memo, health: health };
+  }
+  function impMemoLines(arr) { return arr.filter(function (t) { return String(t).trim() !== ''; }).map(function (t) { return { t: String(t), h: MEMO_HEALTH.test(String(t)), c: null, rw: '' }; }); }
+  /** 送る本文の正規化（NFKC・改行は LF・前後の空白を落とす）。種目名は読み取りの結果のまま（共有の種目の名前を変えない） */
+  function impNorm(t) { return String(t == null ? '' : t).normalize('NFKC').replace(/\r\n?/g, '\n').trim(); }
+
+  function importSub(sessions, mode) {
+    navPush({ cid: cur.customerId, tab: 'training', sub: 'pastimport' }, mode);
+    var box = cur.body; box.innerHTML = '';
+    entryHead('過去分の取り込み', 'トレーニングに戻る');
+    var cid = cur.customerId, todayYmd = today();
+    var autoKnown = EXERCISES.concat(Object.keys(exMaster));
+    var sugg = [];
+    (sessions || []).forEach(function (x) { (x.sets || []).forEach(function (st) { if (sugg.indexOf(st.exercise) < 0) sugg.push(st.exercise); }); });
+    var S = { days: [], digests: [], pre: [], piiWarn: false, shown: IMP_LIM.page, open: {}, reading: false, sending: false, stop: '', reauth: false,
+              all: 'loading', dates: null, consent: 'loading', healthImport: false, gen: 0, done: 0 };
+    var wrap = el('div', { class: 'k-pimp', style: 'display:flex;flex-direction:column;gap:10px;' });
+    box.appendChild(wrap);
+    wrap.appendChild(el('div', { class: 'k-sub', style: 'font-size:13px;line-height:1.7;', text: '共有のプロンプトで整えた出力を丸ごと貼ってください。端末の中で日ごとに切って一覧にします（まだどこにも送りません）。' }));
+    var ta = el('textarea', { rows: '6', class: 'k-memo k-pimp-ta', 'aria-label': '取り込む文を貼る', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-nodirty': '1', placeholder: '=====\n2025/9/20\nベンチプレス\n60×10、60×10' });
+    wrap.appendChild(ta);
+    var readBtn = el('button', { type: 'button', class: 'k-btn k-pimp-read', style: 'min-height:48px;margin:0;', text: '読み取る' });
+    wrap.appendChild(readBtn);
+    var info = el('div', { class: 'k-pimp-info', role: 'status', 'aria-live': 'polite', style: 'display:flex;flex-direction:column;gap:6px;' });
+    var list = el('div', { class: 'k-pimp-list', style: 'display:flex;flex-direction:column;gap:6px;' });
+    var bar = el('div', { class: 'k-savebar k-pimp-bar' });
+    wrap.appendChild(info); wrap.appendChild(list); wrap.appendChild(bar);
+    var healthOn = function () { return S.consent === 'agreed' && S.healthImport === true; };
+    //   同じ日の記録（k_trainingAll の allDates）と健康情報の同意（k_safety）。読めなければ倒れる側（全部の日を既定で入れない／体の注意は入れない）
+    kRead('k_trainingAll', { customerId: cid }).then(function (x) {
+      if (cur.customerId !== cid) return;
+      var ok = !!(x && x.success && x.agg && x.agg.dates === 'ok' && Array.isArray(x.allDates));
+      S.all = ok ? 'ok' : 'ng';
+      if (ok) { S.dates = {}; x.allDates.forEach(function (r) { if (r && typeof r.d === 'string') S.dates[r.d] = Number(r.n) || 0; }); }
+      draw();
+    }, function () { S.all = 'ng'; draw(); });
+    kRead('k_safety', { customerId: cid }).then(function (x) {
+      if (cur.customerId !== cid) return;
+      S.consent = x && x.success ? (x.consent === 'agreed' ? 'agreed' : 'none') : 'unknown';
+      S.healthImport = !!(x && x.success && x.healthImport === true);
+      draw();
+    }, function () { S.consent = 'unknown'; draw(); });
+    //   ★戻る・bfcache で古い取り込みの画面が出たら空にする（貼った文を残さない・改訂8 関門① 中2）
+    if (!impPageShowOn) {
+      impPageShowOn = true;
+      window.addEventListener('pageshow', function (e) { if (e && e.persisted) { var t = document.querySelector('.k-pimp-ta'); if (t) { t.value = ''; var l = document.querySelector('.k-pimp-list'); if (l) l.innerHTML = ''; } } });
+    }
+    function wipe() { S.gen++; S.days = []; S.digests = []; S.pre = []; S.open = {}; ta.value = ''; list.innerHTML = ''; info.innerHTML = ''; }
+    ta.oninput = function () { if (S.sending) return; S.gen++; S.wasRead = false; S.days = []; S.digests = []; S.pre = []; S.stop = ''; draw(); };
+
+    // ---- 1日の塊を読む
+    function dayFrom(b, i) {
+      var first = b.lines[0], rest = b.lines.slice(1);
+      var dd = impDateOf(first, todayYmd);
+      var sec = impSections(rest);
+      var D = { k: 'd' + i, raw: String(first).trim(), date: dd.date, dateErr: dd.err, train: sec.train.join('\n'), memo: impMemoLines(sec.memo), health: sec.health.join('\n'),
+                res: null, dec: [], pos: [], include: null, healthInc: null, st: 'todo', why: '', replayed: false, tooLong: b.lines.length > IMP_LIM.lines };
+      parseDay(D);
+      return D;
+    }
+    function parseDay(D) {
+      D.res = null; D.dec = []; D.pos = [];
+      if (!D.date || D.tooLong) return;   // ★年の無い・読めない日付の塊は parseMemo に渡さない（年を推測させない・G5）
+      var p = D.date.split('-'), dl = (+p[0]) + '/' + (+p[1]) + '/' + (+p[2]);
+      D.res = parseMemo(dl + '\n' + D.train, todayYmd, autoKnown, sugg);
+      D.dec = D.res.pending.map(function () { return null; });
+    }
+    function digestFrom(b, i) {
+      var m = IMP_DIGEST.exec(b.lines[0]) || [];
+      var from = m[1] ? memoYm(m[1], m[2]) : null, to = m[3] ? memoYm(m[3], m[4]) : null;
+      var body = [], skipped = 0, sec = null;
+      b.lines.slice(1).forEach(function (ln) {
+        var h = IMP_HEAD.exec(ln);
+        if (h) { sec = h[1].trim() === '体の注意' ? 'health' : 'memo'; if (sec === 'memo') body.push(String(ln).trim()); else if (String(h[2] || '').trim()) skipped++; return; }
+        if (sec === 'health') { if (String(ln).trim()) skipped++; return; }
+        if (String(ln).trim()) body.push(String(ln).replace(/\s+$/, ''));
+      });
+      return { k: 'g' + i, from: from, to: to, lines: impMemoLines(body), skipped: skipped, include: true, st: 'todo', why: '', replayed: false };
+    }
+    function memoYm(y, mo) { var n = Number(mo); return n >= 1 && n <= 12 ? y + '-' + (n < 10 ? '0' : '') + n : null; }
+    function read() {
+      var text = String(ta.value || '');
+      S.stop = ''; S.days = []; S.digests = []; S.pre = []; S.open = {}; S.shown = IMP_LIM.page; S.wasRead = true; S.progress = ''; S.sendErr = '';
+      if (!text.trim()) { draw(); return; }
+      if (text.length > IMP_LIM.chars) { S.stop = '長すぎます（10万字まで・いま' + text.length + '字）。分けて貼ってください。'; draw(); return; }
+      var sp = impSplit(text);
+      var dayBlocks = sp.blocks.filter(function (b) { return b.kind === 'day'; });
+      if (dayBlocks.length > IMP_LIM.days) { S.stop = '日数が多すぎます（400日まで・いま' + dayBlocks.length + '日）。分けて貼ってください。'; draw(); return; }
+      S.pre = sp.pre; S.piiWarn = IMP_PII_WARN.test(text);
+      S.digests = sp.blocks.filter(function (b) { return b.kind === 'digest'; }).map(digestFrom);
+      //   ★10日ずつ読み、間で画面に処理を返す（400日でも固まらない）
+      var gen = ++S.gen, i = 0;
+      S.reading = true; draw();
+      (function step() {
+        if (gen !== S.gen || !ta.isConnected) return;
+        var end = Math.min(dayBlocks.length, i + IMP_LIM.step);
+        for (; i < end; i++) S.days.push(dayFrom(dayBlocks[i], i));
+        if (i < dayBlocks.length) { setTimeout(step, 0); return; }
+        S.reading = false;
+        S.days.sort(function (a, b) { return a.date && b.date ? (a.date < b.date ? 1 : a.date > b.date ? -1 : 0) : (a.date ? 1 : b.date ? -1 : 0); });
+        draw();
+      })();
+    }
+    readBtn.onclick = function () { if (!S.sending) read(); };
+
+    // ---- 1日の中身から送るものを組む
+    function existing(D) { return S.all === 'ok' && D.date ? (S.dates[D.date] || 0) : null; }
+    function included(D) {
+      if (D.include === true || D.include === false) return D.include;
+      if (S.all !== 'ok') return false;           // ★同じ日を確かめられない＝全部の日を既定で入れない（関門① 重大3）
+      return !existing(D);                        // ★同じ日に記録がある日は既定で入れない（§14 Q2・CEO 裁定）
+    }
+    function healthIncluded(D) { return healthOn() && D.healthInc !== false; }
+    function pendName(p) { return memoName(p && p.parsed ? p.parsed.exercise : ''); }
+    function canEx(p) { var n = pendName(p); return p.kind === 'name' && !!n && n.length <= EX_NAME_MAX && !!(p.parsed && p.parsed.sets && p.parsed.sets.length); }
+    function setOut(st) { var o = impSet(st); o.done = true; if (st.note) o.note = st.note; return o; }
+    function build(D) {
+      var out = { items: [], note: null, health: null, why: '' };
+      if (!D.date) { out.why = '日付を直す'; return out; }
+      if (D.tooLong) { out.why = '長すぎます（1日200行まで）'; return out; }
+      var R2 = D.res, items = R2.items.map(function (it) { return { exercise: it.exercise, doneOnly: it.doneOnly === true, sets: (it.sets || []).map(setOut) }; });
+      var unread = [], moved = [];
+      for (var j = 0; j < R2.pending.length; j++) {
+        var p = R2.pending[j], d = D.dec[j];
+        if (!d) { out.why = '決めることがあります'; return out; }
+        if (d === 'ex' || d.indexOf('c:') === 0) {
+          var nm = d === 'ex' ? pendName(p) : String((p.candidates[Number(d.slice(2))] || {}).name || '');
+          items.splice(Math.min(D.pos[j] == null ? items.length : D.pos[j], items.length), 0, { exercise: exName(nm), doneOnly: false, sets: p.parsed.sets.map(setOut) });
+        } else if (d === 'memo') unread.push(String(p.text));
+        else if (d === 'move') moved.push(String(p.text));
+      }
+      var ml = [];
+      for (var k = 0; k < D.memo.length; k++) {
+        var m = D.memo[k];
+        if (!m.h) { ml.push(m.t); continue; }
+        if (!m.c) { out.why = '体のことが書かれた行を選んでください'; return out; }
+        if (m.c === 'rw') { var t = String(m.rw || '').trim(); if (!t || MEMO_HEALTH.test(t)) { out.why = '書き直した行に体のことが残っています'; return out; } ml.push(t); }
+        else if (m.c === 'move') moved.push(m.t);
+      }
+      if (unread.length) { ml.push('【読めなかった行】'); unread.forEach(function (t) { ml.push(t); }); }
+      var pay = buildPayload(items);
+      if (pay.length > MEMO_LIMITS.items || totalSets(items) > MEMO_LIMITS.total) { out.why = '種目・セットの上限（20種目・60セット）を超えます'; return out; }
+      var note = impNorm(ml.join('\n'));
+      if (note.length > 2000) { out.why = 'メモが長すぎます（2,000字まで）'; return out; }
+      var hb = impNorm([D.health].concat(moved).filter(function (x) { return String(x || '').trim(); }).join('\n'));
+      if (hb && healthIncluded(D) && hb.length > 2000) { out.why = '体の注意が長すぎます（2,000字まで）'; return out; }
+      out.items = pay; out.note = note || null; out.health = hb && healthIncluded(D) ? hb : null; out.healthText = hb;
+      if (!pay.length && !out.note && !out.health) out.why = hb ? '入れられる中身がありません（体の注意は入れません）' : '中身がありません';
+      return out;
+    }
+    function snapshot(D, b) {
+      var s = { customerId: cid, sessionDate: D.date };
+      if (b.items.length) s.items = b.items;
+      if (b.note) s.note = { body: b.note };
+      if (b.health) s.health = { body: b.health };
+      return s;
+    }
+    function digestBody(G) {
+      var ml = [];
+      for (var k = 0; k < G.lines.length; k++) {
+        var m = G.lines[k];
+        if (!m.h) { ml.push(m.t); continue; }
+        if (!m.c) return { why: '体のことが書かれた行を選んでください' };
+        if (m.c === 'rw') { var t = String(m.rw || '').trim(); if (!t || MEMO_HEALTH.test(t)) return { why: '書き直した行に体のことが残っています' }; ml.push(t); }
+      }
+      var body = impNorm(ml.join('\n'));
+      if (!G.from || !G.to || G.from > G.to || G.to > todayYmd.slice(0, 7)) return { why: '期間を選んでください' };
+      if (!body) return { why: '中身がありません' };
+      if (body.length > 4000) return { why: '長すぎます（4,000字まで）' };
+      return { body: body, why: '' };
+    }
+
+    // ---- 描く
+    function badge(t, warn) { return el('span', { class: 'k-flag' + (warn ? '' : ' grey') + ' k-pimp-badge', style: 'font-size:12px;', text: t }); }
+    function bandText() {
+      var inc = 0, recent = 0, old = 0, same = 0, need = 0, dfix = 0, hcount = 0, bnd = cur.trBoundary || '';
+      S.days.forEach(function (D) {
+        var b = build(D);
+        if (!D.date) dfix++; else if (b.why && b.why !== '中身がありません') need++;
+        if (existing(D)) same++;
+        if (D.health.trim()) hcount++;
+        if (!b.why && included(D) && D.st !== 'done') { inc++; if (bnd && D.date >= bnd) recent++; else old++; }
+      });
+      var hl = !hcount ? '' : ('体の注意 ' + hcount + '日（' + (healthOn() ? '注意することへ入れます'
+        : S.consent === 'agreed' ? 'いまは止めています・入れません' : S.consent === 'none' ? '同意が無いため入れません' : '同意を確かめられないため入れません') + '）');
+      return { inc: inc, parts: ['記録に入れる ' + inc + '日' + (bnd ? '（直近3か月 ' + recent + '日・3か月より前 ' + old + '日）' : ''),
+        'まとめ ' + S.digests.length + '件' + S.digests.map(function (g) { return g.from && g.to ? '（' + periodLabel(g.from, g.to) + '）' : '（期間を選ぶ）'; }).join(''),
+        S.all === 'ok' ? '同じ日に記録がある日 ' + same + '日（既定で入れない）' : (S.all === 'loading' ? '同じ日の記録を確かめています…' : '同じ日の記録を確かめられません（全部の日を既定で入れない）'),
+        '決めることがある日 ' + need + '日', '日付を直す日 ' + dfix + '日', hl].filter(Boolean) };
+    }
+    function draw() {
+      info.innerHTML = ''; list.innerHTML = ''; bar.innerHTML = '';
+      if (S.stop) info.appendChild(msg(S.stop, true));
+      if (S.reading) { info.appendChild(msg('読んでいます…（' + S.days.length + '日）')); return; }
+      if (!S.days.length && !S.digests.length) { if (S.wasRead && String(ta.value || '').trim() && !S.stop) info.appendChild(msg('日付の行（年/月/日）が見つかりませんでした。共有のプロンプトの出力をそのまま貼ってください。', true)); return; }
+      if (S.piiWarn) info.appendChild(el('div', { class: 'k-msg bad k-pimp-pii', role: 'alert', text: '名前などが残っていたと AI が書いています。貼る前の置き換えを確かめてください。' }));
+      if (S.pre.length) info.appendChild(el('div', { class: 'k-sub k-pimp-pre', style: 'white-space:pre-wrap;font-size:12px;', text: '区切りより前の文（入れません）：\n' + S.pre.join('\n') }));
+      var bt = bandText();
+      info.appendChild(el('div', { class: 'k-card k-pimp-band', style: 'display:flex;flex-direction:column;gap:2px;font-size:13px;' }, bt.parts.map(function (t) { return el('div', { text: t }); })));
+      S.days.slice(0, S.shown).forEach(function (D) { list.appendChild(dayRow(D)); });
+      if (S.days.length > S.shown) list.appendChild(el('button', { type: 'button', class: 'k-btn out k-pimp-more', style: 'min-height:44px;', text: '続きを表示（あと' + (S.days.length - S.shown) + '日）', onclick: function () { S.shown += IMP_LIM.page; draw(); } }));
+      S.digests.forEach(function (G) { list.appendChild(digestRow(G)); });
+      drawBar(bt);
+    }
+    function dayRow(D) {
+      var b = build(D), ex = existing(D), inc = included(D) && !b.why;
+      var c = el('div', { class: 'k-card k-pimp-day', 'data-k': D.k, style: 'padding:8px 10px;display:flex;flex-direction:column;gap:6px;' });
+      var nEx = b.items.length, nSet = b.items.reduce(function (a, x) { return a + x.sets.length; }, 0);
+      var head = el('button', { type: 'button', class: 'k-dayrow k-pimp-row', 'aria-expanded': S.open[D.k] ? 'true' : 'false', style: 'min-height:44px;flex-wrap:wrap;gap:4px;text-align:left;',
+        onclick: function () { S.open[D.k] = !S.open[D.k]; draw(); } }, [
+        el('span', { style: 'font-weight:700;', text: D.date ? mdw(D.date) + ' ' + D.date.slice(0, 4) : D.raw || '（日付なし）' }),
+        el('span', { class: 'k-sub', text: (nEx ? '種目' + nEx + '・セット' + nSet : '') + (b.note ? (nEx ? '・' : '') + 'メモ' : '') })]);
+      c.appendChild(head);
+      var flags = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;' });
+      if (D.st === 'done') flags.appendChild(badge(D.replayed ? '済（前に入れた分・二重にしていません）' : '済'));
+      if (D.st === 'unknown') flags.appendChild(badge('結果を確かめています（［続きから］で送り直します）', true));
+      if (D.st === 'fail') flags.appendChild(badge('入りませんでした：' + D.why, true));
+      if (ex) flags.appendChild(badge('記録あり ' + ex + '件', true));
+      if (!D.date) flags.appendChild(badge('日付を直す', true));
+      else if (b.why) flags.appendChild(badge(b.why, true));
+      if (D.health.trim()) flags.appendChild(badge(healthIncluded(D) ? '体の注意（入れます）' : '体の注意（入れません）', !healthIncluded(D)));
+      c.appendChild(flags);
+      if (D.st !== 'done' && !b.why) {
+        c.appendChild(el('button', { type: 'button', class: 'k-btn ' + (inc ? '' : 'out ') + 'small k-pimp-inc', 'aria-pressed': inc ? 'true' : 'false', style: 'min-height:44px;margin:0;',
+          text: inc ? '入れる（押すと入れない）' : '入れない（押すと入れる）', onclick: function () { D.include = !inc; draw(); } }));
+      }
+      if (S.open[D.k]) c.appendChild(dayDetail(D, b));
+      return c;
+    }
+    function btnRow(kids) { return el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;' }, kids); }
+    function sbtn(text, cls, fn, on) { return el('button', { type: 'button', class: 'k-btn small ' + (on ? '' : 'out ') + cls, 'aria-pressed': on ? 'true' : 'false', style: 'min-height:44px;margin:0;', text: text, onclick: fn }); }
+    function dayDetail(D, b) {
+      var x = el('div', { class: 'k-pimp-detail', style: 'display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--k-line);padding-top:8px;' });
+      if (!D.date || D.dateErr) {
+        var di = el('input', { type: 'date', class: 'k-in k-pimp-date', 'aria-label': 'この日の日付', max: todayYmd, value: D.date || '' });
+        x.appendChild(el('div', { class: 'k-sub', text: '日付の行：' + D.raw + '（' + (D.dateErr === 'future' ? '未来の日付です' : D.dateErr === 'bad' ? '実在しない日付です' : '年が分かりません') + '）。正しい日付を選んでください。' }));
+        x.appendChild(btnRow([di, sbtn('この日付にする', 'k-pimp-dateok', function () {
+          var v = String(di.value || '');
+          if (!isRealYmd(v) || v > todayYmd) { window.alert('今日以前の実在する日付を選んでください。'); return; }
+          D.date = v; D.dateErr = null; D.include = null; parseDay(D); draw();
+        })]));
+      }
+      b.items.forEach(function (it) { x.appendChild(el('div', { style: 'font-size:14px;', text: it.exercise + '　' + (it.sets.length ? it.sets.map(function (st) { return setOneLine({ weight_kg: st.weight, reps: st.reps, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (q) { return { weight_kg: q.weight, reps: q.reps, assist_reps: q.assist, forced: q.forced }; }) }); }).join('・') : '実施のみ') })); });
+      (D.res ? D.res.pending : []).forEach(function (p, j) {
+        var d = D.dec[j];
+        var pc = el('div', { class: 'k-caution k-pimp-pend', style: 'display:flex;flex-direction:column;gap:6px;' });
+        pc.appendChild(el('div', { style: 'white-space:pre-wrap;font-size:14px;', text: '読めなかった行：' + p.text }));
+        var bs = [];
+        var pick = function (v) { return function () { D.dec[j] = D.dec[j] === v ? null : v; if (v === 'ex' || String(v).indexOf('c:') === 0) D.pos[j] = parseMemo(String(D.res && D.date ? (+D.date.slice(0, 4)) + '/' + (+D.date.slice(5, 7)) + '/' + (+D.date.slice(8, 10)) + '\n' + D.train : '').split(/\r\n|\r|\n/).slice(0, p.lines[0] - 1).join('\n'), todayYmd, autoKnown, sugg).items.length; draw(); }; };
+        if (canEx(p)) {
+          bs.push(sbtn('「' + pendName(p) + '」を種目にする', 'k-pimp-ex', pick('ex'), d === 'ex'));
+          (p.candidates || []).forEach(function (cd, ci) { if (cd && cd.name) bs.push(sbtn('「' + cd.name + '」にする', 'k-pimp-cand', pick('c:' + ci), d === 'c:' + ci)); });
+        }
+        if (!MEMO_HEALTH.test(String(p.text))) bs.push(sbtn('メモに残す', 'k-pimp-memo', pick('memo'), d === 'memo'));
+        else if (healthOn()) bs.push(sbtn('体の注意へ移す', 'k-pimp-move', pick('move'), d === 'move'));
+        bs.push(sbtn('入れない', 'k-pimp-drop', pick('drop'), d === 'drop'));
+        pc.appendChild(btnRow(bs));
+        x.appendChild(pc);
+      });
+      D.memo.forEach(function (m) { x.appendChild(lineBox(m, true)); });
+      if (D.health.trim()) {
+        x.appendChild(el('div', { class: 'k-caution k-pimp-health', style: 'white-space:pre-wrap;font-size:14px;', text: '体の注意：' + D.health + '\n' + (healthIncluded(D) ? '→「注意すること」の日付つきの記録に入れます' : healthOn() ? '→ 入れません' : S.consent === 'none' ? '→ 同意が無いため入れません' : S.consent === 'agreed' ? '→ いまは止めているため入れません' : '→ 同意を確かめられないため入れません') }));
+        if (healthOn()) x.appendChild(sbtn(healthIncluded(D) ? '体の注意を入れない' : '体の注意を入れる', 'k-pimp-hinc', function () { D.healthInc = !healthIncluded(D); draw(); }));
+      }
+      //   この日の文を直す（数字とメモ）。読み直したら、それまでの決定は捨てる
+      var ed = el('div', { style: 'display:none;flex-direction:column;gap:6px;' });
+      var tTa = el('textarea', { rows: '5', class: 'k-memo k-pimp-tedit', 'aria-label': 'この日の数字', 'data-nodirty': '1' }); tTa.value = D.train;
+      var mTa = el('textarea', { rows: '4', class: 'k-memo k-pimp-medit', 'aria-label': 'この日のメモ', 'data-nodirty': '1' }); mTa.value = D.memo.map(function (m) { return m.t; }).join('\n');
+      ed.appendChild(tTa); ed.appendChild(mTa);
+      ed.appendChild(sbtn('読み直す', 'k-pimp-reparse', function () { D.train = String(tTa.value || ''); D.memo = impMemoLines(String(mTa.value || '').split(/\r\n|\r|\n/)); D.include = null; parseDay(D); draw(); }, true));
+      x.appendChild(sbtn('この日の文を直す', 'k-pimp-edit', function () { ed.style.display = ed.style.display === 'none' ? 'flex' : 'none'; }));
+      x.appendChild(ed);
+      x.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬は社内メモに入れません（「注意すること」へ）' }));
+      return x;
+    }
+    //   健康の言葉に当たった行：書き直す／入れない（同意あり・開いているときは体の注意へ移す）。当たらない行はそのまま
+    function lineBox(m, canMove) {
+      if (!m.h) return el('div', { style: 'white-space:pre-wrap;font-size:14px;', text: m.t });
+      var c = el('div', { class: 'k-caution k-pimp-hline', style: 'display:flex;flex-direction:column;gap:6px;' });
+      c.appendChild(el('div', { style: 'white-space:pre-wrap;font-size:14px;', text: '体のことが書かれた行：' + m.t }));
+      var bs = [sbtn('書き直す', 'k-pimp-rw', function () { m.c = m.c === 'rw' ? null : 'rw'; if (m.c === 'rw' && !m.rw) m.rw = m.t; draw(); }, m.c === 'rw')];
+      if (canMove && healthOn()) bs.push(sbtn('体の注意へ移す', 'k-pimp-hmove', function () { m.c = m.c === 'move' ? null : 'move'; draw(); }, m.c === 'move'));
+      bs.push(sbtn('入れない', 'k-pimp-hdrop', function () { m.c = m.c === 'drop' ? null : 'drop'; draw(); }, m.c === 'drop'));
+      c.appendChild(btnRow(bs));
+      if (m.c === 'rw') {
+        var inp = el('input', { type: 'text', class: 'k-in k-pimp-rwin', 'aria-label': '書き直す', value: m.rw, 'data-nodirty': '1' });
+        inp.onchange = function () { m.rw = inp.value; draw(); };
+        c.appendChild(inp);
+        if (MEMO_HEALTH.test(String(m.rw || ''))) c.appendChild(el('div', { class: 'k-sub', style: 'color:var(--k-warn);', text: 'まだ体のことの言葉が残っています。消してください。' }));
+      }
+      return c;
+    }
+    function digestRow(G) {
+      var r = digestBody(G);
+      var c = el('div', { class: 'k-card k-pimp-digest', style: 'padding:8px 10px;display:flex;flex-direction:column;gap:6px;' });
+      c.appendChild(el('div', { style: 'font-weight:700;', text: 'これまでのまとめ ' + (G.from && G.to ? periodLabel(G.from, G.to) : '（期間が読めません）') }));
+      var flags = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' });
+      if (G.st === 'done') flags.appendChild(badge(G.replayed ? '済（前に入れた分・二重にしていません）' : '済'));
+      if (G.st === 'unknown') flags.appendChild(badge('結果を確かめています', true));
+      if (G.st === 'fail') flags.appendChild(badge('入りませんでした：' + G.why, true));
+      if (r.why) flags.appendChild(badge(r.why, true));
+      if (G.skipped) flags.appendChild(badge('体の注意の節 ' + G.skipped + '行は入れません', true));
+      c.appendChild(flags);
+      if (!G.from || !G.to || G.from > G.to || G.to > todayYmd.slice(0, 7)) {
+        var f = el('input', { type: 'month', class: 'k-in k-pimp-gfrom', 'aria-label': 'いつから', value: G.from || '' }), t = el('input', { type: 'month', class: 'k-in k-pimp-gto', 'aria-label': 'いつまで', value: G.to || '' });
+        c.appendChild(btnRow([f, t, sbtn('この期間にする', 'k-pimp-gok', function () { G.from = /^\d{4}-\d{2}$/.test(f.value) ? f.value : null; G.to = /^\d{4}-\d{2}$/.test(t.value) ? t.value : null; draw(); })]));
+      }
+      G.lines.forEach(function (m) { c.appendChild(lineBox(m, false)); });
+      if (G.st !== 'done' && !r.why) c.appendChild(sbtn(G.include ? '入れる（押すと入れない）' : '入れない（押すと入れる）', 'k-pimp-ginc', function () { G.include = !G.include; draw(); }, G.include));
+      return c;
+    }
+    function isRealYmd(v) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v); return !!m && memoReal(+m[1], +m[2], +m[3]) === v; }
+    function queue() {
+      var days = S.days.filter(function (D) { return D.st !== 'done' && included(D) && !build(D).why; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+      var digs = S.digests.filter(function (G) { return G.st !== 'done' && G.include && !digestBody(G).why; });
+      return { days: days, digs: digs };
+    }
+    function drawBar(bt) {
+      var q = queue(), n = q.days.length + q.digs.length;
+      var started = S.days.some(function (D) { return D.st !== 'todo'; }) || S.digests.some(function (G) { return G.st !== 'todo'; });
+      if (S.progress) bar.appendChild(el('div', { class: 'k-sub k-pimp-prog', role: 'status', style: 'text-align:center;', text: S.progress }));
+      if (S.reauth) {
+        bar.appendChild(msg('ログインの更新が必要です。［ログインし直す］→ 戻ったら同じ文を貼り直して［続きから］（入った日は二重になりません）。', true));
+        bar.appendChild(el('button', { type: 'button', class: 'k-btn k-pimp-reauth', style: 'min-height:48px;', text: 'ログインし直す', onclick: function () { wipe(); reauth(null); } }));
+        return;
+      }
+      if (S.sendErr) bar.appendChild(msg(S.sendErr, true));
+      var b = el('button', { type: 'button', class: 'k-btn k-pimp-send', style: 'min-height:48px;', text: S.sending ? '入れています…' : (n ? (started ? '続きから（' : '') + (q.days.length ? q.days.length + '日分' : '') + (q.digs.length ? (q.days.length ? '・' : '') + 'まとめ' + q.digs.length + '件' : '') + 'を入れる' + (started ? '）' : '') : '入れるものはありません') });
+      b.disabled = S.sending || !n || S.all === 'loading' || S.consent === 'loading';
+      b.onclick = function () { send(); };
+      bar.appendChild(b);
+    }
+
+    // ---- 送る（1日ずつ・止まったら［続きから］）
+    function impPost(body) {
+      adoptFreshToken();
+      if (tokenNeedsRefresh()) return Promise.resolve({ success: false, code: 'NEED_REAUTH' });
+      body.idToken = idToken;
+      return post(body).then(function (r) {
+        if (r && r.code === 'UNAUTHORIZED') {
+          var f = (window.liff && liff.getIDToken) ? (liff.getIDToken() || '') : '';
+          if (f && f !== idToken) { idToken = f; body.idToken = f; return post(body).then(function (r2) { return r2 && r2.code === 'UNAUTHORIZED' ? { success: false, code: 'NEED_REAUTH' } : r2; }, function () { return { success: false, code: 'NETWORK' }; }); }
+          return { success: false, code: 'NEED_REAUTH' };
+        }
+        return r;
+      }, function () { return { success: false, code: 'NETWORK' }; });
+    }
+    function hhmmOf(ms) { var t = new Date(Number(ms) + 9 * 3600000); return t.getUTCHours() + '時' + String(t.getUTCMinutes()).padStart(2, '0') + '分'; }
+    function stopWith(r, item) {
+      S.sending = false;
+      var c = r && r.code;
+      if (c === 'NEED_REAUTH') { S.reauth = true; }
+      else if (c === 'NETWORK' || c === 'BAD_RESPONSE' || !r) { item.st = 'unknown'; S.sendErr = '通信が切れました。［続きから］で同じ内容を送り直します（入っていれば二重になりません）。'; }
+      else if (c === 'RATE_LIMITED') { S.sendErr = '回数の上限です。' + (typeof r.retryAt === 'number' ? hhmmOf(r.retryAt) + 'から' : '少し時間をおいて') + '［続きから］を押してください（まだ送っていない日から送ります）。'; }
+      else if (c === 'NO_CONSENT') { S.consent = 'none'; S.sendErr = '健康情報の同意が記録されていないため止めました。体の注意を外したので、［続きから］で残りを入れられます。'; }
+      else if (c === 'HEALTH_IMPORT_OFF') { S.healthImport = false; S.sendErr = '体の注意の取り込みはいまは止めています。体の注意を外したので、［続きから］で残りを入れられます。'; }
+      else { item.st = 'fail'; item.why = errText(r); S.sendErr = (item.date ? md(item.date) : 'まとめ') + '：' + errText(r) + '（止めました）'; }
+      draw();
+    }
+    function send() {
+      if (S.sending) return;
+      var gen = S.gen, q = queue(), total = q.days.length + q.digs.length, i = 0;
+      if (!total) return;
+      S.sending = true; S.sendErr = ''; S.reauth = false; draw();
+      var items = q.days.map(function (D) { return { D: D }; }).concat(q.digs.map(function (G) { return { G: G }; }));
+      (function next() {
+        if (gen !== S.gen || !ta.isConnected || cur.customerId !== cid) { S.sending = false; return; }
+        if (i >= items.length) { S.sending = false; S.progress = total + '件 入れました'; draw(); return; }
+        var it = items[i], target = it.D || it.G;
+        S.progress = (i + 1) + '／' + total + ' 入れています';
+        var p;
+        if (it.D) {
+          var b = build(it.D);
+          if (b.why) { i++; next(); return; }
+          var snap = snapshot(it.D, b);
+          p = reqIdFrom('imp-', snap).then(function (rid) {
+            if (!rid) return { success: false, code: 'NO_CRYPTO' };
+            var body = { action: 'k_importDay', clientReqId: rid };
+            for (var k in snap) body[k] = snap[k];
+            return impPost(body);
+          });
+        } else {
+          var g = digestBody(it.G);
+          if (g.why) { i++; next(); return; }
+          var gs = { customerId: cid, rev: 0, periodFrom: it.G.from, periodTo: it.G.to, body: g.body, origin: 'import' };
+          p = reqIdFrom('imh-', gs).then(function (rid) {
+            if (!rid) return { success: false, code: 'NO_CRYPTO' };
+            var body = { action: 'k_saveHistory', clientReqId: rid };
+            for (var k in gs) body[k] = gs[k];
+            return impPost(body);
+          });
+        }
+        p.then(function (r) {
+          if (gen !== S.gen) { S.sending = false; return; }
+          if (r && r.success) { target.st = 'done'; target.replayed = r.replayed === true; i++; draw(); next(); return; }
+          stopWith(r, target);
+        }, function () { stopWith(null, target); });
+      })();
+    }
+    draw();
+  }
+
   function trainingForm(sessions, exRestore, opts) {
     var c = el('div', { class: 'k-trform' });
     var tid = String((window.state && state.trainerId) || ''), cid = cur.customerId, cname = cur.name;

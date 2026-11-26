@@ -238,6 +238,7 @@ async function saveInner(env, cid, items) {
         stmts.push(S(`UPDATE karte_consent SET state = 'revoked', changed_at = ?, method = 'line', recorded_by = ? WHERE customer_id = ? AND kind = 'health'`, now, MEMBER_ACTOR, cid));
         stmts.push(S(`INSERT INTO karte_consent_log (customer_id, kind, state, at, method, recorded_by) VALUES (?, 'health', 'revoked', ?, 'line', ?)`, cid, now, MEMBER_ACTOR));
         stmts.push(S(`DELETE FROM karte_safety WHERE customer_id = ?`, cid));
+        stmts.push(S(`DELETE FROM karte_health_notes WHERE customer_id = ?`, cid));   // ★設計62 改訂8：取り込んだ体の注意も同じ batch で消す（I48・I99）
       } else if (s.answeredCur(k)) continue;   // declined の再送（★紙の同意は撤回しない・消さない＝回答の表にだけ残す・CEO 裁定）
     } else {
       if (a === 'agreed') {
