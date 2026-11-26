@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -3372,7 +3372,7 @@
     function place() {
       var T = draftNow();
       if (T && (T.pending || T.mpending || T.memoPending)) { err = '前回の保存の結果を確かめるまで取り込めません。'; draw(); return; }
-      if (T && (T.items || []).length) { ask = true; draw(); return; }
+      if (T && (T.items || []).length) { ask = true; draw(); var ak = out.querySelector('.k-impask'); if (ak) { try { ak.scrollIntoView({ block: 'center' }); } catch (e) {} } return; }   // ★下の帯で押した人に見える所へ（2026-11-26）
       commit();
     }
     function commit() {
@@ -3731,12 +3731,30 @@
       var kept = airSave();   // 設計51：編集のたびに一時保存
       var t = reviewTally(rv, aiScope(), isAuto);
       var none = !t.ex && !rvAnyText();
+      //   2026-11-26 オーナー実機（長い文字起こしの .txt）：社内メモの2,000字を超えると commit が err を出すが、err は画面の上（out の先頭）に出て
+      //     下の帯で押した人には見えず「押しても進まない」になった。★超えるなら先に理由を帯に出して押せなくする（数は commit と同じ足し方）
+      var mo = rvMemoOver();
+      if (mo) t.reasons.push('社内メモが' + mo.max + '字を超えます（' + (mo.cur ? 'いまの社内メモ ' + mo.cur + '字＋この下書き ' + mo.add + '字＝' + mo.len + '字' : 'この下書き ' + mo.add + '字') + '）。「その日の社内メモに入れる文章」や種目のメモを短くするか、要らない行を消してください。');
+      //   ★押した後に入れられなかった理由（err）は、押したボタンのすぐ上に出す（画面の上だけに出すと見えない）
+      if (err) bar.appendChild(el('div', { class: 'k-rvperr', role: 'alert', style: 'background:#fde8e6;color:#a3341f;border-radius:10px;padding:8px 10px;margin:0 0 6px;font-size:14px;font-weight:700;', text: err }));
       bar.appendChild(el('div', { class: 'k-sub k-rvcount', style: 'text-align:center;margin-bottom:6px;', text: '種目 ' + t.ex + '・セット ' + t.sets + ((t.inf || t.nob) ? '（推測 ' + t.inf + '・根拠なし ' + t.nob + ' を含む）' : '') + '／「?」で入れない ' + t.skip + '／書き方が読めない ' + t.bad + (t.renamed ? '／種目名を変えた ' + t.renamed : '') }));
       var go = el('button', { type: 'button', class: 'k-btn k-rvput', style: 'min-height:52px;', text: '記録の画面に入れる（まだ保存しません）', onclick: function () { placeReview(); } });
-      if (t.reasons.length || none) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
+      var stop = !!(t.reasons.length || none);
+      if (stop) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
+      var why = el('div', { class: 'k-sub k-rvwhy', style: 'text-align:center;' + (stop ? 'margin:0 0 6px;' : 'margin-top:6px;') + (t.reasons.length ? 'color:var(--k-warn);font-weight:700;' : ''), text: t.reasons.length ? t.reasons.join('') : none ? '入れる項目がありません。' : '押すと、上の内容を記録の画面に入れます（まだ保存はしません。✓を付けて保存したものだけが記録になります）' });
+      //   ★押せない理由はボタンの上に出す（2026-11-26 オーナー実機：ボタンの下は LINE の画面の下端に隠れて「押せない」理由が見えなかった恐れ）
+      if (stop) bar.appendChild(why);
       bar.appendChild(go);
       if (!kept) bar.appendChild(el('div', { class: 'k-sub k-airfail', style: 'text-align:center;', text: 'この端末には途中の内容を残せません（画面を離れると最初からになります）' }));
-      bar.appendChild(el('div', { class: 'k-sub k-rvwhy', style: 'text-align:center;margin-top:6px;' + (t.reasons.length ? 'color:var(--k-warn);' : ''), text: t.reasons.length ? t.reasons.join('') : none ? '入れる項目がありません。' : '押すと、上の内容を記録の画面に入れます（まだ保存はしません。✓を付けて保存したものだけが記録になります）' }));
+      if (!stop) bar.appendChild(why);
+    }
+    //   いまの下書きの社内メモ＋この下書きの文章が commit の上限（reviewBuild の memoMax）を超えるか。組み立てられない（理由が別にある）ときは null
+    function rvMemoOver() {
+      var b; try { b = reviewBuild(rv, aiScope(), isAuto); } catch (e) { return null; }
+      if (!b.memoMax || !b.memos.length) return null;
+      var T = draftNow(), cur = String((T && T.memo) || ''), add = b.memos.join('\n');
+      var next = (cur.trim() ? cur.replace(/\s+$/, '') + '\n' : '') + add;
+      return next.length > b.memoMax ? { max: b.memoMax, cur: cur.trim() ? cur.replace(/\s+$/, '').length : 0, add: add.length, len: next.length } : null;
     }
     function rvAnyText() {
       var any = RV_FIELDS.some(function (f) { return scopeAllows(f[1], aiScope()) && rvLines(rv.fields[f[0]]).length; });
@@ -3781,6 +3799,7 @@
     }
     function placeReview() {
       var b;
+      err = '';
       try { b = reviewBuild(rv, aiScope(), isAuto); } catch (e) { err = 'この内容では入れられません。下の理由を直してください。'; draw(); return; }   // ★下書きは変えない
       if (!b.items.length && !b.memos.length && !b.members.length && !b.todos.length) { err = '入れる項目がありません。'; draw(); return; }
       pendingB = b;

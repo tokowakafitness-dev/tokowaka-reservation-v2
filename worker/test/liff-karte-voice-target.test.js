@@ -60,7 +60,7 @@ function boot() {
     let r;
     if (body.action === 'k_training') r = { success: true, karteSchema: 33, aiDraft: true, aiConsent: 'agreed', sessions: [], best: [] };
     else if (body.action === 'k_exercises') r = { success: true, karteSchema: 33, exercises: [{ name: 'ベンチプレス', part: 'chest' }], truncated: false };
-    else if (body.action === 'k_aiDraft') r = { success: true, draft: DRAFT(), model: 'x', build: 'x' };
+    else if (body.action === 'k_aiDraft') r = { success: true, draft: (w.draftFn || DRAFT)(), model: 'x', build: 'x' };
     else r = { success: true };
     return { json: async () => JSON.parse(JSON.stringify(r)) };
   };
@@ -162,6 +162,98 @@ function checkPlaced(label, w, x, exp) {
   const x = await voiceAndPlace(w, R(w).querySelector('.k-start button.k-voicelog'));
   ok('V4 案内：「いまの記録（1種目）…」', x.addNote && x.addNote.indexOf('いまの記録（1種目）は消さずに') === 0, x.addNote);
   checkPlaced('V4', w, x, { names: ['ラットプルダウン', 'ベンチプレス', 'スクワット'], before });
+}
+
+// ==== 2026-11-26 16:44 オーナー実機：AI の確認画面で［記録の画面に入れる］を押しても進まない ====
+//   ★入れられない理由（err）は画面の上（out の先頭）だけに出ていて、下の帯で押した人には見えなかった。社内メモの2,000字超えは押してから初めて分かった
+const LONG = TRANSCRIPT + '\n' + 'あ'.repeat(260);   // 一時保存のしるしを作る長さ（AIR_HASH_MIN 以上）
+const LONG_COACH = () => Object.assign(DRAFT(), { coaching: Array.from({ length: 12 }, (_, i) => '架空の長い指導' + i + 'い'.repeat(180)) });
+const barOf = (w) => R(w).querySelector('.k-savebar');
+const before = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & 4));
+async function toReview(w, entrySel, text) {
+  R(w).querySelector(entrySel).click(); await settle();
+  const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text || LONG; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
+  btn(R(w), 'AIで振り分ける').click(); await nav();
+}
+// ---- V5 ★長い文字起こし：社内メモが2,000字を超える＝押す前に帯（ボタンの上）に理由・押せない → 文章を短くすると押せて入る ----
+{
+  const w = boot(); w.draftFn = LONG_COACH;
+  await openRecord(w);
+  await toReview(w, '.k-start button.k-impgo');
+  const go = R(w).querySelector('button.k-rvput'), why = R(w).querySelector('.k-rvwhy');
+  ok('V5 ★超えるなら押せない', !!go && go.disabled === true);
+  ok('V5 ★理由は帯の中・ボタンの上に「社内メモが2000字を超えます（この下書き n字）」', !!why && barOf(w).contains(why) && before(why, go) && /^社内メモが2000字を超えます（この下書き \d+字）/.test(why.textContent), why && why.textContent);
+  const f = R(w).querySelector('.k-rvfield[data-field="coaching"]'); f.value = '架空の短い指導'; f.dispatchEvent(new w.Event('input', { bubbles: true })); await settle();
+  const go2 = R(w).querySelector('button.k-rvput');
+  ok('V5 短くすると押せる・理由はボタンの下の案内に戻る', go2.disabled === false && before(go2, R(w).querySelector('.k-rvwhy')) && !R(w).querySelector('.k-rvwhy').textContent.includes('超えます'));
+  go2.click(); await nav();
+  ok('V5 押すと記録の画面に戻り、短くした文章が社内メモに入る', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && (draftOf(w).memo || '').includes('架空の短い指導') && (draftOf(w).memo || '').length <= 2000);
+}
+// ---- V6 いまの社内メモと足して超える＝内訳を出す ----
+{
+  const w = boot();
+  seed(w, [{ exercise: 'ラットプルダウン', sets: [] }], { memo: 'う'.repeat(1950) });
+  await openRecord(w);
+  await toReview(w, '.k-start button.k-voicelog');
+  const why = R(w).querySelector('.k-rvwhy');
+  ok('V6 ★「いまの社内メモ 1950字＋この下書き n字＝m字」・押せない', R(w).querySelector('button.k-rvput').disabled === true && !!why && /いまの社内メモ 1950字＋この下書き \d+字＝\d+字/.test(why.textContent), why && why.textContent);
+}
+// ---- V7 ★押した後に入れられなかった理由は、押したボタンのすぐ上（帯の中・role=alert）に出す ----
+{
+  const w = boot();
+  await openRecord(w);
+  await toReview(w, '.k-start button.k-impgo');
+  const T = draftOf(w) || { v: 1, tid: 'T1', cid: 'C1', sessionDate: TODAY, items: [], reqId: 'kreq1', pending: null, at: Date.now() };
+  T.memoPending = { date: TODAY, body: '架空', tag: '', reqId: 'm1', withTraining: false, memberSaved: false };
+  w.localStorage.setItem(DKEY, JSON.stringify(T));   // 確認の途中で別の画面の送信の結果待ちが残った（押してから初めて分かる理由）
+  R(w).querySelector('button.k-rvput').click(); await nav();
+  const pe = R(w).querySelector('.k-rvperr'), go = R(w).querySelector('button.k-rvput');
+  ok('V7 ★理由が帯の中・ボタンの上に出る（role=alert）', !!pe && barOf(w).contains(pe) && pe.getAttribute('role') === 'alert' && before(pe, go) && pe.textContent.indexOf('前回の保存の結果を確かめるまで取り込めません') === 0, pe && pe.textContent);
+  ok('V7 確認画面のまま（下書きは変えない）', R(w).querySelector('.k-entrytitle').textContent === 'メモから取り込む' && !!R(w).querySelector('.k-rvex'));
+  delete T.memoPending; T.items = [{ exercise: 'ラットプルダウン', sets: [] }]; w.localStorage.setItem(DKEY, JSON.stringify(T));
+  R(w).querySelector('button.k-rvput').click(); await nav();
+  ok('V7 原因が解けたら押せて「後ろに足す」へ・★前の理由は残さない', !!btn(R(w), 'いまの入力の後ろに足す') && !R(w).textContent.includes('前回の保存の結果を確かめるまで'));
+  btn(R(w), 'いまの入力の後ろに足す').click(); await nav();
+  ok('V7 入る', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && draftOf(w).items.length === 3);
+}
+// ---- V8 ★一時保存から復元（記録の画面に戻って開き直す →「続ける」）→ 押すと入る（種目なし／手動の種目あり） ----
+for (const pre of [false, true]) {
+  const label = 'V8 ' + (pre ? '種目あり' : '種目なし');
+  const w = boot();
+  const sc = []; w.Element.prototype.scrollIntoView = function () { sc.push(this); };
+  if (pre) seed(w, [{ exercise: 'ラットプルダウン', sets: [{ w: '', r: '', done: false }] }]);
+  await openRecord(w);
+  const sel = pre ? '.k-start button.k-voicelog' : '.k-start button.k-impgo';
+  await toReview(w, sel);
+  await openRecord(w);
+  R(w).querySelector(sel).click(); await nav();
+  R(w).querySelector('button.k-airgo').click(); await nav();
+  ok(label + '：復元した確認画面（前回確認したときの判定です）・本文の欄は空', !!R(w).querySelector('.k-airrestored') && R(w).querySelector('textarea[aria-label="メモを貼る"]').value === '');
+  ok(label + '：押せる', R(w).querySelector('button.k-rvput').disabled === false);
+  R(w).querySelector('button.k-rvput').click(); await nav();
+  if (pre) {
+    const ak = R(w).querySelector('.k-impask');
+    ok(label + '：★「後ろに足す」のカードを見える所へ動かす', !!ak && sc.includes(ak));
+    btn(R(w), 'いまの入力の後ろに足す').click(); await nav();
+  }
+  ok(label + '：記録の画面に戻り、種目と社内メモが入る・一時保存は消える', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && JSON.stringify(draftOf(w).items.map((i) => i.exercise)) === JSON.stringify((pre ? ['ラットプルダウン'] : []).concat(['ベンチプレス', 'スクワット'])) && draftOf(w).memo === DAY_LINES.join('\n') && !Object.keys(w.localStorage).some((k) => k.indexOf('karte_ai_review_v1:') === 0));
+}
+
+// ---- V9 （16:48 のスクショ）有効なセットが0の種目（全部「?」）があっても止めない：設計50 §5-10 の2どおり数字なしの種目（doneOnly:false）として入り、種目のメモは社内メモへ。復元の有無の両方 ----
+for (const restore of [false, true]) {
+  const label = 'V9 ' + (restore ? '復元' : '復元なし');
+  const w = boot();
+  w.draftFn = () => { const d = DRAFT(); d.exercises.unshift({ name: 'デッドバグ', heard: 'デッドバグ', note: '架空の体幹のメモ', sets: [{ status: 'inferred', w: null, r: 6, bw: false, evidence: 'デッドバグ6回', unsure: '', note: '' }] }); return d; };
+  seed(w, [{ exercise: 'ラットプルダウン', sets: [] }]);
+  await openRecord(w);
+  await toReview(w, '.k-start button.k-voicelog');
+  if (restore) { await openRecord(w); R(w).querySelector('.k-start button.k-voicelog').click(); await nav(); R(w).querySelector('button.k-airgo').click(); await nav(); }
+  const c0 = R(w).querySelector('.k-rvex');
+  ok(label + '：1つ目は「?×6」だけ（入れない）・押せる', c0.querySelector('.k-rvline').value === '?×6' && [...c0.querySelectorAll('.k-rvchip')].every((c) => c.dataset.st === 'skip') && R(w).querySelector('button.k-rvput').disabled === false);
+  R(w).querySelector('button.k-rvput').click(); await nav();
+  btn(R(w), 'いまの入力の後ろに足す').click(); await nav();
+  const d = draftOf(w);
+  ok(label + '：★記録の画面に入る・デッドバグは数字なしの種目・メモは社内メモ', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && JSON.stringify(d.items[1]) === JSON.stringify({ exercise: 'デッドバグ', sets: [], fromMemo: true, doneOnly: false }) && d.memo.includes('デッドバグ：架空の体幹のメモ'), JSON.stringify(d.items[1]));
 }
 
 console.log(`liff-karte-voice-target: ${pass} passed, ${fail} failed`);
