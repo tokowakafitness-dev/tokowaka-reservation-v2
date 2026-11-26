@@ -83,7 +83,7 @@ const TRANSCRIPT = LINES.join('\n');
   btn(R(w), '読み取る').click(); await settle();
   const g = guide(w);
   ok('G1-1 ★カードの代わりに案内が出る（確かめが必要な行の件数つき）', !!g && cards(w).length === 0 && /確かめが必要な行が\d+件/.test(g.textContent), g ? g.textContent : R(w).textContent.slice(0, 200));
-  ok('G1-2 ★AI が使えるときは「下の『AIで振り分ける』を押してください」・ボタンが帯にある', g && g.textContent.includes('「AIで振り分ける」を押してください') && !!btn(R(w), 'AIで振り分ける'));
+  ok('G1-2 ★AI が使えるときは「下の「AIで振り分ける」が向いています」の1行だけ（紙のメモ向けの説明は出さない・設計65）・ボタンが帯にある', g && g.textContent.includes('下の「AIで振り分ける」が向いています') && !g.textContent.includes('紙のメモ向け') && !!btn(R(w), 'AIで振り分ける'));
   ok('G1-3 ★止めない：「それでも1件ずつ確認する」があり、押すと今のカードが出る', !!btn(g, 'それでも1件ずつ確認する'));
   btn(g, 'それでも1件ずつ確認する').click(); await settle();
   ok('G1-4 押すと案内が消え、1件ずつのカードと「記録の画面に入れる」が出る（今の経路のまま）', !guide(w) && cards(w).length > 40 && !!btn(R(w), '記録の画面に入れる'), String(cards(w).length));

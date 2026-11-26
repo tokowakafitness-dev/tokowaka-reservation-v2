@@ -88,7 +88,7 @@ async function voiceAndPlace(w, entry, o = {}) {
 }
 const memoOf = (w) => (draftOf(w) || {}).memo || '';
 const lines = (s) => String(s).split('\n');
-const msgOf = (w) => { const m = R(w).querySelector('.k-trform > .k-sub'); return m ? m.textContent : ''; };
+const msgOf = (w) => { const m = R(w).querySelector('.k-trform > .k-toast'); return m ? m.textContent : ''; };   // 設計65：入れた直後の短い通知
 async function readAndPlace(w, text) {
   R(w).querySelector('.k-start button.k-voicelog, .k-start button.k-impgo, button.k-voicelog').click(); await settle();
   const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = text; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
@@ -111,7 +111,8 @@ async function readAndPlace(w, text) {
   ok('D1 ★2回目：社内メモの同じ行は重ねない（6行のまま）', d.memo === m1, JSON.stringify(d.memo));
   ok('D1 ★2回目：お客様へ・次回までにも重ねない', JSON.stringify(d.member) === mem1, JSON.stringify(d.member));
   ok('D1 種目とセットは今どおり後ろに足す（重ねるかはトレーナーが「後ろに足す」で選んだ）', JSON.stringify(d.items.map((i) => i.exercise)) === JSON.stringify(['ベンチプレス', 'スクワット', 'ベンチプレス', 'スクワット']));
-  ok('D1 ★重ねなかったことを入れた後の1行で言う（行数）', /すでに社内メモにある 6行は重ねて入れませんでした/.test(msgOf(w)) && /お客様に見える欄の同じ文は重ねて入れませんでした/.test(msgOf(w)), msgOf(w));
+  //   設計65（2026-11-26 オーナー「説明は不要」）：重ねなかった数の説明は出さない（重ねなかった行は社内メモに既にある＝消えていない）。通知は種目の数だけ
+  ok('D1 ★設計65：入れた後は「n種目を入れました」の短い通知だけ（重ねなかった説明は出さない）', msgOf(w) === '2種目を入れました' && !/重ねて入れ/.test(R(w).textContent), msgOf(w));
 }
 // ---- D2 ★一部だけ同じ：片方にしか無い行は必ず残る（既存の行・新しい行とも）・順番は既存→新しい行 ----
 {
@@ -123,7 +124,7 @@ async function readAndPlace(w, text) {
   const want = ['既存だけの行', '架空の指導', 'ヒアリング：架空のヒアリング'].concat(DAY_LINES.filter((l) => l !== '架空の指導' && l !== 'ヒアリング：架空のヒアリング'));
   ok('D2 ★社内メモ：既存の3行はそのまま・新しい4行だけ足す（同じ2行は1回）', JSON.stringify(lines(d.memo)) === JSON.stringify(want), JSON.stringify(lines(d.memo)));
   ok('D2 ★お客様へは違う文なので足す・同じ宿題は重ねない', d.member.message === '既存のお客様へ\n【今日の内容】架空のお客様へ' && JSON.stringify(d.member.todo) === JSON.stringify(['架空の宿題', '', '']), JSON.stringify(d.member));
-  ok('D2 重ねなかった行数は2', /すでに社内メモにある 2行は重ねて入れませんでした/.test(msgOf(w)) && /文章 4行は/.test(msgOf(w)), msgOf(w));
+  ok('D2 ★設計65：通知に行き先・重ねなかった行数を書かない', /^\d+種目を入れました$/.test(msgOf(w)) && !/重ねて入れ|文章 \d+行/.test(R(w).textContent), msgOf(w));
 }
 // ---- D3 同じとみなすのは NFKC・空白の違いだけ（意味の近さでは判定しない＝消し過ぎない） ----
 {

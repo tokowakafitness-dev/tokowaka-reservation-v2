@@ -109,7 +109,8 @@ const hcard = (w) => R(w).querySelector('.k-history');
   ok('HU1 ★読めない（null）は「まとめを読めませんでした」・「まだありません」と言わない', hcard(w).textContent.includes('まとめを読めませんでした') && !hcard(w).textContent.includes('まだありません'));
   const { w: w2 } = boot((b) => (b.action === 'k_notes' ? notesFirst({ history: [], pendingMonths: [] }) : undefined));
   await openNotes(w2);
-  ok('HU1 0件は「まだありません（原本は…）」', hcard(w2).textContent.includes('まだありません（原本は「3か月より前のメモ」から見られます）'));
+  //   設計65：「まだありません」だけ。原本の場所は ? の中
+  ok('HU1 0件は「まだありません」・原本の場所は ? を開くと出る', hcard(w2).textContent.includes('まだありません') && !hcard(w2).textContent.includes('原本は') && (() => { hcard(w2).querySelector('.k-hnone .k-q').click(); return (hcard(w2).querySelector('.k-hnone .k-qbody') || {}).textContent === '原本は「3か月より前のメモ」から見られます。'; })());
   const old = notesFirst(); delete old.history; delete old.pendingMonths; delete old.agg;
   const { w: w3 } = boot((b) => (b.action === 'k_notes' ? old : undefined));
   await openNotes(w3);

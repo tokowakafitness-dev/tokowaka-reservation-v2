@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26g 説明の文を削る（挙動の説明・案内の帯は出さない・毎回は要らない注意は項目の横の「?」に畳む・取り込みの直後は「n種目を入れました」の短い通知・AI のボタンの直下に「外部のAI（Anthropic）へ送ります」の1行・健康の1行はカードの一覧の上に1回・設計65）／2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -335,6 +335,15 @@
     '#karteRoot .k-rtg{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid #8692a6;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
     '#karteRoot .k-rtg[aria-pressed=true]{border:1.5px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-weight:700;}',
     '#karteRoot .k-note-hint{font-size:12px;color:var(--k-warn);background:var(--k-warn-l);border-radius:8px;padding:6px 10px;margin-bottom:10px;}',
+    //   設計65：項目の横の「?」（タップ領域 44px・見た目は 22px の丸）。開いたときだけ説明を作る
+    '#karteRoot .k-qrow{display:flex;align-items:center;gap:2px;}',
+    '#karteRoot .k-qrow>:first-child{flex:1;min-width:0;}',
+    '#karteRoot .k-q{flex:none;width:44px;height:44px;min-height:44px;padding:0;margin:0;border:0;background:transparent;display:inline-flex;align-items:center;justify-content:center;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;}',
+    '#karteRoot .k-q span{display:inline-block;width:22px;height:22px;box-sizing:border-box;border-radius:50%;border:1.5px solid #8692a6;color:#5b6661;font-size:13px;font-weight:700;line-height:19px;text-align:center;background:#fff;}',
+    '#karteRoot .k-q[aria-expanded=true] span{background:var(--k-acc);border-color:var(--k-acc);color:#fff;}',
+    '#karteRoot .k-qbody{font-size:13px;line-height:1.7;color:var(--k-ink);background:#f3f5f8;border-radius:10px;padding:8px 10px;margin:2px 0 4px;white-space:pre-wrap;text-align:left;font-weight:400;}',
+    '#karteRoot .k-edhint{margin:0 0 8px;}',
+    '#karteRoot .k-toast{font-size:14px;font-weight:700;color:var(--k-acc);background:var(--k-acc-l);border-radius:10px;padding:8px 10px;margin:0 0 8px;}',
     //   ---- 設計38：メモから取り込む・補助/無理やり/ドロップ/実施
     //   畳んだ種目の行：開くボタンの右に「全部✓」「実施した」（1種目1タップで確かめる）
     '#karteRoot .k-exline{display:flex;align-items:center;gap:6px;margin-bottom:10px;}',   // 2026-11-25 オーナー：つまみは左・全部✓は右・どちらも小さく（行の高さに伸ばさない）
@@ -390,6 +399,18 @@
   function fmtDate(ms) { if (!ms) return ''; var t = new Date(Number(ms) + 9 * 3600000); return (t.getUTCMonth() + 1) + '/' + t.getUTCDate() + ' ' + String(t.getUTCHours()).padStart(2, '0') + ':' + String(t.getUTCMinutes()).padStart(2, '0'); }
   function md(d) { var p = String(d || '').split('-'); return p.length === 3 ? (+p[1]) + '/' + (+p[2]) : String(d || ''); }
   function msg(text, bad) { return el('p', { class: 'k-msg' + (bad ? ' bad' : ''), text: text }); }
+  //   設計65：[項目][?] の行。? を押すと直下に説明を開く（もう一度で閉じる）。説明は開いている間だけ DOM にある（ダイアログは使わない）
+  function helpRow(node, help, cls) {
+    var box = el('div', { class: 'k-qwrap' + (cls ? ' ' + cls : '') }), body = null;
+    var b = el('button', { type: 'button', class: 'k-q', 'aria-label': '説明', 'aria-expanded': 'false', onclick: function (ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      if (body) { if (body.parentNode) body.parentNode.removeChild(body); body = null; b.setAttribute('aria-expanded', 'false'); return; }
+      body = el('div', { class: 'k-qbody', role: 'note', text: help }); box.appendChild(body); b.setAttribute('aria-expanded', 'true');
+    } }, [el('span', { 'aria-hidden': 'true', text: '?' })]);
+    box.appendChild(el('div', { class: 'k-qrow' }, [typeof node === 'string' ? el('span', { text: node }) : node, b]));
+    return box;
+  }
+  var TOAST_MS = 3500;   // 設計65：取り込んだ直後の短い通知が消えるまで
   //   見出しの右に小さなリンク（「編集 ›」「体組成へ ›」）。押せる高さは 44px 取る（2026-11-05 整理：概要は読むだけ・書くのはリンクの先）
   function headRow(title, linkText, onclick, cls) {
     return el('div', { class: 'k-headrow' }, [el('div', { class: 'k-h', style: 'margin:0;', text: title }),
@@ -2372,7 +2393,7 @@
       //   ★「途中」は種目が入っている（または送り直し待ち）ときだけ。開いただけの空の下書きで毎回自動で開かない
       if (d0 && !(d0.pending || d0.memoPending || (d0.items || []).length || String(d0.memo || '').trim())) d0 = null;
       box.appendChild(el('button', { class: 'k-btn', text: d0 ? '記録の入力（途中）を開く' : '＋ 今日の記録', onclick: function () { trainingSub(box, sessions); } }));
-      if (d0) box.appendChild(el('div', { class: 'k-sub', text: '入力の途中の記録があります（この端末に最大24時間残ります）。' }));
+      if (d0) box.appendChild(el('div', { class: 'k-sub', text: '入力の途中の記録があります' }));
       //   設計58：直しかけがあれば知らせる（自動では開かない）
       var e0 = lsGet(edKey((window.state && state.trainerId) || '', cur.customerId));
       if (e0 && e0.editOf && e0.cid === cur.customerId) box.appendChild(el('button', { type: 'button', class: 'k-btn out k-edresume', text: md(e0.sessionDate) + ' の記録を直している途中です（開く）', onclick: function () { openEditFresh(box, sessions, String(e0.editOf)); } }));
@@ -2583,7 +2604,6 @@
       bar.appendChild(el('div', { class: 'k-grid2' }, [
         el('button', { type: 'button', class: 'k-btn', text: '重量・回数ごと写す', onclick: function () { copy(true); } }),
         el('button', { type: 'button', class: 'k-btn out', text: '種目だけ写す', onclick: function () { copy(false); } })]));
-      bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;line-height:1.6;', text: '写した後も自由に直せます。✓（実施）は外した状態で入ります。今日の記録にすでに種目がある場合は、後ろに足します' }));
     }
     function copy(withNums) {
       if (!sel) return;
@@ -2693,7 +2713,6 @@
     if (c === 'AI_REFUSED' || c === 'AI_BAD_OUTPUT' || c === 'AI_TRUNCATED') return 'AIが下書きを作れませんでした。「読み取る」で取り込めます（もう一度押すと1日の回数を1回使います）。';
     return 'AIの振り分けに失敗しました（' + (c || '通信') + '）。もう一度押すと1日の回数を1回使います。「読み取る」でも取り込めます。';
   }
-  var I55_HINT = '種目名・メモに痛み・診断・服薬を入れない（「注意すること」へ）';
   function impSet(st) {   // 読み取った形 → 下書きのセット（✓は外す・印の無い鍵は持たない）
     var o = { w: st.w, r: st.r, done: false };
     if (st.assist != null) o.assist = String(st.assist);
@@ -2934,9 +2953,12 @@
   var AIR_HASH_MIN = 200;   // これより短い文字起こしは照合しない（短い原文はしるしから辞書で当てられる＝関門① 2）
   //   取り込み画面の説明（設計51 関門② 2：「保存はしません」は一時保存と逆になった）
   //   取り込みの行き先（設計56 改訂・2026-11-26）：いまある種目には書き足さない。種目は後ろに増え、文章はその日の社内メモ・お客様に見える欄の末尾
-  var ADD_DEST_TEXT = 'いまある種目には書き足しません（種目は後ろに増え、文章はその日の社内メモ・お客様に見える欄の末尾に入ります）。上書きはしません';
   var AI_KEEP_NOTE = '送った文字起こしは保存しません。振り分けた内容は、この端末に当日中だけ残ります（記録の画面に入れると消えます。根拠・体のことは残しません。同じ端末を使う人は読めます）。';
   var AIR_KEEP_TEXT = '根拠・体のこと・分からなかった点など、保存しない項目があります';
+  //   設計65：取り込みの画面の「?」の中身（入力の仕方・端末の中だけで読む）
+  var IMP_HELP_TEXT = '紙のメモを打つか、貼ってください。キーボードのマイクで話しても入ります（例：ヒップリフト／改行／30かける10　50かける10プラス5）。\n「読み取る」と添付したファイルは端末の中だけで読み、どこにも送りません。音声のファイルは使えません。';
+  var AI_SEND_LINE = '外部のAI（Anthropic）へ送ります';   // 設計65：AI のボタンの直下に必ず出す1行（同意 rec_ai・I76）。詳細は ? の中
+  var IMP_HEALTH_LINE = '痛み・診断・服薬は入れない（「注意すること」へ）';   // 設計65：カードの一覧の上に1回だけ（I55・I71）
   function airKey(tid, cid) { return AIR_PREFIX + String(tid || '') + ':' + String(cid || ''); }
   /** 読む（無い／壊れている／読めた を区別する＝lsGet は区別できない） */
   function lsRead(k) {
@@ -3051,15 +3073,7 @@
     var D0 = draftNow();
     if (D0 && (D0.pending || D0.mpending || D0.memoPending)) { box.appendChild(msg('前回の保存の結果を確かめるまで取り込めません。今日の記録の画面に戻ってください。', true)); return; }
     if (!extOk()) { box.appendChild(msg('いまはメモから取り込めません（システムの更新中の可能性があります）。今日の記録の画面から入力してください。', true)); return; }
-    //   設計56：記録の画面にいまある内容には足される（上書きしない）ことを最初に言う
-    //   ★2026-11-26 オーナー（手動で入れた後に音声）：「いまある内容（種目 1）に足されます」が「種目1に足される」と読めた。
-    //     数は「n種目」と書き、行き先（種目は後ろに増える・文章はその日の社内メモ／お客様に見える欄の末尾・いまある種目には書き足さない）を言う
-    var addNote = null;
-    if (D0) {
-      var nEx0 = (D0.items || []).length, hasMemo0 = !!String(D0.memo || '').trim(), m00 = D0.member || {}, hasMem0 = !!(String(m00.message || '').trim() || (Array.isArray(m00.todo) && m00.todo.some(function (x) { return String(x || '').trim(); })));
-      if (nEx0 || hasMemo0 || hasMem0) addNote = el('div', { class: 'k-addnote', role: 'status', style: 'background:var(--k-acc-l);border-radius:10px;padding:8px 10px;font-size:14px;font-weight:700;color:var(--k-acc);',
-        text: 'いまの記録（' + [nEx0 ? nEx0 + '種目' : '', hasMemo0 ? '社内メモ' : '', hasMem0 ? 'お客様に見える欄' : ''].filter(Boolean).join('・') + '）は消さずに、後ろに足します。' + ADD_DEST_TEXT });
-    }
+    //   設計65（2026-11-26 オーナー）：「いまの記録は消さずに後ろに足します…」の案内は出さない（挙動の説明は要らない・結果は記録の画面に出る）
     //   autoKnown＝固定の種目 ∪ 共有の種目（自動で種目にしてよい名前）。suggestKnown＝この方の最近の種目（候補にだけ使う・自動では使わない）
     var autoKnown = EXERCISES.concat(Object.keys(exMaster));
     var sugg = [];
@@ -3069,12 +3083,12 @@
     });
     function isAuto(name) { return autoKnown.some(function (a) { return exName(a) === name; }); }
     var wrap = el('div', { class: 'k-imp', style: 'display:flex;flex-direction:column;gap:8px;' });
-    if (addNote) wrap.appendChild(addNote);
-    wrap.appendChild(el('div', { class: 'k-sub', style: 'font-size:13px;line-height:1.7;', text: '紙のメモを打つか、貼ってください。キーボードのマイクで話しても入ります（例：ヒップリフト／改行／30かける10　50かける10プラス5）。' }));
-    wrap.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }));
+    //   設計65：入力の仕方・端末の中だけで読むことは「?」に畳む。健康の1行（I55）は残す
+    wrap.appendChild(helpRow(el('div', { class: 'k-imphead', style: 'font-weight:700;font-size:14px;', text: 'メモ・文字起こし' }), IMP_HELP_TEXT, 'k-imphelp'));
     if (exTruncated) wrap.appendChild(el('div', { class: 'k-sub', style: 'color:var(--k-warn);', text: '共有の種目を一部しか読めていないため、確かめが必要な名前が増えます。' }));
     var ta = el('textarea', { rows: '6', class: 'k-memo', 'aria-label': 'メモを貼る', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-nodirty': '1', placeholder: '9/18\nヒップリフト\n30×10 50×10+5' });
     wrap.appendChild(ta);
+    wrap.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' }));   // 設計65 関門②：I55 の「入力欄の真下」
     //   設計48：文字起こしのファイルを添付する。★端末の中で読んで上の欄に入れるだけ（fetch しない・中身もファイル名も保存領域・console に出さない＝I63）
     //     読んでいる途中に別のファイルを選んだ・画面を離れた・別の顧客を開いたら捨てる（世代と cid）。上限を超えたら切らずに入れない
     var attMsg = el('div', { class: 'k-sub k-attmsg', role: 'status', 'aria-live': 'polite', style: 'display:none;' });
@@ -3103,7 +3117,7 @@
         if (next.length > AI_TEXT_MAX) { attSay('長すぎます（3万字まで・' + (prev ? 'いまの欄と合わせて' : '') + next.length + '字）。分けて書き出してください。欄には入れていません。', true); return; }
         ta.value = next;
         ta.oninput();   // 貼ったときと同じ：前の読み取り結果・AI の応答を捨てる
-        attSay((prev ? '貼ってあった文字の後ろに ' : '') + c.text.length + '字を入れました' + (c.dropped ? '（時刻・話者の行を ' + c.dropped + '行落としました）' : '') + '。まだどこにも送っていません。');
+        attSay((prev ? '貼ってあった文字の後ろに ' : '') + c.text.length + '字を入れました' + (c.dropped ? '（時刻・話者の行を ' + c.dropped + '行落としました）' : ''));
       };
       rd.onerror = function () { if (gen === attGen) attSay('ファイルを読めませんでした。欄には入れていません。', true); };
       rd.readAsArrayBuffer(f);
@@ -3112,7 +3126,6 @@
       onclick: function () { attSay(''); attIn.value = ''; attIn.click(); } }));
     wrap.appendChild(attIn);
     wrap.appendChild(attMsg);
-    wrap.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '添付したファイルは端末の中で読んで上の欄に入れるだけで、どこにも送りません。音声のファイルは使えません。' }));
     var out = el('div', { style: 'display:flex;flex-direction:column;gap:10px;' });
     wrap.appendChild(out);
     var bar = el('div', { class: 'k-savebar' });
@@ -3154,11 +3167,10 @@
       if (!L) { if (airNote && !resumeBox.firstChild) resumeBox.appendChild(el('div', { class: 'k-sub k-airnote', text: airNote })); return; }
       var t = reviewTally(L.rv, aiScope(), isAuto);
       resumeBox.appendChild(el('div', { class: 'k-card k-airresume', style: 'display:flex;flex-direction:column;gap:6px;' }, [
-        el('div', { style: 'font-weight:700;', text: '前回の振り分けが途中です（' + hhmm(L.at) + '・種目' + t.ex + '・セット' + t.sets + '）' }),
+        helpRow(el('div', { style: 'font-weight:700;', text: '前回の振り分けが途中です（' + hhmm(L.at) + '・種目' + t.ex + '・セット' + t.sets + '）' }), AIR_KEEP_TEXT, 'k-airkeep'),
         el('div', { style: 'display:flex;gap:16px;' }, [
           el('button', { type: 'button', class: 'k-btn k-airgo', style: 'min-height:44px;margin:0;flex:1;', text: '続ける', onclick: function () { rv = L.rv; rvHash = L.hash; airNote = ''; airReused = false; res = null; err = ''; draw(); try { out.scrollIntoView({ block: 'start' }); } catch (e) {} } }),
-          el('button', { type: 'button', class: 'k-btn out k-airdrop', style: 'min-height:44px;margin:0;flex:1;', text: '捨てて最初から', onclick: function () { var x = lsRead(airK); airUndo = x.st === 'ok' ? x.v : null; lsDel(airK); drawResume(); } })]),
-        el('div', { class: 'k-sub', text: AIR_KEEP_TEXT })]));
+          el('button', { type: 'button', class: 'k-btn out k-airdrop', style: 'min-height:44px;margin:0;flex:1;', text: '捨てて最初から', onclick: function () { var x = lsRead(airK); airUndo = x.st === 'ok' ? x.v : null; lsDel(airK); drawResume(); } })])]));
     }
     ta.oninput = function () {
       if (airUndo || airNote) { airUndo = null; airNote = ''; drawResume(); }
@@ -3454,16 +3466,11 @@
       if (!lsSet(key, T)) { err = 'この端末に下書きを残せないため、入れられませんでした。'; errSticky = true; ask = false; draw(); return; }
       if (rv) { lsDel(airK); rvHash = ''; }   // 設計51：記録の画面に入れたら一時保存を消す（続きから出すと二重に入る）
       var ns = 0, nd = 0; b.items.forEach(function (it) { it.sets.forEach(function (st) { ns++; nd += (st.drops || []).length; }); });
-      trImportMsg = { cid: cid, text: 'メモから ' + b.items.length + '種目・' + ns + 'セット' + (nd ? '（ドロップ' + nd + '）' : '') + 'を入れました。✓を付けて保存してください（✓の無いセットは保存されません）。'
-        + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
-        + (b.nSet ? 'セットのメモ ' + b.nSet + '件は、そのセットのメモに入れました。' : '')
-        + (mm.added.length ? '文章 ' + mm.added.length + '行は、その日の社内メモ（画面の下）の末尾に入れました。' : '')   // 2026-11-26：日の単位の文章の行き先を言う（種目には入れていない）
-        + (mm.skipped ? 'すでに社内メモにある ' + mm.skipped + '行は重ねて入れませんでした。' : '')   // 設計64：重ねなかった数を見せる（黙って落とさない）
-        + (mNew && mAdded ? 'お客様に見える欄に ' + mAdded + '件入れました（保存するとお客様に見えます）。' : '')
-        + (mSkip ? 'お客様に見える欄の同じ文は重ねて入れませんでした。' : '')
-        + (rdate ? '' : (pendingB ? 'AIの下書きを ' + md(T.sessionDate) + ' の記録に入れました。' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。')) };
+      //   設計65（2026-11-26 オーナー「一枚目も説明不要」）：入れた直後は「n種目を入れました」だけの短い通知（行き先・重ねなかった数・✓の説明は出さない）
+      var dateSet = !!(rdate && wasEmpty && rdate !== cdate0);
+      trImportMsg = { cid: cid, text: (dateSet ? md(rdate) + ' に ' : '') + (b.items.length ? b.items.length + '種目を入れました' : '入れました') };
       //   設計56（CEO 判断）：日付は記録の画面に戻った直後の上の1行で知らせる（次の描き直しまで）
-      if (rdate && rdate !== cdate0) trImportMsg.date = wasEmpty ? '記録の日付をメモの ' + md(rdate) + ' にしました' : 'メモの日付（' + md(rdate) + '）と記録の日付（' + md(cdate0) + '）が違います';
+      if (rdate && rdate !== cdate0 && !wasEmpty) trImportMsg.date = 'メモの日付（' + md(rdate) + '）と記録の日付（' + md(cdate0) + '）が違います';   // 判断が要る食い違いだけ残す
       res = null; rv = null; pendingB = null; dec = []; ui = [];
       goBack();
     }
@@ -3575,7 +3582,7 @@
       if (p.kind === 'ai' || p.kind === 'aiunv') {
         var cat = p.kind === 'aiunv' ? 'aiunv' : p.cat;
         if (cat === 'caution' || MEMO_HEALTH.test(String(p.text || ''))) {   // 健康語を含む文は体の状態と同じく捨てるだけ（関門② 高1）
-          c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '体の状態は「注意すること」の画面で入れてください（同意が要ります）。ここからはどこにも入れません。' }));
+          c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '体のことは「注意すること」へ（ここからは入れません）' }));
           c.appendChild(btnCol([act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
           return c;
         }
@@ -3588,7 +3595,6 @@
         kids.push(act('社内メモに足す', function () { decide(j, { act: 'memo' }); }));
         kids.push(act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger'));
         c.appendChild(btnCol(kids));
-        c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '社内メモはお客様には見えません。' + I55_HINT }));
         return c;
       }
       if (p.kind === 'name') {
@@ -3603,7 +3609,6 @@
             } }));
           });
           c.appendChild(cp);
-          c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: I55_HINT }));
         }
         if (p.text.length <= EX_NAME_MAX || exName(u.name).length <= EX_NAME_MAX) {
           var ni = el('input', { type: 'text', maxlength: String(EX_NAME_MAX), 'aria-label': '種目名', 'data-nodirty': '1', autocomplete: 'off', value: u.name });
@@ -3612,7 +3617,7 @@
           c.appendChild(ni);
         }
         if (u.open) {
-          c.appendChild(el('div', { class: 'k-sub', text: '部位を選ぶと種目になります（登録するかは記録の画面で選べます）' }));
+          c.appendChild(el('div', { class: 'k-sub', text: '部位を選ぶ' }));
           var pp = el('div', { class: 'k-pills', role: 'radiogroup', 'aria-label': '部位', style: 'gap:6px;' });
           PART_KEYS.forEach(function (pk) { pp.appendChild(el('button', { type: 'button', role: 'radio', class: 'k-pill', 'aria-checked': 'false', 'data-part': pk[0], text: pk[1], onclick: function () {
             if (!nameOk()) { window.alert('種目名は1〜' + EX_NAME_MAX + '字で入れてください。'); return; }
@@ -3631,7 +3636,6 @@
           exNoteBtn(p, j),
           act('社内メモに足す', function () { decide(j, { act: 'memo' }); }),
           act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
-        c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: I55_HINT }));
         return c;
       }
       if (p.kind === 'paren') {
@@ -3640,7 +3644,6 @@
         c.appendChild(btnCol([
           act('括弧を除いてセットにする', function () { decideFit(j, { act: 'set', note: false }); }, ''),
           act('括弧の中をセットのメモに入れてセットにする', function () { decideFit(j, { act: 'set', note: true }); }),
-          el('div', { class: 'k-note-hint', style: 'margin:0;', text: I55_HINT }),
           act('社内メモに足す', function () { decide(j, { act: 'memo' }); }),
           act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
         return c;
@@ -3655,16 +3658,16 @@
           rt ? act('「' + rt.name + '」に ' + impLine(p.parsed.sets) + ' を足す', function () { decideFit(j, { act: 'addset' }); }, '') : null,
           (p.ai && MEMO_HEALTH.test(String(p.text || ''))) ? null : act('社内メモに足す', function () { decide(j, { act: 'memo' }); }),
           act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
-        c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: p.ai ? '数字は録音の文字起こしから読みました。根拠の文を見て、予告だけ・やり切れなかったセットは記録の画面で直してください。' : '話した数値は予告のことがあります。やり切れなかったセットは、記録の画面で直してください。' }));
+        //   設計65：予告の数字の注意は見出しの「?」に畳む
+        c.replaceChild(helpRow(c.firstChild, p.ai ? '数字は録音の文字起こしから読みました。根拠の文を見て、予告だけ・やり切れなかったセットは記録の画面で直してください。' : '話した数値は予告のことがあります。やり切れなかったセットは、記録の画面で直してください。', 'k-rulehelp'), c.firstChild);
         return c;
       }
       if (p.kind === 'limit' || p.kind === 'second_date') {
-        if (p.kind === 'second_date') c.appendChild(el('div', { class: 'k-sub', text: '1回の記録に1日分だけ取り込みます。' + String(p.text).split('\n')[0] + ' から後ろは、保存した後にもう一度取り込んでください（貼った文字は消していません）。' }));
+        if (p.kind === 'second_date') c.appendChild(el('div', { class: 'k-sub', text: String(p.text).split('\n')[0] + ' から後ろは、保存した後にもう一度取り込む（1回に1日分）' }));
         c.appendChild(btnCol([act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
         return c;
       }
       c.appendChild(btnCol([setNoteOk(p) ? act(setNoteDest(p) + 'にする', function () { decide(j, { act: 'setnote' }); }, '') : null, exNoteBtn(p, j), act('社内メモに足す', function () { decide(j, { act: 'memo' }); }), act('捨てる', function () { decide(j, { act: 'discard' }); }, 'out k-danger')]));
-      c.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '社内メモはお客様には見えません。' + I55_HINT }));
       return c;
     }
     //   ---- 設計50：AI の振り分けの確認（1種目＝1枚の1行・欄の文章・お客様の欄は既定オフ）。rv は純粋なデータ・ここは描くだけ
@@ -3709,7 +3712,7 @@
           box.appendChild(sb);
         }
       }
-      if (ex.orig.length && exName(ex.name) !== exName(ex.name0)) box.appendChild(el('div', { class: 'k-sub k-rvrenamed', text: '種目名を変えたため、数字は全部「直した」として入れます' }));
+      //   設計65：「種目名を変えたため…」は出さない（チップ「直した（種目名を変更）」が示す）
     }
     //   設計53：AI の確認画面の種目の並べ替え（色は種目の中で決まる＝順番に依らない）。並べ替えたら draw → rvFoot が一時保存する（設計51）
     var rvUd = null, rvMoveMsg = '';
@@ -3754,7 +3757,7 @@
       var ta = el('textarea', { class: 'k-rvexnote', 'aria-label': (exName(ex.name) || '種目') + 'のメモ（社内メモ）', 'data-nodirty': '1', style: RV_TA + 'min-height:64px;' });
       ta.value = ex.note;
       ta.oninput = function () { ex.note = ta.value; rvEdited(); };
-      c.appendChild(el('label', { class: 'k-sub', text: '種目のメモ（社内メモ・お客様には見えません）' }));
+      c.appendChild(el('label', { class: 'k-sub', text: '種目のメモ（社内）' }));
       c.appendChild(ta);
       return c;
     }
@@ -3765,7 +3768,7 @@
       ta.value = rv.fields[key];
       ta.oninput = function () { rv.fields[key] = ta.value; rvEdited(); };
       return el('div', { class: 'k-rvfieldbox', style: 'display:flex;flex-direction:column;gap:4px;' }, [
-        el('div', { style: 'font-weight:700;font-size:14px;', text: RV_FIELD_LABEL[key] + '　' }, [el('span', { class: 'k-sub', text: can ? (key === 'next' ? '社内メモ・トレーナー向け・1行1つ' : '社内メモ・1行1つ') : '見るだけ（試用中のため入れません）' })]), ta]);
+        el('div', { style: 'font-weight:700;font-size:14px;', text: RV_FIELD_LABEL[key] + (can ? '' : '　') }, [can ? null : el('span', { class: 'k-sub', text: '見るだけ（試用中のため入れません）' })]), ta]);
     }
     //   関門②（Codex・2026-11-26）：入れられなかった理由（err）は、確認の内容を直したら消す（直した後も「入れられませんでした」が残ると押せるボタンと食い違う）
     //     ★直しても解けない理由（前回の保存の結果待ち・端末に残せない）は消さない（関門② 2周目）
@@ -3782,19 +3785,18 @@
       //   2026-11-26 オーナー実機（長い文字起こしの .txt）：社内メモの2,000字を超えると commit が err を出すが、err は画面の上（out の先頭）に出て
       //     下の帯で押した人には見えず「押しても進まない」になった。★超えるなら先に理由を帯に出して押せなくする（数は commit と同じ足し方）
       var mo = rvMemoOver();
-      if (mo) t.reasons.push('社内メモが' + mo.max + '字を超えます（' + (mo.cur ? 'いまの社内メモ ' + mo.cur + '字＋この下書き ' + mo.add + '字＝' + mo.len + '字' : 'この下書き ' + mo.add + '字') + '）。「その日の社内メモに入れる文章」や種目のメモを短くするか、要らない行を消してください。');
+      if (mo) t.reasons.push('社内メモが' + mo.max + '字を超えます（' + (mo.cur ? 'いまの社内メモ ' + mo.cur + '字＋この下書き ' + mo.add + '字＝' + mo.len + '字' : 'この下書き ' + mo.add + '字') + '）。「その日の社内メモ」や種目のメモを短くするか、要らない行を消してください。');
       //   ★押した後に入れられなかった理由（err）は、押したボタンのすぐ上に出す（画面の上だけに出すと見えない）
       if (err) bar.appendChild(el('div', { class: 'k-rvperr', role: 'alert', style: 'background:#fde8e6;color:#a3341f;border-radius:10px;padding:8px 10px;margin:0 0 6px;font-size:14px;font-weight:700;', text: err }));
-      bar.appendChild(el('div', { class: 'k-sub k-rvcount', style: 'text-align:center;margin-bottom:6px;', text: '種目 ' + t.ex + '・セット ' + t.sets + ((t.inf || t.nob) ? '（推測 ' + t.inf + '・根拠なし ' + t.nob + ' を含む）' : '') + '／「?」で入れない ' + t.skip + '／書き方が読めない ' + t.bad + (t.renamed ? '／種目名を変えた ' + t.renamed : '') }));
-      var go = el('button', { type: 'button', class: 'k-btn k-rvput', style: 'min-height:52px;', text: '記録の画面に入れる（まだ保存しません）', onclick: function () { placeReview(); } });
+      bar.appendChild(el('div', { class: 'k-sub k-rvcount', style: 'text-align:center;margin-bottom:6px;', text: '種目 ' + t.ex + '・セット ' + t.sets + ((t.inf || t.nob) ? '（推測 ' + t.inf + '・根拠なし ' + t.nob + ' を含む）' : '') + (t.skip ? '／「?」で入れない ' + t.skip : '') + (t.bad ? '／書き方が読めない ' + t.bad : '') + (t.renamed ? '／種目名を変えた ' + t.renamed : '') }));
+      var go = el('button', { type: 'button', class: 'k-btn k-rvput', style: 'min-height:52px;', text: '記録の画面に入れる', onclick: function () { placeReview(); } });
       var stop = !!(t.reasons.length || none);
       if (stop) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
-      var why = el('div', { class: 'k-sub k-rvwhy', style: 'text-align:center;' + (stop ? 'margin:0 0 6px;' : 'margin-top:6px;') + (t.reasons.length ? 'color:var(--k-warn);font-weight:700;' : ''), text: t.reasons.length ? t.reasons.join('') : none ? '入れる項目がありません。' : '押すと、上の内容を記録の画面に入れます（まだ保存はしません。✓を付けて保存したものだけが記録になります）' });
+      var why = el('div', { class: 'k-sub k-rvwhy', style: 'text-align:center;' + (stop ? 'margin:0 0 6px;' : 'margin-top:6px;') + (t.reasons.length ? 'color:var(--k-warn);font-weight:700;' : ''), text: t.reasons.length ? t.reasons.join('') : none ? '入れる項目がありません。' : '' });   // 設計65：押せるときの説明は出さない
       //   ★押せない理由はボタンの上に出す（2026-11-26 オーナー実機：ボタンの下は LINE の画面の下端に隠れて「押せない」理由が見えなかった恐れ）
       if (stop) bar.appendChild(why);
       bar.appendChild(go);
       if (!kept) bar.appendChild(el('div', { class: 'k-sub k-airfail', style: 'text-align:center;', text: 'この端末には途中の内容を残せません（画面を離れると最初からになります）' }));
-      if (!stop) bar.appendChild(why);
     }
     //   いまの下書きの社内メモ＋この下書きの文章が commit の上限（reviewBuild の memoMax）を超えるか。組み立てられない（理由が別にある）ときは null
     function rvMemoOver() {
@@ -3810,18 +3812,18 @@
     }
     function drawReview() {
       var sc = aiScope();
-      if (airReused) out.appendChild(el('div', { class: 'k-card k-airreused', style: 'display:flex;flex-direction:column;gap:6px;' }, [el('div', { text: '同じ文字起こしの振り分けを、続きから出しました（回数は使っていません）' }),
+      if (airReused) out.appendChild(el('div', { class: 'k-card k-airreused', style: 'display:flex;flex-direction:column;gap:6px;' }, [helpRow(el('div', { text: '前回の振り分けを出しました' }), '同じ文字起こしなので送っていません（1日の回数は使っていません）。', 'k-airreusedq'),
         el('button', { type: 'button', class: 'k-btn out k-airredo', style: 'min-height:44px;margin:0;', text: '振り分け直す（1日の回数を1回使います）', onclick: function () { aiSend(true); } })]));
-      if (rv.restored) out.appendChild(el('div', { class: 'k-note-hint k-airrestored', style: 'margin:0;', text: '前回確認したときの判定です（根拠は保存していません）。' + AIR_KEEP_TEXT + '。' }));
+      if (rv.restored) out.appendChild(helpRow(el('div', { class: 'k-note-hint', style: 'margin:0;', text: '前回の判定です' }), '前回確認したときの判定です。' + AIR_KEEP_TEXT + '（根拠は保存していません）。', 'k-airrestored'));
       if (sc === 'trial') out.appendChild(el('div', { class: 'k-note-hint k-rvtrial', style: 'margin:0;', text: '試用中：AI の推測の数字・今日の流れ・状態・次回やることは入れません（見るだけ）。' }));
       var exs = el('div', { class: 'k-card k-rvexs', style: 'display:flex;flex-direction:column;gap:8px;' }, [
-        el('div', { style: 'font-weight:700;', text: 'トレーニング　' }, [el('span', { class: 'k-sub', text: '書き方：50×10　自重×10　?＝入れない（× は x でも可）' })])]);
+        helpRow(el('div', { style: 'font-weight:700;', text: 'トレーニング' }), '書き方：50×10　自重×10　?＝入れない（× は x でも可）', 'k-rvhow')]);
       if (rvMoveMsg) { exs.appendChild(el('div', { class: 'k-sub k-movemsg', role: 'status', 'aria-live': 'polite', text: rvMoveMsg })); rvMoveMsg = ''; }
       rv.exercises.forEach(function (ex) { exs.appendChild(rvExCard(ex)); });
       exs.appendChild(el('button', { type: 'button', class: 'k-btn out k-rvadd', style: 'min-height:44px;', text: '＋ 種目を足す', onclick: function () {
         rv.exercises.push({ id: 'e' + rv.exercises.length + 'x', name: '', name0: '', heard: '', off: false, part: null, partFor: null, orig: [], line: '', note: '' }); draw(); } }));
       out.appendChild(exs);
-      var fs = el('div', { class: 'k-card k-rvfields', style: 'display:flex;flex-direction:column;gap:10px;' }, [el('div', { style: 'font-weight:700;', text: 'その日の社内メモに入れる文章（空の欄は入れません）' })]);
+      var fs = el('div', { class: 'k-card k-rvfields', style: 'display:flex;flex-direction:column;gap:10px;' }, [el('div', { style: 'font-weight:700;', text: 'その日の社内メモ' })]);
       RV_FIELDS.forEach(function (f) { fs.appendChild(rvField(f[0])); });
       out.appendChild(fs);
       var on = rv.member.on === true;
@@ -3835,12 +3837,10 @@
       out.appendChild(el('div', { class: 'k-card k-rvmem', style: 'display:flex;flex-direction:column;gap:8px;border:2px solid ' + (on ? 'var(--k-acc)' : '#d7dce5') + ';' }, [
         el('div', { style: 'font-weight:700;', text: 'お客様に見える欄' }),
         el('label', { style: 'display:flex;align-items:center;gap:10px;min-height:44px;font-weight:700;' }, [cb, 'お客様の画面に出す']),
-        el('div', { class: 'k-sub', text: on ? '保存した時点で、この2つがお客様の画面に出ます。' : 'いまは出しません。チェックすると、保存した時点でお客様の画面に出ます。' }),
         el('div', { style: 'font-weight:700;font-size:14px;', text: 'お客様へ（' + MEMBER_MAX.message + '字まで）' }), mta,
         el('div', { style: 'font-weight:700;font-size:14px;', text: '次回までに（1行1つ・' + MEMBER_MAX.todo + 'つまで）' }), tta]));
-      if (rv.caution.length) out.appendChild(el('div', { class: 'k-card k-rvcau', style: 'display:flex;flex-direction:column;gap:4px;' }, [el('div', { style: 'font-weight:700;', text: '体のこと（ここからは入れません）' })]
-        .concat(rv.caution.map(function (t) { return el('div', { class: 'k-imptext k-rvcaution', text: '・' + t }); }))
-        .concat([el('div', { class: 'k-sub', text: '体の状態は「注意すること」の画面で入れてください（お客様の同意が要ります）。' })])));
+      if (rv.caution.length) out.appendChild(el('div', { class: 'k-card k-rvcau', style: 'display:flex;flex-direction:column;gap:4px;' }, [el('div', { style: 'font-weight:700;', text: '体のこと（入れません・「注意すること」へ）' })]
+        .concat(rv.caution.map(function (t) { return el('div', { class: 'k-imptext k-rvcaution', text: '・' + t }); }))));
       if (rv.unclear.length) out.appendChild(el('div', { class: 'k-card k-rvunclear', style: 'display:flex;flex-direction:column;gap:4px;' }, [el('div', { style: 'font-weight:700;', text: 'AI が分からなかった点（入れません）' })]
         .concat(rv.unclear.map(function (u) { return el('div', { class: 'k-sub', text: '・' + u.text + (u.evidence ? '（「' + u.evidence + '」）' : '') }); }))));
       rvFoot();
@@ -3870,7 +3870,6 @@
       if (ask) {
         out.appendChild(el('div', { class: 'k-card k-impcard k-impask' }, [
           el('div', { style: 'font-weight:700;', text: '入力中の記録に種目があります' }),
-          el('div', { class: 'k-sub', text: 'メモの内容を、いまの入力の後ろに足しますか？（置き換えはしません）' }),
           btnCol([act('いまの入力の後ろに足す', function () { commit(); }, ''), act('やめる', function () { ask = false; draw(); })])]));
         return;
       }
@@ -3879,8 +3878,7 @@
         var why = aiOffReason();
         out.appendChild(el('div', { class: 'k-card k-imptguide', role: 'status', style: 'display:flex;flex-direction:column;gap:8px;' }, [
           el('div', { style: 'font-weight:700;', text: '文字起こしのようです（確かめが必要な行が' + res.pending.length + '件）' }),
-          el('div', { class: 'k-sub', text: '「読み取る」は紙のメモ向けです。録音の文字起こしは「AIで振り分ける」の方が向いています。' }),
-          why ? el('div', { class: 'k-sub k-impaioff', style: 'color:var(--k-warn);', text: why }) : el('div', { class: 'k-sub', text: '下の「AIで振り分ける」を押してください。' }),
+          why ? el('div', { class: 'k-sub k-impaioff', style: 'color:var(--k-warn);', text: why }) : el('div', { class: 'k-sub', text: '下の「AIで振り分ける」が向いています' }),
           act('それでも1件ずつ確認する', function () { tlike = false; draw(); var f = out.querySelector('.k-impcard'); if (f) { try { f.scrollIntoView({ block: 'center' }); } catch (e) {} } }, 'k-imptone')]));
       }
       if (res && !err && !tlike) {
@@ -3890,35 +3888,38 @@
         if (plan.length && planOpen) {
           var pb = el('div', { class: 'k-card k-impplanbox', style: 'display:flex;flex-direction:column;gap:8px;' }, [el('div', { style: 'font-weight:700;', text: '決める内容（' + plan.length + '件）' })]);
           plan.forEach(function (x) { pb.appendChild(el('div', { class: 'k-impplanrow' }, [el('div', { class: 'k-imptext', text: x.text }), el('div', { class: 'k-sub', style: 'font-weight:700;', text: '→ ' + x.dest })])); });
-          pb.appendChild(el('div', { class: 'k-note-hint', style: 'margin:0;', text: I55_HINT + '。違うものは「閉じる」を押し、そのカードで選んでください。' }));
           pb.appendChild(btnCol([act('この内容で決める', function () { plan.forEach(function (x) { dec[x.j] = x.d; }); planOpen = false; draw(); }, 'k-impplango'), act('閉じる', function () { planOpen = false; draw(); })]));
           out.appendChild(pb);
         }
+        //   設計65：健康の1行（I55・I71）はカードごとに繰り返さず一覧の上に1回だけ。社内メモが見えないことは ? の中
+        if (res.pending.length) out.appendChild(helpRow(el('div', { class: 'k-note-hint', style: 'margin:0;', text: IMP_HEALTH_LINE }), '社内メモはお客様には見えません。体の状態はお客様の同意が要るため「注意すること」の画面で入れます。', 'k-imphealth'));
         res.pending.forEach(function (p, j) { out.appendChild(card(p, j)); });
       }
       if (res && res.pending.length && !err && !tlike) {
         var go = el('button', { type: 'button', class: 'k-btn k-impput', text: '記録の画面に入れる', onclick: function () { if (allDecided()) place(); } });
-        if (!allDecided()) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); }
+        //   設計65：押せない理由だけをボタンの上に（「何も送りません」の説明は出さない）
+        if (!allDecided()) { go.disabled = true; go.setAttribute('aria-disabled', 'true'); bar.appendChild(el('div', { class: 'k-sub k-impleft', style: 'text-align:center;margin:0 0 6px;', text: '全部選ぶと押せます（' + dec.filter(function (x) { return !x; }).length + '件のこり）' })); }
         bar.appendChild(go);
-        bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: allDecided() ? 'この画面からは何も送りません' : '全部選ぶと押せます（' + dec.filter(function (x) { return !x; }).length + '件のこり）' }));
         return;
       }
       //   設計55（2026-11-24 オーナー）：AI が使えて同意があるときは「AIで振り分ける」が主（塗り）・「読み取る」は枠だけ。使えないときは今までどおり
       var aiMain = !!cur.aiDraft && cur.aiConsent === 'agreed';
       bar.appendChild(el('button', { type: 'button', class: aiMain ? 'k-btn out k-impread' : 'k-btn k-impread', text: '読み取る', onclick: read }));
-      if (!cur.aiDraft) { bar.appendChild(el('div', { class: 'k-sub', style: 'text-align:center;margin-top:6px;', text: 'この画面からは何も送りません（端末の中で読み取ります）' })); return; }
+      if (!cur.aiDraft) return;   // 設計65：「端末の中で読み取ります」は上の見出しの ? の中
       //   設計44：お客様の録音・AI の同意が無ければボタンを出さない（Worker でも 403 で止まる）
       if (cur.aiConsent !== 'agreed') {
-        bar.appendChild(el('div', { class: 'k-sub k-noaiconsent', style: 'text-align:center;margin-top:8px;', text: cur.aiConsent === 'none'
-          ? 'このお客様は録音と AI の利用に同意していません（会員画面の「同意の内容」から同意できます）。「読み取る」は使えます。'
-          : '録音と AI の利用の同意を確認できませんでした。「読み取る」は使えます。' }));
+        //   設計65：AI のボタンが無い理由は1行で残し、同意の場所は ? の中
+        bar.appendChild(helpRow(el('div', { class: 'k-sub', style: 'text-align:center;', text: cur.aiConsent === 'none' ? '録音・AIの同意がありません' : '録音・AIの同意を確かめられませんでした' }),
+          (cur.aiConsent === 'none' ? '会員画面の「同意の内容」から同意できます。' : '開き直すともう一度確かめます。') + '「読み取る」は使えます。', 'k-noaiconsent'));
         return;
       }
       //   設計39：AI で振り分ける（Worker の切替が開き鍵があるときだけ）。送信中は押せない
       var ab = el('button', { type: 'button', class: 'k-btn k-impai', style: 'margin-top:8px;', text: aiBusy ? '振り分けています（1分ほど）' : 'AIで振り分ける（録音の文字起こし）', onclick: aiSend });
       if (aiBusy) { ab.disabled = true; ab.setAttribute('aria-disabled', 'true'); }
       bar.appendChild(ab);
-      bar.appendChild(el('div', { class: 'k-sub k-aiexplain', style: 'text-align:center;margin-top:6px;', text: '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。' + AI_KEEP_NOTE }));
+      //   設計65：外部へ送ることはボタンの直下に必ず1行（同意 rec_ai・I76）。伏せ方・残るもの・保存しないことは ? の中（消さない）
+      bar.appendChild(helpRow(el('div', { class: 'k-sub k-aisendline', style: 'text-align:center;font-weight:700;', text: AI_SEND_LINE }),
+        '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。' + AI_KEEP_NOTE, 'k-aiexplain'));
     }
     draw();
   }
@@ -3995,7 +3996,7 @@
               all: 'loading', dates: null, consent: 'loading', healthImport: false, gen: 0, done: 0 };
     var wrap = el('div', { class: 'k-pimp', style: 'display:flex;flex-direction:column;gap:10px;' });
     box.appendChild(wrap);
-    wrap.appendChild(el('div', { class: 'k-sub', style: 'font-size:13px;line-height:1.7;', text: '共有のプロンプトで整えた出力を丸ごと貼ってください。端末の中で日ごとに切って一覧にします（まだどこにも送りません）。' }));
+    wrap.appendChild(helpRow(el('div', { style: 'font-weight:700;font-size:14px;', text: '共有のプロンプトの出力を丸ごと貼る' }), '端末の中で日ごとに切って一覧にします。入れるボタンを押すまで、どこにも送りません。', 'k-pimphelp'));
     var ta = el('textarea', { rows: '6', class: 'k-memo k-pimp-ta', 'aria-label': '取り込む文を貼る', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-nodirty': '1', placeholder: '=====\n2025/9/20\nベンチプレス\n60×10、60×10' });
     wrap.appendChild(ta);
     var readBtn = el('button', { type: 'button', class: 'k-btn k-pimp-read', style: 'min-height:48px;margin:0;', text: '読み取る' });
@@ -4557,9 +4558,15 @@
     if (restored) note.textContent = (EDIT ? '直しかけを戻しました（' : '入力の途中を戻しました（') + fmtDate(D.at) + '）。この端末に最大24時間残ります。';
     if (EDIT && edNote) note.textContent = edNote;
     //   設計58：直す画面の案内（ダイアログは増やさない＝1行で知らせる）
-    if (EDIT) c.appendChild(el('div', { class: 'k-edhint', role: 'note', style: 'background:#edf2fb;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:14px;color:var(--k-acc);', text: '保存すると、お客様の画面の数字も変わります。お客様に見える欄は「お客様の見え方」から直せます。日付を変えると、この日のお客様に見える欄も同じ日に移ります。' }));
+    //   設計65：お客様に影響することだけ1行で残し、残りの2文は ? の中
+    if (EDIT) c.appendChild(helpRow(el('div', { style: 'background:#edf2fb;border-radius:10px;padding:8px 10px;font-size:14px;color:var(--k-acc);', text: '保存すると、お客様の画面の数字も変わります' }), 'お客様に見える欄は「お客様の見え方」から直せます。日付を変えると、この日のお客様に見える欄も同じ日に移ります。', 'k-edhint'));
     //   メモから取り込んだ直後の1行（メモリにだけある件数の案内・原文は持たない）
-    if (!EDIT && trImportMsg && trImportMsg.cid === cid) { note.textContent = trImportMsg.text; note.style.cssText = 'margin-bottom:8px;font-size:14px;font-weight:700;color:var(--k-acc);background:var(--k-acc-l);border-radius:10px;padding:8px 10px;'; }
+    //   設計65：取り込みの直後の短い通知。TOAST_MS で消える・タップでも消える（帯で説明しない）
+    if (!EDIT && trImportMsg && trImportMsg.cid === cid) {
+      var toast = el('div', { class: 'k-toast', role: 'status', 'aria-live': 'polite', text: trImportMsg.text, onclick: function () { if (toast.parentNode) toast.parentNode.removeChild(toast); } });
+      c.insertBefore(toast, note);
+      setTimeout(function () { if (toast.parentNode) toast.parentNode.removeChild(toast); }, TOAST_MS);
+    }
     if (!EDIT && trImportMsg && trImportMsg.cid === cid && trImportMsg.date) c.appendChild(el('div', { class: 'k-impdate', role: 'status', style: 'background:#fbefd9;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:14px;font-weight:700;color:#5c3a05;', text: trImportMsg.date }));   // 設計56：取り込みの日付の1行
     if (!EDIT) trImportMsg = null;   // 設計58：直す画面は取り込みの案内を使わない（今日の記録の画面に残す）
 
@@ -4780,7 +4787,7 @@
         var ac = allChkBtn(it);
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:2px 0 8px;' }, [el('div', { class: 'k-sub k-prev', style: 'flex:1;min-width:0;font-size:14px;color:var(--k-acc);', text: prevLabel(it.exercise) }), ac]));   // 設計55：実施中にいちばん見る行＝14px・ネイビー
         var db = doneBtn(it);
-        if (db) blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:0 0 8px;' }, [db, el('span', { class: 'k-sub', text: '数字の無い種目は「実施した」で記録します' })]));
+        if (db) blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin:0 0 8px;' }, [db]));   // 設計65：説明の文は出さない（ボタンが示す）
         if (it.regPart && !registeredEx(it.exercise) && !MEMO_PII_WEAK.test(String(it.exercise || ''))) blk.appendChild(regCard(it));   // 設計52：名前らしい印の名前は登録の欄を出さない
         if (it.sets.length) blk.appendChild(el('div', { class: 'k-setrow k-sethead', style: 'margin-bottom:2px;font-size:12px;color:var(--k-sub);' }, [el('span'), el('span', { text: '重量 kg' }), el('span', { text: '回数' }), el('span', { style: 'text-align:center;', text: '実施' }), el('span', { style: 'text-align:center;line-height:1.2;', text: extOk() ? 'メモ・補助' : 'メモ' })]));
         it.sets.forEach(function (s, si) {
@@ -4885,7 +4892,7 @@
       } });
       var box = el('div', { class: 'k-extpanel', style: 'margin-top:8px;' }, [
         el('div', { class: 'k-extrow' }, [el('span', { style: 'font-size:13px;', text: '補助 ＋' }), ai, el('span', { style: 'font-size:13px;', text: '回' }), fz]),
-        el('div', { class: 'k-sub', text: '補助は回数に足しません。ドロップは本セットの✓に含まれます' })]);
+        helpRow(el('span', { class: 'k-sub', text: '数え方' }), '補助は回数に足しません。ドロップは本セットの✓に含まれます', 'k-exthelp')]);
       (Array.isArray(s.drops) ? s.drops : []).forEach(function (d, k) {
         var lb = n + 'セット目のドロップ' + (k + 1) + '段目の';
         var wi = numInput(d.w, 'kg', lb + '重量', function (v) { d.w = v; }); wi.onchange = function () { draw(); };
@@ -4927,8 +4934,7 @@
       } });
       if (regBusy) rb.disabled = true;
       return el('div', { class: 'k-card k-exunreg', 'data-name': name, style: 'margin:0 0 8px;display:flex;flex-direction:column;gap:6px;' }, [
-        el('div', { style: 'font-weight:700;', text: '「' + name + '」は共有の一覧にありません' }),
-        el('div', { class: 'k-sub', text: '部位を選んで登録すると、全トレーナー・全お客様の一覧に出ます（登録しなくても今日の記録には足せます）。' }),
+        helpRow(el('div', { style: 'font-weight:700;', text: '「' + name + '」は共有の一覧にありません' }), '部位を選んで登録すると、全トレーナー・全お客様の一覧に出ます（登録しなくても今日の記録には足せます）。', 'k-reghelp'),
         pp, el('div', { class: 'k-grid2' }, [rb, el('button', { type: 'button', class: 'k-btn out small', text: '登録しない', onclick: function () { delete it.regPart; delete it.regReq; save(); draw(); } })]),
         el('div', { class: 'k-note-hint', style: 'margin:0;', text: '種目名に痛み・診断・服薬が入っていたら登録しない（「注意すること」へ）' })]);
     }
@@ -4998,7 +5004,7 @@
     //   ★書きかけは記録の下書き（D.memo）に残す＝セットと同じく画面を離れても消えない。「お客様へ」は第2弾（保存先を作る）
     if (!D.memoReqId) D.memoReqId = newReqId();
     if (D.memoTag == null) D.memoTag = 'training';
-    c.appendChild(el('div', { class: 'k-sub', style: 'letter-spacing:.08em;padding:10px 2px 6px;', text: '指導メモ（セッション中にそのまま書けます）' }));
+    c.appendChild(el('div', { class: 'k-sub', style: 'letter-spacing:.08em;padding:10px 2px 6px;', text: '指導メモ' }));
     var memoTa = el('textarea', { rows: '3', maxlength: String(NOTE_MAX), 'aria-label': '社内メモ', placeholder: '話した内容・やったこと・次回の課題', 'data-nodirty': '1', class: 'k-memo' });
     memoTa.value = D.memo || '';
     memoTa.oninput = function () { D.memo = memoTa.value; save(); };
@@ -5056,7 +5062,7 @@
       mLabel('お客様へ（' + MEMBER_MAX.message + '字まで）'), mTa, mCount,
       mLabel('次回までに（' + MEMBER_MAX.todo + 'つまで）'), todoBox,
       mLabel('日のタグ（' + MEMBER_MAX.tags + 'つまで）'), dayTags,
-      el('div', { class: 'k-note-hint', style: 'margin:0;', text: '保存するとお客様の画面にそのまま出ます。痛み・診断・社内のことは書かない' })]));
+      el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・社内のことは書かない' })]));
     c = cMain;   // 設計58：ここから先は画面に置く
     //   指導メモを送る。★結果が確定するまで、本文と送信番号を記録の下書き（D.memoPending）に残す（関門② High×3）
     //     ・結果が分からない（通信切れ・応答が読めない）＝同じ送信番号で「同じ内容で送り直す」＝二重にならない
@@ -5847,7 +5853,7 @@
     var c = el('div', { class: 'k-card k-history', style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px;' });
     c.appendChild(el('div', { class: 'k-h', style: 'margin:0;', text: '過去のまとめ' }));
     if (HS.history === null) c.appendChild(msg('まとめを読めませんでした（開き直すともう一度読みます）。', true));
-    else if (!HS.history.length) c.appendChild(msg('まだありません（原本は「3か月より前のメモ」から見られます）。'));
+    else if (!HS.history.length) c.appendChild(helpRow(msg('まだありません'), '原本は「3か月より前のメモ」から見られます。', 'k-hnone'));
     (HS.history || []).forEach(function (h) {
       var full = !!HS.open[h.id];
       var b = el('div', { class: 'k-hblock', style: 'border-top:1px solid var(--k-line,#e5e0d8);padding-top:8px;display:flex;flex-direction:column;gap:6px;' });
