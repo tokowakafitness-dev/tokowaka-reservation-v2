@@ -97,13 +97,14 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
 {
   const { w } = boot({ cfg: { ai: false } });
   await openImport(w);
-  ok('L1-1 ★aiDraft が偽ならボタンを出さない・案内は「何も送りません」のまま', !btn(R(w), 'AIで振り分ける') && R(w).textContent.includes('この画面からは何も送りません'));
+  //   設計65：「何も送りません」は見出しの ? の中（開くと出る）。帯には説明を出さない
+  ok('L1-1 ★aiDraft が偽ならボタンを出さない・外部へ送る1行も無い・「端末の中だけ」は ? の中', !btn(R(w), 'AIで振り分ける') && !R(w).querySelector('.k-aiexplain') && !R(w).textContent.includes('この画面からは何も送りません') && (() => { R(w).querySelector('.k-imphelp .k-q').click(); return (R(w).querySelector('.k-imphelp .k-qbody') || {}).textContent.includes('端末の中だけで読み、どこにも送りません'); })());
   const b = boot();
   await openImport(b.w);
   const ab = btn(R(b.w), 'AIで振り分ける');
-  ok('L1-2 aiDraft が真なら「読み取る」の下にボタン・外部へ送る案内', !!ab && !!btn(R(b.w), '読み取る') && R(b.w).textContent.includes('外部（Anthropic）へ送ります') && R(b.w).textContent.includes('聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります'));
+  ok('L1-2 aiDraft が真なら「読み取る」の下にボタン・外部へ送る案内', !!ab && !!btn(R(b.w), '読み取る') && R(b.w).querySelector('.k-aisendline').textContent === '外部のAI（Anthropic）へ送ります' && (() => { R(b.w).querySelector('.k-aiexplain .k-q').click(); return (R(b.w).querySelector('.k-aiexplain .k-qbody') || {}).textContent.includes('聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります'); })());
   //   設計44：お客様の録音・AI の同意が無い・確認できない・古い Worker（aiConsent が無い）はボタンを出さない
-  for (const [label, v, want] of [['none', 'none', '同意していません'], ['unknown', 'unknown', '確認できませんでした'], ['無い（古い Worker）', undefined, '確認できませんでした']]) {
+  for (const [label, v, want] of [['none', 'none', '同意がありません'], ['unknown', 'unknown', '確かめられませんでした'], ['無い（古い Worker）', undefined, '確かめられませんでした']]) {
     const x = boot({ cfg: { aiConsent: v } });
     await openImport(x.w);
     ok('L1-4 ★aiConsent が' + label + 'なら AI のボタンを出さず、理由の文と「読み取る」', !btn(R(x.w), 'AIで振り分ける') && !!btn(R(x.w), '読み取る') && R(x.w).textContent.includes(want));
@@ -130,7 +131,7 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   btn(R(w), 'この内容で決める').click(); await settle();
   //   体の状態：捨てるだけ
   const cc = cardBy(w, /AI：体の状態/);
-  ok('L2-5 ★体の状態のカードは「捨てる」だけ（社内メモにも入れない）', cc && JSON.stringify(btnsIn(cc)) === JSON.stringify(['捨てる']) && cc.textContent.includes('「注意すること」の画面で入れてください'), cc && JSON.stringify(btnsIn(cc)));
+  ok('L2-5 ★体の状態のカードは「捨てる」だけ（社内メモにも入れない）', cc && JSON.stringify(btnsIn(cc)) === JSON.stringify(['捨てる']) && cc.textContent.includes('「注意すること」へ（ここからは入れません）'), cc && JSON.stringify(btnsIn(cc)));
   btn(cc, '捨てる').click(); await settle();
   //   一覧に無い種目：先に名前 → セットの足すボタンはまだ出ない
   const rc0 = cardBy(w, /スカルクラッシュ改：「/);

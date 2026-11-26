@@ -96,9 +96,11 @@ async function attach(w, bytes, name, type, opt = {}) {
   await openImport(w);
   const b = btn(R(w), 'ファイルを添付（文字起こしの .txt）');
   const inp = R(w).querySelector('input[type=file]');
-  ok('T1-1 貼り付け欄の直後に添付のボタン（高さ48px・幅いっぱいの k-btn）', !!b && TA(w).nextElementSibling === b && /min-height:\s*48px/.test(b.getAttribute('style')) && b.classList.contains('k-btn'));
+  //   設計65 関門②：貼り付け欄の真下は健康の1行（MODEL I55）、その次が添付のボタン
+  ok('T1-1 貼り付け欄の真下に健康の1行・その直後に添付のボタン（高さ48px・幅いっぱいの k-btn）', !!b && TA(w).nextElementSibling && TA(w).nextElementSibling.classList.contains('k-note-hint') && TA(w).nextElementSibling.nextElementSibling === b && /min-height:\s*48px/.test(b.getAttribute('style')) && b.classList.contains('k-btn'));
   ok('T1-2 ファイルの入力は隠し、受け付けは .txt/.srt/.vtt/text/plain だけ（音声を出さない）', !!inp && inp.style.display === 'none' && inp.getAttribute('accept') === '.txt,.srt,.vtt,text/plain');
-  ok('T1-3 ★注記：端末の中で読むだけ・どこにも送らない・音声は使えない（「AIで振り分ける」は外部へ、の既存注記も残る）', R(w).textContent.includes('添付したファイルは端末の中で読んで上の欄に入れるだけで、どこにも送りません。音声のファイルは使えません。') && R(w).textContent.includes('外部（Anthropic）へ送ります'));
+  //   設計65：注記は見出しの ? の中（開くと出る）・AI のボタンの直下の「外部へ送る」1行は常に出る
+  ok('T1-3 ★注記：端末の中で読むだけ・どこにも送らない・音声は使えない（? の中）・「外部のAI（Anthropic）へ送ります」の1行は残る', !R(w).textContent.includes('音声のファイルは使えません') && (() => { R(w).querySelector('.k-imphelp .k-q').click(); const t = (R(w).querySelector('.k-imphelp .k-qbody') || {}).textContent || ''; return t.includes('添付したファイルは端末の中だけで読み、どこにも送りません') && t.includes('音声のファイルは使えません'); })() && R(w).textContent.includes('外部のAI（Anthropic）へ送ります'));
   const clicked = await attach(w, utf8('スクワット\n30×10'), 'a.txt', 'text/plain');
   ok('T1-4 ボタンがファイルの選択を開く', clicked === 1);
 }
@@ -125,7 +127,7 @@ async function attach(w, bytes, name, type, opt = {}) {
   ok('T2-1 ★本文が貼り付け欄に入る', v.includes('スクワット 30キロで10回いきます') && v.includes(SECRET) && v.includes('次は ベンチプレス'), v);
   ok('T2-2 ★時:分:秒だけの行・話者の見出しの行は落ちる／行頭の話者・[時刻] は外す', !/Speaker|話者|スピーカー|00:00|00:01:02/.test(v), v);
   ok('T2-3 ★.txt では分:秒だけの行（1:30）・数字だけの行（30）は残す（記録そのもの）', v.split('\n').includes('1:30') && v.split('\n').includes('30') && v.split('\n').includes('プランク'), v);
-  ok('T2-4 落とした行数と「まだどこにも送っていません」を知らせる', /字を入れました（時刻・話者の行を 6行落としました）。まだどこにも送っていません。/.test(MSG(w).textContent), MSG(w).textContent);
+  ok('T2-4 落とした行数を知らせる（「まだどこにも送っていません」は ? の中・設計65）', /字を入れました（時刻・話者の行を 6行落としました）$/.test(MSG(w).textContent), MSG(w).textContent);
   ok('T2-5 ★添付だけでは何も送らない（fetch を呼ばない）', sent.length === n0, JSON.stringify(sent.slice(n0).map((x) => x.body.action)));
   //   I63：中身もファイル名も保存領域・console に出さない
   const all = storeText(w.localStorage) + storeText(w.sessionStorage) + w.logs.join('\n');

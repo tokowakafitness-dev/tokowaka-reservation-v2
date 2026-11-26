@@ -1113,7 +1113,7 @@ ok('20-3 ★見分けやすさ：入力・✓の枠は白地に3:1以上（#8692
   const back = root.querySelector('.k-entryhead .k-back');
   const bcs = back && w.getComputedStyle(back);
   ok('21-1 ★見出しの左に戻る矢印（ネイビーの帯の上で見える＝背景は透明・矢印は白）', !!back && back.textContent === '←' && bcs.backgroundColor !== 'rgb(255, 255, 255)' && bcs.color === 'rgb(255, 255, 255)', bcs && (bcs.backgroundColor + ' / ' + bcs.color));
-  ok('21-2 ★今日の記録の中に指導メモ（社内メモ・お客様には見えません・タグは最初「トレーニング」）', root.textContent.includes('指導メモ（セッション中にそのまま書けます）') && !!root.querySelector('textarea[aria-label="社内メモ"]') && root.textContent.includes('お客様には見えません') && root.querySelector('.k-pill.on').textContent === 'トレーニング');
+  ok('21-2 ★今日の記録の中に指導メモ（社内メモ・お客様には見えません・タグは最初「トレーニング」）', !root.textContent.includes('セッション中にそのまま書けます') && [...root.querySelectorAll('.k-sub')].some((x) => x.textContent === '指導メモ') && !!root.querySelector('textarea[aria-label="社内メモ"]') && root.textContent.includes('お客様には見えません') && root.querySelector('.k-pill.on').textContent === 'トレーニング');
   await fromPrev(root);
   root.querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
   const ta = root.querySelector('textarea[aria-label="社内メモ"]');

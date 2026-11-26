@@ -106,14 +106,15 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   paste(w, P1); ops++;
   btn(R(w), '読み取る').click(); ops++; await nav();
   //   設計56（CEO 判断）：日付の文だけでは確認画面で止めない＝記録の画面に戻った直後の上の1行で知らせる
-  ok('M1-0b ★空の下書き×日付のあるメモ：記録の画面の上に「記録の日付をメモの 9/18 にしました」', (R(w).querySelector('.k-trform .k-impdate') || {}).textContent === '記録の日付をメモの 9/18 にしました', (R(w).querySelector('.k-impdate') || {}).textContent);
+  //   設計65：空の下書きの日付をメモの日付にしたときは、短い通知に日付を添えるだけ（食い違いの1行 k-impdate は出さない）
+  ok('M1-0b ★空の下書き×日付のあるメモ：記録の画面の上の短い通知「9/18 に 7種目を入れました」・k-impdate なし', (R(w).querySelector('.k-trform .k-toast') || {}).textContent === '9/18 に 7種目を入れました' && !R(w).querySelector('.k-trform .k-impdate'), (R(w).querySelector('.k-toast') || {}).textContent);
   ok('M1-1 決定待ちが無ければそのまま記録の画面へ戻る・7種目', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && draftOf(w).items.length === 7, R(w).textContent.slice(0, 200));
   {
     //   取り込んだ直後（保存して下書きが消える前）の保存領域にも原文が無い
     const st0 = storeText(w.localStorage) + storeText(w.sessionStorage);
     ok('M1-1b ★取り込んだ直後の下書き・退避に原文（行・全体）が無い（I63）', ['30×10 50×10+5', '0×10 10×10+0×10', '80×5(できない)', 'ルーマニアン片足\n9×10'].every((x) => !st0.includes(x)) && /karte_tr_draft_v1/.test(st0));
   }
-  ok('M1-2 上に「メモから 7種目・15セット…✓を付けて保存」の1行・日付はメモの日付', R(w).textContent.includes('メモから 7種目・15セット（ドロップ2）を入れました') && R(w).textContent.includes('✓の無いセットは保存されません') && draftOf(w).sessionDate === '2026-09-18');
+  ok('M1-2 ★設計65：上は短い通知だけ（✓・保存の説明は出さない）・日付はメモの日付', !R(w).textContent.includes('保存されません') && !R(w).textContent.includes('✓を付けて保存') && R(w).querySelectorAll('.k-toast').length === 1 && draftOf(w).sessionDate === '2026-09-18');
   //   全部✓（5種目）・実施した（2種目）を畳んだ行から押す
   for (let i = 0; i < 5; i++) { const b = R(w).querySelector('button.k-allchk'); if (!b) break; b.click(); ops++; await settle(); }
   for (let i = 0; i < 2; i++) { const b = R(w).querySelector('button.k-donechk[aria-pressed="false"]'); if (!b) break; b.click(); ops++; await settle(); }
@@ -173,7 +174,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const ta = paste(w, '9/18\nスクワット\n50×10\n9/20\nベンチプレス\n40×10');
   btn(R(w), '読み取る').click(); await settle();
   const c = card(w, 'second_date');
-  ok('M3-1 2つ目の日付から後ろは1枚のカード・「1日分だけ」「保存した後にもう一度」・選べるのは捨てるだけ', !!c && c.textContent.includes('1回の記録に1日分だけ') && c.textContent.includes('保存した後にもう一度') && !btn(c, '社内メモに足す') && !!btn(c, '捨てる'));
+  ok('M3-1 2つ目の日付から後ろは1枚のカード・「1日分だけ」「保存した後にもう一度」・選べるのは捨てるだけ', !!c && c.textContent.includes('1回に1日分') && c.textContent.includes('保存した後にもう一度') && !btn(c, '社内メモに足す') && !!btn(c, '捨てる'));
   ok('M3-2 貼った欄の文字は消さない', ta.value.includes('9/20'));
   btn(c, '捨てる').click(); await settle();
   btn(R(w), '記録の画面に入れる').click(); await nav();
@@ -231,14 +232,14 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   await openImport(w);
   paste(w, '9/18\nスクワット\n50×10');
   btn(R(w), '読み取る').click(); await settle();
-  const dn = R(w).querySelector('.k-impdate');
-  ok('M4-6 ★完全に空の下書き：確認画面で止めず、記録の画面の上に「記録の日付をメモの 9/18 にしました」', !!dn && !!dn.closest('.k-trform') && dn.textContent === '記録の日付をメモの 9/18 にしました', dn && dn.textContent);
+  const dn = R(w).querySelector('.k-toast');
+  ok('M4-6 ★完全に空の下書き：確認画面で止めず、記録の画面の上の短い通知「9/18 に 1種目を入れました」', !!dn && !!dn.closest('.k-trform') && dn.textContent === '9/18 に 1種目を入れました' && !R(w).querySelector('.k-impdate'), dn && dn.textContent);
   const go = btn(R(w), '記録の画面に入れる'); if (go && !go.disabled) { go.click(); await nav(); }
   ok('M4-6 ★入れると記録の日付が 9/18 になる', draftOf(w).sessionDate === '2026-09-18', draftOf(w).sessionDate);
   btn(R(w), '休憩タイマー').click(); await settle();
   R(w).querySelector('.k-entryhead .k-back').click(); await nav();
   const b2 = btn(R(w), '記録の入力（途中）を開く'); if (b2) { b2.click(); await settle(); }
-  ok('M4-6 日付の1行は取り込みの直後だけ（開き直したら出さない）', !R(w).querySelector('.k-trform .k-impdate'));
+  ok('M4-6 通知は取り込みの直後だけ（開き直したら出さない）', !R(w).querySelector('.k-trform .k-toast') && !R(w).querySelector('.k-trform .k-impdate'));
 }
 
 // ================= M5（I57）取り込んだ✓は全部 false・そのまま保存→送られない =================
@@ -430,7 +431,8 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   const go = () => btn(R(w), '記録の画面に入れる');
   const cH = () => [...R(w).querySelectorAll('.k-impcard[data-kind="name"]')].find((c) => c.querySelector('.k-imptext').textContent === '腰が痛い');
   const cS = () => [...R(w).querySelectorAll('.k-impcard[data-kind="name"]')].find((c) => c.querySelector('.k-imptext').textContent.startsWith('ｽｸﾜｯﾄ'));
-  ok('M21-1 ★最近の種目に同じ健康の文があっても決定待ち・候補（もしかして）に出るだけ・候補の真下に注記', !!cH() && cH().querySelector('button.k-impcand[data-source="suggest"]') && cH().textContent.includes('痛み・診断・服薬') && go().disabled);
+  //   設計65：健康の注記はカードごとに繰り返さず、カードの一覧の上に1回だけ
+  ok('M21-1 ★最近の種目に同じ健康の文があっても決定待ち・候補（もしかして）に出るだけ・健康の注記は一覧の上に1つ', !!cH() && cH().querySelector('button.k-impcand[data-source="suggest"]') && !cH().textContent.includes('痛み・診断・服薬') && R(w).querySelectorAll('.k-imphealth').length === 1 && R(w).querySelector('.k-imphealth').textContent.includes('痛み・診断・服薬') && R(w).querySelector('.k-imphealth').compareDocumentPosition(cH()) === 4 && go().disabled);
   cH().querySelector('button.k-impcand[data-source="suggest"]').click(); await settle();
   ok('M21-2 ★suggest の候補を押すと名前の欄に入るだけ（決まらない・押せない・下書きに入らない）', !!cH().querySelector('input[aria-label="種目名"]') && cH().querySelector('input[aria-label="種目名"]').value === '腰が痛い' && go().disabled && !cH().querySelector('.k-impdone') && !storeText(w.localStorage).includes('腰が痛い'));
   btn(cH(), '種目にする').click(); await settle();
@@ -439,7 +441,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   cS().querySelector('button.k-impcand[data-source="auto"]').click(); await settle();
   ok('M21-4 autoKnown の候補（ｽｸﾜｯﾄ→スクワット）は一押しで種目になる', cS().textContent.includes('種目「スクワット」にする'));
   const cP = card(w, 'paren');
-  ok('M21-5 括弧書き：「括弧の中をセットのメモに入れる」の真下に注記・選ぶまで押せない', cP.textContent.includes('痛み・診断・服薬') && go().disabled);
+  ok('M21-5 括弧書き：カードには注記を繰り返さない（一覧の上の1行だけ）・選ぶまで押せない', !cP.textContent.includes('痛み・診断・服薬') && R(w).querySelectorAll('.k-imphealth').length === 1 && go().disabled);
   btn(cP, '括弧の中をセットのメモに入れてセットにする').click(); await settle();
   go().click(); await nav();
   const d = draftOf(w);
@@ -495,7 +497,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   const d = draftOf(w);
   eq('M24-4 ★1セット目のメモに入る・名前の下の数値はその種目のセット・セットの無い種目は種目名を付けて社内メモへ（黙って捨てない）', d && { items: d.items.map((x) => [x.exercise, x.sets.map((s) => [s.w, s.r, s.note || '']), x.doneOnly]), memo: d.memo },
     { items: [['ベンチプレス', [['40', '10', '肘を上げる意識・胸を張る'], ['50', '10', '']], undefined], ['プランク', [], false], ['ヒップリフト', [['30', '10', '50キロ10回やろう']], undefined]], memo: 'プランク：体幹を意識' });
-  ok('M24-5 案内の1行に件数（種目のメモ 3件）', R(w).textContent.includes('種目のメモ 3件は、その種目の1セット目のメモに入れました'));
+  ok('M24-5 ★設計65：入れた後は短い通知だけ（行き先の件数は出さない）', !R(w).textContent.includes('種目のメモ 3件') && /^\d+種目を入れました$|^\d+\/\d+ に \d+種目を入れました$/.test((R(w).querySelector('.k-toast') || {}).textContent || ''), (R(w).querySelector('.k-toast') || {}).textContent);
   ok('M24-6 記録の画面で1セット目のメモが開いて見える', [...R(w).querySelectorAll('input,textarea')].some((x) => x.value === '肘を上げる意識・胸を張る'));
   for (let i = 0; i < 3; i++) { const b = R(w).querySelector('button.k-allchk'); if (!b) break; b.click(); await settle(); }
   for (let i = 0; i < 2; i++) { const b = R(w).querySelector('button.k-donechk[aria-pressed="false"]'); if (!b) break; b.click(); await settle(); }
@@ -577,7 +579,7 @@ const M25 = '11/3(火)12:30～\n山田様1回目\nベンチプレス　パワー
     [['ベンチプレス', [['65', '3', '足も背中も使えてる・パワーフォームで・次は67.5'], ['65', '3', '余力あり']]], ['スクワット', [['50', '10', '']]]]);
   ok('M25-11 ★名前・健康の言葉は下書きに入らない（社内メモにも）', !/山田|たなか|腰が痛い/.test(JSON.stringify(d)) && !String(d.memo || '').trim());
   ok('M25-12 日付はメモの 11/3', /-11-03$/.test(d.sessionDate));
-  ok('M25-13 案内：セットのメモ 2件・種目のメモ 2件', R(w).textContent.includes('種目のメモ 2件') && R(w).textContent.includes('セットのメモ 2件'));
+  ok('M25-13 ★設計65：行き先の件数の説明は出さない（短い通知だけ）', !R(w).textContent.includes('種目のメモ 2件') && !R(w).textContent.includes('セットのメモ 2件') && !!R(w).querySelector('.k-toast'));
   for (let i = 0; i < 3; i++) { const b = R(w).querySelector('button.k-allchk'); if (!b) break; b.click(); await settle(); }
   btn(R(w), '保存する').click(); await settle();
   const tr = adds(sent);

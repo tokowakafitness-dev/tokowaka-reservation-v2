@@ -110,9 +110,10 @@ function checkPlaced(label, w, x, exp) {
   } else {
     ok(label + '：お客様に見える欄はチェックしなければ入らない', !JSON.stringify(d.member || {}).includes('架空'));
   }
-  const msg = R(w).querySelector('.k-trform > .k-sub');
-  ok(label + '：入れた後の1行で「その日の社内メモ（画面の下）の末尾に入れました」と言う', !!msg && msg.textContent.includes('文章 ' + DAY_LINES.length + '行は、その日の社内メモ（画面の下）の末尾に入れました'), msg && msg.textContent);
-  ok(label + '：確認画面の文章の欄の見出しは「その日の社内メモに入れる文章」', x.head.indexOf('その日の社内メモに入れる文章') === 0, x.head);
+  //   設計65（2026-11-26 オーナー「一枚目も説明不要」）：入れた後は「n種目を入れました」の短い通知だけ（行き先の説明は出さない＝社内メモの欄に出ていることは上で確かめた）
+  const msg = R(w).querySelector('.k-trform > .k-toast');
+  ok(label + '：入れた後は短い通知「2種目を入れました」だけ（行き先の説明なし）', !!msg && msg.textContent === '2種目を入れました' && !R(w).textContent.includes('末尾に入れました'), msg && msg.textContent);
+  ok(label + '：確認画面の文章の欄の見出しは「その日の社内メモ」', x.head === 'その日の社内メモ', x.head);
   ok(label + '：保存の警告は出ていない', w.alerts.length === 0, w.alerts.join('/'));
 }
 
@@ -131,7 +132,7 @@ function checkPlaced(label, w, x, exp) {
   const vb = R(w).querySelector('button.k-voicelog');
   ok('V1 手動：上に［音声でセッションログを残す］', !!vb);
   const x = await voiceAndPlace(w, vb);
-  ok('V1 ★取り込みの画面の案内は「種目 1」と書かない（「1種目」）・いまある種目には書き足さないと言う', !!x.addNote && !/種目\s*\d/.test(x.addNote) && x.addNote.indexOf('いまの記録（1種目）は消さずに、後ろに足します。いまある種目には書き足しません') === 0, x.addNote);
+  ok('V1 ★設計65：取り込みの画面に「後ろに足します」の案内を出さない', x.addNote === null, x.addNote);
   ok('V1 種目があるので「後ろに足す」を聞く', x.asked);
   checkPlaced('V1', w, x, { names: ['ラットプルダウン', 'ベンチプレス', 'スクワット'], before });
 }
@@ -150,7 +151,7 @@ function checkPlaced(label, w, x, exp) {
   seed(w, before, { memo: '既存の社内メモ', member: { message: '既存のお客様へ', todo: ['既存の宿題', '', ''], tags: [] } });
   await openRecord(w);
   const x = await voiceAndPlace(w, R(w).querySelector('.k-start button.k-voicelog'), { member: true });
-  ok('V3 案内：「いまの記録（2種目・社内メモ・お客様に見える欄）は消さずに、後ろに足します。」', x.addNote && x.addNote.indexOf('いまの記録（2種目・社内メモ・お客様に見える欄）は消さずに、後ろに足します。') === 0, x.addNote);
+  ok('V3 ★設計65：案内は出さない（足された結果は下で確かめる）', x.addNote === null, x.addNote);
   checkPlaced('V3', w, x, { names: ['デッドリフト', 'プランク', 'ベンチプレス', 'スクワット'], before, memo0: '既存の社内メモ', member: true, mem0: '既存のお客様へ', todo: ['既存の宿題', '架空の宿題', ''] });
 }
 // ---- V4 種目はあるがセットが空（種目を選んだだけ・数字を入れていない） ----
@@ -160,7 +161,7 @@ function checkPlaced(label, w, x, exp) {
   seed(w, before);
   await openRecord(w);
   const x = await voiceAndPlace(w, R(w).querySelector('.k-start button.k-voicelog'));
-  ok('V4 案内：「いまの記録（1種目）…」', x.addNote && x.addNote.indexOf('いまの記録（1種目）は消さずに') === 0, x.addNote);
+  ok('V4 ★設計65：案内は出さない', x.addNote === null, x.addNote);
   checkPlaced('V4', w, x, { names: ['ラットプルダウン', 'ベンチプレス', 'スクワット'], before });
 }
 
@@ -186,7 +187,7 @@ async function toReview(w, entrySel, text) {
   ok('V5 ★理由は帯の中・ボタンの上に「社内メモが4000字を超えます（この下書き n字）」', !!why && barOf(w).contains(why) && before(why, go) && /^社内メモが4000字を超えます（この下書き \d+字）/.test(why.textContent), why && why.textContent);
   const f = R(w).querySelector('.k-rvfield[data-field="coaching"]'); f.value = '架空の短い指導'; f.dispatchEvent(new w.Event('input', { bubbles: true })); await settle();
   const go2 = R(w).querySelector('button.k-rvput');
-  ok('V5 短くすると押せる・理由はボタンの下の案内に戻る', go2.disabled === false && before(go2, R(w).querySelector('.k-rvwhy')) && !R(w).querySelector('.k-rvwhy').textContent.includes('超えます'));
+  ok('V5 短くすると押せる・理由は消える（押せるときの説明も出さない・設計65）', go2.disabled === false && !R(w).querySelector('.k-rvwhy') && !barOf(w).textContent.includes('超えます') && !barOf(w).textContent.includes('押すと'));
   go2.click(); await nav();
   ok('V5 押すと記録の画面に戻り、短くした文章が社内メモに入る', R(w).querySelector('.k-entrytitle').textContent === '今日の記録を入れる' && (draftOf(w).memo || '').includes('架空の短い指導') && (draftOf(w).memo || '').length <= 4000);
 }

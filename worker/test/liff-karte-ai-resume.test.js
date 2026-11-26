@@ -158,7 +158,7 @@ const now0 = Date.now();
   { const b0 = btn(R(w), '＋ 今日の記録') || btn(R(w), '記録の入力（途中）を開く'); if (b0 && !R(w).classList.contains('k-entry')) { b0.click(); await settle(); } }
   ok('U10 ★記録の画面の取り込みのボタンに「（振り分けの途中あり）」（設計56：0件は「メモ・音声から」・1件以上は「＋ 音声・メモを追加で取り込む」）', !!R(w).querySelector('button.k-impgo') && /^(メモ・音声から|＋ 音声・メモを追加で取り込む)（振り分けの途中あり）$/.test(R(w).querySelector('button.k-impgo').textContent), (R(w).querySelector('button.k-impgo') || {}).textContent);
   R(w).querySelector('button.k-impgo').click(); await settle();
-  ok('U1 ★取り込み画面に帯（時刻・件数）・続ける／捨てて最初から（44px）・保存しない項目の一般の文だけ', !!band(w) && /前回の振り分けが途中です（\d\d:\d\d・種目4・セット/.test(band(w).textContent) && band(w).textContent.includes('保存しない項目があります') && !/体のことの言葉/.test(band(w).textContent) && /min-height:\s*44px/.test(band(w).querySelector('.k-airgo').style.cssText) && /min-height:\s*44px/.test(band(w).querySelector('.k-airdrop').style.cssText), band(w) && band(w).textContent);
+  ok('U1 ★取り込み画面に帯（時刻・件数）・続ける／捨てて最初から（44px）・保存しない項目の一般の文だけ', !!band(w) && /前回の振り分けが途中です（\d\d:\d\d・種目4・セット/.test(band(w).textContent) && !band(w).textContent.includes('保存しない項目があります') && (() => { const q = band(w).querySelector('.k-airkeep .k-q'); q.click(); const t = (band(w).querySelector('.k-airkeep .k-qbody') || {}).textContent || ''; q.click(); return t.includes('保存しない項目があります') && !band(w).querySelector('.k-qbody'); })() && !/体のことの言葉/.test(band(w).textContent) && /min-height:\s*44px/.test(band(w).querySelector('.k-airgo').style.cssText) && /min-height:\s*44px/.test(band(w).querySelector('.k-airdrop').style.cssText), band(w) && band(w).textContent);
   band(w).querySelector('.k-airgo').click(); await settle();
   ok('U1 ★続ける：同じ1行・同じ欄・同じチェック・AI は1回だけ', lineOf(card(w, 'ベンチプレス')).value === '50×10  50×8  60×6  ?  40×?' && field(w, 'coaching').value === 'お客様の肘を張りすぎない\n架空の追加の指導' && R(w).querySelector('.k-rvmemon').checked === true && aiCalls(sent) === 1);
   ok('U1 ★続けた後も色（出所）は同じ（一致・推測・直した・入れない・入れない）', JSON.stringify(chipsOf(card(w, 'ベンチプレス'))) === JSON.stringify(['match', 'inferred', 'edited', 'skip', 'skip']), JSON.stringify(chipsOf(card(w, 'ベンチプレス'))));
@@ -320,8 +320,12 @@ for (const [label, mut] of [['24時間を超えた', (v) => { v.at = now0 - 25 *
 {
   const { w } = boot({ src: FULL });
   await openImport(w);
-  const tx = (R(w).querySelector('.k-aiexplain') || {}).textContent || '';
-  ok('U15 ★取り込み画面の説明の文（画面に出る文で固定）', tx === '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。送った文字起こしは保存しません。振り分けた内容は、この端末に当日中だけ残ります（記録の画面に入れると消えます。根拠・体のことは残しません。同じ端末を使う人は読めます）。', tx);
+  //   設計65：ボタンの直下は「外部のAI（Anthropic）へ送ります」の1行だけ。元の全文は ? を開くと出る（同意の説明を消さない）
+  const ex = R(w).querySelector('.k-aiexplain');
+  ok('U15 ★AI のボタンの直下に1行「外部のAI（Anthropic）へ送ります」・説明は閉じている', !!ex && ex.previousElementSibling && ex.previousElementSibling.classList.contains('k-impai') && ex.querySelector('.k-aisendline').textContent === '外部のAI（Anthropic）へ送ります' && !ex.querySelector('.k-qbody') && !R(w).textContent.includes('機械的に伏せます'));
+  ex.querySelector('.k-q').click();
+  const tx = (ex.querySelector('.k-qbody') || {}).textContent || '';
+  ok('U15 ★? を開くと元の全文（画面に出る文で固定）', ex.querySelector('.k-q').getAttribute('aria-expanded') === 'true' && tx === '「読み取る」は端末の中だけで読みます。「AIで振り分ける」は外部（Anthropic）へ送ります。登録済みの氏名などは機械的に伏せますが、聞き違い・第三者の名前・トレーナーの名前のかな書きは残ることがあります。送った文字起こしは保存しません。振り分けた内容は、この端末に当日中だけ残ります（記録の画面に入れると消えます。根拠・体のことは残しません。同じ端末を使う人は読めます）。', tx);
   ok('U15 ★「保存はしません」（一時保存と逆の説明）が画面に無い', !R(w).textContent.includes('保存はしません。'));
 }
 // ---------- 純粋データ ----------
