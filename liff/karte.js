@@ -741,6 +741,7 @@
   }
 
   function open(customerId, name, tab, draft, mode) {
+    cur.trEdGen = (cur.trEdGen || 0) + 1; cur.trEdLoading = '';   // 設計62（関門② 第3周）：画面を開くたびに［編集］の読み直しの世代を進める＝離れる前の遅れた応答を、開き直した一覧の応答を待たずに捨てる
     cur.pickPlace = null;   // 設計55 関門②：タブ・画面を移ったら種目の欄の帯の位置合わせを外す（記録の画面を開き直せば作り直す）
     gripCancel();   // 設計53 関門②：別のお客様・タブの切り替え
     restStop();   // ★画面を移ったら休憩タイマーは消す（設計33 §9-7）
@@ -1468,7 +1469,6 @@
     cur.trOlder = r.older === true ? true : (r.older === false ? false : null);
     cur.trO = { loaded: false, more: null, cursor: null, open: false, busy: false, err: '' };
     cur.trAll = null; cur.trAllState = 'idle';   // 全期間の集計は別の窓口 k_trainingAll（一覧を描いた後に読む・関門② 中2）
-    cur.trEdGen = (cur.trEdGen || 0) + 1; cur.trEdLoading = '';   // ★開き直したら世代を進める（0 に戻さない）＝開き直す前の遅れた応答を捨てる
     trRecalcTail(sessions);
   }
   /** k_trainingAll の応答を持つ。読めない・古い Worker（窓口が無い）は null＝画面は「直近◯回の中」 */

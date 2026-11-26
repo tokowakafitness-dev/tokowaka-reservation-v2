@@ -295,5 +295,30 @@ async function formAt(date, beforeRes) {
   }
 }
 
+{
+  //   L8d：別のタブへ移り、トレーニングへ戻った一覧の応答が来る前に、離れる前の［編集］の応答が来ても作らない（関門② 第3周 中）
+  const pend = [], lists = [];
+  let hold = false;
+  const { w, sent } = boot((b) => {
+    if (b.action === 'k_training' && b.sessionId) return new Promise((res) => pend.push({ b, res }));
+    if (b.action === 'k_training' && !b.cursor && !b.before && !b.older && hold) return new Promise((res) => lists.push(res));
+    if (b.action === 'k_notes') return { success: true, karteSchema: 33, notes: [] };
+    return first()(b);
+  });
+  const f0 = w.fetch;
+  w.fetch = async (url, opt) => { const body = JSON.parse(opt.body); const r0 = w.handle(body); if (r0 && typeof r0.then === 'function') { sent.push(body); const v = await r0; return { json: async () => JSON.parse(JSON.stringify(v)) }; } return f0(url, opt); };
+  await openTab(w);
+  [...R(w).querySelectorAll('.k-daycard .k-dayrow')].find((r) => r.textContent.indexOf('11/20') === 0).click(); await settle();
+  R(w).querySelector('button.k-dayedit').click(); await settle();
+  w.KarteUI.open('C1', NAME, 'notes'); await settle();
+  hold = true;
+  w.KarteUI.open('C1', NAME, 'training'); await settle();   // 一覧の応答はまだ（lists に待たせる）
+  hold = false;
+  pend[0].res({ success: true, karteSchema: 33, trainingEdit: true, trace: 'live', extra: S1() }); await settle();
+  ok('L8d ★戻った一覧の応答の前に届いた、離れる前の［編集］の応答で直す画面を作らない', R(w).querySelectorAll('.k-trform').length === 0 && !txt(w).includes('の記録を直す'), String(R(w).querySelectorAll('.k-trform').length));
+  lists.forEach((res) => res({ success: true, karteSchema: 33, aiDraft: false, trainingEdit: true, sessions: [S1(), S2(), S3()], best: [] })); await settle();
+  ok('L8d 一覧はその後ふつうに出る', dayRows(w).length === 3);
+}
+
 console.log(`${fail ? '❌' : '✅'} 記録の全期間表示（設計62 段1・画面） 検証: ${pass} passed / ${fail} failed`);
 if (fail) process.exit(1);
