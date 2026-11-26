@@ -5259,6 +5259,25 @@
 
   // ---------------------------------------------------------------- 過去のまとめ（設計62 段2・I96）
   var HISTORY_MAX = 4000;
+  /** 鍵の順を固定した JSON（辞書順・入れ子も・null と undefined の鍵は落とす）。番号の元（設計62 §6-4） */
+  function stableJson(v) {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return '[' + v.map(function (x) { return x === undefined ? 'null' : stableJson(x); }).join(',') + ']';
+    return '{' + Object.keys(v).filter(function (k) { return v[k] !== null && v[k] !== undefined; }).sort().map(function (k) { return JSON.stringify(k) + ':' + stableJson(v[k]); }).join(',') + '}';
+  }
+  /**
+   * 渡した obj から決まる番号：prefix + SHA-256(トレーナー + '\n' + 安定 JSON) の先頭40字（同じ obj なら同じ番号）。何を obj に入れるか（中身だけか・画面の印も入れるか）は呼ぶ側が決める。
+   *   ★計算できない端末は null（乱数で代えない＝再送で二重に入る経路を作らない）
+   */
+  function reqIdFrom(prefix, obj) {
+    try {
+      if (!window.crypto || !crypto.subtle || !window.TextEncoder) return Promise.resolve(null);
+      var tid = String((window.state && state.trainerId) || '');
+      return crypto.subtle.digest('SHA-256', new TextEncoder().encode(tid + '\n' + stableJson(obj))).then(function (b) {
+        return prefix + Array.prototype.map.call(new Uint8Array(b), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('').slice(0, 40);
+      }, function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
   function ymLabel(m) { var p = String(m || '').split('-'); return p.length === 2 ? (+p[0]) + '年' + (+p[1]) + '月' : String(m || ''); }
   function periodLabel(f, t) { return f === t ? ymLabel(f) : ymLabel(f) + '〜' + ymLabel(t); }
   /** 指導の履歴の「過去のまとめ」のカード（ブロックを新しい順・3行で畳む・全文・直す）と「まとめ待ち」の月 */
@@ -5328,22 +5347,27 @@
     wrap.appendChild(c);
     var err = el('div', { class: 'k-msg bad k-herr', role: 'alert', style: 'display:none;' });
     wrap.appendChild(err);
-    var reqId = newReqId(), sending = false, lastBody = null;
-    function data(body) { return { digestId: o.digestId || null, rev: o.digestId ? o.rev : 0, from: fFrom.value, to: fTo.value, body: body, month: o.month || null }; }
+    var sending = false;
+    //   ★作る画面の印（関門② 段2 2周目）：作るときの番号は「この画面の印＋中身」から。開き直した新しい画面は別の印＝作って消した同じ中身をもう一度作れる。
+    //     ログインの取り直しの退避には印も入れる（戻った画面で同じ中身なら同じ番号）。直す・消す・戻すは digestId と rev が入るので中身だけで決める
+    var nonce = typeof o.nonce === 'string' && o.nonce ? o.nonce : newReqId();
+    function data(body) { return { digestId: o.digestId || null, rev: o.digestId ? o.rev : 0, from: fFrom.value, to: fTo.value, body: body, month: o.month || null, nonce: nonce }; }
     function send(body) {
       if (sending) return;
       var dt = data(body);
-      var key = JSON.stringify(dt);
-      if (lastBody !== key) { reqId = newReqId(); lastBody = key; }   // 中身を変えたら新しい番号（同じ中身の送り直しは同じ番号＝二重にならない）
       var params = { customerId: askedFor, rev: dt.rev, body: body, origin: 'trainer' };
       if (dt.digestId) params.digestId = dt.digestId;
       if (body) { params.periodFrom = dt.from; params.periodTo = dt.to; }
       sending = true; err.style.display = 'none';
-      kWrite('k_saveHistory', params, reqId, { kind: 'history', data: dt }).then(function (w) {
+      //   ★番号（関門② 段2）：作るときは「画面の印＋中身」＝同じ画面の A→B→A・ログインの取り直しで戻った画面では同じ番号／新しく開いた画面は別の番号。直す・消す・戻すは中身（digestId・rev を含む）だけ
+      reqIdFrom('his-', dt.digestId ? params : { p: params, n: nonce }).then(function (reqId) {
+        if (!reqId) { sending = false; err.textContent = 'この端末では保存できません（暗号の機能が使えません）。別の端末で開いてください。'; err.style.display = ''; return; }
+        return kWrite('k_saveHistory', params, reqId, { kind: 'history', data: dt }).then(function (w) {
         sending = false;
         if (!w || !w.success) { err.textContent = errText(w); err.style.display = ''; return; }
         open(askedFor, cur.name, 'notes', null, 'replace');
-      }, function () { sending = false; err.textContent = errText(null); err.style.display = ''; });
+        });
+      }).then(null, function () { sending = false; err.textContent = errText(null); err.style.display = ''; });
     }
     var bar = el('div', { class: 'k-savebar' });
     bar.appendChild(el('button', { type: 'button', class: 'k-btn k-hsave', text: '保存する', onclick: function () {

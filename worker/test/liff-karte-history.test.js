@@ -32,6 +32,8 @@ const S0 = () => ({ session_id: 'S0', session_date: '2026-09-20', created_at: 10
 function boot(handle) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://reservation.tokowaka-gym.com/liff/', pretendToBeVisual: true }); dom.window.__KARTE_REST_UI = true;
   const w = dom.window;
+  try { if (!w.crypto || !w.crypto.subtle) Object.defineProperty(w, 'crypto', { value: globalThis.crypto, configurable: true }); } catch (e) {}
+  if (!w.TextEncoder) w.TextEncoder = TextEncoder;
   const sent = [];
   w.idToken = jwt(30);
   w.EDGE_URL = 'https://edge.example';
@@ -142,6 +144,48 @@ const hcard = (w) => R(w).querySelector('.k-history');
   R(w).querySelector('.k-hsave').click(); await settle();
   const s2 = sent.filter((b) => b.action === 'k_saveHistory');
   ok('HU2 ★同じ中身の送り直しは同じ clientReqId（二重にならない）・成功で指導の履歴に戻る', s2.length === 2 && s2[1].clientReqId === s2[0].clientReqId && !R(w).querySelector('.k-hsub'));
+  ok('HU2 番号は中身から決まる形（his- と16進40字）', /^his-[0-9a-f]{40}$/.test(s2[0].clientReqId), s2[0].clientReqId);
+  //   ★新しく開いた作る画面：その画面の中の A→B→A は A が同じ番号・前の画面とは別の番号（関門② 段2 1〜2周目）
+  failSave = true;
+  await openNotes(w);
+  hcard(w).querySelector('.k-hpending').click(); await settle();
+  R(w).querySelector('.k-hta').value = '見本の八月のまとめ';
+  R(w).querySelector('.k-hsave').click(); await settle();
+  R(w).querySelector('.k-hta').value = '別の中身';
+  R(w).querySelector('.k-hsave').click(); await settle();
+  R(w).querySelector('.k-hta').value = '見本の八月のまとめ';
+  R(w).querySelector('.k-hsave').click(); await settle();
+  const s3 = sent.filter((b) => b.action === 'k_saveHistory');
+  ok('HU2 ★同じ画面の中で A→B→A と送ると A は同じ番号・B は別', s3.length === 5 && s3[4].clientReqId === s3[2].clientReqId && s3[3].clientReqId !== s3[2].clientReqId, JSON.stringify(s3.map((x) => x.clientReqId)));
+  ok('HU2 ★作る画面を新しく開いたら、同じ中身でも前の画面とは別の番号（作って消した同じまとめをもう一度作れる・関門② 段2 2周目）', s3[2].clientReqId !== s2[0].clientReqId);
+}
+{
+  //   ログインの取り直し：退避（kind:'history'）に印を入れ、戻った画面で同じ中身なら同じ番号
+  const { w, sent } = boot((b) => (b.action === 'k_notes' ? notesFirst() : (b.action === 'k_saveHistory' ? { success: false, code: 'RATE_LIMITED' } : undefined)));
+  await openNotes(w);
+  hcard(w).querySelector('.k-hpending').click(); await settle();
+  R(w).querySelector('.k-hta').value = '見本の退避';
+  R(w).querySelector('.k-hsave').click(); await settle();
+  w.idToken = jwt(4000);   // 古いトークン＝送らずに退避して読み直す
+  R(w).querySelector('.k-hsave').click(); await settle();
+  let saved = null; try { saved = JSON.parse(w.sessionStorage.getItem('karte_draft_v1')); } catch (e) {}
+  ok('HU2 ★退避は kind:history・印つき・氏名なし', saved && saved.draft && saved.draft.kind === 'history' && typeof saved.draft.data.nonce === 'string' && saved.name === '' && !JSON.stringify(saved).includes(NAME), JSON.stringify(saved));
+  const { w: w2, sent: sent2 } = boot((b) => (b.action === 'k_notes' ? notesFirst() : undefined));
+  w2.KarteUI.open('C1', '', 'notes', saved.draft); await settle();
+  ok('HU2 戻った画面は同じ期間・本文', R(w2).querySelector('.k-hta') && R(w2).querySelector('.k-hta').value === '見本の退避' && R(w2).querySelector('.k-hfrom').value === '2026-08');
+  R(w2).querySelector('.k-hsave').click(); await settle();
+  const a1 = sent.filter((b) => b.action === 'k_saveHistory'), a2 = sent2.filter((b) => b.action === 'k_saveHistory');
+  ok('HU2 ★退避から戻った画面の送信は、退避前と同じ番号', a1.length === 1 && a2.length === 1 && a2[0].clientReqId === a1[0].clientReqId, JSON.stringify([a1.map((x) => x.clientReqId), a2.map((x) => x.clientReqId)]));
+}
+{
+  const { w, sent } = boot((b) => (b.action === 'k_notes' ? notesFirst() : undefined));
+  Object.defineProperty(w, 'crypto', { value: { getRandomValues: (a) => a }, configurable: true });
+  await openNotes(w);
+  hcard(w).querySelector('.k-hnew').click(); await settle();
+  R(w).querySelector('.k-hfrom').value = '2025-01'; R(w).querySelector('.k-hto').value = '2025-02';
+  R(w).querySelector('.k-hta').value = '見本';
+  R(w).querySelector('.k-hsave').click(); await settle();
+  ok('HU2 ★暗号の機能が無い端末は送らない（乱数の番号で代えない）', !sent.some((b) => b.action === 'k_saveHistory') && R(w).querySelector('.k-herr').textContent.includes('この端末では保存できません'));
 }
 
 // ================= HU3 直す・消す・中身を変えたら別の番号 =================
