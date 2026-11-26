@@ -61,7 +61,9 @@ const btn = (w, t) => [...R(w).querySelectorAll('button')].find((x) => x.textCon
 const first = (extra) => (b) => (b.action === 'k_training' && !b.cursor && !b.before && !b.sessionId)
   ? Object.assign({ success: true, karteSchema: 33, aiDraft: false, trainingEdit: true, sessions: [S1(), S2(), S3()], best: [] }, extra || {}) : undefined;
 async function openTab(w) { w.KarteUI.open('C1', NAME, 'training'); await settle(); }
-const dayRows = (w) => [...R(w).querySelectorAll('.k-dayrow')].map((r) => r.textContent.split('(')[0]);
+const dayRows = (w) => [...R(w).querySelectorAll('.k-daycard .k-dayrow')].map((r) => r.textContent.split('(')[0]);
+const oldRows = (w) => [...R(w).querySelectorAll('.k-oldcard .k-dayrow:not(.k-oldtoggle)')].map((r) => r.textContent.split('(')[0]);
+const oldToggle = (w) => R(w).querySelector('.k-oldcard .k-oldtoggle');
 async function pick(w, ex) { const b = [...R(w).querySelectorAll('.k-pill')].find((x) => x.textContent === ex); if (b) { b.click(); await settle(); } return !!b; }
 const bestText = (w) => { const b = R(w).querySelector('.k-trbest'); return b ? b.textContent : ''; };
 
@@ -96,25 +98,69 @@ const bestText = (w) => { const b = R(w).querySelector('.k-trbest'); return b ? 
   ok('L3 ★bestAll が null（unavailable）なら「直近3回の中」で出す（空＝記録なしと扱わない）', bestText(w) === '自己ベスト 60kg × 8（11/10・直近3回の中）', bestText(w));
 }
 
-// ================= L4 もっと前の記録を見る（§4-4） =================
+// ================= L4 直近3か月の続き（R）・3か月より前（older → O）（§4-3・§4-5） =================
 {
+  //   L4a：直近3か月が100回を超えたときの続き（R）。3か月より前は無い
   let failNext = false;
   const { w, sent } = boot((b) => {
-    if (b.action === 'k_training' && b.cursor) return failNext ? { success: false, code: 'UNAVAILABLE' } : { success: true, karteSchema: 33, sessions: [S3(), S0()], best: [], more: false, nextCursor: null };
-    return first({ more: true, nextCursor: '2026-11-10|80|S3' })(b);
+    if (b.action === 'k_training' && b.cursor) return failNext ? { success: false, code: 'UNAVAILABLE' } : { success: true, karteSchema: 33, sessions: [S3(), { ...S3(), session_id: 'S3b', session_date: '2026-10-05' }], best: [], boundary: '2026-09-01', more: false, nextCursor: null };
+    return first({ boundary: '2026-09-01', more: true, nextCursor: 'R|2026-09-01|2026-11-10|80|S3', older: false })(b);
   });
   await openTab(w);
-  const before = dayRows(w);
+  ok('L4a ★見出しは「日別の記録（直近3か月）」・3か月より前の行は出ない（older が偽）', txt(w).includes('日別の記録（直近3か月）') && !oldToggle(w));
   failNext = true;
-  btn(w, 'もっと前の記録を見る').click(); await settle();
-  ok('L4 ★読めなかったら「読めませんでした」・読んだ分は残る・ボタンも残る', txt(w).includes('読めませんでした（もう一度押してください）') && JSON.stringify(dayRows(w)) === JSON.stringify(before) && !!btn(w, 'もっと前の記録を見る'));
+  btn(w, '続きを見る（直近3か月）').click(); await settle();
+  ok('L4a ★読めなかったら「読めませんでした」・読んだ分は残る・ボタンも残る', txt(w).includes('読めませんでした（もう一度押してください）') && dayRows(w).length === 3 && !!btn(w, '続きを見る（直近3か月）'));
   failNext = false;
-  btn(w, 'もっと前の記録を見る').click(); await settle();
+  btn(w, '続きを見る（直近3か月）').click(); await settle();
   const sc = sent.filter((b) => b.cursor);
-  ok('L4 ★送るのは前の応答の nextCursor（cursor だけ）', sc.length === 2 && sc[1].cursor === '2026-11-10|80|S3' && !('before' in sc[1]) && !('sessionId' in sc[1]));
-  ok('L4 ★足した回が日別の記録に出る・同じ session_id は足さない・最後まで読んだらボタンは消える', JSON.stringify(dayRows(w)) === JSON.stringify(['11/20', '11/18', '11/10', '9/20']) && !btn(w, 'もっと前の記録を見る'), JSON.stringify(dayRows(w)));
-  const mb = before.length === 3;
-  ok('L4 最初は3回', mb);
+  ok('L4a ★送るのは前の応答の R のカーソルだけ・足した回が出る・同じ id は足さない・読み切ったらボタンが消える', sc.length === 2 && sc[1].cursor === 'R|2026-09-01|2026-11-10|80|S3' && !('older' in sc[1])
+     && JSON.stringify(dayRows(w)) === JSON.stringify(['11/20', '11/18', '11/10', '10/5']) && !btn(w, '続きを見る（直近3か月）'), JSON.stringify(dayRows(w)));
+}
+{
+  //   L4b：3か月より前（境界 10/1・9/20 の回と、もっと前）
+  let mode = 'ok';
+  const S00 = () => ({ ...S0(), session_id: 'S00', session_date: '2026-08-02' });
+  const { w, sent } = boot((b) => {
+    if (b.action === 'k_training' && b.older === true) return mode === 'fail' ? { success: false, code: 'UNAVAILABLE' } : { success: true, karteSchema: 33, sessions: [S0()], best: [], boundary: '2026-10-01', more: true, nextCursor: 'O|2026-10-01|2026-09-20|10|S0' };
+    if (b.action === 'k_training' && b.cursor) return mode === 'moved' ? { success: false, code: 'BOUNDARY_MOVED' } : { success: true, karteSchema: 33, sessions: [S0(), S00()], best: [], boundary: '2026-10-01', more: false, nextCursor: null };
+    return first({ boundary: '2026-10-01', more: false, nextCursor: null, older: true })(b);
+  });
+  await openTab(w);
+  ok('L4b ★畳んだ「3か月より前の記録（10月より前）」が出て、開くまで読まない', !!oldToggle(w) && oldToggle(w).textContent.includes('10月より前') && sent.filter((b) => b.older).length === 0 && oldRows(w).length === 0);
+  mode = 'fail';
+  oldToggle(w).click(); await settle();
+  ok('L4b ★読めなかったら「読めませんでした」＋もう一度読む', txt(w).includes('読めませんでした（もう一度押してください）') && !!btn(w, 'もう一度読む'));
+  mode = 'ok';
+  btn(w, 'もう一度読む').click(); await settle();
+  const so = sent.filter((b) => b.older);
+  ok('L4b ★最初は older:true だけ（cursor・before を付けない）・3か月より前の回は畳みの中に出て、直近3か月の一覧には混ざらない', so.length === 2 && so[1].older === true && !('cursor' in so[1]) && !('before' in so[1])
+     && JSON.stringify(oldRows(w)) === JSON.stringify(['9/20']) && JSON.stringify(dayRows(w)) === JSON.stringify(['11/20', '11/18', '11/10']), JSON.stringify([oldRows(w), dayRows(w)]));
+  btn(w, 'もっと前を見る（20回ずつ）').click(); await settle();
+  const sc = sent.filter((b) => b.cursor);
+  ok('L4b ★続きは O のカーソル・同じ id は足さない・読み切ったらボタンが消える', sc.length === 1 && sc[0].cursor === 'O|2026-10-01|2026-09-20|10|S0' && JSON.stringify(oldRows(w)) === JSON.stringify(['9/20', '8/2']) && !btn(w, 'もっと前を見る'), JSON.stringify(oldRows(w)));
+  //   ★3か月より前を読んだ後に直近3か月の一覧を描き直しても、3か月より前の回が混ざらない（一覧の配列には足している）
+  R(w).querySelector('.k-daycard .k-dayrow').click(); await settle();
+  ok('L4b ★3か月より前を読んだ後に直近3か月の一覧を描き直しても混ざらない', JSON.stringify(dayRows(w)) === JSON.stringify(['11/20', '11/18', '11/10']), JSON.stringify(dayRows(w)));
+  [...R(w).querySelectorAll('.k-oldcard .k-dayrow:not(.k-oldtoggle)')][1].click(); await settle();
+  ok('L4b ★3か月より前の回にも［編集］が出る（作者）', !!R(w).querySelector('.k-oldcard button.k-dayedit'));
+}
+{
+  //   L4c：月が替わった（409）→ 初回から読み直す
+  const { w, sent } = boot((b) => {
+    if (b.action === 'k_training' && b.older === true) return { success: false, code: 'BOUNDARY_MOVED' };
+    return first({ boundary: '2026-10-01', more: false, older: true })(b);
+  });
+  await openTab(w);
+  const n0 = sent.filter((b) => b.action === 'k_training' && !b.older && !b.cursor).length;
+  oldToggle(w).click(); await settle();
+  ok('L4c ★409 BOUNDARY_MOVED なら初回から読み直す', sent.filter((b) => b.action === 'k_training' && !b.older && !b.cursor).length === n0 + 1);
+}
+{
+  //   L4d：直近3か月が0回で3か月より前がある
+  const { w } = boot(first({ sessions: [], boundary: '2026-10-01', more: false, older: true }));
+  await openTab(w);
+  ok('L4d ★直近3か月が0回でも「まだ記録がありません」と言わず、「直近3か月の記録はありません」＋3か月より前の畳み', !txt(w).includes('まだ記録がありません') && txt(w).includes('直近3か月の記録はありません') && !!oldToggle(w));
 }
 
 // ================= L5 ［編集］は押すたびに1件読み直す（§4-5・I95・P15） =================
@@ -155,8 +201,33 @@ async function formAt(date, beforeRes) {
   ok('L6 ★読み足した回から前回（9/20 の 70kg×5）を出す', txt(a.w).includes('前回 9/20：70kg × 5'), txt(a.w).slice(0, 400));
   const f = await formAt('2026-10-01', () => ({ success: false, code: 'UNAVAILABLE' }));
   ok('L6 ★読み足しの失敗は「前回：読み込めていません」（前回なしと言わない）', txt(f.w).includes('前回：読み込めていません') && !txt(f.w).includes('前回の記録なし'));
+  const { w: w7, sent: s7 } = boot((b) => (b.action === 'k_training' && b.before) ? { success: true, karteSchema: 33, sessions: [S0()], best: [], more: false, nextCursor: null } : first({ sessions: [], boundary: '2026-10-01', more: false, older: true })(b));
+  w7.localStorage.setItem('karte_tr_draft_v1:T1:C1', JSON.stringify({ v: 1, tid: 'T1', cid: 'C1', sessionDate: '2026-10-01', items: [{ exercise: 'スクワット', sets: [{ w: '', r: '', done: false }] }], reqId: 'rq1', pending: null, at: Date.now() }));
+  await openTab(w7); await settle();
+  ok('L6 ★直近3か月が0回で3か月より前がある → 読み足して前回を出す（読んだ回が無いことを「全部読んだ」と取り違えない）', s7.filter((b) => b.before === '2026-10-01').length === 1 && txt(w7).includes('前回 9/20：70kg × 5'));
   const n = await formAt('2026-11-19', () => ({ success: true, sessions: [] }));
   ok('L6 日付が読んだ回の中（11/19）なら読み足さない・前回は 11/18', n.sent.filter((b) => b.before).length === 0 && txt(n.w).includes('前回 11/18：60kg × 8'));
+}
+
+// ================= L7 指導の履歴：直近3か月・続き（R）・3か月より前のメモ（older → O） =================
+{
+  const note = (id, d, body) => ({ note_id: id, session_date: d, condition: null, body, next_plan: null, tag: 'training', reasons: [], next_check: null, author_trainer_id: 'T1', rev: 1, created_at: 1, edited_at: null });
+  const { w, sent } = boot((b) => {
+    if (b.action !== 'k_notes') return undefined;
+    if (b.older === true) return { success: true, karteSchema: 33, notes: [note('N0', '2026-09-01', '見本の古いメモ')], boundary: '2026-10-01', more: false, nextCursor: null };
+    if (b.cursor) return { success: true, karteSchema: 33, notes: [note('N2', '2026-10-03', '見本の続きのメモ')], boundary: '2026-10-01', more: false, nextCursor: null };
+    return { success: true, karteSchema: 33, notes: [note('N1', '2026-11-20', '見本の新しいメモ')], boundary: '2026-10-01', more: true, nextCursor: 'R|2026-10-01|2026-11-20|1|N1', older: true };
+  });
+  w.KarteUI.open('C1', NAME, 'notes'); await settle();
+  const toggle = () => R(w).querySelector('.k-oldnotes .k-oldtoggle');
+  ok('L7 ★直近3か月のメモだけが出て、3か月より前は畳み（10月より前）・開くまで読まない', txt(w).includes('見本の新しいメモ') && !txt(w).includes('見本の古いメモ') && !!toggle() && toggle().textContent.includes('10月より前') && !sent.some((b) => b.older));
+  btn(w, '続きを見る（直近3か月）').click(); await settle();
+  ok('L7 ★続きは R のカーソル・足したメモが出る', sent.some((b) => b.action === 'k_notes' && b.cursor === 'R|2026-10-01|2026-11-20|1|N1') && txt(w).includes('見本の続きのメモ') && !btn(w, '続きを見る'));
+  toggle().click(); await settle();
+  ok('L7 ★開くと older:true で読み、3か月より前のメモが畳みの中に出る', sent.some((b) => b.action === 'k_notes' && b.older === true && !b.cursor) && R(w).querySelector('.k-oldnotes').textContent.includes('見本の古いメモ'));
+  const { w: w2 } = boot((b) => (b.action === 'k_notes' ? { success: true, karteSchema: 33, notes: [{ note_id: 'X', session_date: '2026-11-01', condition: null, body: '見本', next_plan: null, tag: null, reasons: [], next_check: null, author_trainer_id: 'T1', rev: 1, created_at: 1, edited_at: null }] } : undefined));
+  w2.KarteUI.open('C1', NAME, 'notes'); await settle();
+  ok('L7 古い Worker（境界なし）は今までどおり（畳み・「直近3か月」の見出しなし）', !R(w2).querySelector('.k-oldnotes') && !txt(w2).includes('直近3か月'));
 }
 
 console.log(`${fail ? '❌' : '✅'} 記録の全期間表示（設計62 段1・画面） 検証: ${pass} passed / ${fail} failed`);

@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
-import { trainingAggregates, PAST_LIMITS, parseCursor, traceSession } from '../src/routes/karte.js';
+import { trainingAggregates, PAST_LIMITS, parseCursor, traceSession, windowStart, cursorOf } from '../src/routes/karte.js';
 import { buildMemberKarte } from '../src/lib/member-karte.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -55,6 +55,7 @@ function makeEnv() {
   env.KV = { async get(k, t) { const v = env._kv[k]; return v == null ? null : (t === 'json' ? JSON.parse(v) : v); }, async put(k, v) { env._kv[k] = v; } };
   env.DB = {
     prepare(q) {
+      if (env._tick) env._tick(q);
       const boom = env._failRe && env._failRe.test(q);
       if (boom) return { _q: q, _args: [], bind() { return this; }, async run() { throw new Error('D1_ERROR'); }, async first() { throw new Error('D1_ERROR'); }, async all() { throw new Error('D1_ERROR'); } };
       return { _q: q, _args: [], bind(...a) { this._args = a; return this; },
@@ -132,7 +133,7 @@ env.KARTE_TRAINING_EXT = 'on';
 env.KARTE_TRAINING_EDIT = 'on';
 d.exec(`INSERT INTO customers (customer_id, name, line_user_id, default_trainer_id, created_at, updated_at) VALUES
   ('P1', '見本会員五', NULL, 't1', 1, 1), ('P2', '見本会員六', NULL, 't1', 1, 1), ('P3', '見本会員七', NULL, 't1', 1, 1),
-  ('P4', '見本会員八', NULL, 't1', 1, 1), ('P5', '見本会員九', NULL, 't1', 1, 1), ('P6', '見本会員十', NULL, 't1', 1, 1)`);
+  ('P4', '見本会員八', NULL, 't1', 1, 1), ('P5', '見本会員九', NULL, 't1', 1, 1), ('P6', '見本会員十', NULL, 't1', 1, 1), ('P7', '見本会員十一', NULL, 't1', 1, 1)`);
 fresh();
 //   直接入れる（API の上限・回数制限を通さず、並びの境の形を作るため）。sets：[[種目, 重さ, 回数], …]
 let seq = 0;
@@ -149,59 +150,106 @@ function insNote(cid, date, created, id) {
 }
 const ids = (r) => (r.sessions || []).map((x) => x.session_id);
 const sqlOrder = (cid) => qa(env, `SELECT session_id FROM karte_tr_sessions WHERE customer_id = ? AND deleted_at IS NULL ORDER BY session_date DESC, created_at DESC, session_id DESC`, cid).map((x) => x.session_id);
+//   初回 → R のカーソルで最後まで → older:true → O のカーソルで最後まで。系列ごとの id の並びを返す
 async function pageAll(action, cid, key) {
-  const out = []; let r = await call('U_t2', action, { customerId: cid }); let n = 0;
-  for (;;) {
-    out.push(...(r[key] || []).map((x) => x.session_id || x.note_id));
-    if (!r.more || ++n > 20) break;
-    r = await call('U_t2', action, { customerId: cid, cursor: r.nextCursor });
-  }
-  return { out, last: r };
+  const pick = (r) => (r[key] || []).map((x) => x.session_id || x.note_id);
+  const recent = [], older = []; let n = 0;
+  let r = await call('U_t2', action, { customerId: cid });
+  const first = r;
+  for (;;) { recent.push(...pick(r)); if (!r.more || ++n > 30) break; r = await call('U_t2', action, { customerId: cid, cursor: r.nextCursor }); }
+  const lastR = r;
+  r = await call('U_t2', action, { customerId: cid, older: true });
+  for (;;) { older.push(...pick(r)); if (!r.more || ++n > 60) break; r = await call('U_t2', action, { customerId: cid, cursor: r.nextCursor }); }
+  return { first, recent, older, lastR, lastO: r };
 }
+const B = windowStart(NOW);   // 今の境界（Worker と同じ関数・同じ時計）
+const inWin = (n) => dayOffset(-n);          // 1〜50日前は必ず境界以後（月初でも境界は59日以上前）
+const outWin = (n) => dayOffset(-(100 + n));  // 100日より前は必ず境界より前（境界は最大でも92日前）
 
-// ================= P1・P3 ページ送り：同じ日・同じ作成時刻が境にまたがっても全部・重複なし（I93） =================
+// ================= P1・B7・B8 系列ごとのページ送り：R は境界より前へ進まない・O は境界より前だけ・同じ日の境（I93） =================
 {
-  for (let i = 0; i < 19; i++) ins('P1', dayOffset(-(i + 1)), 1000 + i);
-  //   20〜22件目：同じ日・同じ作成時刻（id だけ違う）＝before 方式なら21・22件目が飛ぶ
-  for (const id of ['SAME-a', 'SAME-b', 'SAME-c']) ins('P1', dayOffset(-30), 500, [['スクワット', 80, 5]], id);
-  for (let i = 0; i < 6; i++) ins('P1', dayOffset(-(40 + i)), 400 - i);
-  const { out } = await pageAll('k_training', 'P1', 'sessions');
-  const want = sqlOrder('P1');
-  ok('P1 ★同じ日・同じ作成時刻が20件目と21件目にまたがっても、ページ送りで全件・重複なし・順序どおり', out.length === 28 && new Set(out).size === 28 && same(out, want), JSON.stringify(out.slice(17, 23)));
-  const r1 = await call('U_t2', 'k_training', { customerId: 'P1' });
-  ok('P3 more は21件目があるときだけ真・nextCursor は20件目', r1.more === true && r1.sessions.length === 20 && parseCursor(r1.nextCursor).id === r1.sessions[19].session_id, r1.nextCursor);
-  for (let i = 0; i < 20; i++) ins('P2', dayOffset(-(i + 1)), 100 + i);
+  //   境界以後102回：50日×2回＋51日前に同じ作成時刻の3回（100件目と101件目の境）
+  for (let i = 0; i < 50; i++) { ins('P1', inWin(i + 1), 2000 + i * 2); ins('P1', inWin(i + 1), 2001 + i * 2); }
+  for (const id of ['SAME-a', 'SAME-b', 'SAME-c']) ins('P1', inWin(51), 500, [['スクワット', 80, 5]], id);
+  for (let i = 0; i < 6; i++) ins('P1', outWin(i), 400 - i);
+  const all = sqlOrder('P1');
+  const { first, recent, older, lastR, lastO } = await pageAll('k_training', 'P1', 'sessions');
+  const wantR = qa(env, `SELECT session_id FROM karte_tr_sessions WHERE customer_id = 'P1' AND session_date >= ? ORDER BY session_date DESC, created_at DESC, session_id DESC`, B).map((x) => x.session_id);
+  ok('P1 ★初回は境界以後だけ・上限100・boundary・older', first.status === 200 && first.boundary === B && first.sessions.length === 100 && first.more === true && first.older === true
+     && first.sessions.every((x) => x.session_date >= B) && parseCursor(first.nextCursor).kind === 'R' && parseCursor(first.nextCursor).b === B, JSON.stringify([first.boundary, first.sessions.length, first.more, first.older, first.nextCursor]));
+  ok('P1 ★R の系列は境界以後を全件・重複なし・順序どおり（同じ日・同じ作成時刻が100件目と101件目にまたがる）', recent.length === 103 && new Set(recent).size === 103 && same(recent, wantR), JSON.stringify(recent.slice(98)));
+  ok('B7 ★R を読み切ると more:false・境界より前の行が1つも混ざらない', lastR.more === false && lastR.nextCursor === null && recent.every((id) => wantR.indexOf(id) >= 0)
+     && qa(env, `SELECT session_date d FROM karte_tr_sessions WHERE session_id IN (${recent.map(() => '?').join(',')})`, ...recent).every((x) => x.d >= B));
+  ok('B8 ★O は境界より前だけ・R と O は交わらない・合わせると全部', older.length === 6 && lastO.more === false && older.every((id) => wantR.indexOf(id) < 0) && same(recent.concat(older), all), JSON.stringify(older));
+  for (let i = 0; i < 100; i++) ins('P2', inWin(1 + (i % 50)), 100 + i);
   const r2 = await call('U_t2', 'k_training', { customerId: 'P2' });
-  ok('P3 ちょうど20件なら more は偽・nextCursor は null', r2.more === false && r2.nextCursor === null && r2.sessions.length === 20);
+  ok('P3 境界以後がちょうど100回なら more は偽・nextCursor は null・境界より前が無ければ older は偽', r2.more === false && r2.nextCursor === null && r2.sessions.length === 100 && r2.older === false, JSON.stringify([r2.more, r2.older]));
 }
 
-// ================= P2 壊れた要求は 400（I93） =================
+// ================= P2・B9・B12 壊れた要求・月が替わったカーソル（I93） =================
 {
+  const prevB = windowStart(NOW - 31 * 86400000);
   const bad = [
-    { cursor: '2026-02-30|1|a' }, { cursor: 'x' }, { cursor: '2026-01-01|abc|a' }, { cursor: '2026-01-01|1|a b' }, { cursor: 5 },
-    { before: '2026-13-01' }, { before: 7 }, { sessionId: 'a b' },
-    { cursor: '2026-01-01|1|a', before: '2026-01-01' }, { cursor: '2026-01-01|1|a', sessionId: 'S1' }, { before: '2026-01-01', sessionId: 'S1' },
+    { cursor: `R|${B}|2026-02-30|1|a` }, { cursor: 'x' }, { cursor: `R|${B}|2026-01-01|abc|a` }, { cursor: `R|${B}|2026-01-01|1|a b` }, { cursor: 5 },
+    { cursor: '2026-01-01|1|a' },   // WIP の3要素の形（main に出ていない＝互換の外）
+    { cursor: `M|2026-01|2026-01-05|1|a` }, { cursor: `X|${B}|2026-01-01|1|a` },
+    { before: '2026-13-01' }, { before: 7 }, { sessionId: 'a b' }, { older: false }, { older: 'true' }, { month: '2026-01' },
+    { cursor: cursorOf('R', B, '2026-01-01', 1, 'a'), before: '2026-01-01' }, { cursor: cursorOf('R', B, '2026-01-01', 1, 'a'), sessionId: 'S1' },
+    { before: '2026-01-01', sessionId: 'S1' }, { older: true, before: '2026-01-01' }, { older: true, sessionId: 'S1' },
   ];
   const rs = [];
   for (const b of bad) rs.push((await call('U_t2', 'k_training', { customerId: 'P1', ...b })).status);
-  ok('P2 ★壊れたカーソル・before・sessionId・2つ以上の同時は k_training で 400（黙って1ページ目を返さない）', rs.every((x) => x === 400), JSON.stringify(rs));
+  ok('P2/B12 ★k_training：壊れたカーソル・WIP の3要素の形・M の系列・before・sessionId・older の型違い・month・形の鍵の同時は 400', rs.every((x) => x === 400), JSON.stringify(rs));
   const ns = [];
-  for (const b of [{ cursor: 'x' }, { sessionId: 'S1' }, { cursor: '2026-01-01|1|a', before: '2026-01-01' }, { before: 'y' }]) ns.push((await call('U_t2', 'k_notes', { customerId: 'P1', ...b })).status);
-  ok('P2/P16b k_notes：壊れたカーソル・sessionId（知らない形）・同時・壊れた before は 400', ns.every((x) => x === 400), JSON.stringify(ns));
+  for (const b of [{ cursor: 'x' }, { sessionId: 'S1' }, { month: '2026-01' }, { older: 1 }, { cursor: cursorOf('O', B, '2026-01-01', 1, 'a'), before: '2026-01-01' }, { older: true, before: 'y' }, { before: 'y' }]) ns.push((await call('U_t2', 'k_notes', { customerId: 'P1', ...b })).status);
+  ok('P2/B12 k_notes：壊れたカーソル・sessionId・month（段2 まで受けない）・older の型違い・同時・壊れた before は 400', ns.every((x) => x === 400), JSON.stringify(ns));
+  const m1 = await call('U_t2', 'k_training', { customerId: 'P1', cursor: cursorOf('R', prevB, inWin(5), 1, 'a') });
+  const m2 = await call('U_t2', 'k_training', { customerId: 'P1', cursor: cursorOf('O', prevB, outWin(1), 1, 'a') });
+  const m3 = await call('U_t2', 'k_notes', { customerId: 'P1', cursor: cursorOf('R', prevB, inWin(5), 1, 'a') });
+  ok('B9 ★前の月の境界で発行したカーソル（R・O・指導の履歴）は 409 BOUNDARY_MOVED', prevB !== B && m1.status === 409 && m1.code === 'BOUNDARY_MOVED' && m2.status === 409 && m3.status === 409, JSON.stringify([prevB, m1.status, m1.code]));
+  const blank = await call('U_t2', 'k_training', { customerId: 'P1', before: '' });
+  ok('P2 旧画面の before:""（空）は「無い」＝初回', blank.status === 200 && blank.boundary === B && 'agg' in blank);
 }
 
-// ================= P16a 要求の4つの形（k_training） =================
+// ================= P16a 要求の形（k_training） =================
 {
   const f = await call('U_t2', 'k_training', { customerId: 'P1' });
   const pg = await call('U_t2', 'k_training', { customerId: 'P1', cursor: f.nextCursor });
-  const bf = await call('U_t2', 'k_training', { customerId: 'P1', before: dayOffset(-10) });
+  const od = await call('U_t2', 'k_training', { customerId: 'P1', older: true });
+  const bf = await call('U_t2', 'k_training', { customerId: 'P1', before: inWin(10) });
   const one = await call('U_t2', 'k_training', { customerId: 'P1', sessionId: 'SAME-b' });
-  const hasAgg = (r) => ['bestAll', 'seriesAll', 'allDates', 'agg'].every((k) => k in r);
-  const noAgg = (r) => ['bestAll', 'seriesAll', 'allDates', 'agg'].every((k) => !(k in r));
-  ok('P16a ★初回（3つとも無い・旧画面の customerId だけ）だけ全期間の集計が付く', f.status === 200 && hasAgg(f) && f.agg.best === 'ok' && f.agg.series === 'ok' && f.agg.dates === 'ok');
-  ok('P16a ★ページ送り・前回の読み足しには集計が付かない', pg.status === 200 && noAgg(pg) && bf.status === 200 && noAgg(bf) && pg.sessions.length === 8);
+  const hasAgg = (r) => ['bestAll', 'seriesAll', 'allDates', 'agg', 'older'].every((k) => k in r);
+  const noAgg = (r) => ['bestAll', 'seriesAll', 'allDates', 'agg', 'older'].every((k) => !(k in r));
+  ok('P16a ★初回（形の鍵なし・旧画面の customerId だけ）だけ全期間の集計と older が付く', f.status === 200 && hasAgg(f) && f.agg.best === 'ok' && f.agg.series === 'ok' && f.agg.dates === 'ok');
+  ok('P16a ★R のページ送り・older・前回の読み足しには集計が付かない・前回の読み足しは nextCursor を返さない', pg.status === 200 && noAgg(pg) && od.status === 200 && noAgg(od) && bf.status === 200 && noAgg(bf)
+     && pg.sessions.length === 3 && bf.nextCursor === null && od.sessions.length === 6 && od.sessions.every((x) => x.session_date < B));
   ok('P16a ★1件の読み直しは extra と trace だけ（20回も集計も返さない）', one.status === 200 && noAgg(one) && !('sessions' in one) && one.trace === 'live' && one.extra && one.extra.session_id === 'SAME-b'
      && one.extra.sets.length === 1 && 'trainingEdit' in one && 'karteSchema' in one, JSON.stringify(one).slice(0, 300));
+}
+
+// ================= B10 1つの要求の途中で月替わりの時刻をまたいでも、行・older・boundary・カーソルの境界が同じ（I93） =================
+{
+  const realNow = Date.now;
+  const T0 = Date.UTC(2026, 10, 30, 14, 59, 59, 500);   // 2026-11-30 23:59:59.5 JST → 境界 2026-09-01
+  const T1 = Date.UTC(2026, 10, 30, 15, 0, 1, 0);       // 2026-12-01 00:00:01 JST → 境界 2026-10-01
+  let clock = T0;
+  Date.now = () => clock;
+  try {
+    fresh();
+    for (let i = 0; i < 101; i++) ins('P7', '2026-11-' + String(1 + (i % 25)).padStart(2, '0'), 3000 + i);
+    ins('P7', '2026-09-15', 10, [['デッドリフト', 120, 3]], 'P7-SEP');   // 古い境界の中・新しい境界の外
+    env._tick = (q) => { if (/FROM karte_tr_sessions\s+WHERE customer_id = \? AND deleted_at IS NULL AND session_date >= \?/.test(q)) clock = T1; };   // 境界を決めた後（行を読む文の準備の時点）に時計を進める＝older・集計・カーソルは進んだ後に作られる
+    const r = await call('U_t2', 'k_training', { customerId: 'P7' });
+    env._tick = null;
+    const cu = parseCursor(r.nextCursor);
+    ok('B10 ★要求の途中で月が替わっても、応答の boundary・発行したカーソルの境界は要求の冒頭の値（2026-09-01）', r.status === 200 && clock === T1 && r.boundary === '2026-09-01' && cu && cu.b === '2026-09-01', JSON.stringify([r.status, r.boundary, r.nextCursor]));
+    ok('B10 ★older も同じ境界で数える（9/1 より前は無い＝偽。新しい境界なら 9/15 で真になる）', r.older === false, String(r.older));
+    clock = T1; fresh();
+    const r2 = await call('U_t2', 'k_training', { customerId: 'P7', cursor: r.nextCursor });
+    ok('B10 月が替わった後にそのカーソルを使うと 409（初回から読み直させる）', r2.status === 409 && r2.code === 'BOUNDARY_MOVED');
+    const r3 = await call('U_t2', 'k_training', { customerId: 'P7', older: true });
+    ok('B10 月が替わった後の older は新しい境界（10/1）より前＝9/15 の回が出る', r3.status === 200 && r3.boundary === '2026-10-01' && r3.sessions.some((x) => x.session_id === 'P7-SEP'));
+  } finally { Date.now = realNow; env._tick = null; fresh(); }
 }
 
 // ================= P9 前回の読み足し：D 当日を1件も含まない（§4-6・I59） =================
@@ -212,7 +260,7 @@ async function pageAll(action, cid, key) {
   ins('P3', dayOffset(-49), 100);
   const r = await call('U_t2', 'k_training', { customerId: 'P3', before: D });
   ok('P9 ★D 当日に21件・D−1 に1件 → before:D は D 当日を含まず D−1 が先頭（カーソルで読み足すと D 当日で埋まる）', r.status === 200 && r.sessions.length === 1 && r.sessions[0].session_id === prev
-     && r.sessions.every((x) => x.session_date < D), JSON.stringify(ids(r)));
+     && r.sessions.every((x) => x.session_date < D) && r.nextCursor === null, JSON.stringify(ids(r)));
 }
 
 // ================= P4・P5 全期間の自己ベスト（会員と同じ関数・同点は早い日・無理やりを除く）（I66・I94） =================
@@ -234,7 +282,7 @@ async function pageAll(action, cid, key) {
   ok('P4 ★全種目で会員の自己ベストと一致', same((r.bestAll || []).map(toM), fromM), JSON.stringify([r.bestAll, fromM]));
   const lp = (r.bestAll || []).filter((x) => x.exercise === 'レッグプレス')[0];
   const lps = (r.seriesAll || []).filter((x) => x.exercise === 'レッグプレス');
-  ok('P5 ★1ページ目の20回の外にしか無い種目も自己ベスト・推移に出る', r.sessions.length === 20 && !r.sessions.some((s) => s.sets.some((x) => x.exercise === 'レッグプレス'))
+  ok('P5 ★3か月より前（詳しい一覧の外）にしか無い種目も自己ベスト・推移に出る', r.sessions.length === 2 && !r.sessions.some((s) => s.sets.some((x) => x.exercise === 'レッグプレス'))
      && lp && lp.w === 140 && lps.length === 1 && lps[0].d === dayOffset(-200), JSON.stringify([lp, lps]));
   ok('P5 allDates は [{d, n}]・新しい順', Array.isArray(r.allDates) && r.allDates[0].d === dayOffset(-3) && r.allDates.every((x) => typeof x.n === 'number'), JSON.stringify(r.allDates.slice(0, 3)));
 }
@@ -246,8 +294,8 @@ async function pageAll(action, cid, key) {
   env._failRe = /GROUP BY session_date/;
   const r2 = await call('U_t2', 'k_training', { customerId: 'P4' });
   env._failRe = null;
-  ok('P11 ★自己ベストの読みが失敗：bestAll は null（空配列にしない）・agg.best=unavailable・推移と20回は返る', r.status === 200 && r.bestAll === null && r.agg.best === 'unavailable'
-     && Array.isArray(r.seriesAll) && r.agg.series === 'ok' && r.sessions.length === 20, JSON.stringify(r.agg));
+  ok('P11 ★自己ベストの読みが失敗：bestAll は null（空配列にしない）・agg.best=unavailable・推移と詳しい一覧は返る', r.status === 200 && r.bestAll === null && r.agg.best === 'unavailable'
+     && Array.isArray(r.seriesAll) && r.agg.series === 'ok' && r.sessions.length === 2, JSON.stringify(r.agg));
   ok('P11 ★日付の読みが失敗：allDates は null・agg.dates=unavailable', r2.status === 200 && r2.allDates === null && r2.agg.dates === 'unavailable' && r2.agg.best === 'ok', JSON.stringify(r2.agg));
 }
 
@@ -317,16 +365,17 @@ async function pageAll(action, cid, key) {
   ok('P14 ★5段（上限ちょうど）はたどれる', r5.trace === 'replaced' && r5.extra && r5.extra.session_id === c5[5], JSON.stringify([r5.trace, r5.extra && r5.extra.session_id]));
 }
 
-// ================= P10 指導の履歴のページ送り（P1 と同じ形） =================
+// ================= P10 指導の履歴：初回は境界以後・O の系列は同じ日・同じ作成時刻が20件目と21件目にまたがっても全部 =================
 {
-  for (let i = 0; i < 19; i++) insNote('P2', dayOffset(-(i + 1)), 1000 + i);
-  for (const id of ['NSAME-a', 'NSAME-b', 'NSAME-c']) insNote('P2', dayOffset(-30), 500, id);
-  const { out, last } = await pageAll('k_notes', 'P2', 'notes');
+  for (let i = 0; i < 5; i++) insNote('P2', inWin(i + 1), 5000 + i);
+  for (let i = 0; i < 19; i++) insNote('P2', outWin(i + 1), 1000 - i);
+  for (const id of ['NSAME-a', 'NSAME-b', 'NSAME-c']) insNote('P2', outWin(40), 500, id);
+  const { first, recent, older, lastO } = await pageAll('k_notes', 'P2', 'notes');
   const want = qa(env, `SELECT note_id FROM karte_notes WHERE customer_id = 'P2' AND deleted_at IS NULL ORDER BY session_date DESC, created_at DESC, note_id DESC`).map((x) => x.note_id);
-  ok('P10 ★指導の履歴も同じ日・同じ作成時刻が境にまたがって全件・重複なし・順序どおり', out.length === 22 && new Set(out).size === 22 && same(out, want) && last.more === false, JSON.stringify(out.slice(18)));
-  const f = await call('U_t2', 'k_notes', { customerId: 'P2' });
-  const b = await call('U_t2', 'k_notes', { customerId: 'P2', before: dayOffset(-10) });
-  ok('P16b k_notes の初回は more・nextCursor を返す／before だけ（旧互換）は D より前だけ', f.more === true && typeof f.nextCursor === 'string' && b.status === 200 && b.notes.every((n) => n.session_date < dayOffset(-10)));
+  ok('P10 ★指導の履歴の初回は境界以後だけ（5件）・boundary・older', first.status === 200 && first.boundary === B && first.notes.length === 5 && first.older === true && first.more === false && recent.length === 5);
+  ok('P10 ★O の系列：同じ日・同じ作成時刻が20件目と21件目にまたがっても全件・重複なし・順序どおり・R と合わせると全部', older.length === 22 && new Set(older).size === 22 && same(recent.concat(older), want) && lastO.more === false, JSON.stringify(older.slice(18)));
+  const b = await call('U_t2', 'k_notes', { customerId: 'P2', before: outWin(10) });
+  ok('P16b k_notes の before だけ（旧互換）は D より前だけ・集計も older も付かない', b.status === 200 && b.notes.every((n) => n.session_date < outWin(10)) && !('older' in b) && b.nextCursor === null);
 }
 
 console.log(`${fail ? '❌' : '✅'} 記録の全期間表示（設計62 段1・Worker） 検証: ${pass} passed / ${fail} failed`);

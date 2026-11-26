@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -1456,19 +1456,29 @@
   }
   function byNewest(a, b) { return a.session_date !== b.session_date ? (a.session_date < b.session_date ? 1 : -1) : (Number(b.created_at || 0) - Number(a.created_at || 0)); }
   /**
-   * 設計62 段1：k_training の初回の応答から、ページの状態と全期間の集計を持つ（cur に1つだけ）
-   *   more：true＝もっと前がある／false＝これで全部／null＝古い Worker で分からない
-   *   tail：つながって読んだ回の最も古い日（前回の読み足しが要るかの判定に使う）
+   * 設計62 段1（改訂6）：k_training の初回の応答から、境界・ページの状態・全期間の集計を持つ（cur に1つだけ）
+   *   boundary：Worker が決めた境界（今月を含む3か月の最初の日）。★端末の時計では決めない。無ければ古い Worker＝今までどおり1つの一覧
+   *   trMore／trCursor：R の系列（直近3か月）の続き。true／false／null（古い Worker で分からない）
+   *   trOlder：境界より前に回があるか（true／false／null）。trO：3か月より前の読み込みの状態
    */
   function trPageState(r, sessions) {
+    cur.trBoundary = typeof r.boundary === 'string' && /^\d{4}-\d{2}-01$/.test(r.boundary) ? r.boundary : null;
     cur.trMore = r.more === true ? true : (r.more === false ? false : null);
     cur.trCursor = typeof r.nextCursor === 'string' ? r.nextCursor : null;
-    cur.trTail = trOldest(sessions);
+    cur.trOlder = r.older === true ? true : (r.older === false ? false : null);
+    cur.trO = { loaded: false, more: null, cursor: null, open: false, busy: false, err: '' };
     var a = r.agg && typeof r.agg === 'object' ? r.agg : null;
     cur.trAll = a ? { agg: a, bestAll: Array.isArray(r.bestAll) ? r.bestAll : null, seriesAll: Array.isArray(r.seriesAll) ? r.seriesAll : null,
                       seriesFrom: typeof r.seriesFrom === 'string' ? r.seriesFrom : null } : null;
+    trRecalcTail(sessions);
   }
   function trOldest(sessions) { var m = null; (sessions || []).forEach(function (s) { if (s && s.session_date && (m == null || s.session_date < m)) m = s.session_date; }); return m; }
+  /** つながって読んだ回の最も古い日：R を読み切っていなければ直近3か月の中だけ（3か月より前の回との間に穴がある） */
+  function trRecalcTail(sessions) {
+    var b = cur.trBoundary;
+    var recent = b && cur.trMore !== false ? (sessions || []).filter(function (s) { return s.session_date >= b; }) : sessions;
+    cur.trTail = trOldest(recent);
+  }
   /** 全期間の集計が使えるか（ok か truncated で、値が配列）。unavailable・null・古い Worker は使わない＝読んだ回の中に戻す */
   function trAllOk(k) {
     var A = cur.trAll; if (!A || !A.agg) return false;
@@ -1477,8 +1487,10 @@
   }
   /** 日付 D の「前回」に、D より前を読み足す必要があるか（全部読んだと分かっていれば要らない） */
   function trNeedBefore(date) {
-    if (cur.trMore === false) return false;
-    return !!cur.trTail && date <= cur.trTail;
+    var rDone = cur.trMore === false;
+    var oDone = cur.trOlder === false || !!(cur.trO && cur.trO.loaded && cur.trO.more === false);
+    if (rDone && oDone) return false;
+    return !cur.trTail || date <= cur.trTail;
   }
   /** 入力中の日付より前の直近1回（session_id 単位） */
   function prevSession(sessions, date) { var l = (sessions || []).filter(function (s) { return s.session_date < date; }).sort(byNewest); return l[0] || null; }
@@ -4925,7 +4937,7 @@
   function trainingViews(box, sessions) {
     box.appendChild(el('div', { class: 'k-sub', style: 'letter-spacing:.08em;padding:4px 2px 0;', text: '見る' }));
     var wantDay = cur.wantDayView; cur.wantDayView = null;   // 使っても使わなくても消す
-    if (!sessions.length) { box.appendChild(msg('まだ記録がありません。')); cur.showDayView = function () {}; return; }
+    if (!sessions.length && cur.trOlder !== true) { box.appendChild(msg('まだ記録がありません。')); cur.showDayView = function () {}; return; }   // 設計62：直近3か月が0回でも3か月より前があれば続ける
     var sorted = sessions.slice().sort(byNewest);   // ★日別の記録は drawDays の中で毎回並べ直す（もっと前を足すため）
     function setLine(sets) {
       return setLineOf(sets.slice().sort(function (a, b) { return a.set_no - b.set_no; }));   // 0 は「自重」
@@ -4939,8 +4951,8 @@
       return out;
     }
     //   前回
-    var last = sorted[0], lo = exOrder(last);
-    box.appendChild(el('div', { class: 'k-card', style: 'display:flex;flex-direction:column;gap:8px;' }, [
+    var last = sorted[0], lo = last ? exOrder(last) : null;
+    if (last) box.appendChild(el('div', { class: 'k-card', style: 'display:flex;flex-direction:column;gap:8px;' }, [
       el('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;' }, [el('div', { class: 'k-h', style: 'margin:0;', text: '前回（' + md(last.session_date) + '）' }), el('div', { class: 'k-sub', text: lo.groups.length + '種目・' + (last.sets || []).length + 'セット' })]),
       exRows(last, true)]));
     //   種目ごとの推移
@@ -4974,65 +4986,106 @@
     var dayCard = el('div', { class: 'k-card k-daycard', style: 'display:flex;flex-direction:column;gap:8px;' });
     box.appendChild(dayCard);
     var dayPart = '', openDay = null, moreBusy = false, moreErr = false;
-    //   設計62 §4-4：もっと前の記録を20回ずつ足す（一覧の配列に足す＝［編集］・写す・前回もその回を見る）。同じ session_id は足さない
+    var B = cur.trBoundary, O = cur.trO || { loaded: false, more: null, cursor: null, open: false, busy: false, err: '' };
+    var olderCard = el('div', { class: 'k-card k-oldcard', style: 'display:flex;flex-direction:column;gap:8px;' });
+    if (B && cur.trOlder === true) box.appendChild(olderCard);
+    //   設計62：月が替わった（Worker が 409 BOUNDARY_MOVED）＝初回から読み直す
+    function moved(r) { if (r && r.code === 'BOUNDARY_MOVED') { open(cur.customerId, cur.name, 'training', null, 'replace'); return true; } return false; }
+    function addRows(r) { var have = {}; sessions.forEach(function (x) { have[x.session_id] = 1; }); r.sessions.forEach(function (x) { if (x && !have[x.session_id]) sessions.push(x); }); }
+    //   直近3か月の続き（R の系列・上限100を超えたときだけ）。★3か月より前には入らない（Worker が境界より前へ進まない）
     function loadMore() {
       if (moreBusy || !cur.trCursor) return;
       moreBusy = true; moreErr = false; drawDays();
       var askedFor = cur.customerId;
       kRead('k_training', { customerId: askedFor, cursor: cur.trCursor }).then(function (r) {
         moreBusy = false;
-        if (cur.customerId !== askedFor) return;
+        if (cur.customerId !== askedFor || moved(r)) return;
         if (!r || !r.success || !Array.isArray(r.sessions)) { moreErr = true; drawDays(); return; }   // 読んだ分は残す
-        var have = {}; sessions.forEach(function (x) { have[x.session_id] = 1; });
-        r.sessions.forEach(function (x) { if (x && !have[x.session_id]) sessions.push(x); });
+        addRows(r);
         cur.trMore = r.more === true; cur.trCursor = typeof r.nextCursor === 'string' ? r.nextCursor : null;
-        cur.trTail = trOldest(sessions);
+        trRecalcTail(sessions);
         drawDays();
       }, function () { moreBusy = false; if (cur.customerId === askedFor) { moreErr = true; drawDays(); } });
+    }
+    //   3か月より前（O の系列）：最初は older:true、以後は O のカーソル。一覧の配列に足す＝［編集］・前回もその回を見る
+    function loadOlder() {
+      if (O.busy || (O.loaded && !O.cursor)) return;
+      O.busy = true; O.err = ''; drawOlder();
+      var askedFor = cur.customerId;
+      kRead('k_training', O.loaded ? { customerId: askedFor, cursor: O.cursor } : { customerId: askedFor, older: true }).then(function (r) {
+        O.busy = false;
+        if (cur.customerId !== askedFor || moved(r)) return;
+        if (!r || !r.success || !Array.isArray(r.sessions)) { O.err = '読めませんでした（もう一度押してください）。'; drawOlder(); return; }
+        addRows(r);
+        O.loaded = true; O.more = r.more === true; O.cursor = typeof r.nextCursor === 'string' ? r.nextCursor : null;
+        trRecalcTail(sessions);
+        drawOlder();
+      }, function () { O.busy = false; if (cur.customerId === askedFor) { O.err = '読めませんでした（もう一度押してください）。'; drawOlder(); } });
+    }
+    function dayRow(x, k, n, redraw) {
+      var on = openDay === x.session_id, o = exOrder(x);
+      var row = el('div', { style: 'display:flex;flex-direction:column;gap:6px;padding:10px 0;' + (k < n - 1 ? 'border-bottom:1px solid var(--k-line);' : '') });
+      row.appendChild(el('button', { type: 'button', class: 'k-dayrow', 'aria-expanded': on ? 'true' : 'false', onclick: function () { openDay = on ? null : x.session_id; redraw(); } }, [
+        el('span', { style: 'font-weight:700;', text: mdw(x.session_date) }), el('span', { class: 'k-sub', text: o.groups.length + '種目 ' + (on ? '▾' : '›') })]));
+      row.appendChild(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, partsOf(x).map(function (pt) { return el('span', { class: 'k-tag', style: 'border-radius:999px;padding:2px 9px;font-size:12px;', text: pt }); })));
+      if (on) {
+        row.appendChild(el('div', { class: 'k-sub', text: '担当 ' + trainerName(x.author_trainer_id) }));
+        row.appendChild(exRows(x, true));
+        if (String(x.author_trainer_id) === String(state.trainerId) || state._isOwner) {
+          //   設計58：［編集］は切替が開いていて、新しい鍵を値で使う回なら 33 のときだけ（押しても 409 になるだけの回には出さない）
+          var dayBtns = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-self:flex-start;' });
+          if (cur.trEdit === true && (!sessUsesExt(x) || extOk())) dayBtns.appendChild(el('button', { type: 'button', class: 'k-btn out small k-dayedit', style: 'min-height:44px;min-width:88px;margin:0;', text: '編集', onclick: function () { startEdit(cur.body, sessions, x); } }));
+          row.appendChild(dayBtns);
+          dayBtns.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'min-height:44px;margin:0;', text: '削除', onclick: function () {
+            if (!window.confirm(x.session_date + ' の記録を削除しますか？')) return;
+            kWrite('k_deleteTraining', { sessionId: x.session_id, rev: x.rev }, newReqId()).then(function (w) {
+              if (!w || !w.success) { window.alert(errText(w)); return; }
+              open(cur.customerId, cur.name, 'training', null, 'replace');
+            });
+          } }));
+        }
+      }
+      return row;
+    }
+    function moreBtn(cls, label, busy, fn) {
+      var b = el('button', { type: 'button', class: 'k-btn out ' + cls, style: 'min-height:44px;margin:4px 0 0;', text: busy ? '読み込み中…' : label, onclick: fn });
+      b.disabled = busy;   // ★el に disabled:null を渡すと属性が付いて押せなくなる
+      return b;
     }
     function drawDays() {
       dayCard.innerHTML = '';
       sorted = sessions.slice().sort(byNewest);
-      dayCard.appendChild(el('div', { class: 'k-h', style: 'margin:0;', text: '日別の記録' }));
-      var allParts = []; sorted.forEach(function (x) { partsOf(x).forEach(function (pt) { if (allParts.indexOf(pt) < 0) allParts.push(pt); }); });
+      var recent = B ? sorted.filter(function (x) { return x.session_date >= B; }) : sorted;   // 古い Worker（境界なし）は今までどおり全部
+      dayCard.appendChild(el('div', { class: 'k-h', style: 'margin:0;', text: B ? '日別の記録（直近3か月）' : '日別の記録' }));
+      var allParts = []; recent.forEach(function (x) { partsOf(x).forEach(function (pt) { if (allParts.indexOf(pt) < 0) allParts.push(pt); }); });
       var chips = el('div', { class: 'k-pills', style: 'gap:6px;' });
       [''].concat(allParts).forEach(function (pt) { chips.appendChild(el('button', { type: 'button', class: 'k-pill' + (dayPart === pt ? ' on' : ''), text: pt || 'すべて', onclick: function () { dayPart = pt; drawDays(); } })); });
       dayCard.appendChild(chips);
-      sorted.filter(function (x) { return !dayPart || partsOf(x).indexOf(dayPart) >= 0; }).forEach(function (x, k, arr) {
-        var on = openDay === x.session_id, o = exOrder(x);
-        var row = el('div', { style: 'display:flex;flex-direction:column;gap:6px;padding:10px 0;' + (k < arr.length - 1 ? 'border-bottom:1px solid var(--k-line);' : '') });
-        row.appendChild(el('button', { type: 'button', class: 'k-dayrow', 'aria-expanded': on ? 'true' : 'false', onclick: function () { openDay = on ? null : x.session_id; drawDays(); } }, [
-          el('span', { style: 'font-weight:700;', text: mdw(x.session_date) }), el('span', { class: 'k-sub', text: o.groups.length + '種目 ' + (on ? '▾' : '›') })]));
-        row.appendChild(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, partsOf(x).map(function (pt) { return el('span', { class: 'k-tag', style: 'border-radius:999px;padding:2px 9px;font-size:12px;', text: pt }); })));
-        if (on) {
-          row.appendChild(el('div', { class: 'k-sub', text: '担当 ' + trainerName(x.author_trainer_id) }));
-          row.appendChild(exRows(x, true));
-          if (String(x.author_trainer_id) === String(state.trainerId) || state._isOwner) {
-            //   設計58：［編集］は切替が開いていて、新しい鍵を値で使う回なら 33 のときだけ（押しても 409 になるだけの回には出さない）
-            var dayBtns = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-self:flex-start;' });
-            if (cur.trEdit === true && (!sessUsesExt(x) || extOk())) dayBtns.appendChild(el('button', { type: 'button', class: 'k-btn out small k-dayedit', style: 'min-height:44px;min-width:88px;margin:0;', text: '編集', onclick: function () { startEdit(cur.body, sessions, x); } }));
-            row.appendChild(dayBtns);
-            dayBtns.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'min-height:44px;margin:0;', text: '削除', onclick: function () {
-              if (!window.confirm(x.session_date + ' の記録を削除しますか？')) return;
-              kWrite('k_deleteTraining', { sessionId: x.session_id, rev: x.rev }, newReqId()).then(function (w) {
-                if (!w || !w.success) { window.alert(errText(w)); return; }
-                open(cur.customerId, cur.name, 'training', null, 'replace');
-              });
-            } }));
-          }
-        }
-        dayCard.appendChild(row);
-      });
+      var shown = recent.filter(function (x) { return !dayPart || partsOf(x).indexOf(dayPart) >= 0; });
+      shown.forEach(function (x, k) { dayCard.appendChild(dayRow(x, k, shown.length, drawDays)); });
+      if (B && !recent.length) dayCard.appendChild(msg('直近3か月の記録はありません。'));
       if (moreErr) dayCard.appendChild(msg('読めませんでした（もう一度押してください）。', true));
-      if (cur.trMore === true && cur.trCursor) {
-        var mb = el('button', { type: 'button', class: 'k-btn out k-trmore', style: 'min-height:44px;margin:4px 0 0;', text: moreBusy ? '読み込み中…' : 'もっと前の記録を見る（20回ずつ）', onclick: loadMore });
-        mb.disabled = moreBusy;   // ★el に disabled:null を渡すと属性が付いて押せなくなる
-        dayCard.appendChild(mb);
-      }
+      if (cur.trMore === true && cur.trCursor) dayCard.appendChild(moreBtn('k-trmore', '続きを見る（直近3か月）', moreBusy, loadMore));
     }
+    function drawOlder() {
+      if (!(B && cur.trOlder === true)) return;
+      olderCard.innerHTML = '';
+      var bm = Number(B.slice(5, 7));
+      olderCard.appendChild(el('button', { type: 'button', class: 'k-dayrow k-oldtoggle', 'aria-expanded': O.open ? 'true' : 'false', style: 'min-height:44px;',
+        onclick: function () { O.open = !O.open; if (O.open && !O.loaded) loadOlder(); else drawOlder(); } }, [
+        el('span', { style: 'font-weight:700;', text: '3か月より前の記録' }), el('span', { class: 'k-sub', text: bm + '月より前 ' + (O.open ? '▾' : '›') })]));
+      if (!O.open) return;
+      var older = sessions.filter(function (x) { return x.session_date < B; }).sort(byNewest);
+      older.forEach(function (x, k) { olderCard.appendChild(dayRow(x, k, older.length, drawOlder)); });
+      if (O.busy && !O.loaded) olderCard.appendChild(msg('読み込み中…'));
+      if (O.loaded && !older.length && !O.err) olderCard.appendChild(msg('3か月より前の記録はありません。'));
+      if (O.err) olderCard.appendChild(msg(O.err, true));
+      if (O.loaded ? (O.more === true && O.cursor) : !!O.err) olderCard.appendChild(moreBtn('k-trolder', O.loaded ? 'もっと前を見る（20回ずつ）' : 'もう一度読む', O.busy, loadOlder));
+    }
+    drawOlder();
     drawDays();
     //   送り直しの画面の「日別の記録を確かめる」：日別の記録へ移って一番新しい日を開く
-    cur.showDayView = function () { dayPart = ''; openDay = sorted[0].session_id; drawDays(); dayCard.classList.add('focus'); try { dayCard.scrollIntoView({ block: 'start' }); } catch (e) {} };
+    cur.showDayView = function () { dayPart = ''; openDay = sorted[0] ? sorted[0].session_id : null; drawDays(); dayCard.classList.add('focus'); try { dayCard.scrollIntoView({ block: 'start' }); } catch (e) {} };
     if (wantDay && wantDay === cur.customerId) cur.showDayView();
   }
 
@@ -5083,30 +5136,76 @@
       if (!r || !r.success) { list.innerHTML = ''; list.appendChild(msg(errText(r), true)); return; }
       if (cur.customerId === askedFor) cur.notesSchema = r.karteSchema;
       var notes = r.notes || [];
+      //   設計62 段1（改訂6）：直近3か月（境界は Worker の値）＋R の続き＋畳んだ「3か月より前のメモ」（older → O）。古い Worker（境界なし）は今までどおり
+      var NB = typeof r.boundary === 'string' && /^\d{4}-\d{2}-01$/.test(r.boundary) ? r.boundary : null;
+      var nMore = r.more === true, nCursor = typeof r.nextCursor === 'string' ? r.nextCursor : null, nBusy = false, nErr = false;
+      var NO = { has: r.older === true, loaded: false, more: null, cursor: null, open: false, busy: false, err: '', rows: [] };
       [['', 'すべて']].concat(TAGS).forEach(function (t) {
         chips.appendChild(el('button', { type: 'button', class: 'k-pill', text: t[1], onclick: function () { filt.tag = t[0]; draw(); } }));
       });
+      function nMoved(x) { if (x && x.code === 'BOUNDARY_MOVED') { open(cur.customerId, cur.name, 'notes', null, 'replace'); return true; } return false; }
+      function nAdd(arr, rows) { var have = {}; arr.forEach(function (n) { have[n.note_id] = 1; }); (rows || []).forEach(function (n) { if (n && !have[n.note_id]) arr.push(n); }); }
+      function noteItem(n) {
+        var item = el('div', { class: 'k-tl-item' }, [el('div', { class: 'k-tl-dot' }),
+          el('div', { class: 'k-sub', text: md(n.session_date) + '・' + trainerName(n.author_trainer_id) + (n.edited_at ? '（編集済み）' : '') })]);
+        var c = el('div', { class: 'k-card', style: 'padding:12px;margin-top:6px;' }, [noteView(n)]);
+        if (String(n.author_trainer_id) === String(state.trainerId) || state._isOwner) {
+          c.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'margin-top:8px;', text: '削除', onclick: function () {
+            if (!window.confirm('このメモを削除しますか？')) return;
+            kWrite('k_deleteNote', { noteId: n.note_id, rev: n.rev }, newReqId()).then(function (w) {
+              if (!w || !w.success) { window.alert(errText(w)); return; }
+              open(cur.customerId, cur.name, 'notes', null, 'replace');
+            });
+          } }));
+        }
+        item.appendChild(c);
+        return item;
+      }
+      function nBtn(cls, label, busy, fn) { var b = el('button', { type: 'button', class: 'k-btn out ' + cls, style: 'min-height:44px;margin:4px 0 0;', text: busy ? '読み込み中…' : label, onclick: fn }); b.disabled = busy; return b; }
+      function loadMoreNotes() {
+        if (nBusy || !nCursor) return;
+        nBusy = true; nErr = false; draw();
+        kRead('k_notes', { customerId: askedFor, cursor: nCursor }).then(function (x) {
+          nBusy = false;
+          if (cur.customerId !== askedFor || nMoved(x)) return;
+          if (!x || !x.success || !Array.isArray(x.notes)) { nErr = true; draw(); return; }
+          nAdd(notes, x.notes); nMore = x.more === true; nCursor = typeof x.nextCursor === 'string' ? x.nextCursor : null; draw();
+        }, function () { nBusy = false; nErr = true; draw(); });
+      }
+      function loadOlderNotes() {
+        if (NO.busy || (NO.loaded && !NO.cursor)) return;
+        NO.busy = true; NO.err = ''; draw();
+        kRead('k_notes', NO.loaded ? { customerId: askedFor, cursor: NO.cursor } : { customerId: askedFor, older: true }).then(function (x) {
+          NO.busy = false;
+          if (cur.customerId !== askedFor || nMoved(x)) return;
+          if (!x || !x.success || !Array.isArray(x.notes)) { NO.err = '読めませんでした（もう一度押してください）。'; draw(); return; }
+          nAdd(NO.rows, x.notes); NO.loaded = true; NO.more = x.more === true; NO.cursor = typeof x.nextCursor === 'string' ? x.nextCursor : null; draw();
+        }, function () { NO.busy = false; NO.err = '読めませんでした（もう一度押してください）。'; draw(); });
+      }
       function draw() {
         Array.prototype.forEach.call(chips.children, function (b, i) { b.className = 'k-pill' + ((i === 0 ? '' : TAGS[i - 1][0]) === filt.tag ? ' on' : ''); });
         list.innerHTML = '';
+        if (NB) list.appendChild(el('div', { class: 'k-sub', style: 'font-size:12px;', text: '直近3か月のメモ' }));
         var shown = notes.filter(function (n) { return !filt.tag || n.tag === filt.tag; });
-        shown.forEach(function (n) {
-          var item = el('div', { class: 'k-tl-item' }, [el('div', { class: 'k-tl-dot' }),
-            el('div', { class: 'k-sub', text: md(n.session_date) + '・' + trainerName(n.author_trainer_id) + (n.edited_at ? '（編集済み）' : '') })]);
-          var c = el('div', { class: 'k-card', style: 'padding:12px;margin-top:6px;' }, [noteView(n)]);
-          if (String(n.author_trainer_id) === String(state.trainerId) || state._isOwner) {
-            c.appendChild(el('button', { class: 'k-btn out small k-danger', style: 'margin-top:8px;', text: '削除', onclick: function () {
-              if (!window.confirm('このメモを削除しますか？')) return;
-              kWrite('k_deleteNote', { noteId: n.note_id, rev: n.rev }, newReqId()).then(function (w) {
-                if (!w || !w.success) { window.alert(errText(w)); return; }
-                open(cur.customerId, cur.name, 'notes', null, 'replace');
-              });
-            } }));
-          }
-          item.appendChild(c);
-          list.appendChild(item);
-        });
-        if (!shown.length) list.appendChild(msg(notes.length ? 'このタグのメモはありません。' : 'まだメモがありません。'));
+        shown.forEach(function (n) { list.appendChild(noteItem(n)); });
+        if (!shown.length) list.appendChild(msg(notes.length ? 'このタグのメモはありません。' : (NB && NO.has ? '直近3か月のメモはありません。' : 'まだメモがありません。')));
+        if (nErr) list.appendChild(msg('読めませんでした（もう一度押してください）。', true));
+        if (nMore && nCursor) list.appendChild(nBtn('k-ntmore', '続きを見る（直近3か月）', nBusy, loadMoreNotes));
+        if (!(NB && NO.has)) return;
+        var bm = Number(NB.slice(5, 7));
+        var oc = el('div', { class: 'k-card k-oldnotes', style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px;' });
+        oc.appendChild(el('button', { type: 'button', class: 'k-dayrow k-oldtoggle', 'aria-expanded': NO.open ? 'true' : 'false', style: 'min-height:44px;',
+          onclick: function () { NO.open = !NO.open; if (NO.open && !NO.loaded) loadOlderNotes(); else draw(); } }, [
+          el('span', { style: 'font-weight:700;', text: '3か月より前のメモ' }), el('span', { class: 'k-sub', text: bm + '月より前 ' + (NO.open ? '▾' : '›') })]));
+        if (NO.open) {
+          var os = NO.rows.filter(function (n) { return !filt.tag || n.tag === filt.tag; });
+          os.forEach(function (n) { oc.appendChild(noteItem(n)); });
+          if (NO.busy && !NO.loaded) oc.appendChild(msg('読み込み中…'));
+          if (NO.loaded && !os.length && !NO.err) oc.appendChild(msg(NO.rows.length ? 'このタグのメモはありません。' : '3か月より前のメモはありません。'));
+          if (NO.err) oc.appendChild(msg(NO.err, true));
+          if (NO.loaded ? (NO.more === true && NO.cursor) : !!NO.err) oc.appendChild(nBtn('k-ntolder', NO.loaded ? 'もっと前を見る（20件ずつ）' : 'もう一度読む', NO.busy, loadOlderNotes));
+        }
+        list.appendChild(oc);
       }
       draw();
     });

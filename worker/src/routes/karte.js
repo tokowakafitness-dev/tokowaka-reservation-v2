@@ -1422,62 +1422,101 @@ async function summary(c) {
   });
 }
 
-// ---------------------------------------------------------------- 設計62 段1：ページ送り・全期間の集計・1件の読み直し
-//   ★要求の形（§4-2・I93）：初回＝cursor・before・sessionId が全部無い／ページ送り＝cursor だけ／前回の読み足し＝before だけ／
-//     1件の読み直し＝sessionId だけ（k_training だけ）。2つ以上・形の違いは 400（黙って1ページ目を返さない）
+// ---------------------------------------------------------------- 設計62 段1（改訂6）：直近3か月・ページ送り・全期間の集計・1件の読み直し
+//   ★境界＝JST の暦月で今月を含む3か月の最初の日（11/26 → 9/1）。Worker の時計だけで決め、要求の冒頭で1回だけ求める（I93）
+//   ★要求の形（窓口ごとに形の鍵の集合が違う）：
+//     k_training：初回（形の鍵なし）／older:true／cursor（R・O）／before／sessionId
+//     k_notes   ：初回／older:true／cursor（R・O）／before   ※month（M の系列）は段2
+//     形の鍵が2つ以上・集合の外の形の鍵・型違いは 400（黙って1ページ目を返さない）
+//   ★カーソルは2つの系列：R|<境界>|<日付>|<作成時刻>|<id>（3か月以内）／O|<境界>|<日付>|<作成時刻>|<id>（3か月より前）
+//     発行したときの境界が今の境界と違えば 409 BOUNDARY_MOVED（月が替わった＝初回から読み直す）。R は境界より前へ進まない
 export const PAST_LIMITS = {
+  RECENT_MAX: 100,         // 初回（境界以後）の上限。超えたら R のカーソルで続き
   SERIES_SESSIONS: 1000,   // 推移を作る session の上限（打ち切りは日の境）
   DATES: 2000,             // allDates の日の上限
   BEST_TRAINER: 200,       // トレーナーの自己ベストの種目の上限（上限+1 を読んで truncated）
   TRACE_HOPS: 5,           // 置き換わった session をたどる段の上限（I95）
 };
 const PAGE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-/** 'YYYY-MM-DD|<created_at>|<id>' → { d, c, id }。形が違えば null */
-export function parseCursor(v) {
-  const m = /^(\d{4}-\d{2}-\d{2})\|(\d{1,15})\|([A-Za-z0-9_-]{1,64})$/.exec(String(v));
-  if (!m || !isRealDate(m[1])) return null;
-  return { d: m[1], c: Number(m[2]), id: m[3] };
+const FORM_KEYS = { training: ['cursor', 'older', 'before', 'sessionId'], notes: ['cursor', 'older', 'before'] };
+const ALL_FORM_KEYS = ['cursor', 'older', 'before', 'sessionId', 'month'];
+/** 境界：JST の今月1日から2か月前の1日（YYYY-MM-01） */
+export function windowStart(nowMs) {
+  const d = new Date(Number(nowMs) + 9 * 3600 * 1000);
+  let y = d.getUTCFullYear(), m = d.getUTCMonth() + 1 - 2;
+  if (m <= 0) { m += 12; y -= 1; }
+  return `${y}-${String(m).padStart(2, '0')}-01`;
 }
-export function cursorOf(d, c, id) { return `${d}|${Math.floor(Number(c) || 0)}|${id}`; }
-/** 要求の形を決める。{ form:'first'|'page'|'before'|'one', cursor?, before?, sid? } か { bad } */
-export function readPageForm(body, allowSid) {
+/** 'R|<境界>|YYYY-MM-DD|<created_at>|<id>' → { kind, b, d, c, id }。形が違えば null（WIP の3要素の形も null） */
+export function parseCursor(v) {
+  const m = /^([RO])\|(\d{4}-\d{2}-01)\|(\d{4}-\d{2}-\d{2})\|(\d{1,15})\|([A-Za-z0-9_-]{1,64})$/.exec(String(v));
+  if (!m || !isRealDate(m[2]) || !isRealDate(m[3])) return null;
+  return { kind: m[1], b: m[2], d: m[3], c: Number(m[4]), id: m[5] };
+}
+export function cursorOf(kind, b, d, c, id) { return `${kind}|${b}|${d}|${Math.floor(Number(c) || 0)}|${id}`; }
+/**
+ * 要求の形を決める（which＝'training'|'notes'）。返り値 { form:'first'|'older'|'page'|'before'|'one', ... } か { bad, status? }
+ *   ★空文字・null は「無い」（旧画面の before:'' を壊さない）。それ以外の型違いは 400
+ */
+export function readPageForm(body, which, boundary) {
+  const allowed = FORM_KEYS[which];
   const has = (k) => body[k] !== undefined && body[k] !== null && body[k] !== '';
-  if (!allowSid && has('sessionId')) return { bad: 'sessionId' };
-  const present = ['cursor', 'before', 'sessionId'].filter(has);
+  const present = ALL_FORM_KEYS.filter(has);
+  if (present.some((k) => allowed.indexOf(k) < 0)) return { bad: 'FORM_KEY' };
   if (present.length > 1) return { bad: 'FORM' };
   if (!present.length) return { form: 'first' };
   const k = present[0], v = body[k];
+  if (k === 'older') return v === true ? { form: 'older' } : { bad: 'older' };
   if (typeof v !== 'string') return { bad: k };
-  if (k === 'cursor') { const cu = parseCursor(v); return cu ? { form: 'page', cursor: cu } : { bad: 'cursor' }; }
+  if (k === 'cursor') {
+    const cu = parseCursor(v);
+    if (!cu) return { bad: 'cursor' };
+    if (cu.b !== boundary) return { bad: 'BOUNDARY_MOVED', status: 409 };
+    return { form: 'page', cursor: cu };
+  }
   if (k === 'before') return isRealDate(v) ? { form: 'before', before: v } : { bad: 'before' };
   return PAGE_ID_RE.test(v) ? { form: 'one', sid: v } : { bad: 'sessionId' };
 }
-/** ページの条件（並びは session_date DESC, created_at DESC, <id> DESC で全部一意） */
-function pageWhere(f, idCol) {
+/** ページの条件（並びは session_date DESC, created_at DESC, <id> DESC で全部一意）。系列の範囲（境界の前後）も全ページで守る */
+function pageWhere(f, idCol, boundary) {
+  if (f.form === 'first') return { sql: ' AND session_date >= ?', args: [boundary], kind: 'R' };
+  if (f.form === 'older') return { sql: ' AND session_date < ?', args: [boundary], kind: 'O' };
   if (f.form === 'page') {
-    const { d, c, id } = f.cursor;
-    return { sql: ` AND (session_date < ? OR (session_date = ? AND (created_at < ? OR (created_at = ? AND ${idCol} < ?))))`, args: [d, d, c, c, id] };
+    const { kind, d, c, id } = f.cursor;
+    return { sql: ` AND session_date ${kind === 'R' ? '>=' : '<'} ? AND (session_date < ? OR (session_date = ? AND (created_at < ? OR (created_at = ? AND ${idCol} < ?))))`,
+             args: [boundary, d, d, c, c, id], kind };
   }
-  if (f.form === 'before') return { sql: ' AND session_date < ?', args: [f.before] };   // ★D 当日を1件も含まない（前回の読み足し・§4-6）
-  return { sql: '', args: [] };
+  return { sql: ' AND session_date < ?', args: [f.before], kind: null };   // ★before：D 当日を1件も含まない（前回の読み足し・§4-6）。ページ送りしない
+}
+const pageSize = (f) => (f.form === 'first' ? PAST_LIMITS.RECENT_MAX : KARTE_LIMITS.PAGE);
+/** 境界より前に生きた行が1つでもあるか（初回の older）。読めなければ null（＝分からない・画面は「3か月より前」を出さない） */
+async function olderExists(env, table, cid, boundary) {
+  try {
+    const r = await env.DB.prepare(`SELECT 1 AS x FROM ${table} WHERE customer_id = ? AND deleted_at IS NULL AND session_date < ? LIMIT 1`).bind(cid, boundary).first();
+    return !!r;
+  } catch (_) { return null; }
 }
 
 async function notes(c) {
   return readSection(c, 'notes', async (cid) => {
-    const f = readPageForm(c.body, false);
-    if (f.bad) return err('BAD_REQUEST', 400, f.bad);
-    const w = pageWhere(f, 'note_id');
+    const boundary = windowStart(Date.now());   // ★この要求の中では最後までこの値
+    const f = readPageForm(c.body, 'notes', boundary);
+    if (f.bad) return err(f.status === 409 ? 'BOUNDARY_MOVED' : 'BAD_REQUEST', f.status || 400, f.bad);
+    const w = pageWhere(f, 'note_id', boundary);
+    const n = pageSize(f);
     const r = await c.env.DB.prepare(
       `SELECT note_id, session_date, condition, body, next_plan, tag, reasons_json, next_check, author_trainer_id, rev, created_at, edited_at
          FROM karte_notes WHERE customer_id = ? AND deleted_at IS NULL${w.sql}
-        ORDER BY session_date DESC, created_at DESC, note_id DESC LIMIT ${KARTE_LIMITS.PAGE + 1}`
+        ORDER BY session_date DESC, created_at DESC, note_id DESC LIMIT ${n + 1}`
     ).bind(cid, ...w.args).all();
     const rows = r.results || [];
-    const more = rows.length > KARTE_LIMITS.PAGE;
-    const page = rows.slice(0, KARTE_LIMITS.PAGE);
+    const more = rows.length > n;
+    const page = rows.slice(0, n);
     const last = page[page.length - 1];
-    return { karteSchema: karteSchemaFor(c.env, c.who), notes: page.map(noteOut), more,
-             nextCursor: more && last ? cursorOf(last.session_date, last.created_at, last.note_id) : null };
+    const out = { karteSchema: karteSchemaFor(c.env, c.who), notes: page.map(noteOut), boundary, more,
+                  nextCursor: more && last && w.kind ? cursorOf(w.kind, boundary, last.session_date, last.created_at, last.note_id) : null };
+    if (f.form === 'first') out.older = await olderExists(c.env, 'karte_notes', cid, boundary);
+    return out;
   });
 }
 
@@ -1636,13 +1675,14 @@ export async function traceSession(env, cid, sid, hops = PAST_LIMITS.TRACE_HOPS)
 
 async function training(c) {
   return readSection(c, 'training', async (cid) => {
-    const f = readPageForm(c.body, true);
-    if (f.bad) return err('BAD_REQUEST', 400, f.bad);
+    const boundary = windowStart(Date.now());   // ★この要求の中では最後までこの値（行・older・応答・カーソル）
+    const f = readPageForm(c.body, 'training', boundary);
+    if (f.bad) return err(f.status === 409 ? 'BOUNDARY_MOVED' : 'BAD_REQUEST', f.status || 400, f.bad);
     const aiConsent = await aiConsentFor(c.env, c.who, cid);   // 設計44：画面の補助（関門は k_aiDraft の中）
     const trainingEdit = trainingEditOn(c.env, c.who);   // 設計58：［編集］を出すか（真偽値だけ）
     const head = { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit };   // 設計39・設計58
     if (f.form === 'one') {
-      //   ★1件の読み直しは extra と trace だけ（20回・集計は返さない＝［編集］のたびに重い集計を走らせない・P16a）
+      //   ★1件の読み直しは extra と trace だけ（20回・集計は返さない＝［編集］のたびに重い集計を走らせない）
       const t = await traceSession(c.env, cid, f.sid);
       if (!t.sid) return { ...head, extra: null, trace: t.trace };
       const one = await c.env.DB.prepare(
@@ -1653,20 +1693,22 @@ async function training(c) {
       const [x] = await loadSessions(c.env, [one]);
       return { ...head, extra: x, trace: t.trace, ...(t.replacedFrom ? { replacedFrom: t.replacedFrom } : {}) };
     }
-    const w = pageWhere(f, 'session_id');
+    const w = pageWhere(f, 'session_id', boundary);
+    const n = pageSize(f);
     const ss = await c.env.DB.prepare(
       `SELECT session_id, session_date, author_trainer_id, rev, created_at FROM karte_tr_sessions
         WHERE customer_id = ? AND deleted_at IS NULL${w.sql}
-        ORDER BY session_date DESC, created_at DESC, session_id DESC LIMIT ${KARTE_LIMITS.PAGE + 1}`
+        ORDER BY session_date DESC, created_at DESC, session_id DESC LIMIT ${n + 1}`
     ).bind(cid, ...w.args).all();
     const rows = ss.results || [];
-    const more = rows.length > KARTE_LIMITS.PAGE;
-    const page = rows.slice(0, KARTE_LIMITS.PAGE);
+    const more = rows.length > n;
+    const page = rows.slice(0, n);
     const last = page[page.length - 1];
-    const nextCursor = more && last ? cursorOf(last.session_date, last.created_at, last.session_id) : null;
+    const nextCursor = more && last && w.kind ? cursorOf(w.kind, boundary, last.session_date, last.created_at, last.session_id) : null;
     const sessions = await loadSessions(c.env, page);
-    const aggs = f.form === 'first' ? await trainingAggregates(c.env, cid) : {};
-    return { ...head, sessions, best: pageBest(sessions), more, nextCursor, ...aggs };   // ★空でも版を返す
+    const out = { ...head, sessions, best: pageBest(sessions), boundary, more, nextCursor };   // ★空でも版を返す
+    if (f.form === 'first') Object.assign(out, { older: await olderExists(c.env, 'karte_tr_sessions', cid, boundary) }, await trainingAggregates(c.env, cid));
+    return out;
   });
 }
 
