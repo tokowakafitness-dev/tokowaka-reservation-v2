@@ -372,12 +372,14 @@ setEnv(ON);
 }
 
 capture(false);
-// A9 本番の切替は off（空）か allow＋担当 A だけ（2026-11-20 決定0194）。on・担当の追加は弁護士の確認の後（決定0177）＝ここで落とす
+// A9 本番の切替は off（空）か allow＋担当 A だけ（2026-11-20 決定0194）か on（2026-11-26 会社の決定0213＝全トレーナー・同意の画面は A のまま）。
+//    on のときは同意の画面（MEMBER_CONSENT）が allow＋A のままであることも見る＝AI に送れる会員が同意の画面を通らずに増えない
 {
   const TOML = readFileSync(join(W, 'wrangler.toml'), 'utf8');
-  ok('A9 wrangler.toml：KARTE_AI_DRAFT は off か allow（on ではない）・allow なら担当は A だけ',
+  ok('A9 wrangler.toml：KARTE_AI_DRAFT は off か allow（担当 A だけ）か on（同意の画面は allow＋A のまま）',
     (/^KARTE_AI_DRAFT = "off"$/m.test(TOML) && /^KARTE_AI_DRAFT_TRAINERS = ""$/m.test(TOML))
-    || (/^KARTE_AI_DRAFT = "allow"$/m.test(TOML) && /^KARTE_AI_DRAFT_TRAINERS = "A"$/m.test(TOML)));
+    || (/^KARTE_AI_DRAFT = "allow"$/m.test(TOML) && /^KARTE_AI_DRAFT_TRAINERS = "A"$/m.test(TOML))
+    || (/^KARTE_AI_DRAFT = "on"$/m.test(TOML) && /^MEMBER_CONSENT = "allow"$/m.test(TOML) && /^MEMBER_CONSENT_TRAINERS = "A"$/m.test(TOML)));
   // A10 設計49 D6＝medium（2026-11-21 オーナー決定）。打ち間違いは本番で low に黙って倒れる＝値をここで固定する
   const eff = TOML.match(/^KARTE_AI_EFFORT = "([^"]*)"$/mg) || [];
   ok('A10 wrangler.toml：KARTE_AI_EFFORT は "medium" が1行だけ', eff.length === 1 && eff[0] === 'KARTE_AI_EFFORT = "medium"', JSON.stringify(eff));
