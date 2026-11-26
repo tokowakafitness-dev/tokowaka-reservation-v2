@@ -50,9 +50,9 @@ function textFound(needle) {
   clearRate();
   const st = [];
   for (const b of [{ member: { message: 'x' }, items: ITEMS }, { items: [], note: null }, {}, { sessionDate: future, items: ITEMS }, { sessionDate: '2026-02-30', items: ITEMS },
-                   { note: { body: 'あ'.repeat(2001) } }, { note: { body: '  ' } }, { note: 'x' }, { note: { body: 'x', extra: 1 } }, { health: { body: 'あ'.repeat(2001) } }])
+                   { note: { body: 'あ'.repeat(KARTE_LIMITS.NOTE_CHARS + 1) } }, { note: { body: '  ' } }, { note: 'x' }, { note: { body: 'x', extra: 1 } }, { health: { body: 'あ'.repeat(2001) } }])
     st.push((await imp('U_t1', b)).status);
-  ok('J1 member・空・未来の日・実在しない日・2,001字・空白だけ・形違い・知らない鍵は 400', st.every((x) => x === 400), JSON.stringify(st));
+  ok('J1 member・空・未来の日・実在しない日・上限＋1字・空白だけ・形違い・知らない鍵は 400', st.every((x) => x === 400), JSON.stringify(st));
   const onlyNote = await imp('U_t1', { note: { body: 'メモだけの日' } });
   ok('J1 メモだけの日も入る（session は作らない）', onlyNote.status === 200 && onlyNote.sessionId === null && onlyNote.noteId);
 }
@@ -95,8 +95,35 @@ function textFound(needle) {
   const big = [];
   for (let i = 0; i < 20; i++) big.push({ exercise: '見本種目' + i, sets: Array.from({ length: i < 10 ? 4 : 2 }, (_, k) => ({ weight: 10 + k, reps: 10 })) });
   const total = big.reduce((a, x) => a + x.sets.length, 0);
-  const r = await imp('U_t1', { items: big, note: { body: 'あ'.repeat(2000) } });
-  ok('J5 20種目・60セット・2,000字のメモを1つの batch で入れられる', total === 60 && r.status === 200 && qn(`SELECT COUNT(*) n FROM karte_tr_sets WHERE session_id = ?`, r.sessionId) === 60, JSON.stringify(r));
+  const r = await imp('U_t1', { items: big, note: { body: 'あ'.repeat(KARTE_LIMITS.NOTE_CHARS) } });
+  ok('J5 20種目・60セット・上限（4,000字）のメモを1つの batch で入れられる', total === 60 && r.status === 200 && qn(`SELECT COUNT(*) n FROM karte_tr_sets WHERE session_id = ?`, r.sessionId) === 60, JSON.stringify(r));
+}
+
+// ================= J6 設計64：同じ日に同じ本文の社内メモが既にあれば、社内メモは重ねない（記録は入る・違う文は入る・既存は変えない） =================
+{
+  clearRate();
+  const day = jstDay(NOW - 150 * 86400000);
+  const nOf = (body) => qn(`SELECT COUNT(*) n FROM karte_notes WHERE customer_id = 'C1' AND session_date = ? AND deleted_at IS NULL AND body = ?`, day, body);
+  await call('U_t1', 'k_addNote', { customerId: 'C1', sessionDate: day, tag: 'training', body: '架空の日々のメモ\n', clientReqId: crid() });   // 日々の画面の社内メモ（末尾の改行つき）
+  const c0 = counts();
+  const r = await imp('U_t1', { sessionDate: day, items: ITEMS, note: { body: '架空の日々のメモ' } });
+  ok('J6 ★同じ本文（前後の空白だけ違う）は社内メモを重ねない・記録は入る・応答で noteSame', r.status === 200 && r.noteId === null && r.noteSame === true && !!r.sessionId && counts().n === c0.n && counts().s === c0.s + 1, JSON.stringify(r));
+  ok('J6 既存の社内メモは1字も変えない', nOf('架空の日々のメモ\n') === 1 && nOf('架空の日々のメモ') === 0);
+  const only = await imp('U_t1', { sessionDate: day, note: { body: '架空の日々のメモ' } });
+  ok('J6 メモだけの日で同じ本文なら何も書かずに成功（noteSame）', only.status === 200 && only.noteSame === true && only.noteId === null && counts().n === c0.n, JSON.stringify(only));
+  const diff = await imp('U_t1', { sessionDate: day, note: { body: '架空の日々のメモ。続き' } });
+  ok('J6 ★少しでも違う本文は入れる（片方にしか無い文は残る）', diff.status === 200 && !!diff.noteId && nOf('架空の日々のメモ。続き') === 1, JSON.stringify(diff));
+  //   関門② 中2：上の読みをすり抜けても（同時に届いた2つ目）、書く文そのものが同じ本文を2件にしない＝読みを空振りにして確かめる
+  const d2 = jstDay(NOW - 152 * 86400000);
+  await imp('U_t1', { sessionDate: d2, note: { body: '架空の同時のメモ' } });
+  env._failRe = /^SELECT 1 AS x FROM karte_notes WHERE customer_id/;   // 読みが失敗＝今どおり入れる側へ倒れる
+  const race = await imp('U_t1', { sessionDate: d2, items: ITEMS, note: { body: '架空の同時のメモ' } });
+  env._failRe = null;
+  ok('J6 ★読みが失敗・空振りしても（同時に届いた2つ目と同じ）同じ本文は2件にならない（記録は入る）', race.status === 200 && !!race.sessionId && qn(`SELECT COUNT(*) n FROM karte_notes WHERE session_date = ? AND body = '架空の同時のメモ'`, d2) === 1, JSON.stringify(race));
+  const k = crid();
+  const a1 = await imp('U_t1', { sessionDate: jstDay(NOW - 151 * 86400000), note: { body: '架空の再送のメモ' } }, { crid: k });
+  const a2 = await imp('U_t1', { sessionDate: jstDay(NOW - 151 * 86400000), note: { body: '架空の再送のメモ' } }, { crid: k });
+  ok('J6 ★同じ番号の再送は今どおり同じ応答（重ねない判定で 409 にならない）', a1.status === 200 && !!a1.noteId && a2.replayed === true && a2.noteId === a1.noteId, JSON.stringify([a1, a2]));
 }
 
 // ================= HN1 スイッチ =================

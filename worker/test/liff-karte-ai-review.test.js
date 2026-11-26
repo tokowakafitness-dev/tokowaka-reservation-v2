@@ -287,7 +287,7 @@ for (const [label, src] of [['trial', SRC], ['不正な値（Full）', BOGUS]]) 
   ok('T8 ★member.on が厳密に true でなければお客様の欄は入らない', bD.members.length === 0 && bD.todos.length === 0);
   const rvE = D0(); rvE.exercises[1].off = true;
   const bE = T.reviewBuild(rvE, 'full', isAuto);
-  ok('T10 出力の形は設計49 と同じ（items・memos・nNote・nSet・blocked・members・todos・memoMax）', JSON.stringify(Object.keys(bE)) === JSON.stringify(['items', 'memos', 'nNote', 'nSet', 'blocked', 'members', 'todos', 'memoMax']) && bE.memoMax === 2000);
+  ok('T10 出力の形は設計49 と同じ（items・memos・nNote・nSet・blocked・members・todos・memoMax）', JSON.stringify(Object.keys(bE)) === JSON.stringify(['items', 'memos', 'nNote', 'nSet', 'blocked', 'members', 'todos', 'memoMax']) && bE.memoMax === 4000);
   ok('T9 組み立てた中身に根拠・迷った理由・体のこと・分からなかった点・聞こえた言葉が無い', !/60キロで5回|予告かもしれない|膝が少し痛い|予告か実施か|スカルフラッシュ/.test(JSON.stringify(bE)), JSON.stringify(bE).slice(0, 300));
   ok('T12 scope の判定は1か所：next は full だけ', T.scopeAllows('next', 'full') && !T.scopeAllows('next', 'trial'));
 }

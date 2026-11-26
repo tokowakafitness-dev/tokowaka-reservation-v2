@@ -284,7 +284,8 @@ for (const [label, o] of [['AI 無効', { aiDraft: false }], ['同意なし', { 
   await openRecord(w);
   R(w).querySelector('.k-start button.k-voicelog').click(); await settle();
   const an = R(w).querySelector('.k-addnote');
-  ok('G11 ' + label + '：取り込みの画面に「いまある内容（種目 1・社内メモ・お客様に見える欄）に足されます。上書きはしません」', !!an && an.textContent === 'いまある内容（種目 1・社内メモ・お客様に見える欄）に足されます。上書きはしません', an && an.textContent);
+  //   2026-11-26 オーナー：「種目 1」が「種目1に足される」と読めた＝数は「1種目」・行き先を言う（liff-karte-voice-target.test.js でも固定）
+  ok('G11 ' + label + '：取り込みの画面に「いまの記録（1種目・社内メモ・お客様に見える欄）は消さずに、後ろに足します。いまある種目には書き足しません…」', !!an && an.textContent === 'いまの記録（1種目・社内メモ・お客様に見える欄）は消さずに、後ろに足します。いまある種目には書き足しません（種目は後ろに増え、文章はその日の社内メモ・お客様に見える欄の末尾に入ります）。上書きはしません', an && an.textContent);
   ok('G11 ' + label + '：AI のボタンは出ず「読み取る」（従来どおり）', !btn(R(w), 'AIで振り分ける') && !!btn(R(w), '読み取る'));
   const ta = R(w).querySelector('textarea[aria-label="メモを貼る"]'); ta.value = 'スクワット\n60×8'; ta.dispatchEvent(new w.Event('input', { bubbles: true }));
   btn(R(w), '読み取る').click(); await settle();

@@ -27,7 +27,10 @@ export const KARTE_LIMITS = {
   TOKEN_MAX_AGE_S: 3600,   // 2026-11-06 オーナー承認（決定0142）で10分→1時間＝LINE の ID トークンの有効期限。exp は auth.js が別に見る。LIFF は開いたままトークンが新しくならず、10分では施術中に保存できなかった
   RATE_PER_WINDOW: 60,
   WINDOW_MS: 10 * 60 * 1000,
-  NOTE_CHARS: 2000,
+  //   社内メモ（karte_notes.body）の字数。2026-11-26 に 2,000→4,000（設計63）。★本文16KB（BODY_BYTES）に入る上限から決めた：
+  //   日本語は1字3バイト＝4,000字で12KB＋次回やること500字（1.5KB）＋ID トークン（約1.3KB）＋鍵＝約15KB。10,000字は本文16KB を超える（変えるなら BODY_BYTES と一緒）
+  //   ★画面 liff/karte.js の NOTE_MAX と同じ値（karte-memo-limit.test.js が揃っていることを見る）
+  NOTE_CHARS: 4000,
   TEXT_CHARS: 500,
   EXERCISES: 20,
   SETS_PER_EXERCISE: 10,   // ord（その回の何番目の種目か）ごと。同じ名前の2つの種目は別々に数える（設計38）
@@ -994,11 +997,22 @@ async function importDay(c) {
   if (tr && tr.total > L.TOTAL_SETS) return err('TOTAL_SETS', 400);
   const tid = String(c.who.trainerId || '');
   const date = String(b.sessionDate);
+  //   設計64：その日に同じ本文の社内メモ（前後の空白だけ違うものを含む）が既に生きていれば、社内メモは重ねない（記録・体の注意は今どおり）。
+  //   ★本文の完全一致だけ（意味の近さ・行の一部では判定しない＝消し過ぎない）。既存の行は変えない。payload の note は元のまま（再送の照合を変えない）
+  //   ★取り込みの一覧の「同じ日に記録がある日」は記録（karte_tr_sessions）だけを見ていて、メモだけの日を拾えない（2026-11-26 本物の SQLite で再現）
+  const noteIn = note;
+  let noteSame = false;
+  if (note) {
+    try {
+      const hit = await c.env.DB.prepare(`SELECT 1 AS x FROM karte_notes WHERE customer_id = ? AND session_date = ? AND deleted_at IS NULL AND trim(body, ' ' || char(9, 10, 13)) = ? LIMIT 1`).bind(cid, date, note).first();
+      if (hit) { note = null; noteSame = true; }
+    } catch (_) { /* 読めなければ今どおり入れる（重ねない判定のために取り込みを止めない） */ }
+  }
   const sid = tr ? newId() : null, nid = note ? newId() : null, hid = health ? newId() : null;
   const t = tr ? trainingRows(sid, tr) : null;
   return runWrite(c, {
     action: 'k_importDay', section: 'import', customerId: cid,
-    payload: { v: 1, cid, date, items: tr ? trainingHashItems(tr.items) : null, note, health },
+    payload: { v: 1, cid, date, items: tr ? trainingHashItems(tr.items) : null, note: noteIn, health },
     extUsed: !!(tr && tr.extUsed),
     healthGate: !!health,
     plan: (now) => ({
@@ -1011,8 +1025,12 @@ async function importDay(c) {
           G.trShape(sid, { sets: t.nSets, drops: t.nDrops, exercises: tr.items.length }),
         ] : []),
         ...(note ? [
+          //   設計64：同時に2つ届いても同じ本文を2件にしない（上の読みと同じ条件を書く文そのものにも置く・関門② 中2）。
+          //   ★競り負けた側は行を書かないが応答の noteId は返る（取り込みの画面は id を使わない・本文は入っている）
           S(`INSERT INTO karte_notes (note_id, customer_id, session_date, condition, body, next_plan, tag, reasons_json, next_check, author_trainer_id, rev, created_at)
-             VALUES (?, ?, ?, NULL, ?, NULL, 'training', NULL, NULL, ?, 1, ?)`, nid, cid, date, note, tid, now),
+             SELECT ?, ?, ?, NULL, ?, NULL, 'training', NULL, NULL, ?, 1, ?
+              WHERE NOT EXISTS (SELECT 1 FROM karte_notes WHERE customer_id = ? AND session_date = ? AND deleted_at IS NULL AND trim(body, ' ' || char(9, 10, 13)) = ?)`,
+            nid, cid, date, note, tid, now, cid, date, note),
         ] : []),
         ...(health ? [
           //   ★健康情報は同意の見張りと、書く文そのものの条件の両方（I48）。どちらかが抜けても書かない
@@ -1022,7 +1040,7 @@ async function importDay(c) {
               WHERE EXISTS (SELECT 1 FROM karte_consent WHERE customer_id = ? AND kind = 'health' AND state = 'agreed')`, hid, cid, date, health, tid, now, cid),
         ] : []),
       ],
-      result: { sessionId: sid, noteId: nid, hnoteId: hid },
+      result: noteSame ? { sessionId: sid, noteId: null, hnoteId: hid, noteSame: true } : { sessionId: sid, noteId: nid, hnoteId: hid },
     }),
   });
 }
