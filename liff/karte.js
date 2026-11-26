@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -322,6 +322,7 @@
     '#karteRoot .k-addset{display:block;width:100%;min-height:44px;border:1px dashed var(--k-acc);border-radius:10px;background:#fff;color:var(--k-acc);font-size:14px;font-family:inherit;margin-top:4px;}',
     '#karteRoot .k-pick{display:flex;flex-direction:column;gap:8px;width:100%;text-align:left;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-pick.on{border:2px solid var(--k-acc);}',
+    '#karteRoot .k-hclamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}',
     '#karteRoot .k-dayrow{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:44px;border:0;background:transparent;padding:0;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-daycard.focus{border-color:var(--k-acc);}',
     '#karteRoot input:focus,#karteRoot textarea:focus,#karteRoot select:focus{outline:none;border-color:var(--k-acc) !important;box-shadow:0 0 0 3px rgba(36,59,102,.18);}',
@@ -1475,7 +1476,8 @@
   function trSetAll(x) {
     var a = x && x.success && x.agg && typeof x.agg === 'object' ? x.agg : null;
     cur.trAll = a ? { agg: a, bestAll: Array.isArray(x.bestAll) ? x.bestAll : null, seriesAll: Array.isArray(x.seriesAll) ? x.seriesAll : null,
-                      seriesFrom: typeof x.seriesFrom === 'string' ? x.seriesFrom : null } : null;
+                      seriesFrom: typeof x.seriesFrom === 'string' ? x.seriesFrom : null,
+                      monthsAll: Array.isArray(x.monthsAll) ? x.monthsAll : null } : null;   // 設計62 段2：月ごとの1行（null＝読めない・古い Worker）
     cur.trAllState = a ? 'done' : 'failed';
   }
   function trOldest(sessions) { var m = null; (sessions || []).forEach(function (s) { if (s && s.session_date && (m == null || s.session_date < m)) m = s.session_date; }); return m; }
@@ -5007,8 +5009,8 @@
       cur.trAllState = 'loading'; drawEx();
       kRead('k_trainingAll', { customerId: aFor }).then(function (x) {
         if (cur.customerId !== aFor || cur.tab !== 'training' || !exCard.isConnected) return;
-        trSetAll(x); drawEx();
-      }, function () { if (cur.customerId === aFor && exCard.isConnected) { trSetAll(null); drawEx(); } });
+        trSetAll(x); drawEx(); drawOlder();
+      }, function () { if (cur.customerId === aFor && exCard.isConnected) { trSetAll(null); drawEx(); drawOlder(); } });
     })();
     //   日別の記録（いまは種目から分かる部位で絞る。日のタグは第2弾）
     var dayCard = el('div', { class: 'k-card k-daycard', style: 'display:flex;flex-direction:column;gap:8px;' });
@@ -5099,6 +5101,17 @@
       if (!(B && cur.trOlder === true)) return;
       olderCard.innerHTML = '';
       var bm = Number(B.slice(5, 7));
+      //   設計62 段2：畳んだ「3か月より前の記録」の上に月ごとの1行（回数・主な種目・最高）。読めないときは書かない（「無い」とも言わない）
+      var MA = cur.trAll && cur.trAll.monthsAll;
+      if (MA && MA.length) {
+        MA.forEach(function (m) {
+          if (!m || typeof m.month !== 'string') return;
+          var t = ymLabel(m.month) + '：' + Number(m.sessions || 0) + '回' + ((m.top || []).length ? '・主な種目 ' + m.top.join('／') : '')
+            + (m.best ? '・最高 ' + wLabel(m.best.w) + '×' + m.best.r + '（' + m.best.exercise + '）' : '');
+          olderCard.appendChild(el('div', { class: 'k-sub k-trmonth', style: 'font-size:13px;line-height:1.6;', text: t }));
+        });
+        if (cur.trAll.agg && cur.trAll.agg.months === 'truncated') olderCard.appendChild(el('div', { class: 'k-sub', style: 'font-size:12px;', text: '月ごとの行は新しい36か月だけ' }));
+      }
       olderCard.appendChild(el('button', { type: 'button', class: 'k-dayrow k-oldtoggle', 'aria-expanded': O.open ? 'true' : 'false', style: 'min-height:44px;',
         onclick: function () { O.open = !O.open; if (O.open && !O.loaded) loadOlder(); else drawOlder(); } }, [
         el('span', { style: 'font-weight:700;', text: '3か月より前の記録' }), el('span', { class: 'k-sub', text: bm + '月より前 ' + (O.open ? '▾' : '›') })]));
@@ -5144,6 +5157,7 @@
   function tabNotes(box, draft) {
     //   ★書くのは上のボタンから専用の記入画面へ（2026-11-05 整理案）
     if (draft && (draft.kind === 'note' || (draft.kind === 'sub' && draft.sub === 'note'))) { noteSub(box, draft.kind === 'note' ? draft.data : null, draft.navMode); return; }
+    if (draft && draft.kind === 'history' && draft.data) { historySub(box, draft.data); return; }   // 設計62 段2：ログインの取り直しの後にまとめを書く画面へ戻す
     var reflectOpen = !!(draft && (draft.kind === 'reflect' || draft.kind === 'reflectNote'));
     box.appendChild(el('button', { class: 'k-btn', text: '＋ メモを書く', onclick: function () { noteSub(box, null); } }));
     var rbox = el('div');
@@ -5168,6 +5182,9 @@
       var NB = typeof r.boundary === 'string' && /^\d{4}-\d{2}-01$/.test(r.boundary) ? r.boundary : null;
       var nMore = r.more === true, nCursor = typeof r.nextCursor === 'string' ? r.nextCursor : null, nBusy = false, nErr = false;
       var NO = { has: r.older === true, loaded: false, more: null, cursor: null, open: false, busy: false, err: '', rows: [] };
+      //   設計62 段2：過去のまとめ（期間のブロック）・まとめ待ちの月。鍵が無い＝古い Worker（出さない）／null＝読めなかった（「無い」と言わない）
+      var HS = { has: NB && 'history' in r, history: Array.isArray(r.history) ? r.history : null, pending: Array.isArray(r.pendingMonths) ? r.pendingMonths : null,
+                 trunc: !!(r.agg && (r.agg.history === 'truncated' || r.agg.pending === 'truncated')), open: {} };
       [['', 'すべて']].concat(TAGS).forEach(function (t) {
         chips.appendChild(el('button', { type: 'button', class: 'k-pill', text: t[1], onclick: function () { filt.tag = t[0]; draw(); } }));
       });
@@ -5219,6 +5236,7 @@
         if (!shown.length) list.appendChild(msg(notes.length ? 'このタグのメモはありません。' : (NB && NO.has ? '直近3か月のメモはありません。' : 'まだメモがありません。')));
         if (nErr) list.appendChild(msg('読めませんでした（もう一度押してください）。', true));
         if (nMore && nCursor) list.appendChild(nBtn('k-ntmore', '続きを見る（直近3か月）', nBusy, loadMoreNotes));
+        if (HS.has) list.appendChild(historyCard(HS, function () { draw(); }));
         if (!(NB && NO.has)) return;
         var bm = Number(NB.slice(5, 7));
         var oc = el('div', { class: 'k-card k-oldnotes', style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px;' });
@@ -5237,6 +5255,108 @@
       }
       draw();
     });
+  }
+
+  // ---------------------------------------------------------------- 過去のまとめ（設計62 段2・I96）
+  var HISTORY_MAX = 4000;
+  function ymLabel(m) { var p = String(m || '').split('-'); return p.length === 2 ? (+p[0]) + '年' + (+p[1]) + '月' : String(m || ''); }
+  function periodLabel(f, t) { return f === t ? ymLabel(f) : ymLabel(f) + '〜' + ymLabel(t); }
+  /** 指導の履歴の「過去のまとめ」のカード（ブロックを新しい順・3行で畳む・全文・直す）と「まとめ待ち」の月 */
+  function historyCard(HS, redraw) {
+    var c = el('div', { class: 'k-card k-history', style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px;' });
+    c.appendChild(el('div', { class: 'k-h', style: 'margin:0;', text: '過去のまとめ' }));
+    if (HS.history === null) c.appendChild(msg('まとめを読めませんでした（開き直すともう一度読みます）。', true));
+    else if (!HS.history.length) c.appendChild(msg('まだありません（原本は「3か月より前のメモ」から見られます）。'));
+    (HS.history || []).forEach(function (h) {
+      var full = !!HS.open[h.id];
+      var b = el('div', { class: 'k-hblock', style: 'border-top:1px solid var(--k-line,#e5e0d8);padding-top:8px;display:flex;flex-direction:column;gap:6px;' });
+      b.appendChild(el('div', { style: 'font-weight:700;', text: periodLabel(h.from, h.to) + (h.origin === 'import' ? '（取り込み）' : '') }));
+      b.appendChild(el('div', { class: 'k-hbody' + (full ? '' : ' k-hclamp'), style: 'white-space:pre-wrap;font-size:14px;line-height:1.7;', text: h.body }));
+      b.appendChild(el('div', { style: 'display:flex;gap:12px;' }, [
+        el('button', { type: 'button', class: 'k-btn out small k-hfull', style: 'min-height:44px;margin:0;flex:1;', text: full ? '畳む' : '全文', onclick: function () { HS.open[h.id] = !full; redraw(); } }),
+        el('button', { type: 'button', class: 'k-btn out small k-hedit', style: 'min-height:44px;margin:0;flex:1;', text: '直す', onclick: function () { historySub(cur.body, { digestId: h.id, rev: h.rev, from: h.from, to: h.to, body: h.body }); } })]));
+      c.appendChild(b);
+    });
+    if (HS.pending === null) c.appendChild(msg('まとめ待ちの月を読めませんでした。', true));
+    (HS.pending || []).forEach(function (pm) {
+      c.appendChild(el('button', { type: 'button', class: 'k-dayrow k-hpending', style: 'min-height:44px;', onclick: function () { historySub(cur.body, { month: pm.month, from: pm.month, to: pm.month, body: '' }); } }, [
+        el('span', { style: 'font-weight:700;', text: 'まとめ待ち：' + ymLabel(pm.month) }), el('span', { class: 'k-sub', text: 'メモ ' + pm.n + '件 ›' })]));
+    });
+    if (HS.trunc) c.appendChild(el('div', { class: 'k-sub', style: 'font-size:12px;', text: '数が多いため、新しい分だけを表示しています。' }));
+    c.appendChild(el('button', { type: 'button', class: 'k-btn out k-hnew', style: 'min-height:44px;margin:0;', text: '＋ まとめを書く', onclick: function () { historySub(cur.body, { from: '', to: '', body: '' }); } }));
+    return c;
+  }
+  /**
+   * まとめを書く・直す画面。o＝{ digestId?, rev?, from, to, body, month? }（month＝まとめ待ちの月：その月の指導メモを上に並べる）
+   *   ★送るのは k_saveHistory だけ。ログインの取り直しは同じ画面へ戻す（kind:'history'・氏名なし・I62）
+   */
+  function historySub(box, o) {
+    navPush({ cid: cur.customerId, tab: 'notes', sub: 'history' });
+    box.innerHTML = '';
+    entryHead(o.digestId ? 'まとめを直す' : 'まとめを書く', '指導の履歴に戻る');
+    var wrap = el('div', { class: 'k-hsub', style: 'display:flex;flex-direction:column;gap:10px;' });
+    box.appendChild(wrap);
+    var askedFor = cur.customerId;
+    if (o.month) {
+      var mc = card(ymLabel(o.month) + 'の指導メモ', []), mlist = el('div', { class: 'k-tl' }), mBusy = false, mCursor = null, mMore = false;
+      mc.appendChild(mlist); wrap.appendChild(mc);
+      var mload = function () {
+        if (mBusy) return;
+        mBusy = true;
+        var moreB = mc.querySelector('.k-hmore'); if (moreB) moreB.remove();
+        kRead('k_notes', mCursor ? { customerId: askedFor, cursor: mCursor } : { customerId: askedFor, month: o.month }).then(function (x) {
+          mBusy = false;
+          if (cur.customerId !== askedFor || !mc.isConnected) return;
+          if (!x || !x.success || !Array.isArray(x.notes)) { mc.appendChild(msg('メモを読めませんでした（まとめは書けます）。', true)); return; }
+          x.notes.forEach(function (n) { mlist.appendChild(el('div', { class: 'k-tl-item' }, [el('div', { class: 'k-sub', text: md(n.session_date) }), el('div', { class: 'k-card', style: 'padding:10px;margin-top:4px;' }, [noteView(n)])])); });
+          mMore = x.more === true; mCursor = typeof x.nextCursor === 'string' ? x.nextCursor : null;
+          if (mMore && mCursor) mc.appendChild(el('button', { type: 'button', class: 'k-btn out k-hmore', style: 'min-height:44px;', text: '続きを見る（20件ずつ）', onclick: mload }));
+        }, function () { mBusy = false; if (mc.isConnected) mc.appendChild(msg('メモを読めませんでした（まとめは書けます）。', true)); });
+      };
+      mload();
+    }
+    var fFrom = el('input', { type: 'month', class: 'k-in k-hfrom', 'aria-label': 'いつから', value: o.from || '' });
+    var fTo = el('input', { type: 'month', class: 'k-in k-hto', 'aria-label': 'いつまで', value: o.to || '' });
+    var ta = el('textarea', { rows: '10', class: 'k-memo k-hta', maxlength: String(HISTORY_MAX), 'aria-label': 'まとめ' });
+    ta.value = o.body || '';
+    var cnt = el('div', { class: 'k-sub', style: 'text-align:right;font-size:12px;' });
+    function drawCnt() { cnt.textContent = ta.value.length + '／' + HISTORY_MAX + '字'; }
+    ta.oninput = drawCnt; drawCnt();
+    var c = card('期間とまとめ', [
+      el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [fFrom, el('span', { text: '〜' }), fTo]),
+      ta, cnt, el('div', { class: 'k-note-hint', style: 'margin:0;', text: '痛み・診断・服薬はここに書かず「注意すること」へ' })]);
+    wrap.appendChild(c);
+    var err = el('div', { class: 'k-msg bad k-herr', role: 'alert', style: 'display:none;' });
+    wrap.appendChild(err);
+    var reqId = newReqId(), sending = false, lastBody = null;
+    function data(body) { return { digestId: o.digestId || null, rev: o.digestId ? o.rev : 0, from: fFrom.value, to: fTo.value, body: body, month: o.month || null }; }
+    function send(body) {
+      if (sending) return;
+      var dt = data(body);
+      var key = JSON.stringify(dt);
+      if (lastBody !== key) { reqId = newReqId(); lastBody = key; }   // 中身を変えたら新しい番号（同じ中身の送り直しは同じ番号＝二重にならない）
+      var params = { customerId: askedFor, rev: dt.rev, body: body, origin: 'trainer' };
+      if (dt.digestId) params.digestId = dt.digestId;
+      if (body) { params.periodFrom = dt.from; params.periodTo = dt.to; }
+      sending = true; err.style.display = 'none';
+      kWrite('k_saveHistory', params, reqId, { kind: 'history', data: dt }).then(function (w) {
+        sending = false;
+        if (!w || !w.success) { err.textContent = errText(w); err.style.display = ''; return; }
+        open(askedFor, cur.name, 'notes', null, 'replace');
+      }, function () { sending = false; err.textContent = errText(null); err.style.display = ''; });
+    }
+    var bar = el('div', { class: 'k-savebar' });
+    bar.appendChild(el('button', { type: 'button', class: 'k-btn k-hsave', text: '保存する', onclick: function () {
+      var body = String(ta.value || '').trim();
+      if (!body) { err.textContent = 'まとめを入れてください（消すときは下の「このまとめを消す」）。'; err.style.display = ''; return; }
+      if (!/^\d{4}-\d{2}$/.test(fFrom.value) || !/^\d{4}-\d{2}$/.test(fTo.value) || fFrom.value > fTo.value) { err.textContent = '期間（いつから〜いつまで）を選んでください。'; err.style.display = ''; return; }
+      send(body);
+    } }));
+    if (o.digestId) bar.appendChild(el('button', { type: 'button', class: 'k-btn out k-danger k-hdel', style: 'margin-top:8px;', text: 'このまとめを消す', onclick: function () {
+      if (!window.confirm('このまとめを消しますか？（元のメモと記録は消えません）')) return;
+      send('');
+    } }));
+    wrap.appendChild(bar);
   }
 
   function noteForm(draftData) {

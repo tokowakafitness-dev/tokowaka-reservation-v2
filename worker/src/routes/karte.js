@@ -661,6 +661,73 @@ async function deleteNote(c) {
   });
 }
 
+// ================================================================ 過去のまとめ（設計62 段2・I96）
+/**
+ * k_saveHistory：期間のブロックを作る・直す・消す（本文が空）・戻す（消した行に本文を入れる）。
+ *   作る：digestId なし・rev 0 だけ → 表は rev 1。直す・消す・戻す：digestId の行の今の rev と一致するときだけ rev+1（消した行も残す）
+ *   期間：実在の月・from ≤ to・to は今月（JST）以前。境界の月以後でも拒まない・重なりも止めない（見せる）
+ *   控え：karte_revisions（table_name='karte_history_digest'・row_id＝digest_id・直前の period・body・origin・deleted_at・rev）
+ */
+async function saveHistory(c) {
+  const cid = cidOf(c.body);
+  if (!(await canSeeKarteShared(c.env, c.who, cid))) return err('NOT_FOUND', 404);
+  const b = c.body;
+  const digestId = b.digestId == null || b.digestId === '' ? null : String(b.digestId);
+  const rev = Number(b.rev);
+  const body = b.body == null ? '' : String(b.body).trim();
+  const origin = b.origin == null ? 'trainer' : String(b.origin);
+  let from = null, to = null;
+  try {
+    if (digestId !== null && !PAGE_ID_RE.test(digestId)) throw new RangeError('digestId');
+    if (!Number.isInteger(rev) || rev < 0 || (digestId === null ? rev !== 0 : rev < 1)) throw new RangeError('rev');
+    if (origin !== 'trainer' && origin !== 'import') throw new RangeError('origin');
+    if (body.length > PAST_LIMITS.HISTORY_CHARS) throw new RangeError('TOO_LONG');
+    if (digestId === null && !body) throw new RangeError('EMPTY');
+    if (body) {
+      from = String(b.periodFrom || ''); to = String(b.periodTo || '');
+      if (!isRealMonth(from) || !isRealMonth(to) || from > to) throw new RangeError('period');
+      if (to > jstToday(Date.now()).slice(0, 7)) throw new RangeError('period');
+    }
+  } catch (e) { return err('BAD_REQUEST', 400, e.message); }
+  const tid = String(c.who.trainerId || '');
+  const id = digestId || newId();
+  const payload = { cid, digestId, rev, body, from, to, origin };
+  if (digestId === null) {
+    return runWrite(c, {
+      action: 'k_saveHistory', section: 'history', customerId: cid, payload,
+      plan: (now) => ({
+        stmts: [
+          G.target(cid),
+          S(`INSERT INTO karte_history_digest (digest_id, customer_id, period_from, period_to, body, origin, rev, created_by, created_at, updated_by, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`, id, cid, from, to, body, origin, tid, now, tid, now),
+        ],
+        result: { digestId: id, rev: 1 },
+      }),
+    });
+  }
+  return runWrite(c, {
+    action: 'k_saveHistory', section: 'history', customerId: cid, payload,
+    plan: (now) => ({
+      stmts: [
+        //   ★その会員のブロックか（別の会員の id を直させない）・rev
+        S(`INSERT INTO karte_guard (target) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM karte_history_digest WHERE digest_id = ? AND customer_id = ?)`, id, cid),
+        G.rev('karte_history_digest', 'digest_id', id, rev),
+        //   消す要求は生きた行だけ（消した行を消し直して rev を進めない）
+        ...(body ? [] : [G.rowLive('karte_history_digest', 'digest_id', id)]),
+        S(`INSERT INTO karte_revisions (table_name, row_id, rev, before_json, changed_by, changed_at, reason)
+           SELECT 'karte_history_digest', digest_id, rev,
+                  json_object('period_from', period_from, 'period_to', period_to, 'body', body, 'origin', origin, 'deleted_at', deleted_at, 'rev', rev), ?, ?, ?
+             FROM karte_history_digest WHERE digest_id = ?`, tid, now, body ? 'edit' : 'delete', id),
+        body
+          ? S(`UPDATE karte_history_digest SET period_from = ?, period_to = ?, body = ?, origin = ?, deleted_at = NULL, rev = rev + 1, updated_by = ?, updated_at = ?
+                WHERE digest_id = ? AND rev = ?`, from, to, body, origin, tid, now, id, rev)
+          : S(`UPDATE karte_history_digest SET deleted_at = ?, rev = rev + 1, updated_by = ?, updated_at = ? WHERE digest_id = ? AND rev = ?`, now, tid, now, id, rev),
+      ],
+      result: body ? { digestId: id, rev: rev + 1 } : { digestId: id, rev: rev + 1, deleted: true },
+    }),
+  });
+}
+
 //   トレーニングの要求の鍵（設計38 §3-3）。★知らない鍵は 400（SET_KEY）。古い画面が送る鍵（exercise・sets／weight・reps・note）は全部ここにある
 const TR_ITEM_KEYS = ['exercise', 'sets', 'doneOnly'];
 const TR_SET_KEYS = ['weight', 'reps', 'note', 'assist', 'forced', 'drops'];
@@ -1426,7 +1493,7 @@ async function summary(c) {
 //   ★境界＝JST の暦月で今月を含む3か月の最初の日（11/26 → 9/1）。Worker の時計だけで決め、要求の冒頭で1回だけ求める（I93）
 //   ★要求の形（窓口ごとに形の鍵の集合が違う）：
 //     k_training：初回（形の鍵なし）／older:true／cursor（R・O）／before／sessionId
-//     k_notes   ：初回／older:true／cursor（R・O）／before   ※month（M の系列）は段2
+//     k_notes   ：初回／older:true／cursor（R・O・M）／before／month（段2：境界の月より前の1か月だけ・M の系列）
 //     形の鍵が2つ以上・集合の外の形の鍵・型違いは 400（黙って1ページ目を返さない）
 //   ★カーソルは2つの系列：R|<境界>|<日付>|<作成時刻>|<id>（3か月以内）／O|<境界>|<日付>|<作成時刻>|<id>（3か月より前）
 //     発行したときの境界が今の境界と違えば 409 BOUNDARY_MOVED（月が替わった＝初回から読み直す）。R は境界より前へ進まない
@@ -1436,9 +1503,13 @@ export const PAST_LIMITS = {
   DATES: 2000,             // allDates の日の上限
   BEST_TRAINER: 200,       // トレーナーの自己ベストの種目の上限（上限+1 を読んで truncated）
   TRACE_HOPS: 5,           // 置き換わった session をたどる段の上限（I95）
+  HISTORY: 60,             // 段2：過去のまとめのブロック（k_notes の初回・上限+1 で truncated）
+  PENDING: 36,             // 段2：まとめ待ちの月
+  MONTHS: 36,              // 段2：月ごとの1行（k_trainingAll の monthsAll）
+  HISTORY_CHARS: 4000,     // 段2：まとめの本文（表の CHECK と同じ）
 };
 const PAGE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const FORM_KEYS = { training: ['cursor', 'older', 'before', 'sessionId'], notes: ['cursor', 'older', 'before'] };
+const FORM_KEYS = { training: ['cursor', 'older', 'before', 'sessionId'], notes: ['cursor', 'older', 'before', 'month'] };
 const ALL_FORM_KEYS = ['cursor', 'older', 'before', 'sessionId', 'month'];
 /** 境界：JST の今月1日から2か月前の1日（YYYY-MM-01） */
 export function windowStart(nowMs) {
@@ -1454,6 +1525,23 @@ export function parseCursor(v) {
   return { kind: m[1], b: m[2], d: m[3], c: Number(m[4]), id: m[5] };
 }
 export function cursorOf(kind, b, d, c, id) { return `${kind}|${b}|${d}|${Math.floor(Number(c) || 0)}|${id}`; }
+/** 実在の 'YYYY-MM' か（月 01〜12・4桁の年） */
+export function isRealMonth(v) { return typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v); }
+/** 'YYYY-MM' の次の月の1日（YYYY-MM-01） */
+export function nextMonthStart(m) {
+  let y = Number(m.slice(0, 4)), mo = Number(m.slice(5, 7)) + 1;
+  if (mo > 12) { mo = 1; y += 1; }
+  return `${y}-${String(mo).padStart(2, '0')}-01`;
+}
+/**
+ * 段2：M の系列のカーソル 'M|<月>|YYYY-MM-DD|<created_at>|<id>'。★境界を持たない＝月替わりの 409 の対象外（設計62 §4-3）。
+ *   日付はその月の中だけ（月の外の日付は形の違い＝null）
+ */
+export function parseMonthCursor(v) {
+  const m = /^M\|(\d{4}-\d{2})\|(\d{4}-\d{2}-\d{2})\|(\d{1,15})\|([A-Za-z0-9_-]{1,64})$/.exec(String(v));
+  if (!m || !isRealMonth(m[1]) || !isRealDate(m[2]) || m[2].slice(0, 7) !== m[1]) return null;
+  return { kind: 'M', month: m[1], d: m[2], c: Number(m[3]), id: m[4] };
+}
 /**
  * 要求の形を決める（which＝'training'|'notes'）。返り値 { form:'first'|'older'|'page'|'before'|'one', ... } か { bad, status? }
  *   ★空文字・null は「無い」（旧画面の before:'' を壊さない）。それ以外の型違いは 400
@@ -1468,7 +1556,16 @@ export function readPageForm(body, which, boundary) {
   const k = present[0], v = body[k];
   if (k === 'older') return v === true ? { form: 'older' } : { bad: 'older' };
   if (typeof v !== 'string') return { bad: k };
+  if (k === 'month') {
+    //   段2：その月の指導メモだけ。月は実在で、境界の月より前だけ（それ以外は 400）
+    return isRealMonth(v) && `${v}-01` < boundary ? { form: 'month', month: v } : { bad: 'month' };
+  }
   if (k === 'cursor') {
+    if (which === 'notes' && String(v).charAt(0) === 'M') {
+      const mc = parseMonthCursor(v);
+      if (!mc || `${mc.month}-01` >= boundary) return { bad: 'cursor' };
+      return { form: 'page', cursor: mc };
+    }
     const cu = parseCursor(v);
     if (!cu) return { bad: 'cursor' };
     if (cu.b !== boundary) return { bad: 'BOUNDARY_MOVED', status: 409 };
@@ -1480,6 +1577,13 @@ export function readPageForm(body, which, boundary) {
 /** ページの条件（並びは session_date DESC, created_at DESC, <id> DESC で全部一意）。系列の範囲（境界の前後）も全ページで守る */
 function pageWhere(f, idCol, boundary) {
   if (f.form === 'first') return { sql: ' AND session_date >= ?', args: [boundary], kind: 'R' };
+  if (f.form === 'month') return { sql: ' AND session_date >= ? AND session_date < ?', args: [`${f.month}-01`, nextMonthStart(f.month)], kind: 'M', month: f.month };
+  if (f.form === 'page' && f.cursor.kind === 'M') {
+    //   ★M は月の上下限を全ページで守る（境界は見ない）
+    const { month, d, c, id } = f.cursor;
+    return { sql: ` AND session_date >= ? AND session_date < ? AND (session_date < ? OR (session_date = ? AND (created_at < ? OR (created_at = ? AND ${idCol} < ?))))`,
+             args: [`${month}-01`, nextMonthStart(month), d, d, c, c, id], kind: 'M', month };
+  }
   if (f.form === 'older') return { sql: ' AND session_date < ?', args: [boundary], kind: 'O' };
   if (f.form === 'page') {
     const { kind, d, c, id } = f.cursor;
@@ -1513,11 +1617,50 @@ async function notes(c) {
     const more = rows.length > n;
     const page = rows.slice(0, n);
     const last = page[page.length - 1];
-    const out = { karteSchema: karteSchemaFor(c.env, c.who), notes: page.map(noteOut), boundary, more,
-                  nextCursor: more && last && w.kind ? cursorOf(w.kind, boundary, last.session_date, last.created_at, last.note_id) : null };
-    if (f.form === 'first') out.older = await olderExists(c.env, 'karte_notes', cid, boundary);
+    const nc = !(more && last && w.kind) ? null
+      : (w.kind === 'M' ? cursorOf('M', w.month, last.session_date, last.created_at, last.note_id) : cursorOf(w.kind, boundary, last.session_date, last.created_at, last.note_id));
+    const out = { karteSchema: karteSchemaFor(c.env, c.who), notes: page.map(noteOut), boundary, more, nextCursor: nc };
+    if (f.form === 'month') out.month = w.month;
+    if (f.form === 'first') {
+      out.older = await olderExists(c.env, 'karte_notes', cid, boundary);
+      Object.assign(out, await historyRead(c.env, cid, boundary));   // 段2：過去のまとめ・まとめ待ち（初回だけ）
+    }
     return out;
   });
+}
+
+/**
+ * 段2（設計62 §5-2・I96）：過去のまとめ（生きたブロック・period_to の新しい順）と、まとめ待ちの月。
+ *   集計ごとに try で包み、失敗は null・状態は unavailable（空配列にしない＝「無い」と「読めない」を分ける）
+ *   pendingMonths：境界の月より前で、生きた指導メモが n 件あり、生きたブロックのどれにも覆われない月
+ */
+export async function historyRead(env, cid, boundary, L = PAST_LIMITS) {
+  const out = { agg: {} };
+  try {
+    const r = await env.DB.prepare(
+      `SELECT digest_id, period_from, period_to, body, origin, rev, updated_by, updated_at FROM karte_history_digest
+        WHERE customer_id = ? AND deleted_at IS NULL
+        ORDER BY period_to DESC, period_from DESC, digest_id DESC LIMIT ${L.HISTORY + 1}`
+    ).bind(cid).all();
+    const rows = (r && r.results) || [];
+    out.history = rows.slice(0, L.HISTORY).map((x) => ({ id: x.digest_id, from: x.period_from, to: x.period_to, body: x.body, origin: x.origin,
+                                                          rev: x.rev, updatedBy: x.updated_by, updatedAt: x.updated_at }));
+    out.agg.history = rows.length > L.HISTORY ? 'truncated' : 'ok';
+  } catch (_) { out.history = null; out.agg.history = 'unavailable'; }
+  try {
+    const r = await env.DB.prepare(
+      `SELECT substr(n.session_date, 1, 7) AS month, COUNT(*) AS n FROM karte_notes n
+        WHERE n.customer_id = ? AND n.deleted_at IS NULL AND n.session_date < ?
+          AND NOT EXISTS (SELECT 1 FROM karte_history_digest h
+                           WHERE h.customer_id = n.customer_id AND h.deleted_at IS NULL
+                             AND h.period_from <= substr(n.session_date, 1, 7) AND h.period_to >= substr(n.session_date, 1, 7))
+        GROUP BY substr(n.session_date, 1, 7) ORDER BY month DESC LIMIT ${L.PENDING + 1}`
+    ).bind(cid, boundary).all();
+    const rows = (r && r.results) || [];
+    out.pendingMonths = rows.slice(0, L.PENDING).map((x) => ({ month: x.month, n: Number(x.n) }));
+    out.agg.pending = rows.length > L.PENDING ? 'truncated' : 'ok';
+  } catch (_) { out.pendingMonths = null; out.agg.pending = 'unavailable'; }
+  return out;
 }
 
 /** session の行（id・日付・作者・rev・作成時刻）→ セット・種目の並び・ドロップを付けた形（今までの k_training の1回と同じ形） */
@@ -1583,7 +1726,7 @@ function pageBest(sessions) {
  *   seriesAll：session を LIMIT N+1 で選び、打ち切りは日の境（N件目と N+1件目が同じ日ならその日を丸ごと外す）。採る日が決まってからセットを読む
  *   allDates：[{d, n}]・LIMIT 2001 で truncated
  */
-export async function trainingAggregates(env, cid, L = PAST_LIMITS) {
+export async function trainingAggregates(env, cid, L = PAST_LIMITS, boundary = windowStart(Date.now())) {
   const out = { agg: {} };
   try {
     const r = await bestAllQuery(env.DB, cid, L.BEST_TRAINER + 1).all();
@@ -1639,7 +1782,56 @@ export async function trainingAggregates(env, cid, L = PAST_LIMITS) {
     out.allDates = rows.slice(0, L.DATES).map((x) => ({ d: x.d, n: Number(x.n) }));
     out.agg.dates = rows.length > L.DATES ? 'truncated' : 'ok';
   } catch (_) { out.allDates = null; out.agg.dates = 'unavailable'; }
+  //   段2（設計62 §5-3・改訂6 §5-4 の定義）：境界より前の月ごとの1行。保存しない・読むたびに作る
+  try { out.monthsAll = await monthsAllRead(env, cid, boundary, L); out.agg.months = out.monthsAll.length > L.MONTHS ? 'truncated' : 'ok'; out.monthsAll = out.monthsAll.slice(0, L.MONTHS); }
+  catch (_) { out.monthsAll = null; out.agg.months = 'unavailable'; }
   return out;
+}
+
+/**
+ * 月ごとの1行（境界より前の月だけ・新しい順・上限+1 を返す＝呼ぶ側が truncated を決める）
+ *   sessions＝その月の生きた session の数（数字の無い種目だけの回も数える）
+ *   top＝その月に出た種目（セットか数字の無い種目）を出た session の数の多い順・同数は種目名の順で3つまで
+ *   best＝本セットで無理やりでない行（I66）から 重さ→回数→早い日→session_id の順で1つ。数字の行が無い月は null
+ */
+export async function monthsAllRead(env, cid, boundary, L = PAST_LIMITS) {
+  const ms = await env.DB.prepare(
+    `SELECT substr(session_date, 1, 7) AS month, COUNT(*) AS n FROM karte_tr_sessions
+      WHERE customer_id = ? AND deleted_at IS NULL AND session_date < ?
+      GROUP BY substr(session_date, 1, 7) ORDER BY month DESC LIMIT ${L.MONTHS + 1}`
+  ).bind(cid, boundary).all();
+  const months = ((ms && ms.results) || []).map((x) => ({ month: x.month, sessions: Number(x.n), top: [], best: null }));
+  if (!months.length) return [];
+  const lo = months[months.length - 1].month + '-01';
+  const [tp, bs] = await Promise.all([
+    env.DB.prepare(
+      `SELECT month, exercise, COUNT(DISTINCT session_id) AS c FROM (
+         SELECT substr(s.session_date, 1, 7) AS month, t.exercise, s.session_id FROM karte_tr_sets t JOIN karte_tr_sessions s ON s.session_id = t.session_id
+          WHERE s.customer_id = ? AND s.deleted_at IS NULL AND s.session_date < ? AND s.session_date >= ?
+         UNION ALL
+         SELECT substr(s.session_date, 1, 7), x.exercise, s.session_id FROM karte_tr_exercises x JOIN karte_tr_sessions s ON s.session_id = x.session_id
+          WHERE s.customer_id = ? AND s.deleted_at IS NULL AND s.session_date < ? AND s.session_date >= ? AND x.done_only = 1)
+        GROUP BY month, exercise`
+    ).bind(cid, boundary, lo, cid, boundary, lo).all(),
+    env.DB.prepare(
+      `SELECT month, exercise, weight_kg, reps, session_date FROM (
+         SELECT substr(s.session_date, 1, 7) AS month, t.exercise, t.weight_kg, t.reps, s.session_date,
+                ROW_NUMBER() OVER (PARTITION BY substr(s.session_date, 1, 7) ORDER BY t.weight_kg DESC, t.reps DESC, s.session_date ASC, s.session_id ASC) AS rn
+           FROM karte_tr_sets t JOIN karte_tr_sessions s ON s.session_id = t.session_id
+           LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
+          WHERE s.customer_id = ? AND s.deleted_at IS NULL AND e.forced IS NULL AND s.session_date < ? AND s.session_date >= ?)
+        WHERE rn = 1`
+    ).bind(cid, boundary, lo).all(),
+  ]);
+  const by = {};
+  months.forEach((m) => { by[m.month] = m; });
+  const tops = {};
+  for (const x of ((tp && tp.results) || [])) if (by[x.month]) (tops[x.month] = tops[x.month] || []).push({ exercise: x.exercise, c: Number(x.c) });
+  Object.keys(tops).forEach((k) => {
+    by[k].top = tops[k].sort((a, b) => (b.c - a.c) || (a.exercise < b.exercise ? -1 : a.exercise > b.exercise ? 1 : 0)).slice(0, 3).map((x) => x.exercise);
+  });
+  for (const x of ((bs && bs.results) || [])) if (by[x.month]) by[x.month].best = { exercise: x.exercise, w: x.weight_kg, r: x.reps, d: x.session_date };
+  return months;
 }
 
 /**
@@ -1720,7 +1912,7 @@ async function training(c) {
 async function trainingAll(c) {
   return readSection(c, 'trainingAll', async (cid) => {   // ★access_log の action は 'k_' + section＝k_trainingAll（窓口の名前と同じ）
     if (ALL_FORM_KEYS.some((k) => c.body[k] !== undefined && c.body[k] !== null && c.body[k] !== '')) return err('BAD_REQUEST', 400, 'FORM_KEY');
-    return trainingAggregates(c.env, cid);
+    return trainingAggregates(c.env, cid, PAST_LIMITS, windowStart(Date.now()));
   });
 }
 
@@ -1924,6 +2116,7 @@ export const KARTE_HANDLERS = {
   k_addNote: addNote,
   k_editNote: editNote,
   k_deleteNote: deleteNote,
+  k_saveHistory: saveHistory,
   k_addTraining: addTraining,
   k_deleteTraining: deleteTraining,
   k_editTraining: editTraining,
