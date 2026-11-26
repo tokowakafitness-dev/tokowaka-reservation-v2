@@ -22,7 +22,7 @@ import { AI_V2_LIMITS, AI_SCHEMA_V2, AI_SYSTEM_V2, aiEffort, readSse, SseError, 
 import { normalizeExerciseName } from '../lib/karte-exercises.js';
 import { readRecRow, recConsentValid } from './member-consent.js';
 
-export const AI_BUILD = '2026-11-25a 設計39＋設計44 同意＋設計49 v2＋設計50（根拠の探し方・数字の分類・自重の区別・お客様を伏せない・指示文）＋設計61（お客様へのふり返りの組み立て）';
+export const AI_BUILD = '2026-11-26a 設計64（同じ事実は1つの欄にだけ）／2026-11-25a 設計39＋設計44 同意＋設計49 v2＋設計50（根拠の探し方・数字の分類・自重の区別・お客様を伏せない・指示文）＋設計61（お客様へのふり返りの組み立て）';
 
 export const AI_LIMITS = {
   BODY_BYTES: 128 * 1024,   // このパス（/karte/ai-draft）だけ。3万字×3バイト＋余裕

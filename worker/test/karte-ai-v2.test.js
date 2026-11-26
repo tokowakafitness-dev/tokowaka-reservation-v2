@@ -566,5 +566,25 @@ setEnv(V2);
 }
 
 Object.assign(console, orig);
+{
+  //   V2-34 設計64：同じ事実は1つの欄にだけ。語の有無でなく「7. の1行の中に、この順で在る」・6. の後・書かないの前（位置で守る）
+  const { AI_SYSTEM_V2 } = await import('../src/routes/karte-ai-v2.js');
+  const ls = AI_SYSTEM_V2.split('\n');
+  const i7 = ls.findIndex((l) => l.startsWith('7. 同じ事実は1つの欄にだけ書く'));
+  const i6 = ls.findIndex((l) => l.startsWith('6. unclear')), iNo = ls.findIndex((l) => l.startsWith('書かない：'));
+  ok('V2-34 7. の行は1行・6. の直後・書かないの直前', ls.filter((l) => l.startsWith('7. ')).length === 1 && i7 === i6 + 1 && iNo === i7 + 1, [i6, i7, iNo].join(','));
+  const l7 = ls[i7] || '';
+  const marks = ['言い換えて別の欄に繰り返さない', 'その種目の note にだけ書き', 'coaching と summary.flow に重ねない', 'summary.flow＝何をどの順で行ったかだけ', '指導の中身・状態・次回のことは書かない', 'coaching＝種目に結びつかない全体の指導だけ', 'condition・hearing・next_actions もほかの欄と同じことを書かない', '事実そのものは省かない'];
+  const at = marks.map((m) => l7.indexOf(m));
+  ok('V2-34 ★欄の持ち場（種目の note・flow・coaching・ほか）と「事実は省かない」が7. の行の中にこの順で在る', at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1])), marks.map((m, i) => m + '@' + at[i]).join(' '));
+  ok('V2-34 ★7. は member_message の規則に触れない（お客様の欄の扱いは業務の規則が決まるまで変えない）', l7.indexOf('member') < 0);
+  //   出力の形は変わらない：文字起こしの身代わりで今どおりの draft が通る
+  setEnv(V2);
+  reply = () => ({ draft: okDraft() });
+  const r = await call({ client_ai_format: 2 });
+  ok('V2-34 指示文を足しても応答の形は今どおり（v:2・summary・exercises・coaching・hearing・next_actions）', r.status === 200 && r.draft && r.draft.v === 2 && Array.isArray(r.draft.summary) && Array.isArray(r.draft.exercises) && Array.isArray(r.draft.coaching) && Array.isArray(r.draft.next_actions), JSON.stringify(r).slice(0, 300));
+  reply = null;
+}
+
 console.log(`karte-ai-v2: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

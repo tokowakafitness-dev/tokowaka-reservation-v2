@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -1607,6 +1607,22 @@
   var NOTE_MAX = 4000;
   //   Worker の本文の上限（KARTE_LIMITS.BODY_BYTES）と、送る前に見積もるときに取っておく分（ID トークン・鍵）
   var BODY_BYTES = 16 * 1024, BODY_RESERVE = 2048;
+  //   設計64：同じ文を2回書かない（消さない・削らない）。同じとみなすのは NFKC・空白の詰め・前後の空白の違いだけ（意味の近さでは判定しない＝消し過ぎない）
+  function sameKey(s) { var t = String(s == null ? '' : s); try { t = t.normalize('NFKC'); } catch (e) {} return t.replace(/\s+/g, ' ').trim(); }
+  /** いまの文（cur）の末尾に adds の行を足す。cur にある行・adds の中で前に出た行と同じ行は足さない。cur の行は変えない（足す行が無ければ cur のまま。足すときは今までどおり cur の末尾の空白・空行だけ詰めてから改行でつなぐ） */
+  function memoMerge(cur, adds) {
+    var base = String(cur || ''), seen = Object.create(null), out = [], skipped = 0;   // ★{} だと constructor・toString 等が最初から在ることになる（関門② 中1）
+    base.split(/\r\n|\r|\n/).forEach(function (l) { var k = sameKey(l); if (k) seen[k] = 1; });
+    (adds || []).forEach(function (x) {
+      String(x == null ? '' : x).split(/\r\n|\r|\n/).forEach(function (l) {
+        var k = sameKey(l); if (!k) return;
+        if (seen[k]) { skipped++; return; }
+        seen[k] = 1; out.push(l);
+      });
+    });
+    var text = out.length ? (base.trim() ? base.replace(/\s+$/, '') + '\n' : '') + out.join('\n') : base;
+    return { text: text, added: out, skipped: skipped };
+  }
   /** UTF-8 のバイト数（TextEncoder の無い所でも同じ数え方） */
   function utf8Len(s) {
     s = String(s); var n = 0;
@@ -3409,22 +3425,28 @@
         ask = false; err = '上限（20種目・1種目10セット・合計60セット。ドロップも1つと数えます）を超えるため入れられません。どれかを捨てるか、いまの記録を保存してから取り込んでください。'; draw(); return;
       }
       //   設計39：お客様に見える欄（お客様へ・次回までに）。入らなければ取り込み全体を止める（途中まで入れない）。お客様に出るのは記録の画面で「保存する」を押したときだけ
-      var mNew = null;
+      var mNew = null, mSkip = 0, mAdded = 0;
       if (b.members.length || b.todos.length) {
         var m0 = (T.member && typeof T.member === 'object') ? T.member : {};
         mNew = { message: String(m0.message || ''), todo: Array.isArray(m0.todo) ? m0.todo.slice() : [], tags: Array.isArray(m0.tags) ? m0.tags.slice() : [] };
         while (mNew.todo.length < MEMBER_MAX.todo) mNew.todo.push('');
-        if (b.members.length) { var addM = b.members.join('\n'); mNew.message = mNew.message.trim() ? mNew.message.replace(/\s+$/, '') + '\n' + addM : addM; }
+        //   設計64：お客様へは足す文の全部の行が既にあれば重ねない（1行でも新しければ文ごと今どおり末尾へ＝見出しの組み立てを崩さない）。次回までには同じ項目が既にあれば重ねない（違う文は今どおり末尾へ）
+        if (b.members.length) { var addM = b.members.join('\n'); if (memoMerge(mNew.message, [addM]).added.length === 0) mSkip++; else { mAdded++; mNew.message = mNew.message.trim() ? mNew.message.replace(/\s+$/, '') + '\n' + addM : addM; } }
+        var tdSeen = Object.create(null); mNew.todo.forEach(function (v) { var k = sameKey(v); if (k) tdSeen[k] = 1; });
+        var tdAdd = []; b.todos.forEach(function (t) { var k = sameKey(t); if (!k) return; if (tdSeen[k]) { mSkip++; return; } tdSeen[k] = 1; tdAdd.push(t); });
         var free = []; mNew.todo.forEach(function (v, i) { if (i < MEMBER_MAX.todo && !String(v || '').trim()) free.push(i); });
-        if (mNew.message.length > MEMBER_MAX.message || b.todos.length > free.length || b.todos.some(function (t) { return t.length > MEMBER_MAX.todoLen; })) {
+        if (mNew.message.length > MEMBER_MAX.message || tdAdd.length > free.length || tdAdd.some(function (t) { return t.length > MEMBER_MAX.todoLen; })) {
           ask = false; err = 'お客様に見える欄に入りきりません（お客様へ' + MEMBER_MAX.message + '字・次回までに' + MEMBER_MAX.todo + 'つ）。どれかを社内メモか捨てるにしてください。'; draw(); return;
         }
-        b.todos.forEach(function (t, i) { mNew.todo[free[i]] = t; });
+        tdAdd.forEach(function (t, i) { mNew.todo[free[i]] = t; });
+        mAdded += tdAdd.length;
       }
       var first = (T.items || []).length;
       T.items = all;
       if (mNew) T.member = mNew;
-      if (b.memos.length) T.memo = (String(T.memo || '').trim() ? String(T.memo).replace(/\s+$/, '') + '\n' : '') + b.memos.join('\n');   // 選んだものだけ社内メモの末尾へ
+      //   選んだものだけ社内メモの末尾へ。設計64：いまの社内メモにある行・この下書きの中で前に出た行と同じ行は重ねない（既存の行は変えない）
+      var mm = memoMerge(T.memo, b.memos);
+      if (mm.added.length) T.memo = mm.text;
       //   設計49・設計63：社内メモは NOTE_MAX 字まで（Worker も超えたら受けない）。超えるなら入れない（切らない・下書きは変えない）
       if (b.memoMax && String(T.memo || '').length > b.memoMax) { ask = false; err = '社内メモが' + b.memoMax + '字を超えます（' + String(T.memo).length + '字）。どれかを外してください。'; draw(); return; }
       T.openEi = first;
@@ -3435,8 +3457,10 @@
       trImportMsg = { cid: cid, text: 'メモから ' + b.items.length + '種目・' + ns + 'セット' + (nd ? '（ドロップ' + nd + '）' : '') + 'を入れました。✓を付けて保存してください（✓の無いセットは保存されません）。'
         + (b.nNote ? '種目のメモ ' + b.nNote + '件は、その種目の1セット目のメモに入れました。' : '')
         + (b.nSet ? 'セットのメモ ' + b.nSet + '件は、そのセットのメモに入れました。' : '')
-        + (b.memos.length ? '文章 ' + b.memos.join('\n').split('\n').length + '行は、その日の社内メモ（画面の下）の末尾に入れました。' : '')   // 2026-11-26：日の単位の文章の行き先を言う（種目には入れていない）
-        + (mNew ? 'お客様に見える欄に ' + (b.members.length + b.todos.length) + '件入れました（保存するとお客様に見えます）。' : '')
+        + (mm.added.length ? '文章 ' + mm.added.length + '行は、その日の社内メモ（画面の下）の末尾に入れました。' : '')   // 2026-11-26：日の単位の文章の行き先を言う（種目には入れていない）
+        + (mm.skipped ? 'すでに社内メモにある ' + mm.skipped + '行は重ねて入れませんでした。' : '')   // 設計64：重ねなかった数を見せる（黙って落とさない）
+        + (mNew && mAdded ? 'お客様に見える欄に ' + mAdded + '件入れました（保存するとお客様に見えます）。' : '')
+        + (mSkip ? 'お客様に見える欄の同じ文は重ねて入れませんでした。' : '')
         + (rdate ? '' : (pendingB ? 'AIの下書きを ' + md(T.sessionDate) + ' の記録に入れました。' : '日付の行がありません。' + md(T.sessionDate) + ' として入れます（見出しで変えられます）。')) };
       //   設計56（CEO 判断）：日付は記録の画面に戻った直後の上の1行で知らせる（次の描き直しまで）
       if (rdate && rdate !== cdate0) trImportMsg.date = wasEmpty ? '記録の日付をメモの ' + md(rdate) + ' にしました' : 'メモの日付（' + md(rdate) + '）と記録の日付（' + md(cdate0) + '）が違います';
@@ -3776,9 +3800,9 @@
     function rvMemoOver() {
       var b; try { b = reviewBuild(rv, aiScope(), isAuto); } catch (e) { return null; }
       if (!b.memoMax || !b.memos.length) return null;
-      var T = draftNow(), cur = String((T && T.memo) || ''), add = b.memos.join('\n');
-      var next = (cur.trim() ? cur.replace(/\s+$/, '') + '\n' : '') + add;
-      return next.length > b.memoMax ? { max: b.memoMax, cur: cur.trim() ? cur.replace(/\s+$/, '').length : 0, add: add.length, len: next.length } : null;
+      //   設計64：commit と同じ memoMerge で数える（重ねない行は長さに入れない）
+      var T = draftNow(), cur = String((T && T.memo) || ''), mm = memoMerge(cur, b.memos), next = mm.text, add = mm.added.join('\n');
+      return mm.added.length && next.length > b.memoMax ? { max: b.memoMax, cur: cur.trim() ? cur.replace(/\s+$/, '').length : 0, add: add.length, len: next.length } : null;
     }
     function rvAnyText() {
       var any = RV_FIELDS.some(function (f) { return scopeAllows(f[1], aiScope()) && rvLines(rv.fields[f[0]]).length; });
@@ -4173,7 +4197,7 @@
         el('span', { class: 'k-sub', text: (nEx ? '種目' + nEx + '・セット' + nSet : '') + (b.note ? (nEx ? '・' : '') + 'メモ' : '') })]);
       c.appendChild(head);
       var flags = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;' });
-      if (D.st === 'done') flags.appendChild(badge(D.replayed ? '済（前に入れた分・二重にしていません）' : '済'));
+      if (D.st === 'done') flags.appendChild(badge(D.replayed ? '済（前に入れた分・二重にしていません）' : (D.noteSame ? '済（同じ社内メモがその日に既にあったため、メモは重ねていません）' : '済')));
       if (D.st === 'unknown') flags.appendChild(badge('結果を確かめています（［続きから］で送り直します）', true));
       if (D.st === 'fail') flags.appendChild(badge('入りませんでした：' + D.why, true));
       if (ex) flags.appendChild(badge('記録あり ' + ex + '件', true));
@@ -4354,7 +4378,7 @@
         }
         p.then(function (r) {
           if (gen !== S.gen || !ta.isConnected || cur.customerId !== cid) return;
-          if (r && r.success) { target.st = 'done'; target.replayed = r.replayed === true; i++; draw(); next(); return; }
+          if (r && r.success) { target.st = 'done'; target.replayed = r.replayed === true; target.noteSame = r.noteSame === true; i++; draw(); next(); return; }
           stopWith(r, target);
         }, function () { if (gen !== S.gen || !ta.isConnected || cur.customerId !== cid) return; stopWith(null, target); });
       })();

@@ -446,6 +446,16 @@ const band = (w) => (R(w).querySelector('.k-pimp-band') || {}).textContent || ''
   ok('S11 送ったのは 3/1 だけ・本文は16KB 以下・メモは切らずにそのまま', b.length === 1 && b[0].sessionDate === '2025-03-01' && b[0].note.body === '【その日の内容】\n' + 'か'.repeat(3980) && Buffer.byteLength(JSON.stringify(b[0])) <= 16 * 1024, JSON.stringify(b.map((x) => [x.sessionDate, x.note && x.note.body.length, Buffer.byteLength(JSON.stringify(x))])));
 }
 
+// ================= S12 設計64：Worker が「同じ社内メモがその日に既にあった」と答えたら、その日に言う =================
+{
+  const { w } = boot(wk({ write: (b) => (b.sessionDate === '2025-04-01' ? { success: true, sessionId: null, noteId: null, hnoteId: null, noteSame: true } : { success: true, sessionId: null, noteId: 'N', hnoteId: null }) }));
+  await openImport(w);
+  await paste(w, ['=====', '2025/4/1', '【その日の内容】', '架空の同じメモ', '=====', '2025/4/2', '【その日の内容】', '架空の別のメモ'].join('\n'));
+  sendBtn(w).click(); for (let i = 0; i < 40; i++) await tick(); await settle();
+  ok('S12 ★同じ社内メモがあった日は「済（同じ社内メモがその日に既にあったため、メモは重ねていません）」', dayOf(w, '4/1').textContent.includes('済（同じ社内メモがその日に既にあったため、メモは重ねていません）'), dayOf(w, '4/1').textContent);
+  ok('S12 ほかの日はただの「済」', dayOf(w, '4/2').textContent.includes('済') && !dayOf(w, '4/2').textContent.includes('重ねていません'), dayOf(w, '4/2').textContent);
+}
+
 // ================= HN 注意することの画面：取り込んだ体の注意（日付つき）・削除 =================
 {
   const notes = [{ id: 'H1', date: '2025-09-20', body: '見本の体の注意', by: 'T1', at: 1 }, { id: 'H2', date: '2025-09-01', body: '見本のほかの人の', by: 'T2', at: 1 }];
