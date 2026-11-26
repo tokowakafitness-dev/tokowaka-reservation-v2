@@ -486,13 +486,13 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   paste(w, 'ベンチプレス\n肘を上げる意識\n40×10 50×10\n胸を張る\nプランク\n体幹を意識\nヒップリフト\n30×10\n50キロ10回やろう');   // 設計41：「50キロ10回」は R10 で読むので、読めない形（相談の言い方）にした
   btn(R(w), '読み取る').click(); await settle();
   const names = [...R(w).querySelectorAll('.k-impcard')];
-  ok('M24-1 種目の直下の名前の決定待ち：直前の種目「ベンチプレス」の1セット目のメモにする が出る・プランクの下はプランク', !!btn(card(w, 'name', 0), '直前の種目「ベンチプレス」の1セット目のメモにする') && !!btn(card(w, 'name', 2), '直前の種目「プランク」'), names.map((c) => c.textContent).join(' | '));
+  ok('M24-1 種目の直下の名前の決定待ち：直前の種目「ベンチプレス」のメモにする が出る（設計67：文言）・プランクの下はプランク', !!btn(card(w, 'name', 0), '直前の種目「ベンチプレス」のメモにする') && !!btn(card(w, 'name', 2), '直前の種目「プランク」'), names.map((c) => c.textContent).join(' | '));
   ok('M24-1b ★直前が決まっていない名前の決定待ちの下には出さない（どの種目か決まらない）', !btn(card(w, 'name', 1), '直前の種目'));
   ok('M24-2 種目の下の読めない数値の行：直前の種目「ヒップリフト」が出る', !!btn(card(w, 'line', 0), '直前の種目「ヒップリフト」'));
   btn(card(w, 'name', 0), '直前の種目').click(); await settle();
   ok('M24-2b 前を「種目のメモ」にすると、続く名前にも同じ宛先が出る', !!btn(card(w, 'name', 1), '直前の種目「ベンチプレス」'));
   for (const c of [card(w, 'name', 1), card(w, 'name', 2), card(w, 'line', 0)]) { btn(c, '直前の種目').click(); await settle(); }
-  ok('M24-3 選んだ後の表示：1セット目のメモ・お客様には見えない・下の数値もその種目のセットにする', card(w, 'name', 0).textContent.includes('「ベンチプレス」の1セット目のメモにする（お客様には見えません）') && card(w, 'name', 0).textContent.includes('下の数値も「ベンチプレス」のセットにする'));
+  ok('M24-3 選んだ後の表示：1セット目のメモ・お客様には見えない・下の数値もその種目のセットにする', card(w, 'name', 0).textContent.includes('「ベンチプレス」のメモにする（お客様には見えません）') && card(w, 'name', 0).textContent.includes('下の数値も「ベンチプレス」のセットにする'));
   btn(R(w), '記録の画面に入れる').click(); await nav();
   const d = draftOf(w);
   eq('M24-4 ★1セット目のメモに入る・名前の下の数値はその種目のセット・セットの無い種目は種目名を付けて社内メモへ（黙って捨てない）', d && { items: d.items.map((x) => [x.exercise, x.sets.map((s) => [s.w, s.r, s.note || '']), x.doneOnly]), memo: d.memo },
@@ -560,7 +560,7 @@ const M25 = '11/3(火)12:30～\n山田様1回目\nベンチプレス　パワー
   btn(R(w), '読み取る').click(); await settle();
   const pb = btn(R(w), '提案どおりに決める');
   ok('M25-1 「提案どおりに決める（5件）」が出る（名前・tail×3・箇条書き。健康の言葉・たなかさんは入らない）', !!pb && pb.textContent === '提案どおりに決める（5件）', pb && pb.textContent);
-  ok('M25-2 カードに「提案：」が出る（セットのメモ）', R(w).textContent.includes('提案：「ベンチプレス」の1セット目のメモ（お客様には見えません）'));
+  ok('M25-2 カードに「提案：」が出る（セットのメモ）', R(w).textContent.includes('提案：「ベンチプレス」のメモ（お客様には見えません）'));
   pb.click(); await settle();
   const box = R(w).querySelector('.k-impplanbox');
   ok('M25-3 ★開いただけでは決まらない（記録の画面に入れる は押せないまま・のこり7件）', !!box && btn(R(w), '記録の画面に入れる').disabled && R(w).textContent.includes('7件のこり'));
