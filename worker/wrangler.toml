@@ -92,7 +92,8 @@ MEMBER_CONSENT_TRAINERS = "A"
 #   "on"        … 全トレーナーで受け付ける。karteSchema は 33
 #   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる
 #   ★止めるときは "off" にして push（古い Worker への巻き戻しを止める手段に使わない）。値を変えた push は decisions に記録する
-KARTE_TRAINING_EXT = "allow"
+#   ★2026-11-25 オーナー決定：実運用へ移すため全トレーナーに開く（取り込み・新しい項目）
+KARTE_TRAINING_EXT = "on"
 #   allow のときに受け付けるトレーナーの trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
 KARTE_TRAINING_EXT_TRAINERS = "A"
 
@@ -102,7 +103,8 @@ KARTE_TRAINING_EXT_TRAINERS = "A"
 #   "on"        … 全トレーナー（作者本人かオーナーだけが直せるのは切替に関わらず同じ）
 #   ★厳密に "on"／"allow" のときだけ開く。書き忘れ・打ち間違いは "off" に倒れる。値を変えた push は decisions に記録する
 #   ★2026-11-25 CEO 決定（設計58 Q2）：まず allow でオーナーだけ実機確認 → on は別の PR
-KARTE_TRAINING_EDIT = "allow"
+#   ★2026-11-25 オーナー決定：実運用へ移すため全トレーナーに開く（直せるのは作者本人かオーナーのまま）
+KARTE_TRAINING_EDIT = "on"
 #   allow のときに受け付けるトレーナーの trainer_id（カンマ区切り）。★trainer_id だけ。氏名・メールを書かない
 KARTE_TRAINING_EDIT_TRAINERS = "A"
 
