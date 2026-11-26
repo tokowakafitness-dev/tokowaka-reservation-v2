@@ -147,6 +147,16 @@ function storageEvt(w, oldV, newV) { w.dispatchEvent(new w.StorageEvent('storage
   ok('L26 作者でもオーナーでもなければ出さない', !editBtn(w));
 }
 
+// ================= L20c 変更なしで閉じる：ほかのタブが持ち主を取った直後（イベントがまだ届いていない）＝凍結・ほかの下書きを消さない（関門②） =================
+{
+  const { w, sent } = boot();
+  await startEdit(w, 'S1');
+  const B = Object.assign({}, ed(w), { owner: 'other-form', ver: Number(ed(w).ver) + 1 });
+  w.localStorage.setItem(EKEY, JSON.stringify(B));   // storage イベントは送らない＝古い画面はまだ知らない
+  saveBtn(w).click(); await settle();
+  ok('L20c ★変更なしの保存でも持ち主が違えば凍結（「更新しました」を出さない）', frozen(w) && frozenText(w).includes('ほかの画面で変わりました') && !R(w).querySelector('.k-ednochange') && editsSent(sent).length === 0);
+  ok('L20c ★ほかの画面の直しかけは消さない', w.localStorage.getItem(EKEY) === JSON.stringify(B));
+}
 // ================= L20・L22 中身の写し（値を落とさない・✓ 済みで開く） =================
 {
   const { w, sent } = boot();
@@ -165,7 +175,12 @@ function storageEvt(w, oldV, newV) { w.dispatchEvent(new w.StorageEvent('storage
   dIn.value = '2026-11-20'; dIn.dispatchEvent(new w.Event('change')); await settle();
   ok('L20 お客様の画面も変わることを1行で知らせる（ダイアログは出さない）', !!R(w).querySelector('.k-edhint') && R(w).querySelector('.k-edhint').textContent.includes('お客様の画面の数字も変わります') && w.confirms.length === 0);
   saveBtn(w).click(); await settle();
-  ok('L20 ★何も変えずに保存＝「変更はありません」で送らない', w.alerts.includes('変更はありません。') && editsSent(sent).length === 0);
+  //   2026-11-25 オーナー指示：変更が無くても保存で閉じる（送らない・直す下書きだけ消す・今日の下書きは触らない）
+  ok('L20 ★何も変えずに保存＝送らずに「更新しました（変更はありませんでした）」で閉じる', editsSent(sent).length === 0 && writesSent(sent).length === 0 && !!R(w).querySelector('.k-ednochange') && R(w).textContent.includes('変更はありませんでした') && !w.alerts.includes('変更はありません。') && !R(w).querySelector('.k-hsave'), R(w).textContent.slice(0, 200));
+  ok('L20 ★変更なしで閉じたら直す下書きは消え・今日の下書きはそのまま', !w.localStorage.getItem(EKEY) && w.localStorage.getItem(DKEY) === today0);
+  const back = btn(R(w), '記録の一覧を見る');
+  ok('L20 閉じた画面に［記録の一覧を見る］', !!back);
+  await startEdit(w, 'S1');
   setReps(w, '1セット目の回数', '11');   // 開いている種目＝最後のヒップリフト
   saveBtn(w).click(); await settle();
   const s = editsSent(sent);

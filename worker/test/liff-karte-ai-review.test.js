@@ -270,6 +270,12 @@ for (const [label, src] of [['trial', SRC], ['不正な値（Full）', BOGUS]]) 
   const isAuto = (n) => ['ベンチプレス', 'チェストプレス', 'スクワット', 'レッグプレス'].indexOf(n) >= 0;
   const D0 = () => T.reviewFromDraft(DRAFT(), isAuto, 'full');
   const th = (rv) => { try { T.reviewBuild(rv, 'full', isAuto); return ''; } catch (e) { return e.message; } };
+  //   設計61 改訂2：お客様へは見出しごとの改行を残す（行の中の空白はまとめる・空行は落とす）。オンで組み立てた中身にも改行が残る
+  const rvM = T.reviewFromDraft(Object.assign(DRAFT(), { member_message: '【今日の内容】スクワット。\n\n【よくできた点】膝の  向き。\n【次回に向けて】お尻。' }), isAuto, 'full');
+  ok('T12b ★確認の状態に入るとき見出しの改行が残る', rvM.member.message === '【今日の内容】スクワット。\n【よくできた点】膝の 向き。\n【次回に向けて】お尻。', JSON.stringify(rvM.member.message));
+  rvM.exercises[1].off = true; rvM.member.on = true;
+  let bM = null; try { bM = T.reviewBuild(rvM, 'full', isAuto); } catch (e) { bM = null; }
+  ok('T12b ★オンで組み立てた「お客様へ」にも改行が残る', !!bM && bM.members.length === 1 && bM.members[0].split('\n').length === 3, JSON.stringify(bM && bM.members));
   const rvA = D0(); rvA.exercises[1].off = true;
   ok('T6 一覧に無い種目を外すと組み立てられる', th(rvA) === '', th(rvA));
   const rvB = D0(); rvB.exercises[1].off = true; rvB.exercises[0].line = '50×';

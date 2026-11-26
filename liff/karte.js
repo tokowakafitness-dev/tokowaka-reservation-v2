@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-25g 休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -314,8 +314,11 @@
     '#karteRoot .k-datehit{position:relative;display:inline-block;white-space:nowrap;}',
     '#karteRoot .k-datehit .k-dateover{inset:-14px -6px;width:auto;height:auto;}',
     '#karteRoot .k-btn.k-btn-line{background:#fff;color:var(--k-acc);border:1px solid var(--k-acc);min-height:44px;margin:0 0 10px;}',
-    '#karteRoot .k-excol{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;background:#fff;border:1px solid #dde3ea;box-shadow:0 1px 3px rgba(28,35,33,.07);border-radius:12px;padding:0 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
-    '#karteRoot .k-exhead{flex:1;min-width:0;display:flex;align-items:center;gap:8px;min-height:44px;border:0;background:transparent;padding:0;font-family:inherit;color:inherit;text-align:left;}',   // 設計56：開いた種目の見出し（押すと閉じる）
+    '#karteRoot .k-excol{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;min-height:48px;background:#fff;border:1px solid #dde3ea;box-shadow:0 1px 3px rgba(28,35,33,.07);border-radius:12px;padding:6px 12px;margin-bottom:10px;font-family:inherit;color:var(--k-ink);}',
+    //   2026-11-25 オーナー：種目名が1字ずつ縦に折れていた（名前・印・部位・セット数・右のボタンが1行で幅を取り合っていた）→ 名前は1行目に全幅・印などは2行目で折らない
+    '#karteRoot .k-exname{flex:1 1 100%;min-width:0;overflow-wrap:anywhere;line-height:1.35;}',
+    '#karteRoot .k-excol>span:not(.k-exname),#karteRoot .k-exhead>span:not(.k-exname){flex:none;white-space:nowrap;}',
+    '#karteRoot .k-exhead{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-height:44px;border:0;background:transparent;padding:0;font-family:inherit;color:inherit;text-align:left;}',   // 設計56：開いた種目の見出し（押すと閉じる）
     '#karteRoot .k-addset{display:block;width:100%;min-height:44px;border:1px dashed var(--k-acc);border-radius:10px;background:#fff;color:var(--k-acc);font-size:14px;font-family:inherit;margin-top:4px;}',
     '#karteRoot .k-pick{display:flex;flex-direction:column;gap:8px;width:100%;text-align:left;font-family:inherit;font-size:14px;color:var(--k-ink);}',
     '#karteRoot .k-pick.on{border:2px solid var(--k-acc);}',
@@ -336,7 +339,7 @@
     '#karteRoot .k-exline{display:flex;align-items:center;gap:6px;margin-bottom:10px;}',   // 2026-11-25 オーナー：つまみは左・全部✓は右・どちらも小さく（行の高さに伸ばさない）
     '#karteRoot .k-exline .k-excol{margin-bottom:0;flex:1;min-width:0;}',
     '#karteRoot .k-allchk{flex:none;min-width:44px;min-height:44px;padding:0 6px;border-radius:10px;border:1px solid var(--k-acc);background:var(--k-acc-l);color:var(--k-acc);font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap;}',
-    '#karteRoot .k-donechk{min-width:48px;min-height:48px;padding:0 12px;border-radius:12px;font-size:15px;font-weight:700;font-family:inherit;white-space:nowrap;background:#fff;color:#5b6661;border:1px solid #8692a6;}',
+    '#karteRoot .k-donechk{flex:none;min-width:48px;min-height:48px;padding:0 8px;border-radius:10px;font-size:13px;font-weight:700;font-family:inherit;white-space:nowrap;background:#fff;color:#5b6661;border:1px solid #8692a6;}',
     '#karteRoot .k-donechk[aria-pressed=true]{background:#243b66;color:#fff;border-color:#243b66;}',
     '#karteRoot .k-frommemo{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--k-gold-l);color:#6b5427;white-space:nowrap;}',
     '#karteRoot .k-marks{margin:-2px 0 6px 28px;font-size:12px;color:var(--k-acc);font-weight:700;}',
@@ -2572,6 +2575,8 @@
   var AI_HH_TEXT = '健康の情報を含む根拠だったため、そのままは使えません';
   var AI_STATUSES = ['match', 'inferred', 'nobasis', 'healthHidden'];
   function rvStr(v) { return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; }
+  //   設計61 改訂2：お客様へは見出しごとの改行を残す（行の中の空白だけまとめる）
+  function rvMsg(v) { return typeof v === 'string' ? v.split('\n').map(function (x) { return x.replace(/\s+/g, ' ').trim(); }).filter(Boolean).join('\n') : ''; }
   //   ---- 設計50：確認の状態（純粋なデータ）。種目は1行の文字（「読み取る」の memoSets で読む）・ほかは欄の文章・お客様の欄は既定オフのチェック
   //     ★orig（AI の判定）は応答から1回だけ作り以後変えない。トレーナーが変えるのは name・line・note・fields・member・off・part だけ
   var RV_FIELDS = [['flow', 'summary'], ['condition', 'condition'], ['coaching', 'coaching'], ['hearing', 'hearing'], ['next', 'next']];   // [欄, scope の種類]
@@ -2608,7 +2613,7 @@
         line: orig.map(function (o) { return rvTok(o, scope); }).join('  '), note: note.join('\n') };
     });
     rv.fields = { flow: lst('summary').join('\n'), condition: lst('condition').join('\n'), coaching: lst('coaching').join('\n'), hearing: lst('hearing').join('\n'), next: lst('next_actions').join('\n') };
-    rv.member = { on: false, message: rvStr(dr.member_message), todo: lst('member_todo').join('\n') };
+    rv.member = { on: false, message: rvMsg(dr.member_message), todo: lst('member_todo').join('\n') };
     rv.caution = lst('caution');
     rv.unclear = (Array.isArray(dr.unclear) ? dr.unclear : []).map(function (u) { return { text: rvStr(u && u.text), evidence: rvStr(u && u.evidence) }; }).filter(function (u) { return u.text; });
     return rv;
@@ -4071,7 +4076,7 @@
         if (ei !== D.openEi) {   // 畳んだ種目：押すと広げる（入力済み・✓の数を出す）
           var nd = it.sets.filter(function (x) { return x.done === true; }).length;
           var colBtn = el('button', { type: 'button', class: 'k-excol', 'aria-expanded': 'false', 'aria-label': it.exercise + 'を開く', onclick: function () { D.openEi = ei; save(); draw(); } }, [
-            el('span', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;text-align:left;', text: it.exercise }),
+            el('span', { class: 'k-exname', style: 'font-weight:700;font-size:15px;text-align:left;', text: it.exercise }),
             it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
             el('span', { class: 'k-tag', text: partOf(it.exercise) }),
             el('span', { class: 'k-sub', text: (it.sets.length ? it.sets.length + 'セット' + (nd ? '（✓' + nd + '）' : '') : (it.doneOnly === true ? '実施（✓）' : '数字なし')) + ' ›' })]);
@@ -4093,7 +4098,7 @@
         blk.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;' }, [
           D.items.length > 1 ? trGrip(it, ei) : null,   // 2026-11-25 オーナー：つまみは左端（畳んだ行と同じ位置）
           el('button', { type: 'button', class: 'k-exhead', 'aria-expanded': 'true', 'aria-label': it.exercise + 'を閉じる', onclick: function () { D.openEi = -1; save(); draw(); } }, [
-            el('span', { style: 'flex:1;min-width:0;font-weight:700;font-size:15px;', text: it.exercise }),
+            el('span', { class: 'k-exname', style: 'font-weight:700;font-size:15px;', text: it.exercise }),
             it.fromMemo ? el('span', { class: 'k-frommemo', text: 'メモから' }) : null,
             el('span', { class: 'k-tag', text: partOf(it.exercise) }),
             el('span', { class: 'k-sub k-exfold', 'aria-hidden': 'true', style: 'font-size:16px;', text: '⌄' })]),
@@ -4573,6 +4578,19 @@
         return s.done === true && hasR(s) && (bad(s.assist) || (Array.isArray(s.drops) && s.drops.some(function (d) { return hasR(d) && bad(d.assist); })));
       }); });
     }
+    function editNoChange(items) {
+      var cur0 = lsGet(draftKey);
+      if (cur0 && cur0.pending) { edFreeze('送信の結果を確かめている直しがあります。開き直して確かめてください。'); return; }   // ★送り直し待ちを黙って消さない
+      if (!cur0 || cur0.owner !== formId || Number(cur0.ver) !== Number(D.ver)) { edFreeze('ほかの画面で変わりました。開き直してください。'); return; }   // ★sendEdit と同じ所有者・世代の確かめ（関門②）
+      edStore(draftKey, null, formId);   // この画面の下書きだけ消す
+      edDispose();
+      var n = 0; items.forEach(function (x) { n += x.sets.length; });
+      if (saveBtn && saveBtn.classList.contains('k-hsave') && saveBtn.parentNode) saveBtn.parentNode.removeChild(saveBtn);
+      leaveForm(); c.innerHTML = '';
+      c.appendChild(el('div', { class: 'k-h k-eddone k-ednochange', text: '更新しました' }));
+      c.appendChild(el('div', { style: 'font-size:14px;margin-bottom:8px;', text: md(D.sessionDate) + '・' + items.length + '種目・' + n + 'セット（変更はありませんでした）' }));
+      c.appendChild(el('button', { class: 'k-btn out', text: '記録の一覧を見る', onclick: function () { if (same()) open(cid, cname, 'training', null, 'replace'); } }));
+    }
     function editSave() {
       if (edFrozen || edDisposed || sending) return;
       var items = buildPayload(D.items);
@@ -4583,7 +4601,8 @@
       if (n && !window.confirm('記録されない入力が ' + n + ' セットあります（✓が無い・重量か回数が空）。保存すると、その入力（セットのメモも）は消えます。よいですか？')) return;
       var total = 0; items.forEach(function (it) { it.sets.forEach(function (st) { total += 1 + (st.drops ? st.drops.length : 0); }); });
       if (total > TR_TOTAL) { window.alert('1回の記録は合計60セットまでです。'); return; }
-      if (edBase(D.sessionDate, D.items) === D.base) { window.alert('変更はありません。'); return; }
+      //   2026-11-25 オーナー指示：変更が無くても「保存する」で閉じられる。★サーバーには送らない（空の置き換えで版を増やさない）。直しかけの下書きだけ片づけ、直したときと同じ完了の画面を出す
+      if (edBase(D.sessionDate, D.items) === D.base) { editNoChange(items); return; }
       sendEdit({ sessionId: String(D.editOf), rev: Number(D.editRev), sessionDate: D.sessionDate, items: items }, D.reqId);
     }
     //   設計55：保存は見出しの右上（見出しが無いときだけ従来どおり下の帯）。中身・確認・送信は今までと同じ

@@ -157,6 +157,14 @@ const ITEMS = () => [
   ok('S10 ★畳んだ行はつまみが先頭・全部✓が末尾', [...R(w).querySelectorAll('.k-exline')].length >= 1 && [...R(w).querySelectorAll('.k-exline')].every((ln) => ln.firstElementChild.classList.contains('k-grip') && (!ln.querySelector('.k-allchk') || ln.lastElementChild.classList.contains('k-allchk'))));
   ok('S10 ★開いた種目の見出しもつまみが先頭', [...R(w).querySelectorAll('.k-exhead')].every((h) => h.parentElement.firstElementChild.classList.contains('k-grip')));
   ok('S10 ★行は縦に伸ばさない（align-items:center）・全部✓は小さいが44px', /\.k-exline\{[^}]*align-items:center/.test(FULL) && /\.k-allchk\{[^}]*min-width:44px;min-height:44px/.test(FULL));
+  //   S10b 2026-11-25 オーナー：種目名が1字ずつ縦に折れた → 名前は1行目に全幅・印などは折らない・実施したは小さく。jsdom は寸法を測れない＝規則の値を宣言ごとに取り出して見る
+  const rule = (sel) => { const m = FULL.match(new RegExp("'#karteRoot " + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\{([^}]*)\\}'")); return m ? Object.fromEntries(m[1].split(';').filter(Boolean).map((d) => { const i = d.indexOf(':'); return [d.slice(0, i).trim(), d.slice(i + 1).trim()]; })) : null; };
+  const rName = rule('.k-exname'), rCol = rule('.k-excol'), rHead = rule('.k-exhead'), rDone = rule('.k-donechk'), rRest = rule('.k-excol>span:not(.k-exname),#karteRoot .k-exhead>span:not(.k-exname)');
+  ok('S10b ★名前は1行目に全幅（flex:1 1 100%）・畳んだ行と見出しは折り返す（flex-wrap:wrap）', !!rName && rName.flex === '1 1 100%' && rCol && rCol['flex-wrap'] === 'wrap' && rHead && rHead['flex-wrap'] === 'wrap', JSON.stringify([rName, rCol && rCol['flex-wrap'], rHead && rHead['flex-wrap']]));
+  ok('S10b ★名前以外の印・部位・セット数は縮めず折らない（flex:none・nowrap）', !!rRest && rRest.flex === 'none' && rRest['white-space'] === 'nowrap', JSON.stringify(rRest));
+  ok('S10b ★実施したは文字を小さく（13px・縮めない・押せる大きさは設計38 の48px のまま）', !!rDone && rDone['min-width'] === '48px' && rDone['min-height'] === '48px' && rDone['font-size'] === '13px' && rDone.flex === 'none', JSON.stringify(rDone));
+  const cols = [...R(w).querySelectorAll('button.k-excol')], heads = [...R(w).querySelectorAll('button.k-exhead')];
+  ok('S10b ★畳んだ行・開いた見出しとも、名前は最初の要素で k-exname（名前に flex:1 の上書きが無い）', cols.length === 2 && heads.length === 1 && cols.concat(heads).every((b) => b.firstElementChild.classList.contains('k-exname') && !/flex/.test(b.firstElementChild.style.cssText)), cols.concat(heads).map((b) => b.firstElementChild.outerHTML).join(' '));
   await tap(w, grip(w, 1));
   ok('S2 軽く押すと「上へ／下へ」が出る', !!R(w).querySelector('.k-gripud'));
   btn(R(w).querySelector('.k-gripud'), '上へ').click(); await settle();
