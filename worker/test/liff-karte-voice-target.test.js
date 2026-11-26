@@ -41,7 +41,8 @@ const DRAFT = () => ({
   next_actions: ['架空の次回：足の倒れ方を確認する'],
   member_message: '【今日の内容】架空のお客様へ', member_todo: ['架空の宿題'], unclear: [],
 });
-const DAY_LINES = ['今日の流れ：架空の流れ：胸から脚へ', 'ベンチプレス：架空の種目メモ：左右差を確認する', '状態：架空の状態', '架空の指導', 'ヒアリング：架空のヒアリング', '次回やること：架空の次回：足の倒れ方を確認する'];
+//   設計66：種目のメモは社内メモでなく AI のベンチプレスの1セット目のメモへ（社内メモの行には含めない）
+const DAY_LINES = ['今日の流れ：架空の流れ：胸から脚へ', '状態：架空の状態', '架空の指導', 'ヒアリング：架空のヒアリング', '次回やること：架空の次回：足の倒れ方を確認する'];
 const AI_TEXTS = ['架空の流れ', '架空の種目メモ', '架空の状態', '架空の指導', '架空のヒアリング', '架空の次回', '架空のお客様へ', '架空の宿題'];
 
 function boot() {
@@ -95,7 +96,8 @@ function checkPlaced(label, w, x, exp) {
   const d = draftOf(w);
   ok(label + '：種目は後ろに足す（いまある種目のあとに AI の種目）', !!d && JSON.stringify(d.items.map((i) => i.exercise)) === JSON.stringify(exp.names), d && JSON.stringify(d.items.map((i) => i.exercise)));
   ok(label + '：★いまある種目（種目1〜）は名前・セット・セットのメモ・✓がそのまま（AI の文章を書き足さない）', JSON.stringify(d.items.slice(0, exp.before.length)) === JSON.stringify(exp.before), JSON.stringify(d.items.slice(0, exp.before.length)));
-  ok(label + '：★どの種目のセットにも AI の文章が入っていない', !JSON.stringify(d.items).match(/架空/));
+  //   設計66：AI の種目のメモはその AI の種目（ベンチプレス）の1セット目のメモへ。いまある種目・ほかの AI の種目には入らない
+  ok(label + '：★いまある種目のセットに AI の文章が入っていない・AI のベンチプレスの1セット目に種目のメモ', !JSON.stringify(d.items.slice(0, exp.before.length)).match(/架空/) && d.items[exp.before.length].sets[0].note === '架空の種目メモ：左右差を確認する' && !JSON.stringify(d.items.slice(exp.before.length + 1)).match(/架空/), JSON.stringify(d.items));
   const add = d.items.slice(exp.before.length);
   ok(label + '：AI の種目のセットはその種目に入る（ベンチプレス 50×10・スクワット 自重×15・✓は外す）', add.length === 2 && add[0].sets.length === 1 && add[0].sets[0].w === '50' && add[0].sets[0].r === '10' && add[0].sets[0].done === false && add[1].sets[0].w === '' && add[1].sets[0].r === '15', JSON.stringify(add));
   const want = (exp.memo0 ? [exp.memo0] : []).concat(DAY_LINES).join('\n');
@@ -103,7 +105,7 @@ function checkPlaced(label, w, x, exp) {
   const ta = R(w).querySelector('textarea[aria-label="社内メモ"]');
   ok(label + '：記録の画面の「社内メモ」の欄にそのまま出ている', !!ta && ta.value === want);
   const ex0 = R(w).querySelector('[data-ei="0"]');
-  ok(label + '：★記録の画面の種目1の欄に AI の文章が出ていない', !!ex0 && !AI_TEXTS.some((t) => (ex0.textContent + [...ex0.querySelectorAll('input,textarea')].map((e) => e.value).join('')).includes(t)));
+  if (exp.before.length) ok(label + '：★記録の画面の種目1（いまある種目）の欄に AI の文章が出ていない', !!ex0 && !AI_TEXTS.some((t) => (ex0.textContent + [...ex0.querySelectorAll('input,textarea')].map((e) => e.value).join('')).includes(t)));
   if (exp.member) {
     const m = d.member || {};
     ok(label + '：お客様に見える欄（チェックしたとき）はお客様へ・次回までにの末尾（既存は消さない）', m.message === (exp.mem0 ? exp.mem0 + '\n' : '') + '【今日の内容】架空のお客様へ' && JSON.stringify(m.todo) === JSON.stringify(exp.todo), JSON.stringify(m));
