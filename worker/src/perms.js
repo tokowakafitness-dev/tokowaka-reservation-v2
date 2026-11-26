@@ -87,6 +87,7 @@ const TABLE = {
   'k_summary':          ['trainer'],
   'k_notes':            ['trainer'],
   'k_training':         ['trainer'],
+  'k_trainingAll':      ['trainer'],   // 設計62：全期間の集計（k_training と同じ範囲）
   'k_safety':           ['trainer'],
   'k_body':             ['trainer'],
   'k_contract':         ['trainer'],

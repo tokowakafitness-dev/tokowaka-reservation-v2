@@ -58,8 +58,18 @@ function boot(handle) {
 const R = (w) => w.document.getElementById('karteRoot');
 const txt = (w) => (R(w) ? R(w).textContent : '');
 const btn = (w, t) => [...R(w).querySelectorAll('button')].find((x) => x.textContent.indexOf(t) === 0);
-const first = (extra) => (b) => (b.action === 'k_training' && !b.cursor && !b.before && !b.sessionId)
-  ? Object.assign({ success: true, karteSchema: 33, aiDraft: false, trainingEdit: true, sessions: [S1(), S2(), S3()], best: [] }, extra || {}) : undefined;
+//   初回の一覧（k_training）と、別の窓口の全期間の集計（k_trainingAll）。extra.agg が無ければ集計の窓口は無い（古い Worker）として 400
+const AGG_KEYS = ['agg', 'bestAll', 'seriesAll', 'seriesFrom', 'allDates'];
+const first = (extra) => (b) => {
+  const e = extra || {};
+  if (b.action === 'k_trainingAll') return e.agg ? Object.assign({ success: true }, ...AGG_KEYS.filter((k) => k in e).map((k) => ({ [k]: e[k] }))) : { success: false, code: 'BAD_REQUEST' };
+  if (b.action === 'k_training' && !b.cursor && !b.before && !b.sessionId && !b.older) {
+    const base = { success: true, karteSchema: 33, aiDraft: false, trainingEdit: true, sessions: [S1(), S2(), S3()], best: [] };
+    Object.keys(e).forEach((k) => { if (AGG_KEYS.indexOf(k) < 0) base[k] = e[k]; });
+    return base;
+  }
+  return undefined;
+};
 async function openTab(w) { w.KarteUI.open('C1', NAME, 'training'); await settle(); }
 const dayRows = (w) => [...R(w).querySelectorAll('.k-daycard .k-dayrow')].map((r) => r.textContent.split('(')[0]);
 const oldRows = (w) => [...R(w).querySelectorAll('.k-oldcard .k-dayrow:not(.k-oldtoggle)')].map((r) => r.textContent.split('(')[0]);
@@ -228,6 +238,61 @@ async function formAt(date, beforeRes) {
   const { w: w2 } = boot((b) => (b.action === 'k_notes' ? { success: true, karteSchema: 33, notes: [{ note_id: 'X', session_date: '2026-11-01', condition: null, body: '見本', next_plan: null, tag: null, reasons: [], next_check: null, author_trainer_id: 'T1', rev: 1, created_at: 1, edited_at: null }] } : undefined));
   w2.KarteUI.open('C1', NAME, 'notes'); await settle();
   ok('L7 古い Worker（境界なし）は今までどおり（畳み・「直近3か月」の見出しなし）', !R(w2).querySelector('.k-oldnotes') && !txt(w2).includes('直近3か月'));
+}
+
+// ================= L8 ［編集］の二重押し・応答の逆転（関門② 中1） =================
+{
+  const pend = [];
+  const { w, sent } = boot((b) => {
+    if (b.action === 'k_training' && b.sessionId) return new Promise((res) => pend.push({ b, res }));
+    return first()(b);
+  });
+  //   身代わりの fetch は Promise の応答も待つ
+  const f0 = w.fetch;
+  w.fetch = async (url, opt) => { const body = JSON.parse(opt.body); const r0 = w.handle(body); if (r0 && typeof r0.then === 'function') { sent.push(body); const v = await r0; return { json: async () => JSON.parse(JSON.stringify(v)) }; } return f0(url, opt); };
+  await openTab(w);
+  [...R(w).querySelectorAll('.k-daycard .k-dayrow')].find((r) => r.textContent.indexOf('11/20') === 0).click(); await settle();
+  const eb = R(w).querySelector('button.k-dayedit');
+  eb.click(); eb.click(); await settle();
+  ok('L8 ★同じ記録の［編集］を素早く2回押しても、読み直しは1本だけ', sent.filter((b) => b.action === 'k_training' && b.sessionId).length === 1, String(sent.filter((b) => b.sessionId).length));
+  pend[0].res({ success: true, karteSchema: 33, trainingEdit: true, trace: 'live', extra: S1() }); await settle();
+  ok('L8 応答のあと直す画面が1つだけ開く', R(w).querySelectorAll('.k-trform').length === 1, String(R(w).querySelectorAll('.k-trform').length));
+}
+{
+  //   別の記録を続けて押す → 後から押した方だけで画面を作る（前の応答が遅れて来ても捨てる）
+  const pend = [];
+  const { w, sent } = boot((b) => (b.action === 'k_training' && b.sessionId) ? new Promise((res) => pend.push({ b, res })) : first()(b));
+  const f0 = w.fetch;
+  w.fetch = async (url, opt) => { const body = JSON.parse(opt.body); const r0 = w.handle(body); if (r0 && typeof r0.then === 'function') { sent.push(body); const v = await r0; return { json: async () => JSON.parse(JSON.stringify(v)) }; } return f0(url, opt); };
+  await openTab(w);
+  const box = R(w).querySelector('.k-daycard').closest('#karteRoot');
+  [...R(w).querySelectorAll('.k-daycard .k-dayrow')].find((r) => r.textContent.indexOf('11/20') === 0).click(); await settle();
+  R(w).querySelector('button.k-dayedit').click(); await settle();
+  //   読み込み中の画面から戻って別の日の［編集］を押す身代わり：openEditFresh を直接2回目として呼ぶ代わりに、一覧を開き直して別の日を押す
+  w.KarteUI.open('C1', NAME, 'training'); await settle();
+  [...R(w).querySelectorAll('.k-daycard .k-dayrow')].find((r) => r.textContent.indexOf('11/18') === 0).click(); await settle();
+  R(w).querySelector('button.k-dayedit').click(); await settle();
+  const s2 = pend.find((p) => p.b.sessionId === 'S2'), s1 = pend.find((p) => p.b.sessionId === 'S1');
+  s2.res({ success: true, karteSchema: 33, trainingEdit: true, trace: 'live', extra: S2() }); await settle();
+  s1.res({ success: true, karteSchema: 33, trainingEdit: true, trace: 'live', extra: S1() }); await settle();
+  const ed = JSON.parse(w.localStorage.getItem('karte_tr_edit_v1:T1:C1') || 'null');
+  ok('L8 ★応答が逆転しても、後から押した記録（11/18）で画面ができ、遅れた前の応答で作り直さない', txt(w).includes('11/18') && ed && ed.editOf === 'S2' && R(w).querySelectorAll('.k-trform').length === 1, JSON.stringify([ed && ed.editOf, txt(w).includes('11/18'), R(w).querySelectorAll('.k-trform').length, txt(w).slice(0, 120)]));
+}
+
+{
+  //   L8c：読み込み中に別のタブへ移る／一覧を開き直す → 遅れた応答で直す画面を作らない（関門② 第2周 中）
+  for (const how of ['tab', 'reopen']) {
+    const pend = [];
+    const { w, sent } = boot((b) => (b.action === 'k_training' && b.sessionId) ? new Promise((res) => pend.push({ b, res })) : (b.action === 'k_notes' ? { success: true, karteSchema: 33, notes: [] } : first()(b)));
+    const f0 = w.fetch;
+    w.fetch = async (url, opt) => { const body = JSON.parse(opt.body); const r0 = w.handle(body); if (r0 && typeof r0.then === 'function') { sent.push(body); const v = await r0; return { json: async () => JSON.parse(JSON.stringify(v)) }; } return f0(url, opt); };
+    await openTab(w);
+    [...R(w).querySelectorAll('.k-daycard .k-dayrow')].find((r) => r.textContent.indexOf('11/20') === 0).click(); await settle();
+    R(w).querySelector('button.k-dayedit').click(); await settle();
+    w.KarteUI.open('C1', NAME, how === 'tab' ? 'notes' : 'training'); await settle();
+    pend[0].res({ success: true, karteSchema: 33, trainingEdit: true, trace: 'live', extra: S1() }); await settle();
+    ok('L8c ★読み込み中に' + (how === 'tab' ? '別のタブへ移った' : '一覧を開き直した') + '後の遅れた応答で直す画面を作らない', R(w).querySelectorAll('.k-trform').length === 0 && !txt(w).includes('の記録を直す'), String(R(w).querySelectorAll('.k-trform').length));
+  }
 }
 
 console.log(`${fail ? '❌' : '✅'} 記録の全期間表示（設計62 段1・画面） 検証: ${pass} passed / ${fail} failed`);

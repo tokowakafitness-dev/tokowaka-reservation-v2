@@ -1612,7 +1612,7 @@ export async function trainingAggregates(env, cid, L = PAST_LIMITS) {
     if (fromDay) {
       //   ★採る session＝その会員の生きた session のうち fromDay 以後（打ち切った日を含まない＝含めた日は全セットから）
       const st = await env.DB.prepare(
-        `SELECT s.session_date, t.exercise, t.weight_kg, t.reps
+        `SELECT DISTINCT s.session_date, t.exercise, t.weight_kg, t.reps
            FROM karte_tr_sets t JOIN karte_tr_sessions s ON s.session_id = t.session_id
            LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
           WHERE s.customer_id = ? AND s.deleted_at IS NULL AND e.forced IS NULL AND s.session_date >= ?`
@@ -1707,8 +1707,20 @@ async function training(c) {
     const nextCursor = more && last && w.kind ? cursorOf(w.kind, boundary, last.session_date, last.created_at, last.session_id) : null;
     const sessions = await loadSessions(c.env, page);
     const out = { ...head, sessions, best: pageBest(sessions), boundary, more, nextCursor };   // ★空でも版を返す
-    if (f.form === 'first') Object.assign(out, { older: await olderExists(c.env, 'karte_tr_sessions', cid, boundary) }, await trainingAggregates(c.env, cid));
+    if (f.form === 'first') out.older = await olderExists(c.env, 'karte_tr_sessions', cid, boundary);
     return out;
+  });
+}
+
+/**
+ * 全期間の集計（設計62 段1・I94・関門② 中2）：k_training の初回と別の窓口。画面は一覧を描いた後に呼ぶ
+ *   ★集計が重くて Worker の要求ごと打ち切られても、一覧（k_training）は巻き込まれない。画面は読めなければ「直近◯回の中」
+ *   要求の鍵は customerId だけ（形の鍵を送ったら 400）
+ */
+async function trainingAll(c) {
+  return readSection(c, 'trainingAll', async (cid) => {   // ★access_log の action は 'k_' + section＝k_trainingAll（窓口の名前と同じ）
+    if (ALL_FORM_KEYS.some((k) => c.body[k] !== undefined && c.body[k] !== null && c.body[k] !== '')) return err('BAD_REQUEST', 400, 'FORM_KEY');
+    return trainingAggregates(c.env, cid);
   });
 }
 
@@ -1901,6 +1913,7 @@ export const KARTE_HANDLERS = {
   k_summary: summary,
   k_notes: notes,
   k_training: training,
+  k_trainingAll: trainingAll,
   k_safety: safety,
   k_body: bodySection,
   k_contract: contract,

@@ -208,7 +208,7 @@ const outWin = (n) => dayOffset(-(100 + n));  // 100日より前は必ず境界�
   const m3 = await call('U_t2', 'k_notes', { customerId: 'P1', cursor: cursorOf('R', prevB, inWin(5), 1, 'a') });
   ok('B9 ★前の月の境界で発行したカーソル（R・O・指導の履歴）は 409 BOUNDARY_MOVED', prevB !== B && m1.status === 409 && m1.code === 'BOUNDARY_MOVED' && m2.status === 409 && m3.status === 409, JSON.stringify([prevB, m1.status, m1.code]));
   const blank = await call('U_t2', 'k_training', { customerId: 'P1', before: '' });
-  ok('P2 旧画面の before:""（空）は「無い」＝初回', blank.status === 200 && blank.boundary === B && 'agg' in blank);
+  ok('P2 旧画面の before:""（空）は「無い」＝初回', blank.status === 200 && blank.boundary === B && 'older' in blank);
 }
 
 // ================= P16a 要求の形（k_training） =================
@@ -218,9 +218,16 @@ const outWin = (n) => dayOffset(-(100 + n));  // 100日より前は必ず境界�
   const od = await call('U_t2', 'k_training', { customerId: 'P1', older: true });
   const bf = await call('U_t2', 'k_training', { customerId: 'P1', before: inWin(10) });
   const one = await call('U_t2', 'k_training', { customerId: 'P1', sessionId: 'SAME-b' });
-  const hasAgg = (r) => ['bestAll', 'seriesAll', 'allDates', 'agg', 'older'].every((k) => k in r);
   const noAgg = (r) => ['bestAll', 'seriesAll', 'allDates', 'agg', 'older'].every((k) => !(k in r));
-  ok('P16a ★初回（形の鍵なし・旧画面の customerId だけ）だけ全期間の集計と older が付く', f.status === 200 && hasAgg(f) && f.agg.best === 'ok' && f.agg.series === 'ok' && f.agg.dates === 'ok');
+  const all = await call('U_t2', 'k_trainingAll', { customerId: 'P1' });
+  ok('P16a ★初回（形の鍵なし・旧画面の customerId だけ）は一覧と older だけ・全期間の集計は別の窓口 k_trainingAll（関門② 中2）', f.status === 200 && 'older' in f && !('agg' in f) && !('bestAll' in f)
+     && all.status === 200 && all.agg && all.agg.best === 'ok' && all.agg.series === 'ok' && all.agg.dates === 'ok' && Array.isArray(all.bestAll) && !('sessions' in all), JSON.stringify(Object.keys(all)));
+  const allBad = [];
+  for (const b of [{ cursor: 'x' }, { older: true }, { before: '2026-01-01' }, { sessionId: 'S1' }, { month: '2026-01' }]) allBad.push((await call('U_t2', 'k_trainingAll', { customerId: 'P1', ...b })).status);
+  const allOther = await call('U_t2', 'k_trainingAll', { customerId: 'NO-SUCH' });
+  const lg = q1(env, `SELECT section, action, result FROM karte_access_log WHERE action LIKE 'k_training%' AND section <> 'training' ORDER BY id DESC LIMIT 1`);
+  ok('P16a access_log の action は窓口の名前と同じ k_trainingAll（中身は書かない）', lg && lg.action === 'k_trainingAll' && lg.section === 'trainingAll', JSON.stringify(lg));
+  ok('P16a k_trainingAll に形の鍵を送ったら 400・見えない会員は 404', allBad.every((x) => x === 400) && allOther.status === 404, JSON.stringify([allBad, allOther.status]));
   ok('P16a ★R のページ送り・older・前回の読み足しには集計が付かない・前回の読み足しは nextCursor を返さない', pg.status === 200 && noAgg(pg) && od.status === 200 && noAgg(od) && bf.status === 200 && noAgg(bf)
      && pg.sessions.length === 3 && bf.nextCursor === null && od.sessions.length === 6 && od.sessions.every((x) => x.session_date < B));
   ok('P16a ★1件の読み直しは extra と trace だけ（20回も集計も返さない）', one.status === 200 && noAgg(one) && !('sessions' in one) && one.trace === 'live' && one.extra && one.extra.session_id === 'SAME-b'
@@ -271,7 +278,7 @@ const outWin = (n) => dayOffset(-(100 + n));  // 100日より前は必ず境界�
   //   25回前にしか無い種目（1ページ目の20回の外）
   ins('P4', dayOffset(-200), 1, [['レッグプレス', 140, 8]]);
   for (let i = 0; i < 24; i++) ins('P4', dayOffset(-(100 + i)), 10 + i, [['ベンチプレス', 40, 10]]);
-  const r = await call('U_t2', 'k_training', { customerId: 'P4' });
+  const r = Object.assign(await call('U_t2', 'k_training', { customerId: 'P4' }), await call('U_t2', 'k_trainingAll', { customerId: 'P4' }));
   const mk = await buildMemberKarte(env, 'P4', {});
   const bp = (r.bestAll || []).filter((x) => x.exercise === 'ベンチプレス')[0];
   const mbp = mk.training.best.filter((x) => x.exercise === 'ベンチプレス')[0];
@@ -290,13 +297,13 @@ const outWin = (n) => dayOffset(-(100 + n));  // 100日より前は必ず境界�
 // ================= P11 集計の1つだけ失敗 → その値は null・unavailable・20回は返る（I94） =================
 {
   env._failRe = /ROW_NUMBER\(\) OVER/;
-  const r = await call('U_t2', 'k_training', { customerId: 'P4' });
+  const r = Object.assign(await call('U_t2', 'k_training', { customerId: 'P4' }), await call('U_t2', 'k_trainingAll', { customerId: 'P4' }));
   env._failRe = /GROUP BY session_date/;
-  const r2 = await call('U_t2', 'k_training', { customerId: 'P4' });
+  const r2 = await call('U_t2', 'k_trainingAll', { customerId: 'P4' });
   env._failRe = null;
   ok('P11 ★自己ベストの読みが失敗：bestAll は null（空配列にしない）・agg.best=unavailable・推移と詳しい一覧は返る', r.status === 200 && r.bestAll === null && r.agg.best === 'unavailable'
      && Array.isArray(r.seriesAll) && r.agg.series === 'ok' && r.sessions.length === 2, JSON.stringify(r.agg));
-  ok('P11 ★日付の読みが失敗：allDates は null・agg.dates=unavailable', r2.status === 200 && r2.allDates === null && r2.agg.dates === 'unavailable' && r2.agg.best === 'ok', JSON.stringify(r2.agg));
+  ok('P11 ★日付の読みが失敗：allDates は null・agg.dates=unavailable（集計の窓口は 200 のまま）', r2.status === 200 && r2.allDates === null && r2.agg.dates === 'unavailable' && r2.agg.best === 'ok', JSON.stringify(r2.agg));
 }
 
 // ================= P12・P13・P17 上限と打ち切り（小さな上限で関数を直接） =================

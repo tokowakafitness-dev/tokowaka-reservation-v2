@@ -19,6 +19,8 @@ const SRC = process.env.KARTE_SRC ? readFileSync(process.env.KARTE_SRC, 'utf8') 
 
 let pass = 0, fail = 0;
 function ok(name, cond, detail) { if (cond) pass++; else { fail++; console.log(`❌ ${name}${detail ? '\n   ' + detail : ''}`); } }
+//   設計62：トレーニングのタブを開くと全期間の集計 k_trainingAll を読む。鍵は customerId だけ（メモの文は乗らない）＝読みとして許す
+const allOnly = (x) => x.action === 'k_trainingAll' && Object.keys(x).every((k) => ['action', 'idToken', 'customerId'].includes(k));
 function eq(name, got, want) { ok(name, JSON.stringify(got) === JSON.stringify(want), 'got : ' + JSON.stringify(got) + '\n   want: ' + JSON.stringify(want)); }
 const tick = () => new Promise((r) => setTimeout(r, 0));
 async function settle() { for (let i = 0; i < 12; i++) await tick(); }
@@ -129,7 +131,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const raw = ['30×10 50×10+5', '0×10 10×10+0×10', '80×5(できない)', P1];
   const sentText = JSON.stringify(sent), lsT = storeText(w.localStorage), ssT = storeText(w.sessionStorage), logT = w.logs.join('\n');
   ok('M1-6 ★原文（行・全体）が送信・localStorage・sessionStorage・console のどこにも無い（I63）', raw.every((x) => !sentText.includes(x) && !lsT.includes(x) && !ssT.includes(x) && !logT.includes(x)));
-  ok('M1-7 取り込みの画面からは何も送っていない（読む k_training・k_exercises と保存の1回だけ）', sent.every((x) => ['k_training', 'k_exercises', 'k_addTraining'].includes(x.action)));
+  ok('M1-7 取り込みの画面からは何も送っていない（読む k_training・k_exercises と保存の1回だけ）', sent.every((x) => ['k_training', 'k_exercises', 'k_addTraining'].includes(x.action) || allOnly(x)));
 }
 {
   //   M1b 読み取った直後（記録の画面へ戻る前）も、下書きに原文が無い
@@ -161,7 +163,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const d = draftOf(w);
   eq('M2-6 ★選んだ先にだけ入る：種目の並びはメモの行の順・括弧を除いたセット・名前の下の数値・社内メモ', d && { items: d.items.map((x) => [x.exercise, x.sets.map((s) => [s.w, s.r, s.note || '']), x.regPart || '']), memo: d.memo },
     { items: [['ヒップリフト', [['30', '10', ''], ['80', '5', '']], ''], ['45度レッグプレス', [['50', '10', '']], 'legs']], memo: '50×10' });
-  ok('M2-7 取り込みの画面からは何も送らない', !sent.some((x) => !['k_training', 'k_exercises'].includes(x.action)));
+  ok('M2-7 取り込みの画面からは何も送らない', !sent.some((x) => !['k_training', 'k_exercises'].includes(x.action) && !allOnly(x)));
 }
 
 // ================= M3 2つ目の日付：1日分だけ・案内・貼った欄は残る =================
@@ -382,7 +384,7 @@ const pendOf = (items) => ({ pending: { payload: { customerId: 'C1', sessionDate
   btn(R(e.w), '読み取る').click(); await settle();
   btn(card(e.w, 'name'), '捨てる').click(); await settle();
   btn(R(e.w), '記録の画面に入れる').click(); await nav();
-  ok('M17-2 ★取り込みの画面ではトークンの取り直しが起きない・退避（sessionStorage）に何も乗らない', e.w.reloaded === 0 && !e.w.sessionStorage.getItem('karte_draft_v1') && !e.sent.some((x) => !['k_training', 'k_exercises'].includes(x.action)));
+  ok('M17-2 ★取り込みの画面ではトークンの取り直しが起きない・退避（sessionStorage）に何も乗らない', e.w.reloaded === 0 && !e.w.sessionStorage.getItem('karte_draft_v1') && !e.sent.some((x) => !allOnly(x) && !['k_training', 'k_exercises'].includes(x.action)));
 }
 {
   const { w, sent } = boot({ cfg: S32, ls: draftLS([{ exercise: 'プランク', sets: [], doneOnly: true }]) });

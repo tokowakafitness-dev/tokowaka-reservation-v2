@@ -1467,10 +1467,16 @@
     cur.trCursor = typeof r.nextCursor === 'string' ? r.nextCursor : null;
     cur.trOlder = r.older === true ? true : (r.older === false ? false : null);
     cur.trO = { loaded: false, more: null, cursor: null, open: false, busy: false, err: '' };
-    var a = r.agg && typeof r.agg === 'object' ? r.agg : null;
-    cur.trAll = a ? { agg: a, bestAll: Array.isArray(r.bestAll) ? r.bestAll : null, seriesAll: Array.isArray(r.seriesAll) ? r.seriesAll : null,
-                      seriesFrom: typeof r.seriesFrom === 'string' ? r.seriesFrom : null } : null;
+    cur.trAll = null; cur.trAllState = 'idle';   // 全期間の集計は別の窓口 k_trainingAll（一覧を描いた後に読む・関門② 中2）
+    cur.trEdGen = (cur.trEdGen || 0) + 1; cur.trEdLoading = '';   // ★開き直したら世代を進める（0 に戻さない）＝開き直す前の遅れた応答を捨てる
     trRecalcTail(sessions);
+  }
+  /** k_trainingAll の応答を持つ。読めない・古い Worker（窓口が無い）は null＝画面は「直近◯回の中」 */
+  function trSetAll(x) {
+    var a = x && x.success && x.agg && typeof x.agg === 'object' ? x.agg : null;
+    cur.trAll = a ? { agg: a, bestAll: Array.isArray(x.bestAll) ? x.bestAll : null, seriesAll: Array.isArray(x.seriesAll) ? x.seriesAll : null,
+                      seriesFrom: typeof x.seriesFrom === 'string' ? x.seriesFrom : null } : null;
+    cur.trAllState = a ? 'done' : 'failed';
   }
   function trOldest(sessions) { var m = null; (sessions || []).forEach(function (s) { if (s && s.session_date && (m == null || s.session_date < m)) m = s.session_date; }); return m; }
   /** つながって読んだ回の最も古い日：R を読み切っていなければ直近3か月の中だけ（3か月より前の回との間に穴がある） */
@@ -2379,8 +2385,15 @@
    */
   function openEditFresh(box, sessions, sid, mode, exRestore) {
     var askedFor = cur.customerId, tid = String((window.state && state.trainerId) || ''), k = edKey(tid, askedFor);
+    //   ★関門② 中1：読み直しの途中にもう一度押しても2本目を走らせない（同じ記録）。別の記録を押したら世代を進め、前の応答は捨てる
+    if (cur.trEdLoading === askedFor + ':' + sid) return;
+    var gen = (cur.trEdGen || 0) + 1; cur.trEdGen = gen; cur.trEdLoading = askedFor + ':' + sid;
     box.innerHTML = ''; box.appendChild(msg('読み込み中…'));
-    function done(o, target) { if (cur.customerId === askedFor) trainingEditSub(box, sessions, target || sid, mode, exRestore, o); }
+    function done(o, target) {
+      if (cur.trEdGen !== gen || cur.tab !== 'training') return;   // 後から押した方・開き直した後が勝つ／別のタブへ移っていたら作らない
+      cur.trEdLoading = '';
+      if (cur.customerId === askedFor) trainingEditSub(box, sessions, target || sid, mode, exRestore, o);
+    }
     kRead('k_training', { customerId: askedFor, sessionId: sid }).then(function (r) {
       if (!r || !r.success || typeof r.trace !== 'string') { done({ miss: 'error' }); return; }
       if (r.extra && r.extra.session_id) {
@@ -4957,15 +4970,21 @@
       exRows(last, true)]));
     //   種目ごとの推移
     var exList = [];
-    sorted.forEach(function (x) { (x.sets || []).forEach(function (st) { if (exList.indexOf(st.exercise) < 0) exList.push(st.exercise); }); });
-    //   設計62：読んだ20回の外にしか無い種目も選べる（推移の新しい日の順→自己ベストの名前の順）
-    if (trAllOk('series')) cur.trAll.seriesAll.slice().sort(function (a, b) { return a.d < b.d ? 1 : a.d > b.d ? -1 : 0; }).forEach(function (x) { if (x && x.exercise && exList.indexOf(x.exercise) < 0) exList.push(x.exercise); });
-    if (trAllOk('best')) cur.trAll.bestAll.forEach(function (x) { if (x && x.exercise && exList.indexOf(x.exercise) < 0) exList.push(x.exercise); });
+    function buildExList() {
+      exList = [];
+      sorted.forEach(function (x) { (x.sets || []).forEach(function (st) { if (exList.indexOf(st.exercise) < 0) exList.push(st.exercise); }); });
+      //   設計62：読んだ回の外（3か月より前）にしか無い種目も選べる（推移の新しい日の順→自己ベストの名前の順）
+      if (trAllOk('series')) cur.trAll.seriesAll.slice().sort(function (a, b) { return a.d < b.d ? 1 : a.d > b.d ? -1 : 0; }).forEach(function (x) { if (x && x.exercise && exList.indexOf(x.exercise) < 0) exList.push(x.exercise); });
+      if (trAllOk('best')) cur.trAll.bestAll.forEach(function (x) { if (x && x.exercise && exList.indexOf(x.exercise) < 0) exList.push(x.exercise); });
+    }
+    buildExList();
     var exSel = exList[0], exCard = el('div', { class: 'k-card', style: 'display:flex;flex-direction:column;gap:10px;' });
     box.appendChild(exCard);
     function drawEx() {
       exCard.innerHTML = '';
       exCard.appendChild(el('div', { class: 'k-h', style: 'margin:0;', text: '種目ごとの推移' }));
+      buildExList(); if (exList.indexOf(exSel) < 0) exSel = exList[0];
+      if (cur.trAllState === 'loading') exCard.appendChild(el('div', { class: 'k-sub k-trnote', style: 'font-size:12px;', text: '全期間の推移を読み込み中…' }));
       var chips = el('div', { class: 'k-pills', style: 'gap:6px;' });
       exList.forEach(function (ex) { chips.appendChild(el('button', { type: 'button', class: 'k-pill' + (ex === exSel ? ' on' : ''), text: ex, onclick: function () { exSel = ex; drawEx(); } })); });
       exCard.appendChild(chips);
@@ -4982,6 +5001,15 @@
       else if (st) exCard.appendChild(el('div', { class: 'k-sub k-trbest', style: 'font-size:13px;', text: '自己ベスト ' + wLabel(st.best.w) + ' × ' + st.best.r + '（' + md(st.best.d) + '・直近' + nLoaded + '回の中）' }));
     }
     drawEx();
+    //   設計62（関門② 中2）：全期間の集計は一覧を描いた後に別の窓口で読む＝集計が重くて落ちても一覧は残る
+    (function () {
+      var aFor = cur.customerId;
+      cur.trAllState = 'loading'; drawEx();
+      kRead('k_trainingAll', { customerId: aFor }).then(function (x) {
+        if (cur.customerId !== aFor || cur.tab !== 'training' || !exCard.isConnected) return;
+        trSetAll(x); drawEx();
+      }, function () { if (cur.customerId === aFor && exCard.isConnected) { trSetAll(null); drawEx(); } });
+    })();
     //   日別の記録（いまは種目から分かる部位で絞る。日のタグは第2弾）
     var dayCard = el('div', { class: 'k-card k-daycard', style: 'display:flex;flex-direction:column;gap:8px;' });
     box.appendChild(dayCard);

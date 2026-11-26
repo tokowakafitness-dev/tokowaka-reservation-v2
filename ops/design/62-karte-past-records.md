@@ -81,7 +81,7 @@
 
 | 形 | 鍵 | 返すもの |
 |---|---|---|
-| 初回 | 形の鍵が全部無い（k_training：`cursor`・`older`・`before`・`sessionId`／k_notes：`cursor`・`older`・`before`・`month`） | **境界以後の回**（新しい順・上限100。超えたら `more:true`・`nextCursor`＝**R の系列**）＋ `boundary` ＋ `older`（境界より前に生きた回が1つでもあるか・`LIMIT 1` の読み）＋全期間の集計（§4-4） |
+| 初回 | 形の鍵が全部無い（k_training：`cursor`・`older`・`before`・`sessionId`／k_notes：`cursor`・`older`・`before`・`month`） | **境界以後の回**（新しい順・上限100。超えたら `more:true`・`nextCursor`＝**R の系列**）＋ `boundary` ＋ `older`（境界より前に生きた回が1つでもあるか・`LIMIT 1` の読み）。★全期間の集計は別の窓口 `k_trainingAll`（§4-4・関門② で分けた） |
 | 3か月より前の最初のページ | `older: true` だけ | Worker 自身の境界より前の20回（`session_date < boundary`＝境界の日を含まない）。`nextCursor` は **O の系列** |
 | ページ送り | `cursor` だけ | 系列ごとに20回ずつ。**R は全ページで `session_date >= 境界` を守り、境界より前へは進まない**（境界以後を読み切ったら `more:false`）。O は境界より前だけ |
 | 前回の読み足し | `before` だけ（D 当日を含まない） | D より前の20回（`nextCursor` は返さない＝この形からページ送りしない）。I59 の「前回」専用 |
@@ -94,9 +94,11 @@
 - 旧画面（`customerId` だけ）は初回＝境界以後の回を受け取る。境界以後が20回を超えても旧画面は全部描く（上限100）。旧画面に `older` を見る作りは無い＝3か月より前は旧画面から見えなくなる（新しい画面は同時に出る＝§10）。
 - `k_notes` も同じ（`sessionId` の形は無い・代わりに `month` がある＝初回・`older`・`cursor`（R／O／M）・`before`・`month` の5つ）。初回は境界以後の指導メモ（上限100）＋`boundary`＋`older`。段2 で月のまとめと「まとめ待ち」を初回に足す。
 
-### 4-4. 全期間の集計（WIP のまま・I94）
+### 4-4. 全期間の集計（I94）
 
-`bestAll`（会員と同じ関数 `bestAllQuery`・同点は早い日・上限+1 で truncated）／`seriesAll`（session を LIMIT 1001 で選び日の境で打ち切る・`seriesFrom`）／`allDates`（`[{d,n}]`・LIMIT 2001）。集計ごとに `agg` の状態（ok／truncated／unavailable）・失敗は null・初回だけ。画面は使えないとき「直近◯回の中」と書く（全期間と言わない）。
+★**別の窓口 `k_trainingAll`**（要求は customerId だけ・形の鍵は 400・許可表は k_training と同じ）。画面は一覧を描いた後に呼ぶ（関門② 中2：重い会員で集計が Worker の時間・CPU の天井に当たっても、一覧は先に返っている）。推移のセットは `DISTINCT` で読み、同じ重さ×回数の繰り返しを Worker へ運ばない。
+
+`bestAll`（会員と同じ関数 `bestAllQuery`・同点は早い日・上限+1 で truncated）／`seriesAll`（session を LIMIT 1001 で選び日の境で打ち切る・`seriesFrom`）／`allDates`（`[{d,n}]`・LIMIT 2001）。集計ごとに `agg` の状態（ok／truncated／unavailable）・失敗は null。`k_trainingAll` の1回で返す（k_training の応答には含めない）。画面は使えないとき「直近◯回の中」と書く（全期間と言わない）。
 
 ### 4-5. 画面
 
