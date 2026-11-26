@@ -390,6 +390,26 @@ const band = (w) => (R(w).querySelector('.k-pimp-band') || {}).textContent || ''
   ok('HN8 ★bfcache（pageshow の persisted）で貼った文・一覧・送る帯が消える', R(w).querySelector('.k-pimp-ta').value === '' && !R(w).querySelector('.k-pimp-day') && !R(w).querySelector('.k-pimp-send'));
   ok('HN8 消した後に何も送っていない', !sent.some((b) => b.action === 'k_importDay'));
 }
+{
+  //   ★関門② 段3 2周目：送信中に bfcache で消したら、古い送信の失敗・成功が画面に戻ってこない（新しい送信の印を倒さない）
+  let rel = null;
+  const { w, sent } = boot(wk());
+  const f0 = w.fetch;
+  w.fetch = (u, o) => { const b = JSON.parse(o.body); if (b.action !== 'k_importDay') return f0(u, o); sent.push(b); return new Promise((res, rej) => { rel = { res: (v) => res({ json: async () => v }), rej }; }); };
+  await openImport(w);
+  await paste(w, SAMPLE);
+  sendBtn(w).click(); for (let i = 0; i < 20; i++) await tick();
+  ok('HN8 前提：1日目を送っている途中', !!rel && sentOf(sent, 'k_importDay').length === 1);
+  const ev = new w.Event('pageshow'); Object.defineProperty(ev, 'persisted', { value: true });
+  w.dispatchEvent(ev); await settle();
+  await paste(w, '=====\n2025/10/1\nスクワット\n×10');
+  const r0 = rel; rel = null;
+  sendBtn(w).click(); for (let i = 0; i < 20; i++) await tick();
+  r0.rej(new Error('old')); for (let i = 0; i < 20; i++) await tick(); await settle();
+  ok('HN8 ★古い送信の失敗は表示されず、新しい送信は送信中のまま（［続きから］を重ねて押せない）', !R(w).querySelector('.k-pimp-bar').textContent.includes('通信が切れました') && sendBtn(w).disabled && sendBtn(w).textContent.includes('入れています'), R(w).querySelector('.k-pimp-bar').textContent);
+  rel.res({ success: true, sessionId: 'S' }); for (let i = 0; i < 30; i++) await tick(); await settle();
+  ok('HN8 新しい送信は最後まで進む', dayOf(w, '10/1').textContent.includes('済'));
+}
 
 // ================= S10 上限と段階の読み =================
 {

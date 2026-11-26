@@ -3953,7 +3953,7 @@
     //   ★全部消す＝貼った文・日の配列・決めた結果・送る帯（見えないまま送れる状態を残さない）
     function wipe() { S.gen++; S.sending = false; S.days = []; S.digests = []; S.pre = []; S.open = {}; S.progress = ''; S.sendErr = ''; S.reauth = false; S.wasRead = false; ta.value = ''; list.innerHTML = ''; info.innerHTML = ''; bar.innerHTML = ''; }
     impWipe = function () { if (ta.isConnected) { wipe(); draw(); } else impWipe = null; };
-    ta.oninput = function () { if (S.sending) return; S.gen++; S.wasRead = false; S.days = []; S.digests = []; S.pre = []; S.stop = ''; draw(); };
+    ta.oninput = function () { if (S.sending) return; S.gen++; S.sending = false; S.wasRead = false; S.days = []; S.digests = []; S.pre = []; S.stop = ''; draw(); };
 
     // ---- 1日の塊を読む
     function dayFrom(b, i) {
@@ -4272,7 +4272,8 @@
       S.sending = true; S.sendErr = ''; S.reauth = false; draw();
       var items = q.days.map(function (D) { return { D: D }; }).concat(q.digs.map(function (G) { return { G: G }; }));
       (function next() {
-        if (gen !== S.gen || !ta.isConnected || cur.customerId !== cid) { S.sending = false; return; }
+        //   ★古い世代（文を変えた・wipe した）の続きは何もしない。S.sending は wipe・入力の側が戻す（新しい送信の印を古い続きが倒さない・関門② 段3 2周目）
+        if (gen !== S.gen || !ta.isConnected || cur.customerId !== cid) return;
         if (i >= items.length) { S.sending = false; S.progress = total + '件 入れました'; draw(); return; }
         var it = items[i], target = it.D || it.G;
         S.progress = (i + 1) + '／' + total + ' 入れています';
@@ -4299,10 +4300,10 @@
           });
         }
         p.then(function (r) {
-          if (gen !== S.gen) { S.sending = false; return; }
+          if (gen !== S.gen || !ta.isConnected || cur.customerId !== cid) return;
           if (r && r.success) { target.st = 'done'; target.replayed = r.replayed === true; i++; draw(); next(); return; }
           stopWith(r, target);
-        }, function () { stopWith(null, target); });
+        }, function () { if (gen !== S.gen || !ta.isConnected || cur.customerId !== cid) return; stopWith(null, target); });
       })();
     }
     draw();
