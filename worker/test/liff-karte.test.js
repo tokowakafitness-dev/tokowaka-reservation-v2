@@ -1046,7 +1046,7 @@ ok('12-8 ★予約画面全体の viewport は変えない（会員の画面に�
   const t = root.textContent;
   ok('19-1 ★トレーニング（K2）：＋今日の記録 → 見る → 前回（11/1）→ 種目ごとの推移 → 日別の記録', ['＋ 今日の記録', '見る', '前回（11/1）', '種目ごとの推移', '日別の記録'].map((x) => t.indexOf(x)).every((v, i, a) => v >= 0 && (i === 0 || v > a[i - 1])) && !root.querySelector('.k-seg'), t.slice(0, 200));
   ok('19-2 前回のカード：種目・重量×回数・セットのメモ（2種目・3セット）', t.includes('2種目・3セット') && t.includes('50kg × 10・8') && t.includes('2セット目：最後は補助'));
-  ok('19-3 種目ごとの推移：自己ベスト', t.includes('自己ベスト 50kg × 10（11/1）'));
+  ok('19-3 種目ごとの推移：自己ベスト', /自己ベスト 50kg × 10（11\/1・直近\d+回の中）/.test(t));
   const rows = () => [...root.querySelectorAll('.k-dayrow')];
   ok('19-4 日別の記録：日付（曜日）・種目の数・部位の印、最初は閉じている', rows().length === 2 && rows()[0].textContent.includes('11/1(日)') && rows()[0].getAttribute('aria-expanded') === 'false');
   rows()[1].click(); await settle();
