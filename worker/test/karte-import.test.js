@@ -111,7 +111,10 @@ function textFound(needle) {
   const r2 = await imp('U_t1', { items: ITEMS });
   ok('HN1 health なしは止まらない', r2.status === 200);
   const toml = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
-  ok('HN1 ★wrangler.toml に KARTE_HEALTH_IMPORT = "on" が無い（既定は止まったまま main に入る）', !/^KARTE_HEALTH_IMPORT\s*=\s*"on"/m.test(toml));
+  // ★2026-11-26 オーナー決定で on。on は「この1行だけ」で、値の揺れ（allow 等）を許さない。開くなら同意の画面（MEMBER_CONSENT）を広げないことと組み
+  ok('HN1 ★wrangler.toml の KARTE_HEALTH_IMPORT は無いか、厳密に "on" の1行だけ（2026-11-26 オーナー決定）',
+     (!/^KARTE_HEALTH_IMPORT\s*=/m.test(toml))
+     || ((toml.match(/^KARTE_HEALTH_IMPORT\s*=.*$/mg) || []).length === 1 && /^KARTE_HEALTH_IMPORT = "on"$/m.test(toml)));
 }
 
 // ================= HN2 同意 =================
