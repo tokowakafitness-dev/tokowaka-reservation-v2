@@ -201,8 +201,8 @@ const outWin = (n) => dayOffset(-(100 + n));  // 100日より前は必ず境界�
   for (const b of bad) rs.push((await call('U_t2', 'k_training', { customerId: 'P1', ...b })).status);
   ok('P2/B12 ★k_training：壊れたカーソル・WIP の3要素の形・M の系列・before・sessionId・older の型違い・month・形の鍵の同時は 400', rs.every((x) => x === 400), JSON.stringify(rs));
   const ns = [];
-  for (const b of [{ cursor: 'x' }, { sessionId: 'S1' }, { month: '2026-01' }, { older: 1 }, { cursor: cursorOf('O', B, '2026-01-01', 1, 'a'), before: '2026-01-01' }, { older: true, before: 'y' }, { before: 'y' }]) ns.push((await call('U_t2', 'k_notes', { customerId: 'P1', ...b })).status);
-  ok('P2/B12 k_notes：壊れたカーソル・sessionId・month（段2 まで受けない）・older の型違い・同時・壊れた before は 400', ns.every((x) => x === 400), JSON.stringify(ns));
+  for (const b of [{ cursor: 'x' }, { sessionId: 'S1' }, { month: B.slice(0, 7) }, { month: '2026-13' }, { month: 202601 }, { month: '2026-01', older: true }, { older: 1 }, { cursor: cursorOf('O', B, '2026-01-01', 1, 'a'), before: '2026-01-01' }, { older: true, before: 'y' }, { before: 'y' }]) ns.push((await call('U_t2', 'k_notes', { customerId: 'P1', ...b })).status);
+  ok('P2/B12 k_notes：壊れたカーソル・sessionId・month（境界の月・実在しない・型違い・他の形と同時＝段2）・older の型違い・同時・壊れた before は 400', ns.every((x) => x === 400), JSON.stringify(ns));
   const m1 = await call('U_t2', 'k_training', { customerId: 'P1', cursor: cursorOf('R', prevB, inWin(5), 1, 'a') });
   const m2 = await call('U_t2', 'k_training', { customerId: 'P1', cursor: cursorOf('O', prevB, outWin(1), 1, 'a') });
   const m3 = await call('U_t2', 'k_notes', { customerId: 'P1', cursor: cursorOf('R', prevB, inWin(5), 1, 'a') });

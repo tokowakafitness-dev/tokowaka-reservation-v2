@@ -376,7 +376,8 @@ export default {
     }
     //   カルテの失敗は code と HTTP の状態をそのまま返す（429・409・404 等）
     if (result && result._error) {
-      return json({ success: false, code: result._error, detail: result.detail || undefined }, origin,
+      //   retryAt：カルテの回数の上限のとき Worker の時計でいつから送れるか（設計62 §6-4）。ほかの失敗には付かない
+      return json({ success: false, code: result._error, detail: result.detail || undefined, retryAt: typeof result.retryAt === 'number' ? result.retryAt : undefined }, origin,
                   result._status || 400);
     }
     if (result && result._fallback) {

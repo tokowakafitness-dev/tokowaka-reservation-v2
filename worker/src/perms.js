@@ -98,6 +98,9 @@ const TABLE = {
   'k_addNote':          ['trainer'],
   'k_editNote':         ['trainer'],
   'k_deleteNote':       ['trainer'],
+  'k_saveHistory':      ['trainer'],   // 設計62 段2：過去のまとめ（期間のブロック）
+  'k_importDay':        ['trainer'],   // 設計62 段3：過去分の取り込み（1日ずつ）
+  'k_deleteHealthNote': ['trainer'],   // 設計62 改訂8：取り込んだ体の注意を消す
   'k_addTraining':      ['trainer'],
   'k_deleteTraining':   ['trainer'],
   //   保存した記録を直す（設計58）。isKarteWrite に当たる名前（edit）＝Origin・トークン1時間の守り。切替 KARTE_TRAINING_EDIT
