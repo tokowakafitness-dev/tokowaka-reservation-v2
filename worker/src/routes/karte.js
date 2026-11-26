@@ -16,7 +16,7 @@
 import { canSeeCustomer } from '../perms.js';
 import { synthesizeBody, pickGoalLine } from '../lib/body-series.js';
 import { normalizeHearing, normalizePainMap, normalizeReasons, normalizeTag, parseJsonCol, has, HEARING_REVISION_SQL } from '../lib/karte-hearing.js';
-import { buildMemberKarte } from '../lib/member-karte.js';
+import { buildMemberKarte, bestAllQuery } from '../lib/member-karte.js';
 import { EXERCISE_LIMITS, normalizeExerciseName, normalizePart } from '../lib/karte-exercises.js';
 import { readRecRow, recConsentValid, readHealthCurAnswer } from './member-consent.js';
 import { MEMBER_ACTOR } from '../lib/consent-docs.js';
@@ -1422,79 +1422,251 @@ async function summary(c) {
   });
 }
 
+// ---------------------------------------------------------------- 設計62 段1：ページ送り・全期間の集計・1件の読み直し
+//   ★要求の形（§4-2・I93）：初回＝cursor・before・sessionId が全部無い／ページ送り＝cursor だけ／前回の読み足し＝before だけ／
+//     1件の読み直し＝sessionId だけ（k_training だけ）。2つ以上・形の違いは 400（黙って1ページ目を返さない）
+export const PAST_LIMITS = {
+  SERIES_SESSIONS: 1000,   // 推移を作る session の上限（打ち切りは日の境）
+  DATES: 2000,             // allDates の日の上限
+  BEST_TRAINER: 200,       // トレーナーの自己ベストの種目の上限（上限+1 を読んで truncated）
+  TRACE_HOPS: 5,           // 置き換わった session をたどる段の上限（I95）
+};
+const PAGE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** 'YYYY-MM-DD|<created_at>|<id>' → { d, c, id }。形が違えば null */
+export function parseCursor(v) {
+  const m = /^(\d{4}-\d{2}-\d{2})\|(\d{1,15})\|([A-Za-z0-9_-]{1,64})$/.exec(String(v));
+  if (!m || !isRealDate(m[1])) return null;
+  return { d: m[1], c: Number(m[2]), id: m[3] };
+}
+export function cursorOf(d, c, id) { return `${d}|${Math.floor(Number(c) || 0)}|${id}`; }
+/** 要求の形を決める。{ form:'first'|'page'|'before'|'one', cursor?, before?, sid? } か { bad } */
+export function readPageForm(body, allowSid) {
+  const has = (k) => body[k] !== undefined && body[k] !== null && body[k] !== '';
+  if (!allowSid && has('sessionId')) return { bad: 'sessionId' };
+  const present = ['cursor', 'before', 'sessionId'].filter(has);
+  if (present.length > 1) return { bad: 'FORM' };
+  if (!present.length) return { form: 'first' };
+  const k = present[0], v = body[k];
+  if (typeof v !== 'string') return { bad: k };
+  if (k === 'cursor') { const cu = parseCursor(v); return cu ? { form: 'page', cursor: cu } : { bad: 'cursor' }; }
+  if (k === 'before') return isRealDate(v) ? { form: 'before', before: v } : { bad: 'before' };
+  return PAGE_ID_RE.test(v) ? { form: 'one', sid: v } : { bad: 'sessionId' };
+}
+/** ページの条件（並びは session_date DESC, created_at DESC, <id> DESC で全部一意） */
+function pageWhere(f, idCol) {
+  if (f.form === 'page') {
+    const { d, c, id } = f.cursor;
+    return { sql: ` AND (session_date < ? OR (session_date = ? AND (created_at < ? OR (created_at = ? AND ${idCol} < ?))))`, args: [d, d, c, c, id] };
+  }
+  if (f.form === 'before') return { sql: ' AND session_date < ?', args: [f.before] };   // ★D 当日を1件も含まない（前回の読み足し・§4-6）
+  return { sql: '', args: [] };
+}
+
 async function notes(c) {
   return readSection(c, 'notes', async (cid) => {
-    const before = String(c.body.before || '');
+    const f = readPageForm(c.body, false);
+    if (f.bad) return err('BAD_REQUEST', 400, f.bad);
+    const w = pageWhere(f, 'note_id');
     const r = await c.env.DB.prepare(
       `SELECT note_id, session_date, condition, body, next_plan, tag, reasons_json, next_check, author_trainer_id, rev, created_at, edited_at
-         FROM karte_notes WHERE customer_id = ? AND deleted_at IS NULL ${before ? 'AND session_date < ?' : ''}
-        ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
-    ).bind(...(before ? [cid, before] : [cid])).all();
-    return { karteSchema: karteSchemaFor(c.env, c.who), notes: (r.results || []).map(noteOut) };
+         FROM karte_notes WHERE customer_id = ? AND deleted_at IS NULL${w.sql}
+        ORDER BY session_date DESC, created_at DESC, note_id DESC LIMIT ${KARTE_LIMITS.PAGE + 1}`
+    ).bind(cid, ...w.args).all();
+    const rows = r.results || [];
+    const more = rows.length > KARTE_LIMITS.PAGE;
+    const page = rows.slice(0, KARTE_LIMITS.PAGE);
+    const last = page[page.length - 1];
+    return { karteSchema: karteSchemaFor(c.env, c.who), notes: page.map(noteOut), more,
+             nextCursor: more && last ? cursorOf(last.session_date, last.created_at, last.note_id) : null };
   });
+}
+
+/** session の行（id・日付・作者・rev・作成時刻）→ セット・種目の並び・ドロップを付けた形（今までの k_training の1回と同じ形） */
+async function loadSessions(env, sessions) {
+  if (!sessions.length) return [];
+  //   ★3つの表（種目の並び・付加・ドロップ）は生きた session の id を通してだけ読む（設計38 I70）
+  const ids = sessions.map((x) => x.session_id);
+  const ph = ids.map(() => '?').join(',');
+  const [st, xs, ds] = await Promise.all([
+    //   並び：新しい回（付加あり）は ord, set_no。古い回は ord が NULL＝今までどおり exercise, set_no
+    env.DB.prepare(
+      `SELECT t.set_id, t.session_id, t.exercise, t.set_no, t.weight_kg, t.reps, t.note, e.ord, e.assist_reps, e.forced
+         FROM karte_tr_sets t LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
+        WHERE t.session_id IN (${ph}) ORDER BY t.session_id, e.ord, t.exercise, t.set_no`
+    ).bind(...ids).all(),
+    env.DB.prepare(
+      `SELECT session_id, ord, exercise, done_only FROM karte_tr_exercises WHERE session_id IN (${ph}) ORDER BY session_id, ord`
+    ).bind(...ids).all(),
+    env.DB.prepare(
+      `SELECT d.set_id, d.drop_seq, d.weight_kg, d.reps, d.assist_reps, d.forced
+         FROM karte_tr_drops d JOIN karte_tr_sets t ON t.set_id = d.set_id
+        WHERE t.session_id IN (${ph}) ORDER BY d.set_id, d.drop_seq`
+    ).bind(...ids).all(),
+  ]);
+  //   新しい形の回か古い回かは「種目の並びの行があるか」だけで決める（設計38 §3-5）
+  const exBy = {};
+  for (const x of (xs.results || [])) (exBy[x.session_id] = exBy[x.session_id] || []).push({ ord: x.ord, exercise: x.exercise, doneOnly: x.done_only === 1 });
+  const dropBy = {};
+  for (const d of (ds.results || [])) {
+    (dropBy[d.set_id] = dropBy[d.set_id] || []).push({ weight_kg: d.weight_kg, reps: d.reps, assist_reps: d.assist_reps, forced: d.forced === 1 });
+  }
+  const by = {};
+  for (const s of (st.results || [])) {
+    //   ★古い回のセットは今までと同じ鍵だけ（set_id は返さない）。新しい回は ord・補助・無理やり（真偽値）・ドロップを足す
+    //     ★ドロップは本セットの下にだけ置く（平らな配列に混ぜない＝古い画面が本セットと数えない）
+    const o = { session_id: s.session_id, exercise: s.exercise, set_no: s.set_no, weight_kg: s.weight_kg, reps: s.reps, note: s.note,
+                e1rm: e1rm(s.weight_kg, s.reps) };
+    if (exBy[s.session_id]) Object.assign(o, { ord: s.ord, assist_reps: s.assist_reps, forced: s.forced === 1, drops: dropBy[s.set_id] || [] });
+    (by[s.session_id] = by[s.session_id] || []).push(o);
+  }
+  return sessions.map((x) => (exBy[x.session_id]
+    ? { ...x, sets: by[x.session_id] || [], exercises: exBy[x.session_id] }
+    : { ...x, sets: by[x.session_id] || [] }));
+}
+
+/** グラフ（そのページの回だけ・今までの best）：種目名ごとに、その日の推定1RMの最大。本セットだけ・無理やりを除く（I66） */
+function pageBest(sessions) {
+  const best = [];
+  for (const se of sessions) {
+    const day = {};
+    for (const s of (se.sets || [])) {
+      if (s.forced === true) continue;
+      if (s.e1rm != null && (!(s.exercise in day) || s.e1rm > day[s.exercise])) day[s.exercise] = s.e1rm;
+    }
+    for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
+  }
+  return best;
+}
+
+/**
+ * 全期間の集計（初回だけ・設計62 §4-3・I94）。集計ごとに try で包み、失敗は値を null・状態を unavailable（空配列にしない）
+ *   bestAll：会員と同じ関数（bestAllQuery）。上限+1 で truncated
+ *   seriesAll：session を LIMIT N+1 で選び、打ち切りは日の境（N件目と N+1件目が同じ日ならその日を丸ごと外す）。採る日が決まってからセットを読む
+ *   allDates：[{d, n}]・LIMIT 2001 で truncated
+ */
+export async function trainingAggregates(env, cid, L = PAST_LIMITS) {
+  const out = { agg: {} };
+  try {
+    const r = await bestAllQuery(env.DB, cid, L.BEST_TRAINER + 1).all();
+    const rows = (r && r.results) || [];
+    out.bestAll = rows.slice(0, L.BEST_TRAINER).map((b) => ({ exercise: b.exercise, w: b.weight_kg, r: b.reps, d: b.session_date }));
+    out.agg.best = rows.length > L.BEST_TRAINER ? 'truncated' : 'ok';
+  } catch (_) { out.bestAll = null; out.agg.best = 'unavailable'; }
+  try {
+    const N = L.SERIES_SESSIONS;
+    const ss = await env.DB.prepare(
+      `SELECT session_date FROM karte_tr_sessions WHERE customer_id = ? AND deleted_at IS NULL
+        ORDER BY session_date DESC, created_at DESC, session_id DESC LIMIT ${N + 1}`
+    ).bind(cid).all();
+    const rows = (ss && ss.results) || [];
+    let fromDay = null, truncated = false;
+    if (rows.length > N) {
+      truncated = true;
+      const cut = rows[N - 1].session_date;
+      if (rows[N].session_date === cut) {
+        //   N件目の日は上限の外にもある＝その日を丸ごと外す。外した後の最も古い日から
+        const kept = rows.slice(0, N).filter((x) => x.session_date !== cut);
+        fromDay = kept.length ? kept[kept.length - 1].session_date : null;
+      } else fromDay = cut;
+    } else fromDay = rows.length ? rows[rows.length - 1].session_date : null;
+    const series = [];
+    if (fromDay) {
+      //   ★採る session＝その会員の生きた session のうち fromDay 以後（打ち切った日を含まない＝含めた日は全セットから）
+      const st = await env.DB.prepare(
+        `SELECT s.session_date, t.exercise, t.weight_kg, t.reps
+           FROM karte_tr_sets t JOIN karte_tr_sessions s ON s.session_id = t.session_id
+           LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
+          WHERE s.customer_id = ? AND s.deleted_at IS NULL AND e.forced IS NULL AND s.session_date >= ?`
+      ).bind(cid, fromDay).all();
+      const day = new Map();
+      for (const x of ((st && st.results) || [])) {
+        const v = e1rm(x.weight_kg, x.reps);
+        if (v == null) continue;
+        const k = x.session_date + '\u0000' + x.exercise;
+        const p = day.get(k);
+        if (!p || v > p.e1rm) day.set(k, { d: x.session_date, exercise: x.exercise, e1rm: v });
+      }
+      for (const v of day.values()) series.push(v);
+      series.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : (a.exercise < b.exercise ? -1 : a.exercise > b.exercise ? 1 : 0)));
+    }
+    out.seriesAll = series; out.seriesFrom = fromDay; out.agg.series = truncated ? 'truncated' : 'ok';
+  } catch (_) { out.seriesAll = null; out.seriesFrom = null; out.agg.series = 'unavailable'; }
+  try {
+    const r = await env.DB.prepare(
+      `SELECT session_date AS d, COUNT(*) AS n FROM karte_tr_sessions WHERE customer_id = ? AND deleted_at IS NULL
+        GROUP BY session_date ORDER BY session_date DESC LIMIT ${L.DATES + 1}`
+    ).bind(cid).all();
+    const rows = (r && r.results) || [];
+    out.allDates = rows.slice(0, L.DATES).map((x) => ({ d: x.d, n: Number(x.n) }));
+    out.agg.dates = rows.length > L.DATES ? 'truncated' : 'ok';
+  } catch (_) { out.allDates = null; out.agg.dates = 'unavailable'; }
+  return out;
+}
+
+/**
+ * 1件の読み直し（設計62 §4-5・I95）：生きていればその session。直して置き換わっていれば replaced_by をたどる
+ *   返り値 { sid, trace:'live'|'replaced', replacedFrom? } か { sid:null, trace:'deleted'|'broken' }
+ *   deleted＝最初の sid がその会員の session でない・edit の控えが無いまま消えている（たどった先が消されたときも）
+ *   broken＝循環・自分を指す・段の上限・形の違い・行が無い・他の会員を指す
+ */
+export async function traceSession(env, cid, sid, hops = PAST_LIMITS.TRACE_HOPS) {
+  const row = (id) => env.DB.prepare(`SELECT session_id, customer_id, deleted_at FROM karte_tr_sessions WHERE session_id = ?`).bind(id).first();
+  const first = await row(sid);
+  if (!first || String(first.customer_id) !== String(cid)) return { sid: null, trace: 'deleted' };
+  if (first.deleted_at == null) return { sid, trace: 'live' };
+  const seen = new Set([sid]);
+  let curId = sid;
+  for (let hop = 0; hop < hops; hop++) {
+    const rv = await env.DB.prepare(
+      `SELECT json_extract(before_json, '$.replaced_by') AS replaced_by FROM karte_revisions
+        WHERE table_name = 'karte_tr_sessions' AND row_id = ? AND reason = 'edit'
+        ORDER BY changed_at DESC, id DESC LIMIT 1`
+    ).bind(curId).first();
+    if (!rv || rv.replaced_by == null) return { sid: null, trace: 'deleted' };   // 直しではなく消された
+    const nx = String(rv.replaced_by);
+    if (!PAGE_ID_RE.test(nx) || seen.has(nx)) return { sid: null, trace: 'broken' };
+    seen.add(nx);
+    const r = await row(nx);
+    if (!r || String(r.customer_id) !== String(cid)) return { sid: null, trace: 'broken' };
+    if (r.deleted_at == null) return { sid: nx, trace: 'replaced', replacedFrom: sid };
+    curId = nx;
+  }
+  return { sid: null, trace: 'broken' };
 }
 
 async function training(c) {
   return readSection(c, 'training', async (cid) => {
-    const before = String(c.body.before || '');
-    const ss = await c.env.DB.prepare(
-      `SELECT session_id, session_date, author_trainer_id, rev, created_at FROM karte_tr_sessions
-        WHERE customer_id = ? AND deleted_at IS NULL ${before ? 'AND session_date < ?' : ''}
-        ORDER BY session_date DESC, created_at DESC LIMIT ${KARTE_LIMITS.PAGE}`
-    ).bind(...(before ? [cid, before] : [cid])).all();
-    const sessions = ss.results || [];
+    const f = readPageForm(c.body, true);
+    if (f.bad) return err('BAD_REQUEST', 400, f.bad);
     const aiConsent = await aiConsentFor(c.env, c.who, cid);   // 設計44：画面の補助（関門は k_aiDraft の中）
     const trainingEdit = trainingEditOn(c.env, c.who);   // 設計58：［編集］を出すか（真偽値だけ）
-    if (!sessions.length) return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit, sessions: [], best: [] };   // ★空でも版を返す
-    //   ★3つの表（種目の並び・付加・ドロップ）は生きた session の id を通してだけ読む（設計38 I70）
-    const ids = sessions.map((x) => x.session_id);
-    const ph = ids.map(() => '?').join(',');
-    const [st, xs, ds] = await Promise.all([
-      //   並び：新しい回（付加あり）は ord, set_no。古い回は ord が NULL＝今までどおり exercise, set_no
-      c.env.DB.prepare(
-        `SELECT t.set_id, t.session_id, t.exercise, t.set_no, t.weight_kg, t.reps, t.note, e.ord, e.assist_reps, e.forced
-           FROM karte_tr_sets t LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
-          WHERE t.session_id IN (${ph}) ORDER BY t.session_id, e.ord, t.exercise, t.set_no`
-      ).bind(...ids).all(),
-      c.env.DB.prepare(
-        `SELECT session_id, ord, exercise, done_only FROM karte_tr_exercises WHERE session_id IN (${ph}) ORDER BY session_id, ord`
-      ).bind(...ids).all(),
-      c.env.DB.prepare(
-        `SELECT d.set_id, d.drop_seq, d.weight_kg, d.reps, d.assist_reps, d.forced
-           FROM karte_tr_drops d JOIN karte_tr_sets t ON t.set_id = d.set_id
-          WHERE t.session_id IN (${ph}) ORDER BY d.set_id, d.drop_seq`
-      ).bind(...ids).all(),
-    ]);
-    //   新しい形の回か古い回かは「種目の並びの行があるか」だけで決める（設計38 §3-5）
-    const exBy = {};
-    for (const x of (xs.results || [])) (exBy[x.session_id] = exBy[x.session_id] || []).push({ ord: x.ord, exercise: x.exercise, doneOnly: x.done_only === 1 });
-    const dropBy = {};
-    for (const d of (ds.results || [])) {
-      (dropBy[d.set_id] = dropBy[d.set_id] || []).push({ weight_kg: d.weight_kg, reps: d.reps, assist_reps: d.assist_reps, forced: d.forced === 1 });
+    const head = { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit };   // 設計39・設計58
+    if (f.form === 'one') {
+      //   ★1件の読み直しは extra と trace だけ（20回・集計は返さない＝［編集］のたびに重い集計を走らせない・P16a）
+      const t = await traceSession(c.env, cid, f.sid);
+      if (!t.sid) return { ...head, extra: null, trace: t.trace };
+      const one = await c.env.DB.prepare(
+        `SELECT session_id, session_date, author_trainer_id, rev, created_at FROM karte_tr_sessions
+          WHERE session_id = ? AND customer_id = ? AND deleted_at IS NULL`
+      ).bind(t.sid, cid).first();
+      if (!one) return { ...head, extra: null, trace: 'broken' };   // たどった直後に消えた
+      const [x] = await loadSessions(c.env, [one]);
+      return { ...head, extra: x, trace: t.trace, ...(t.replacedFrom ? { replacedFrom: t.replacedFrom } : {}) };
     }
-    const by = {};
-    for (const s of (st.results || [])) {
-      //   ★古い回のセットは今までと同じ鍵だけ（set_id は返さない）。新しい回は ord・補助・無理やり（真偽値）・ドロップを足す
-      //     ★ドロップは本セットの下にだけ置く（平らな配列に混ぜない＝古い画面が本セットと数えない）
-      const o = { session_id: s.session_id, exercise: s.exercise, set_no: s.set_no, weight_kg: s.weight_kg, reps: s.reps, note: s.note,
-                  e1rm: e1rm(s.weight_kg, s.reps) };
-      if (exBy[s.session_id]) Object.assign(o, { ord: s.ord, assist_reps: s.assist_reps, forced: s.forced === 1, drops: dropBy[s.set_id] || [] });
-      (by[s.session_id] = by[s.session_id] || []).push(o);
-    }
-    //   グラフ：種目名ごとに、その日の推定1RMの最大。★本セットだけ（ドロップは別の表）・無理やりを除く・回数は自分の回数（I66）
-    const best = [];
-    for (const se of sessions) {
-      const day = {};
-      for (const s of (by[se.session_id] || [])) {
-        if (s.forced === true) continue;
-        if (s.e1rm != null && (!(s.exercise in day) || s.e1rm > day[s.exercise])) day[s.exercise] = s.e1rm;
-      }
-      for (const ex of Object.keys(day)) best.push({ d: se.session_date, exercise: ex, e1rm: day[ex] });
-    }
-    return { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit,   // 設計39・設計58：AI の振り分けのボタンを出すか（真偽値だけ）
-             sessions: sessions.map((x) => (exBy[x.session_id]
-               ? { ...x, sets: by[x.session_id] || [], exercises: exBy[x.session_id] }
-               : { ...x, sets: by[x.session_id] || [] })), best };
+    const w = pageWhere(f, 'session_id');
+    const ss = await c.env.DB.prepare(
+      `SELECT session_id, session_date, author_trainer_id, rev, created_at FROM karte_tr_sessions
+        WHERE customer_id = ? AND deleted_at IS NULL${w.sql}
+        ORDER BY session_date DESC, created_at DESC, session_id DESC LIMIT ${KARTE_LIMITS.PAGE + 1}`
+    ).bind(cid, ...w.args).all();
+    const rows = ss.results || [];
+    const more = rows.length > KARTE_LIMITS.PAGE;
+    const page = rows.slice(0, KARTE_LIMITS.PAGE);
+    const last = page[page.length - 1];
+    const nextCursor = more && last ? cursorOf(last.session_date, last.created_at, last.session_id) : null;
+    const sessions = await loadSessions(c.env, page);
+    const aggs = f.form === 'first' ? await trainingAggregates(c.env, cid) : {};
+    return { ...head, sessions, best: pageBest(sessions), more, nextCursor, ...aggs };   // ★空でも版を返す
   });
 }
 

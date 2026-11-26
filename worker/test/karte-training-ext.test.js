@@ -501,8 +501,9 @@ async function schemas(as) {
   env.KARTE_TRAINING_EXT = 'on';
   const e2 = await call('U_t1', 'k_training', { customerId: 'C3' });
   ok('T31 記録が0件の k_training も切替に従う（32／33）', e0.karteSchema === 32 && e1.karteSchema === 32 && e1.sessions.length === 0 && e2.karteSchema === 33);
-  ok('T31 ★ソースに karteSchema: KARTE_SCHEMA（定数のまま返す）が残っていない・6か所が karteSchemaFor', !/karteSchema:\s*KARTE_SCHEMA\b/.test(KSRC)
-     && (KSRC.match(/karteSchema: karteSchemaFor\(c\.env, c\.who\)/g) || []).length === 6);
+  //   ★設計62：k_training は版を head の1か所で作る（空のとき・1件の読み直しも同じ head）＝6か所→5か所
+  ok('T31 ★ソースに karteSchema: KARTE_SCHEMA（定数のまま返す）が残っていない・5か所が karteSchemaFor', !/karteSchema:\s*KARTE_SCHEMA\b/.test(KSRC)
+     && (KSRC.match(/karteSchema: karteSchemaFor\(c\.env, c\.who\)/g) || []).length === 5);
 
   clearRate();
   env.KARTE_TRAINING_EXT = 'allow';

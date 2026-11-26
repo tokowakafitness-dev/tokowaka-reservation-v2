@@ -108,6 +108,25 @@ async function readBody(db, cid) {
 }
 
 // ---------------------------------------------------------------- トレーニング
+/**
+ * 自己ベスト（生きた記録すべて・種目ごと）を読む文。★会員の画面（c_myKarte・k_memberPreview）と
+ *   トレーナーの画面（k_training の bestAll・設計62）が同じこの1つを使う（I66・I94）
+ *   規則：本セットだけ（ドロップは別の表）・無理やりを除く・重さ最大→同じなら回数最大→同じなら**早い日**（初めて出した日）
+ *   limit：返す種目の数（名前の順）。上限を超えたか知りたいときは limit+1 を渡して数える
+ */
+export function bestAllQuery(db, cid, limit) {
+  const n = Math.max(1, Math.min(1000, Math.floor(Number(limit) || 1)));
+  return db.prepare(
+    `SELECT exercise, weight_kg, reps, session_date FROM (
+       SELECT t.exercise, t.weight_kg, t.reps, s.session_date,
+              ROW_NUMBER() OVER (PARTITION BY t.exercise ORDER BY t.weight_kg DESC, t.reps DESC, s.session_date ASC) AS rn
+         FROM karte_tr_sets t JOIN karte_tr_sessions s ON s.session_id = t.session_id
+         LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
+        WHERE s.customer_id = ? AND s.deleted_at IS NULL AND e.forced IS NULL)
+      WHERE rn = 1 ORDER BY exercise LIMIT ${n}`
+  ).bind(cid);
+}
+
 async function readTraining(db, cid) {
   const ss = await db.prepare(
     `SELECT session_id, session_date FROM karte_tr_sessions
@@ -118,15 +137,7 @@ async function readTraining(db, cid) {
   //   ★無理やりのセットは会員に出さない（設計38 §6-3・オーナー確定・I67）。出さない集合は SQL の WHERE で決める
   //     ＝日別・自己ベスト・推移が同じ集合から作られ、食い違わない。印の列は WHERE と JOIN の条件にだけ書き、SELECT 句には書かない
   //   自己ベスト：生きた記録すべてから、種目ごとに重さ最大→同じなら回数最大→同じなら早い日。本セットだけ（ドロップは別の表）
-  const bestQ = db.prepare(
-    `SELECT exercise, weight_kg, reps, session_date FROM (
-       SELECT t.exercise, t.weight_kg, t.reps, s.session_date,
-              ROW_NUMBER() OVER (PARTITION BY t.exercise ORDER BY t.weight_kg DESC, t.reps DESC, s.session_date ASC) AS rn
-         FROM karte_tr_sets t JOIN karte_tr_sessions s ON s.session_id = t.session_id
-         LEFT JOIN karte_tr_set_ext e ON e.set_id = t.set_id
-        WHERE s.customer_id = ? AND s.deleted_at IS NULL AND e.forced IS NULL)
-      WHERE rn = 1 ORDER BY exercise LIMIT ${MEMBER_LIMITS.BEST}`
-  ).bind(cid).all();
+  const bestQ = bestAllQuery(db, cid, MEMBER_LIMITS.BEST).all();
   if (!sessions.length) {
     await bestQ;
     return { sessions: [], best: [] };

@@ -64,7 +64,14 @@ function boot(o = {}) {
     sent.push(body);
     const c = w.cfg;
     let r;
-    if (body.action === 'k_training') { r = { success: true, karteSchema: c.schema, aiDraft: false, sessions: c.sessions, best: [] }; if (c.edit !== undefined) r.trainingEdit = c.edit; }
+    //   設計62：1件の読み直し（sessionId）・前回の読み足し（before）は Worker と同じ答え方（c.oneRes で上書きできる）
+    if (body.action === 'k_training' && body.sessionId) {
+      const x = c.sessions.find((s) => s.session_id === body.sessionId);
+      r = c.oneRes ? c.oneRes(body) : (x ? { success: true, karteSchema: c.schema, aiDraft: false, trace: 'live', extra: x } : { success: true, karteSchema: c.schema, aiDraft: false, trace: 'deleted', extra: null });
+      if (r && r.success && c.edit !== undefined) r.trainingEdit = c.edit;
+    }
+    else if (body.action === 'k_training' && body.before) { r = { success: true, karteSchema: c.schema, aiDraft: false, sessions: c.sessions.filter((s) => s.session_date < body.before), best: [], more: false, nextCursor: null }; }
+    else if (body.action === 'k_training') { r = { success: true, karteSchema: c.schema, aiDraft: false, sessions: c.sessions, best: [] }; if (c.edit !== undefined) r.trainingEdit = c.edit; }
     else if (body.action === 'k_exercises') r = { success: true, karteSchema: c.schema, exercises: [], truncated: false };
     else if (body.action === 'k_summary') r = { success: true, karteSchema: c.schema, customer: { name: NAME, trainerId: 'T1' }, hearing: null, consent: { state: 'agreed' } };
     else if (body.action === 'k_editTraining') {

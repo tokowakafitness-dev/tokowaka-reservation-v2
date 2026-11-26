@@ -320,7 +320,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   const { w } = boot({ cfg: { sessions: [S_OLD, S_NEW] } });
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const t0 = R(w).textContent;
-  ok('M10-1 ★自己ベストに無理やり（100kg×3）を入れない（種目名ごと・全 ord）', t0.includes('自己ベスト 80kg × 5（10/20）') && !t0.includes('自己ベスト 100kg'), t0.slice(0, 500));
+  ok('M10-1 ★自己ベストに無理やり（100kg×3）を入れない（種目名ごと・全 ord）', t0.includes('自己ベスト 80kg × 5（10/20・直近2回の中）') && !t0.includes('自己ベスト 100kg'), t0.slice(0, 500));
   ok('M10-2 ★前回のカード：新しい回は ord ごと（スクワットが2行）・数字の無い種目は「実施のみ」・印は1セットずつ', t0.includes('前回（11/3）') && t0.includes('4種目・4セット') && t0.includes('60kg×10・100kg×3（無理）') && t0.includes('40kg×10+補助2') && t0.includes('50kg×8→30kg×10') && t0.includes('実施のみ'));
   const T = w.KarteUI._t;
   const st = T.exerciseStats([S_OLD, S_NEW], 'スクワット');
