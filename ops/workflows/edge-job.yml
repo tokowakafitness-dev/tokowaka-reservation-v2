@@ -65,10 +65,10 @@ jobs:
             exit 1
           fi
           echo "登録しました：$op"
-          echo "結果は 1〜2分後に $EDGE_URL/jobs/$rid で読めます"
+          echo "結果は 1〜2分後に読み取りの鍵つきで読めます：curl -H @<鍵のヘッダのファイル> $EDGE_URL/jobs/$rid（鍵の無い要求は 403）"
           {
             echo "### 点検を登録しました"
             echo ""
             echo "- 作業: \`$op\`"
-            echo "- 結果: $EDGE_URL/jobs/$rid"
+            echo "- 結果: $EDGE_URL/jobs/$rid（★ヘッダ X-Job-Read-Key が要る。ブラウザでは開けない）"
           } >> "$GITHUB_STEP_SUMMARY"

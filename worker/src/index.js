@@ -24,6 +24,7 @@ import { remainAllow, remainProbe } from './routes/remain-allow.js';
 import { verifyQuota } from './routes/quota-verify.js';
 import { handleCalc } from './routes/verify.js';
 import { handleJobs, handleJobRead } from './routes/jobs.js';
+import { handleSquadDigest, handleSquadStatus, handleSquadReport, handleSquadReportAck } from './routes/squad.js';
 import { KARTE_HANDLERS, isKarteWrite, KARTE_LIMITS } from './routes/karte.js';
 import { KARTE_AI_HANDLERS, AI_LIMITS, AI_PATH } from './routes/karte-ai.js';
 import { handleBodyWrite, handleBodyFreeze, handleBodySeries } from './routes/body.js';
@@ -36,7 +37,7 @@ import { compatMemberStatus, compatTrainers, compatTrainerReservations,
 
 // 版の印（/health に載せる・認証不要・個人情報なし）。★Worker を変えて出すたびに上げる。
 //   無いと「反映したつもりで入っていない」を外から見分けられない（2026-11-07・設計38 の設置で気づいた）
-export const WORKER_BUILD = '2026-11-24a 設計54 S1a write-shadow（/writeshadow・既定は記録しない WRITE_SHADOW 未設定）／2026-11-19a 設計44 同意の規則（会員画面からの健康情報の撤回・紙の同意の人にも聞く）＋印だけ（行0件）の送信で表の全行を読まない（打ち手A）・設計45 写しが書き込みの印を含まなければ答えない（I79）';
+export const WORKER_BUILD = '2026-11-27a 保全部隊が要約を読む口（/squad/digest・/squad/status・/squad/report・?squad=1）・/jobs/<id> は鍵の形を D1 より前に見る／2026-11-24a 設計54 S1a write-shadow（/writeshadow・既定は記録しない WRITE_SHADOW 未設定）／2026-11-19a 設計44 同意の規則（会員画面からの健康情報の撤回・紙の同意の人にも聞く）＋印だけ（行0件）の送信で表の全行を読まない（打ち手A）・設計45 写しが書き込みの印を含まなければ答えない（I79）';
 
 // このオリジンからだけ受ける。ワイルドカードは使わない。
 const ALLOWED_ORIGINS = [
@@ -189,6 +190,19 @@ export default {
     if (url.pathname === '/jobs') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
       return handleJobs(request, env);
+    }
+
+    // 保全部隊が要約を読む口（会社の決定0208・2026-11-27）。★CORS を返さない（ブラウザから呼ばせない）
+    //   書く：/squad/digest（GAS の合言葉）・/squad/report/ack（GAS）／読む：/squad/status（部隊の鍵）／報告：/squad/report（部隊の鍵・SQUAD_REPORT=on）
+    if (url.pathname === '/squad/digest' || url.pathname === '/squad/report' || url.pathname === '/squad/report/ack') {
+      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+      if (url.pathname === '/squad/digest') return handleSquadDigest(request, env);
+      if (url.pathname === '/squad/report') return handleSquadReport(request, env);
+      return handleSquadReportAck(request, env);
+    }
+    if (url.pathname === '/squad/status') {
+      if (request.method !== 'GET') return new Response('Method Not Allowed', { status: 405 });
+      return handleSquadStatus(request, env, WORKER_BUILD);
     }
 
     // 契約から「枠」を作る（段階3-a の土台・2026-10-07）。

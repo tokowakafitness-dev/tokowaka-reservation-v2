@@ -44,13 +44,16 @@ async function sha256hex(text) {
  *   ★鍵は URL に載せない（アクセスの記録・シェルの履歴に残る）。鍵は乱数24バイトの16進＝48桁だけ受け付ける */
 export async function handleJobRead(request, env, requestId) {
   if (!/^[A-Za-z0-9_-]{24,64}$/.test(requestId)) return json({ success: false, code: 'BAD_ID' }, 400);
+  //   ★鍵の形を D1 より前に見る（2026-11-27・会社の決定0208 の別件）。鍵の無い・形の違う要求で D1 を読ませない
+  //     （それまでは状態だけ返していたが、状態を読むにも D1 を1回引く＝外から無制限に D1 の読み取り枠を使えた）
+  const k = request.headers.get('X-Job-Read-Key') || '';
+  if (!/^[0-9a-f]{48}$/.test(k)) return json({ success: false, code: 'NO_READ_KEY' }, 403);
   const row = await env.DB.prepare(
     'SELECT request_id, op, status, enqueued_at, claimed_at, finished_at, result, error, read_key_hash FROM jobs WHERE request_id = ?'
   ).bind(requestId).first();
   if (!row) return json({ success: false, code: 'NOT_FOUND' }, 404);
   //   ★鍵が合うときだけ結果を返す。鍵の無い依頼（古い形）・鍵が違う・鍵が無いは、状態だけ（結果と理由は返さない）
-  const k = request.headers.get('X-Job-Read-Key') || '';
-  const okKey = !!row.read_key_hash && /^[0-9a-f]{64}$/.test(row.read_key_hash) && /^[0-9a-f]{48}$/.test(k)
+  const okKey = !!row.read_key_hash && /^[0-9a-f]{64}$/.test(row.read_key_hash)
     && safeEqual(await sha256hex(k), row.read_key_hash);
   const job = { request_id: row.request_id, op: row.op, status: row.status, enqueued_at: row.enqueued_at,
                 claimed_at: row.claimed_at, finished_at: row.finished_at,

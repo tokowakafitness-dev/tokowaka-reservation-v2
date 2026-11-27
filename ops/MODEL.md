@@ -75,6 +75,7 @@ D1                      その写し ＋ D1で作った枠・引当
 | `reservation_allocations` | reservation_id | `quotaBuild`（**消してから入れる**） | 超過の件数 | ↑2つを外部キーで参照 |
 | `customer_sync_version` | customer_id | ingest（source・dirty・★`home_covers_seq`／`resv_covers_seq`＝写しが含む通し番号と `*_blocked_since`・設計45 migration 0034）／quotaBuild（built） | 鮮度の判定・★I79 の門 | — |
 | `remain_shadow_slot` / `remain_shadow` / `remain_shadow_sample` | 設計12 | shadow | 心拍 | — |
+| `squad_digest` / `squad_reads` / `squad_report`（保全部隊が読む口・migration 0040・設計68） | kind（digest／beat）／day（JST）／id=1 | `/squad/digest`（GAS・合言葉・許可リストで組み直した本文だけ・snap_at の新しい側だけ・1種類1行）／`/squad/status` の加算（★部隊の鍵が合った後だけ・1日200回を1つの条件付き UPSERT で）／`/squad/report`（部隊の鍵・★SQUAD_REPORT=on のときだけ・1日6件）・心拍の応答で渡す（handed_at・hand_n：ack が無いまま2時間で渡し直し3回まで）・`/squad/report/ack`（GAS） | `/squad/status`（部隊）・`/quota/status?squad=1`（日次点検 squad_quiet） | 履歴を持たない（上書き）。★氏名・会員番号・自由文の列が無い（I-SQ1）。squad_reads は1日1行ずつ増える（消さない・年に365行） |
 | `write_shadow_log` / `write_shadow_stat` / `calendar_arrival_log` / `fresh_delay_log`（設計54 S1a・migration 0036） | n（GAS が作る8桁の乱数）／(day,key)／id | `/writeshadow`（GAS の送る段から・判定して記録）／calsync の差分（M2）／`/quota/rebuild`（M3）。★WRITE_SHADOW が厳密に "on" のときだけ書く | `/writeshadow/status`（日次点検・作業依頼）| 14日／30日で消す（status の呼び出しで1回50行まで）。★顧客ID・予約ID・予定ID・氏名の列が無い（I84） |
 
 ### 2-3b. 顧客カルテ（設計28・★Worker だけが書く・D1 が唯一の正本）
@@ -123,6 +124,7 @@ D1                      その写し ＋ D1で作った枠・引当
 | Script Property `LB_HEALTH_STATUS`／`LB_HEALTH_SINCE`／`LB_HEALTH_DONE`（自己修理 P1 §4） | — | `_lbHealthSave`（点検の最後に1回） | `lbSelfHeal`（`check_id === DONE` のときだけ）・Nudge・監査 | 次の点検が上書き（古い check_id では上書きしない） |
 | Script Property `LB_HEALTH_SAVE_LAST`（2026-11-24・I-H33） | — | `_lbHealthSaveNote`（dailyHealthCheck の最後・newer と印を失った回は書かない） | 次の点検（`_lbHealthSaveFailRead` → heal_save_fail）・作業依頼 `remaining {healStatus}`（I-H34） | 次の点検が上書き。★DONE ≥ check_id なら古い失敗とみなして鳴らさない |
 | Script Property `SELF_HEAL_MODE`／`LB_SELFHEAL_LAST`／`LB_SELFHEAL_DONE` ほか | — | 人（モード・既定 practice）／`lbSelfHeal`（lbNudgeDaily の最後から） | 点検（selfheal_stale） | — |
+| CacheService `lb_squad_beat`／`lb_squad_fail`（保全部隊・設計68） | — | `lbSquadBeat`（心拍を送れたら55分）／`_lbSquadCount`（送れなかった理由ごとの数・6時間で消える） | 心拍の間引き・次の要約の `send_fail` | ★Script Property を増やさない。消えても困らない（止まったかの正は Worker の受け取り時刻） |
 
 - ★`cancel_notes.note_purged_at` は「ひとことが残っていない」印を兼ねる（ひとことが無い行は書いた時点で `-`）。だから点検と作業依頼は **note 列を一度も読まずに**「残っている行」を数えられる（I-C6）。
 - ★**キャンセルした時刻は cancel_notes の `cancelled_at` にしか無い**（台帳にキャンセルの時刻の列は無い。当日消化のときだけ transfer_credits の付与時刻が実質の時刻）。設計37 の計測の土台。
@@ -289,7 +291,7 @@ trg_alloc_return_pack       同
 | I-H7 | **SELF_HEAL_MODE が未設定・不正値・トリガーのイベント引数 → practice**（直さず would_attempts を数えるだけ）。`lbSelfHeal(nudgeStartMs)` の引数は**予算の計算にだけ**使い（I-H31）、mode には一切効かない（専用のトリガーは無く、lbNudgeDaily の最後から呼ぶ） | `self-heal-repair.test.js` I-H7 |
 | I-H8 | **`要約.check_id === LB_HEALTH_DONE`・`completed === true`・26時間以内でなければ修理しない**（要約だけ書いて落ちた点検の結果を使わない） | `self-heal-repair.test.js` I-H8 |
 | I-H9 | **同じ案件の修理は3回まで。attempts は呼ぶ前に +1**（途中で落ちても数える）。練習は attempts を使わず would_attempts（これも3回まで） | `self-heal-repair.test.js` I-H9 |
-| I-H10 | **振り分け表 `ops/booking-health-triage.md` と `LB_TRIAGE` が一致（94 key・2026-11-25 設計57 の4つを足した）・表に無い key は B**。LB_TRIAGE の段は add している段と一致 | `self-heal-triage.test.js` I-H10 |
+| I-H10 | **振り分け表 `ops/booking-health-triage.md` と `LB_TRIAGE` が一致（97 key・2026-11-27 保全部隊の2つ squad_quiet・squad_check_fail を足した）・表に無い key は B**。LB_TRIAGE の段は add している段と一致 | `self-heal-triage.test.js` I-H10 |
 | I-H11 | **古い点検（check_id が小さい）は新しい要約・台帳を上書きしない／DONE は小さい値で戻らない** | `self-heal-check.test.js` I-H11 |
 | I-H12 | **予約の行・残数の材料・顧客に届くものを書く処理（dailySync・syncExistingReservations・lbDwEnsureQueued・_lbPush 等）を修理から呼ばない**。P1 の A は trigger_missing と cancel_notes_unready の2つだけ | `self-heal-repair.test.js` I-H12 |
 | I-H13 | **facts・ids・last_action・notify_code・notify_state・status は列挙だけ**（facts は key ごとの一覧 `LB_FACT_ENUM`・ids は `^C\d{14}$` で member_broken だけ）。一覧に無い値は捨てて `facts_rejected` に数える | `self-heal-check.test.js` I-H13 |
@@ -315,6 +317,16 @@ trg_alloc_return_pack       同
 | I-H33 | **点検の保存（`_lbHealthSave`）の結果を LB_HEALTH_SAVE_LAST に残し（newer と印を失った回は書かない。★DONE を書いていない回は印の確認を noSkip にしない＝延長できなければ LB_HEALTH_SKIP に数え翌日 health_skipped が鳴る）、次の点検が「saved=false で、DONE が信じられない（未設定・数でない・0以下・いま＋5分より先＝broken・要約の check_id ≠ DONE・completed でない）か DONE < その check_id」なら `heal_save_fail`（B・理由は列挙 `LB_SAVE_WHY`＋other／壊れた記録は broken）を出す**＝従来の悪化メールに「自己修理の台帳に保存できませんでした（理由: …）」が載る。悪化したときだけ知らせる既存の規則に従う（続いても1回）。★知らせるのは失敗した翌日の点検 | `self-heal-ledger.test.js` I-H33 |
 | I-H34 | **作業依頼 `remaining {healStatus}`（`heal_status` も可・新しい op を足さない）は読むだけで、列挙・数・日時だけを返す**：LB_HEALTH_STATUS の要約（会員番号は件数だけ）・LB_HEALTH_DONE・LB_SELFHEAL_DONE・保存の結果・見送り・台帳の行（key・cls・stage・status・attempts・would_attempts・last_action・日時）。列挙に無い値は `?`。印の owner・氏名・自由文は返さない | `self-heal-ledger.test.js` I-H34 |
 | I-H35 | **点検の段「自己修理の見張り」そのものが例外で落ちたら、固定の key `selfheal_watch_fail`（B・warn・facts は exception だけ）を add する**。例外の文は出さない（I-H1）。段は checked に付けない（今どおり＝その段の key を閉じない）。印を失った例外（lbLeaseLost）は add せず外へ投げる（I-H21） | `self-heal-ledger.test.js` I-H35 |
+
+| I-SQ1 | **保全部隊の口（/squad/*）が受け・保存し・返すのは許可リスト（`worker/src/lib/squad-schema.js`）で組み直した欄だけ。氏名・会員番号（末尾4桁も）・電話・LINE ID・予約ID・自由文を出さない。台帳の時刻は時間単位に切り下げる**。未知の key は `?`（unknown_keys に数える）・許されない facts は捨てる（facts_rejected）・重複キー・末尾のデータ・型の違う必須欄・65,536 バイト超・圧縮は丸ごと拒否して前の行を残す。Mac の台本の再構築器も同じ定義（写し）で strict に組み直す | `squad-read.test.js` I-SQ1・`gas-squad.test.js` G1-4/G1-5（会社の台本側は 90_ops/maintenance-squad/test/test-squad.sh） |
+| I-SQ2 | **部隊の鍵（X-Squad-Read-Key）では予約・残数・顧客の窓口に書けない（全部 401/403）。GAS の合言葉（X-Ingest-Secret）では /squad/status を読めない**。部隊の鍵で書けるのは squad_reads の加算と、★SQUAD_REPORT="on" のときの squad_report（列挙と件数だけ・1日6件）だけ | `squad-read.test.js` I-SQ2・I-SQ9 |
+| I-SQ3 | **古い（要約26時間・心拍2時間）・一度も受けていない・未完走は中身を出さない（state=stale／none）。未完走は snap_at の新しい側の印で判定（同時刻は要約）**。snap_at は received_at−2時間〜＋5分だけ受け、同じ kind で戻る値・同値で本文違いは 409（rejected に数える・理由は分けない）、同値・同本文は received_at を動かさない、壊れた未来値の行は次の正常な要求で置き換わる | `squad-read.test.js` I-SQ3（到着順の全順列を含む） |
+| I-SQ4 | **SQUAD_READ="off"・鍵の欄が空・形の違う鍵・違う鍵では D1 に1回も触れない（読み書きとも）。鍵が合った読み取りの1日200回は1つの条件付き UPSERT で原子的（RETURNING が無ければ 429・例外は 503）** | `squad-read.test.js` I-SQ4 |
+| I-SQ5 | **要約の組み立ては GAS の1か所（`_lbHealStatusRead`＋`_lbHs*` の検査。作業依頼の文字 `lbHealStatusText` と部隊への `lbHealStatusObject` が同じ読み取りから作る）。GAS と Worker の列挙（LB_TRIAGE の key・段・LB_ACTION_ENUM・facts・status・保存の理由・見送り・送信の失敗・報告の文）が揃う** | `gas-squad.test.js` I-SQ5 |
+| I-SQ6 | **部隊のためにトリガーと Script Property を増やさない**。送るのは dailyHealthCheck（完走の印の後・開始から5分30秒以内）・lbSelfHeal（完走の印の後）・pushToEdgeLight（最後・1時間に1回・開始3分超は見送り）の中だけ。間引きと失敗の数は CacheService | `gas-squad.test.js` I-SQ6・G1/G2 |
+| I-SQ7 | **要約の check_id は前進のみ**（snap_at が新しくても check_id が小さい要約は置き換えない） | `squad-read.test.js` I-SQ7 |
+| I-SQ8 | **部隊の鍵は AI に見せない**：Mac の台本は鍵を `IFS= read -r` で1行だけ読み（source しない・600／親700）、ヘッダを secrets/ の下の 600 の一時ファイルで curl に渡してすぐ消し、コマンドライン・出力・記録・inbox・claude の環境（env -i）に出さない。Worker には SHA-256 だけ（入れ替え用に _NEXT） | 会社リポジトリ 90_ops/maintenance-squad/test/test-squad.sh（I-SQ8）・`squad-read.test.js` I-SQ4-4/5 |
+| I-SQ9 | **部隊の報告（④）は列挙と件数だけ。GAS は心拍の応答で受け取り（ack が無いまま2時間たてば Worker が渡し直す・3回まで。GAS は同じ番号を二度送らない＝CacheService で番号を覚える）、もう一度列挙で確かめてから固定の文でオーナー（owner かつ active）へ `_lbPushOnce`（失敗はメール）で送り、結果を ack する**。SQUAD_REPORT が "on" でなければ受けない・渡さない。squad_quiet（部隊が26時間読まない・C）は read_on のときだけ・一度も読まれていなければ出さない | `squad-read.test.js` I-SQ9・`gas-squad.test.js` G3/G4 |
 
 ★**新しい不変条件を足したら、この表に「守っている検査」を必ず書く。**
 　空欄のまま残すと、2026-10-09 のように**検査が飾りになっていても気づけない**。
@@ -561,6 +573,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 | LINE通知の送り直し | 1回8件・90秒 | `warmupCache`（10分ごと）の末尾に相乗り。開始3分超なら見送り | 次の10分へ回る |
 | 空き枠のお知らせ（設計37 改訂5） | 1回45秒・枠3つ・1枠3名 | `warmupCache` の末尾（送り直しの後）に相乗り。開始3分30秒超なら見送り | 次の10分へ回る（sent_partial・wait） |
 | GASのバージョン | 200・削除不可（上限は「本数」＝`clasp versions` の件数。GASエディタの「番号」ではない） | 2026-10-06 の確認で 109本（以前ここにあった「188」は番号を本数と読み違えた値）。いまの本数は**未確認**（唯一の出所は GitHub Actions「GASを反映する」のログ）。床だけは分かる：反映ワークフローは残り5本以下で止まる＝直前の反映が成功していれば残り6本以上 | プロジェクト作り直し＝**LIFFのURLが変わる** |
+| 保全部隊の口（設計68） | 本文 65,536 バイト（受ける・返す・inbox）・項目100・台帳60・読み取り1日200回・報告1日6件 | 最大構造で 約59KB（`squad-read.test.js` I-SQ1-14）。D1 の書き込みは1日 約30行＋読み取りの加算（鍵が合ったときだけ） | 超えたら 413／429（切り詰めない） |
 | GASの実行時間 | 6分 | 押し出しは打ち切り方式 | 途中から再開する作りが必須 |
 | D1の書き込み | 1日10万行 | 差分同期で抑えている | 書き込みが止まる |
 | D1の読み取り | 1日500万行 | 余裕 | — |

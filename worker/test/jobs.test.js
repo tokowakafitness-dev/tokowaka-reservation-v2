@@ -139,21 +139,22 @@ eq('正しければ登録できる',
   const env = makeEnv([{ request_id: ID, op: 'audit', status: 'done', result: 'ok', error: 'e',
                          enqueued_at: 1, claimed_at: 2, finished_at: 3, read_key_hash: HASH }]);
   const [s, b] = await j(await handleJobRead(new Request('https://x'), env, ID));
-  eq('★IDだけでは結果を読めない（状態は返す）', [s, b.job.result, b.job.error, b.job.status, b.job.withheld], [200, null, null, 'done', 'BAD_KEY']);
+  //   ★2026-11-27：鍵の形を D1 より前に見る（会社の決定0208 の別件）。鍵の無い要求は状態も返さず 403・D1 を引かない
+  eq('★IDだけでは読めない（403・D1 を引かない）', [s, b.code, b.job, env._sql.length], [403, 'NO_READ_KEY', undefined, 0]);
   const [, bk] = await j(await handleJobRead(new Request('https://x', { headers: { 'X-Job-Read-Key': KEY } }), env, ID));
   eq('★正しい鍵なら読める', [bk.job.result, bk.job.error], ['ok', 'e']);
   const [, bw] = await j(await handleJobRead(new Request('https://x', { headers: { 'X-Job-Read-Key': KEY.replace(/f$/, 'e') } }), env, ID));
   eq('★違う鍵では読めない', bw.job.result, null);
   eq('★鍵のハッシュは返さない', 'read_key_hash' in bk.job, false);
-  const [, bq] = await j(await handleJobRead(new Request('https://x?k=' + KEY), env, ID));
-  eq('★鍵を URL で渡しても読めない（ヘッダだけ）', bq.job.result, null);
+  const [sq, bq] = await j(await handleJobRead(new Request('https://x?k=' + KEY), env, ID));
+  eq('★鍵を URL で渡しても読めない（ヘッダだけ）', [sq, bq.job], [403, undefined]);
   //   ハッシュは一致させ、形だけが違う鍵で確かめる（ハッシュ不一致で落ちたのを形の検査と取り違えない）
   for (const weak of ['0123456789abcdef'.repeat(2), 'X'.repeat(48), KEY + '00']) {
     const envW = makeEnv([{ request_id: ID, op: 'audit', status: 'done', result: 'ok', error: null,
                             enqueued_at: 1, claimed_at: 2, finished_at: 3,
                             read_key_hash: createHash('sha256').update(weak).digest('hex') }]);
-    const [, bs] = await j(await handleJobRead(new Request('https://x', { headers: { 'X-Job-Read-Key': weak } }), envW, ID));
-    eq('★48桁の16進でない鍵は受け付けない（' + weak.length + '桁）', bs.job.result, null);
+    const [ss, bs] = await j(await handleJobRead(new Request('https://x', { headers: { 'X-Job-Read-Key': weak } }), envW, ID));
+    eq('★48桁の16進でない鍵は受け付けない・D1 を引かない（' + weak.length + '桁）', [ss, bs.job, envW._sql.length], [403, undefined, 0]);
   }
   const envOld = makeEnv([{ request_id: ID, op: 'audit', status: 'done', result: 'ok', error: null,
                             enqueued_at: 1, claimed_at: 2, finished_at: 3, read_key_hash: null }]);
@@ -180,7 +181,7 @@ eq('正しければ登録できる',
   db.exec(M);
   eq('★0019 で残っていた依頼が消える', db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n, 0);
   eq('0019 で鍵の列ができる', db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('jobs') WHERE name = 'read_key_hash'").get().n, 1);
-  const [s2] = await j(await handleJobRead(new Request('https://x'), env, 'bbbbbbbbbbbbbbbbbbbbbbbb'));
+  const [s2] = await j(await handleJobRead(new Request('https://x', { headers: { 'X-Job-Read-Key': '0123456789abcdef'.repeat(3) } }), env, 'bbbbbbbbbbbbbbbbbbbbbbbb'));
   eq('★違うIDでは読めない', s2, 404);
   const [s3, b3] = await j(await handleJobRead(new Request('https://x'), env, 'short'));
   eq('★短いIDは受け付けない（総当たり対策）', [s3, b3.code], [400, 'BAD_ID']);
