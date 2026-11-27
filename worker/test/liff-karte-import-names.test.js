@@ -202,7 +202,7 @@ const OUT = [
   await press(groupOf(w, 'ドンキーキック'), '.k-pimp-ex');
   ok('N1 一覧に無い名前を種目にすると推定の部位を出す', groupOf(w, '腸腰筋ストレッチ').textContent.includes('部位：その他（推定）') && !groupOf(w, 'ワンレッグルーマニアンデット').querySelector('.k-pimp-part'));
   const rg = groups(w).find((g) => g.querySelector('.k-pimp-set'));
-  ok('N1 ★前の名前を種目にすると、続きの 16+16×10 は［セットにする（16kg×10）］で1回だけ決める（2日）', !!rg && rg.textContent.includes('16+16×10') && rg.textContent.includes('2日') && rg.querySelector('.k-pimp-set').textContent === 'セットにする（16kg×10）', rg && rg.textContent);
+  ok('N1 ★前の名前を種目にすると、続きの 16+16×10 は［セットにする（16kg × 10）］で1回だけ決める（2日）', !!rg && rg.textContent.includes('16+16×10') && rg.textContent.includes('2日') && rg.querySelector('.k-pimp-set').textContent === 'セットにする（16kg × 10）', rg && rg.textContent);
   ok('N1 ★60×？ は決めることに出さない（前の名前に従う）', !groups(w).some((g) => g.textContent.includes('60×？')));
   //   日の中身のカードも同じ決め方を見る（11/6 を開くと ドンキーキック は種目にする が押されている）
   const d6 = await openDay(w, '11/6');

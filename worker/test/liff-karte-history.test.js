@@ -220,7 +220,7 @@ const hcard = (w) => R(w).querySelector('.k-history');
   const { w } = boot(withMonths(agg));
   await openTab(w);
   const rows = [...R(w).querySelectorAll('.k-oldcard .k-trmonth')].map((x) => x.textContent);
-  ok('HU4 ★月ごとの1行：回数・主な種目・最高（種目）／最高が無い月は書かない', JSON.stringify(rows) === JSON.stringify(['2026年8月：8回・主な種目 ベンチプレス／スクワット・最高 80kg×5（スクワット）', '2026年7月：1回・主な種目 ストレッチ']), JSON.stringify(rows));
+  ok('HU4 ★月ごとの1行：回数・主な種目・最高（種目）／最高が無い月は書かない', JSON.stringify(rows) === JSON.stringify(['2026年8月：8回・主な種目 ベンチプレス／スクワット・最高 80kg × 5（スクワット）', '2026年7月：1回・主な種目 ストレッチ']), JSON.stringify(rows));
   const kids = [...R(w).querySelector('.k-oldcard').children];
   ok('HU4 月ごとの行は畳みの行の上', kids.findIndex((x) => x.classList.contains('k-trmonth')) < kids.findIndex((x) => x.classList.contains('k-oldtoggle')));
   const { w: w2 } = boot(withMonths({ agg: { best: 'ok', series: 'ok', dates: 'ok', months: 'unavailable' }, bestAll: [], seriesAll: [], seriesFrom: null, allDates: [], monthsAll: null }));

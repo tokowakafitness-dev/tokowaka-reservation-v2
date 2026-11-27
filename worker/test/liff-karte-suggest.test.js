@@ -228,7 +228,7 @@ async function openPicker(w) { await openRecord(w); btn(R(w), '＋ 種目を足�
   await openRecord(w);
   R(w).querySelector('button.k-pickgo').click(); await settle();
   const card = R(w).querySelector('button.k-pick');
-  const shownNames = [...card.querySelectorAll('span')].map((x) => x.textContent).filter((t) => t === 'スクワット' || t === 'ベンチプレス');
+  const shownNames = [...card.querySelectorAll('span, .k-exbname')].map((x) => x.textContent).filter((t) => t === 'スクワット' || t === 'ベンチプレス');
   btn(R(w), '重量・回数ごと写す').click(); await new Promise((r) => setTimeout(r, 40)); await settle();
   const it = draftOf(w).items;
   ok('G8b ★写した順はカードの表示と同じ（スクワット → ベンチプレス → スクワット・同名でも結合しない）', JSON.stringify(it.map((x) => x.exercise)) === '["スクワット","ベンチプレス","スクワット"]' && JSON.stringify(shownNames) === JSON.stringify(it.map((x) => x.exercise)), JSON.stringify(it.map((x) => x.exercise)) + ' / ' + JSON.stringify(shownNames));

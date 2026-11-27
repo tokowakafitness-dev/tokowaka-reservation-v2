@@ -449,7 +449,7 @@ async function afterReload(st, resp) { const e = boot(resp || baseResp(), { toke
   });
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const t0 = R(w).textContent;
-  ok('B2-1 ★見る側：前回・日別・自己ベストで 0 は「自重」', t0.includes('自重 × 12・10') && t0.includes('自重×8・5kg×6') && !t0.includes('0kg'), t0.slice(0, 400));
+  ok('B2-1 ★見る側：前回・日別・自己ベストで 0 は「自重」', t0.includes('自重 × 12・10') && t0.includes('自重 × 8・5kg × 6') && !t0.includes('0kg'), t0.slice(0, 400));
   btn(R(w), '＋ 今日の記録').click(); await settle();
   btn(R(w), '＋ 種目を足す').click();
   pill(R(w), 'ディップス').click();

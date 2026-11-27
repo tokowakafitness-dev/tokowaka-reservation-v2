@@ -262,7 +262,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   btn(R(w), '読み取る').click(); await nav();
   ok('M6-a 取り込んだ最初の種目が開いている', !R(w).querySelector('button.k-excol[aria-label="フロアアブを開く"]') && !!R(w).querySelector('button.k-excol[aria-label="腸腰筋ストレッチを開く"]'));
   R(w).querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
-  ok('M6-0 印はセットの行の真下（✎ を閉じていても見える）', [...R(w).querySelectorAll('.k-marks')].map((x) => x.textContent).join('|') === '→ 自重×10|→ 5kg×10');
+  ok('M6-0 印はセットの行の真下（✎ を閉じていても見える）', [...R(w).querySelectorAll('.k-marks')].map((x) => x.textContent).join('|') === 'ドロップ 自重 × 10|ドロップ 5kg × 10');
   btn(R(w), '保存する').click(); await settle();
   const tr = adds(sent);
   eq('M6-1 ★✓の本セットのドロップだけ送る・✓の無い本セットのドロップは送らない・「実施した」の無い数字の無い種目は送らない', tr.length === 1 && tr[0].items, [{ exercise: 'フロアアブ', sets: [{ weight: 10, reps: 10, drops: [{ weight: 0, reps: 10 }] }] }]);
@@ -310,7 +310,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   btn(R(w), 'ドロップを足す').click(); await settle();
   const dw = R(w).querySelector('input[aria-label="1セット目のドロップ1段目の重量"]'); dw.value = '20'; dw.oninput(); dw.onchange(); await settle();
   const dr = R(w).querySelector('input[aria-label="1セット目のドロップ1段目の回数"]'); dr.value = '8'; dr.oninput(); dr.onchange(); await settle();
-  ok('M9-1 印：＋補助3　→ 20kg×8　無理（ダイアログなし）', R(w).querySelector('.k-marks').textContent === '＋補助3　→ 20kg×8　無理' && w.confirms === 0, R(w).querySelector('.k-marks') && R(w).querySelector('.k-marks').textContent);
+  ok('M9-1 印：＋補助3　ドロップ 20kg × 8　無理（ダイアログなし）', R(w).querySelector('.k-marks').textContent === '＋補助3　ドロップ 20kg × 8　無理' && w.confirms === 0, R(w).querySelector('.k-marks') && R(w).querySelector('.k-marks').textContent);
   ok('M9-2 無理やりは切り替え（aria-pressed）', R(w).querySelector('button[aria-label="1セット目を無理やりにする"]').getAttribute('aria-pressed') === 'true');
   R(w).querySelector('button[aria-label="1セット目を実施済みにする"]').click(); await settle();
   btn(R(w), '保存する').click(); await settle();
@@ -324,7 +324,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   w.KarteUI.open('C1', '会員', 'training'); await settle();
   const t0 = R(w).textContent;
   ok('M10-1 ★自己ベストに無理やり（100kg×3）を入れない（種目名ごと・全 ord）', t0.includes('自己ベスト 80kg × 5（10/20・直近2回の中）') && !t0.includes('自己ベスト 100kg'), t0.slice(0, 500));
-  ok('M10-2 ★前回のカード：新しい回は ord ごと（スクワットが2行）・数字の無い種目は「実施のみ」・印は1セットずつ', t0.includes('前回（11/3）') && t0.includes('4種目・4セット') && t0.includes('60kg×10・100kg×3（無理）') && t0.includes('40kg×10+補助2') && t0.includes('50kg×8→30kg×10') && t0.includes('実施のみ'));
+  ok('M10-2 ★前回のカード：新しい回は ord ごと（スクワットが2行）・数字の無い種目は「実施のみ」・印は1セットずつ', t0.includes('前回（11/3）') && t0.includes('4種目・4セット') && t0.includes('60kg × 10・100kg × 3（無理）') && t0.includes('40kg × 10+補助2') && t0.includes('50kg × 8（ドロップ 30kg × 10）') && t0.includes('実施のみ'));
   const T = w.KarteUI._t;
   const st = T.exerciseStats([S_OLD, S_NEW], 'スクワット');
   ok('M10-3 exerciseStats：無理やりを除く（セット数・推定の最大）', st.sets === 3 && st.maxE === 93.3 && st.best.w === 80, JSON.stringify(st));
@@ -333,7 +333,7 @@ const card = (w, kind, i = 0) => [...R(w).querySelectorAll('.k-impcard')].filter
   btn(R(w), '＋ 種目を足す').click();
   pill(R(w), 'スクワット').click();
   btn(R(w), '選んだ 1 種目を足す').click(); await settle();
-  ok('M11-1 ★前回の値：同じ名前の ord を「 ／ 」でつなぐ・無理やりも印つき', R(w).textContent.includes('前回 11/3：60kg×10・100kg×3（無理） ／ 50kg×8→30kg×10'), R(w).textContent.slice(0, 400));
+  ok('M11-1 ★前回の値：同じ名前の ord を「 ／ 」でつなぐ・無理やりも印つき', R(w).textContent.includes('前回 11/3：60kg × 10・100kg × 3（無理） ／ 50kg × 8（ドロップ 30kg × 10）'), R(w).textContent.slice(0, 400));
   const wIn = R(w).querySelector('input[aria-label="1セット目の重量"]'), rIn = R(w).querySelector('input[aria-label="1セット目の回数"]');
   ok('M12-1 ★1セット目は前回の全 ord の本セットのうち無理やりでない最大（60×10・100×3 ではない）', wIn.value === '60' && rIn.value === '10', wIn.value + '×' + rIn.value);
 }
@@ -565,7 +565,7 @@ const M25 = '11/3(火)12:30～\n山田様1回目\nベンチプレス　パワー
   const box = R(w).querySelector('.k-impplanbox');
   ok('M25-3 ★開いただけでは決まらない（記録の画面に入れる は押せないまま・のこり7件）', !!box && btn(R(w), '記録の画面に入れる').disabled && R(w).textContent.includes('7件のこり'));
   ok('M25-4 ★名前の行は〇〇にして出す・「山田」は計画に出ない', box.textContent.includes('〇〇様1回目') && box.textContent.includes('→ 捨てる') && !box.textContent.includes('山田'));
-  ok('M25-5 原文は切り詰めない・行き先は同じ行', [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('足も背中も使えてる') && r.textContent.includes('→ 「ベンチプレス」の 65kg×3 のセットのメモ')));
+  ok('M25-5 原文は切り詰めない・行き先は同じ行', [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('足も背中も使えてる') && r.textContent.includes('→ 「ベンチプレス」の 65kg × 3 のセットのメモ')));
   ok('M25-6 確認のボタンは一覧の末尾（行の後ろ）', (() => { const go = btn(box, 'この内容で決める'); const rows = box.querySelectorAll('.k-impplanrow'); return !!go && !!(rows[rows.length - 1].compareDocumentPosition(go) & w.Node.DOCUMENT_POSITION_FOLLOWING); })());
   ok('M25-7 ★健康の言葉・名前らしい行は計画に入らない', !box.textContent.includes('腰が痛い') && !box.textContent.includes('たなかさん'));
   ok('M25-8 ★I63：計画を開いても原文は保存領域に無い', !/パワーフォーム|山田|余力/.test(storeText(w.localStorage) + storeText(w.sessionStorage)));
@@ -625,7 +625,7 @@ const setsOf = (d) => d && d.items.map((x) => [x.exercise, x.sets.map((s) => s.w
   ok('M26-1 ★R10 は読み取っただけでは記録に入らない（確認の一覧に出る）', !!card(w, 'rule', 0) && R(w).querySelector('.k-impsum').textContent.includes('本セット2'));
   btn(R(w), '提案どおりに決める').click(); await settle();
   const box = R(w).querySelector('.k-impplanbox');
-  ok('M26-2 計画に原文と行き先（「ベンチプレス」に 55kg×5 を足す）', !!box && [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('55キロで5回いきます') && r.textContent.includes('「ベンチプレス」に 55kg×5 を足す')), box && box.textContent);
+  ok('M26-2 計画に原文と行き先（「ベンチプレス」に 55kg×5 を足す）', !!box && [...box.querySelectorAll('.k-impplanrow')].some((r) => r.textContent.includes('55キロで5回いきます') && r.textContent.includes('「ベンチプレス」に 55kg × 5 を足す')), box && box.textContent);
   btn(box, 'この内容で決める').click(); await settle();
   btn(R(w), '記録の画面に入れる').click(); await nav();
   eq('M26-3 ★順番はメモの行の順（50×10 → 55×5 → 60×3）・「足を使えた」は 60×3 のメモ', setsOf(draftOf(w)), [['ベンチプレス', ['50×10', '55×5', '60×3[足を使えた]']]]);
@@ -660,7 +660,7 @@ const setsOf = (d) => d && d.items.map((x) => [x.exercise, x.sets.map((s) => s.w
   paste(w, 'スクワット\n' + Array.from({ length: 9 }, (_, i) => (40 + i) + '×10').join('\n') + '\n×10ずつ 2種類');
   btn(R(w), '読み取る').click(); await settle();
   ok('M26-6 ★上限を超える addset は計画に入らない（提案どおりに決める が出ない）', !btn(R(w), '提案どおりに決める'), R(w).textContent.slice(0, 200));
-  ok('M26-6b カードのボタンに足す数値（重さなし×10 を2セット）', !!btn(card(w, 'rule', 0), '「スクワット」に 自重×10・自重×10 を足す'), card(w, 'rule', 0).textContent);
+  ok('M26-6b カードのボタンに足す数値（重さなし×10 を2セット）', !!btn(card(w, 'rule', 0), '「スクワット」に 自重 × 10・10 を足す'), card(w, 'rule', 0).textContent);
   btn(card(w, 'rule', 0), '「スクワット」に').click(); await settle();
   ok('M26-7 ★カードで選んでも決まらず理由が出る', card(w, 'rule', 0).textContent.includes('上限') && btn(R(w), '記録の画面に入れる').disabled);
 }

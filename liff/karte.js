@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-27b 過去分の取り込みの決めることを名前ごとに（1回決めると取り込む全部の日に効く・一覧に無い名前もセットが無くても種目にできる・前の名前の続きの行はその決め方に従う・16+16×10 は前を種目にしたら［セットにする］・前置き付きの名前は一覧の名前を候補に・【確認が必要な点】は日にもまとめにも入れず一覧の上に出す・設計62 改訂9）／2026-11-27a 0件で「手動で入れる」を押したら他の始め方を消す（種目の欄を開いている間は［← 始め方に戻る］1つ・閉じると3つに戻る）／2026-11-26i 数字の無い種目（実施のみ）のメモをその種目に付ける（Worker の karte_tr_ex_notes・exNote が真のときだけ・記録の画面の ✎・AI の下書き・読み取る・直す画面・日別・取り込みの決め方の文言は「「X」のメモにする」・設計67）／2026-11-26h AI の下書きを社内で重ねない（種目のメモ→その種目の1セット目のメモ・「nセット目：」→そのセットのメモ・入らない分は今どおり社内メモ・今日の流れから種目名と数字だけの行を外す・設計66）／2026-11-26g 説明の文を削る（挙動の説明・案内の帯は出さない・毎回は要らない注意は項目の横の「?」に畳む・取り込みの直後は「n種目を入れました」の短い通知・AI のボタンの直下に「外部のAI（Anthropic）へ送ります」の1行・健康の1行はカードの一覧の上に1回・設計65）／2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-27c 種目の記録の書き方と折り返しを揃える（種目名は1行で独立・セットはその下・1セットの途中で折り返さない・同じ重さは「100kg × 15・15」・× の前後に空白・ドロップは（ドロップ …）で → を使わない・前回／日別／3か月より前／写す画面／取り込み／自己ベスト／月ごとの1行を1つの部品に・推移のチップは1行・設計70）／2026-11-27b 過去分の取り込みの決めることを名前ごとに（1回決めると取り込む全部の日に効く・一覧に無い名前もセットが無くても種目にできる・前の名前の続きの行はその決め方に従う・16+16×10 は前を種目にしたら［セットにする］・前置き付きの名前は一覧の名前を候補に・【確認が必要な点】は日にもまとめにも入れず一覧の上に出す・設計62 改訂9）／2026-11-27a 0件で「手動で入れる」を押したら他の始め方を消す（種目の欄を開いている間は［← 始め方に戻る］1つ・閉じると3つに戻る）／2026-11-26i 数字の無い種目（実施のみ）のメモをその種目に付ける（Worker の karte_tr_ex_notes・exNote が真のときだけ・記録の画面の ✎・AI の下書き・読み取る・直す画面・日別・取り込みの決め方の文言は「「X」のメモにする」・設計67）／2026-11-26h AI の下書きを社内で重ねない（種目のメモ→その種目の1セット目のメモ・「nセット目：」→そのセットのメモ・入らない分は今どおり社内メモ・今日の流れから種目名と数字だけの行を外す・設計66）／2026-11-26g 説明の文を削る（挙動の説明・案内の帯は出さない・毎回は要らない注意は項目の横の「?」に畳む・取り込みの直後は「n種目を入れました」の短い通知・AI のボタンの直下に「外部のAI（Anthropic）へ送ります」の1行・健康の1行はカードの一覧の上に1回・設計65）／2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -234,6 +234,13 @@
     '#karteRoot .k-pill{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid #8692a6;background:#fff;color:#3f4550;font-size:13px;font-family:inherit;}',
     '#karteRoot .k-pill.on{border:1.5px solid var(--k-acc);background:var(--k-acc);color:#fff;font-weight:700;}',
     '#karteRoot .k-pills{display:flex;flex-wrap:wrap;gap:8px;}',
+    '#karteRoot .k-exblock{display:flex;flex-direction:column;gap:1px;min-width:0;}',
+    '#karteRoot .k-exbname{font-weight:700;font-size:14px;line-height:1.4;overflow-wrap:anywhere;}',
+    '#karteRoot .k-setline{font-size:13px;line-height:1.5;color:var(--k-sub,#5b6270);}',
+    //   小片は1つの塊（inline-block）：塊と塊の間で折り返し、塊の中は1行に入る限り割らない。1行より長い塊だけ中で折り返す（横にはみ出さない・関門② 中）
+    '#karteRoot .k-setp{display:inline-block;max-width:100%;overflow-wrap:anywhere;}',
+    '#karteRoot .k-pill.k-exchip{white-space:nowrap;}',
+    '#karteRoot .k-pill.k-exchip.long{white-space:normal;text-align:left;line-height:1.3;padding:6px 12px;}',
     '#karteRoot .k-seg{display:flex;background:#ecedef;border-radius:10px;padding:3px;gap:2px;}',
     '#karteRoot .k-seg button{flex:1;min-height:44px;border:none;border-radius:8px;background:transparent;font-size:13px;color:#3f4550;font-family:inherit;}',
     '#karteRoot .k-seg button.on{background:#fff;color:var(--k-ink);font-weight:700;box-shadow:0 1px 2px rgba(0,0,0,.06);}',
@@ -1400,17 +1407,44 @@
   function wLabel(w) { return isBw(w) ? '自重' : w + 'kg'; }
   //   印（補助・ドロップ・無理やり）があるセットか（新しい回のセットだけが持つ鍵。古い回は鍵が無い＝今までどおり）
   function setHasMark(x) { return !!x && (x.assist_reps != null || x.forced === true || (Array.isArray(x.drops) && x.drops.length > 0)); }
-  function setOneLine(x) {   // 「50kg×10+補助5」「10kg×10→自重×10」「80kg×5（無理）」
-    var t = wLabel(x.weight_kg) + '×' + x.reps + (x.assist_reps != null ? '+補助' + x.assist_reps : '');
-    (Array.isArray(x.drops) ? x.drops : []).forEach(function (d) { t += '→' + wLabel(d.weight_kg) + '×' + d.reps + (d.assist_reps != null ? '+補助' + d.assist_reps : '') + (d.forced === true ? '（無理）' : ''); });
-    return t + (x.forced === true ? '（無理）' : '');
+  //   ---- セットの書き方（2026-11-27 オーナー：前回のカードが崩れる・書き方が種目で不揃い）。★セットを表す所は全部ここを通す
+  //     「重さ × 回数」（× の前後に空白）。同じ重さが続く印の無いセットは「100kg × 15・15」、重さが変わったら「・90kg × 10」。
+  //     自重は「自重 × 10」。補助は「+補助7」、できない回は「（無理）」、ドロップは「（ドロップ 40kg × 8・20kg × 8）」（→ は使わない）。
+  //     印のあるセットは前のセットとまとめない（どのセットの印か分からなくなる）
+  function wr(w, r) { return wLabel(w) + ' × ' + r; }
+  function setOneLine(x) {   // 「50kg × 10+補助5」「80kg × 5（無理）」「60kg × 10（ドロップ 40kg × 8）」
+    return setPiecesOne(x).join('');
   }
-  function setLineOf(st) {   // 「50kg × 10・10・8」／重さが混ざるときは「50kg×10・自重×12」
-    if (!st.length) return '実施のみ';   // 数字の無い種目（設計38・新しい回だけ）
-    //   ★印が1つでもあれば、まとめ書きをせず1セットずつ（設計38 §6-1）。印の無い回は1文字も変えない
-    if (st.some(setHasMark)) return st.map(setOneLine).join('・');
-    var oneW = st.every(function (x) { return x.weight_kg === st[0].weight_kg; });
-    return oneW ? wLabel(st[0].weight_kg) + ' × ' + st.map(function (x) { return x.reps; }).join('・') : st.map(function (x) { return wLabel(x.weight_kg) + '×' + x.reps; }).join('・');
+  function setPiecesOne(x) {
+    var out = [wr(x.weight_kg, x.reps) + (x.assist_reps != null ? '+補助' + x.assist_reps : '') + (x.forced === true ? '（無理）' : '')];
+    var ds = Array.isArray(x.drops) ? x.drops : [];
+    ds.forEach(function (d, i) { out.push((i === 0 ? '（ドロップ ' : '') + wr(d.weight_kg, d.reps) + (d.assist_reps != null ? '+補助' + d.assist_reps : '') + (d.forced === true ? '（無理）' : '') + (i === ds.length - 1 ? '）' : '・')); });
+    return out;
+  }
+  //   同じ重さか：数として読めるものだけ比べる（空・null・数でない値はまとめない＝別の重さを同じに見せない・関門② 軽）
+  function wKey(w) { return (w === '' || w == null || !isFinite(Number(w))) ? null : Number(w); }
+  /** セットの並び → 折り返してよい切れ目で分けた小片の配列（小片の中では折り返さない＝1セットの途中で割れない）。
+   *  区切りの「・」は前の小片の尻に付ける（折り返した行の頭が「・」で始まらない・関門② 中） */
+  function setPieces(st) {
+    if (!st.length) return ['実施のみ'];   // 数字の無い種目（設計38・新しい回だけ）
+    var out = [], prev = null;
+    st.forEach(function (x) {
+      var plain = !setHasMark(x), k = wKey(x.weight_kg);
+      if (out.length) out[out.length - 1] += '・';
+      if (plain && prev && prev.plain && k != null && prev.k === k) { out.push(String(x.reps)); return; }
+      out = out.concat(plain ? [wr(x.weight_kg, x.reps)] : setPiecesOne(x));
+      prev = { plain: plain, k: k };
+    });
+    return out;
+  }
+  function setLineOf(st) { return setPieces(st).join(''); }   // 文字の形（写す画面・取り込み・検査）
+  /** 画面の形：小片ごとに折り返さない span（.k-setp）。種目名の下の行に置く */
+  function setLineEl(st, cls) {
+    return el('div', { class: 'k-setline' + (cls ? ' ' + cls : '') }, setPieces(st).map(function (t) { return el('span', { class: 'k-setp', text: t }); }));
+  }
+  /** 種目1つ：名前は1行で独立（太字）・セットはその下 */
+  function exBlock(name, st, cls) {
+    return el('div', { class: 'k-exblock' + (cls ? ' ' + cls : '') }, [el('div', { class: 'k-exbname', text: name }), setLineEl(st)]);
   }
   /** 種目ごとのまとめ（自己ベスト＝重量が最大のセット・同じなら回数が多い方） */
   function exerciseStats(sessions, ex) {
@@ -2603,7 +2637,7 @@
         var kids = [el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;' }, [el('b', { style: 'font-size:15px;', text: mdw(x.session_date) }), on ? el('span', { style: 'font-size:12px;color:var(--k-acc);font-weight:700;', text: '選択中' }) : null]),
           el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, dayParts(x).map(function (pt) { return el('span', { class: 'k-tag', text: pt }); }))];
         if (on) kids.push(el('div', { style: 'display:flex;flex-direction:column;gap:4px;font-size:14px;' }, o.groups.map(function (g) {
-          return el('div', { style: 'display:flex;justify-content:space-between;gap:8px;' }, [el('span', { text: g.exercise }), el('span', { class: 'k-sub', style: 'font-size:13px;', text: setLineOf(g.sets) })]);
+          return exBlock(g.exercise, g.sets);
         })));
         else kids.push(el('div', { class: 'k-sub', style: 'font-size:13px;', text: o.groups.map(function (g) { return g.exercise; }).join('・') }));
         cards.appendChild(el('button', { type: 'button', 'aria-pressed': on ? 'true' : 'false', class: 'k-card k-pick' + (on ? ' on' : ''), onclick: function () { sel = x; draw(); } }, kids));
@@ -2729,7 +2763,8 @@
     if (ds.length) o.drops = ds;
     return o;
   }
-  function impLine(sets) { return (sets || []).map(function (st) { return setOneLine({ weight_kg: st.w === '' ? 0 : st.w, reps: st.r, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (d) { return { weight_kg: d.w === '' ? 0 : d.w, reps: d.r, assist_reps: d.assist, forced: d.forced }; }) }); }).join('・'); }
+  function impSetsOut(sets) { return (sets || []).map(function (st) { return { weight_kg: st.w === '' ? 0 : st.w, reps: st.r, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (d) { return { weight_kg: d.w === '' ? 0 : d.w, reps: d.r, assist_reps: d.assist, forced: d.forced }; }) }; }); }
+  function impLine(sets) { return setLineOf(impSetsOut(sets)); }
   //   ---- 設計49：AI の下書き v2 の確認（1画面）。★状態は純粋なデータ（rv）だけ・DOM を読まない・端末のメモリの中だけ（I63・I71）
   //     AI_V2_SAVE_SCOPE：D8（同意の文面の範囲）が決まるまで 'trial' だった。2026-11-21 同意の版 rec_ai-2026-11-21（要約・推測・様子・次回の予定を含む）で 'full'（決定0195）。★不正な値は 'trial'
   //       戻すときはこの1行を 'trial' に（v2 を出す前は効かない＝KARTE_AI_FORMAT 未設定なら Worker が v1 を返す）
@@ -4405,7 +4440,7 @@
           D.date = v; D.dateErr = null; D.include = null; parseDay(D); draw();
         })]));
       }
-      b.items.forEach(function (it) { x.appendChild(el('div', { style: 'font-size:14px;', text: it.exercise + '　' + (it.sets.length ? it.sets.map(function (st) { return setOneLine({ weight_kg: st.weight, reps: st.reps, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (q) { return { weight_kg: q.weight, reps: q.reps, assist_reps: q.assist, forced: q.forced }; }) }); }).join('・') : '実施のみ') })); });
+      b.items.forEach(function (it) { x.appendChild(exBlock(it.exercise, it.sets.map(function (st) { return { weight_kg: st.weight, reps: st.reps, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (q) { return { weight_kg: q.weight, reps: q.reps, assist_reps: q.assist, forced: q.forced }; }) }; }))); });
       //   この日の決めること（押すと、同じ名前・同じ行の全部の日に効く）
       D.units.forEach(function (u) { var a = actOf(D, u); if (a.key) x.appendChild(groupCard(S.gmap[a.key] || gOf({}, a, u), u)); });
       D.memo.forEach(function (m) { x.appendChild(lineBox(m, true)); });
@@ -5042,10 +5077,10 @@
     //   ---- 設計38：補助・無理やり・ドロップ・実施（数字なし）・全部✓
     function hasExt(s) { return String(s.assist == null ? '' : s.assist).trim() !== '' || s.forced === true || (Array.isArray(s.drops) && s.drops.length > 0); }
     function dLabel(w) { return (w === '' || w == null) ? '自重' : wLabel(w); }
-    function marksOf(s) {   // 「＋補助5」「→ 自重×10」「無理」
+    function marksOf(s) {   // 「＋補助5」「ドロップ 自重 × 10」「無理」（→ は使わない・2026-11-27）
       var out = [], a = String(s.assist == null ? '' : s.assist).trim();
       if (a) out.push('＋補助' + a);
-      (Array.isArray(s.drops) ? s.drops : []).forEach(function (d) { var da = String(d.assist == null ? '' : d.assist).trim(); out.push('→ ' + dLabel(d.w) + '×' + (hasR(d) ? d.r : '？') + (da ? '＋補助' + da : '') + (d.forced === true ? '（無理）' : '')); });
+      (Array.isArray(s.drops) ? s.drops : []).forEach(function (d) { var da = String(d.assist == null ? '' : d.assist).trim(); out.push('ドロップ ' + dLabel(d.w) + ' × ' + (hasR(d) ? d.r : '？') + (da ? '＋補助' + da : '') + (d.forced === true ? '（無理）' : '')); });
       if (s.forced === true) out.push('無理');
       return out.join('　');
     }
@@ -5710,13 +5745,10 @@
     var wantDay = cur.wantDayView; cur.wantDayView = null;   // 使っても使わなくても消す
     if (!sessions.length && cur.trOlder !== true) { box.appendChild(msg('まだ記録がありません。')); cur.showDayView = function () {}; return; }   // 設計62：直近3か月が0回でも3か月より前があれば続ける
     var sorted = sessions.slice().sort(byNewest);   // ★日別の記録は drawDays の中で毎回並べ直す（もっと前を足すため）
-    function setLine(sets) {
-      return setLineOf(sets.slice().sort(function (a, b) { return a.set_no - b.set_no; }));   // 0 は「自重」
-    }
     function exRows(sess, withNotes) {
       var o = exOrder(sess), out = el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:14px;' });
       o.groups.forEach(function (g) {
-        out.appendChild(el('div', { style: 'display:flex;justify-content:space-between;gap:8px;' }, [el('span', { text: g.exercise }), el('span', { class: 'k-sub', style: 'font-size:13px;text-align:right;', text: setLine(g.sets) })]));
+        out.appendChild(exBlock(g.exercise, g.sets.slice().sort(function (a, b) { return a.set_no - b.set_no; })));
         if (withNotes) g.sets.forEach(function (st) { if (st.note) out.appendChild(el('div', { class: 'k-sub', style: 'margin:-2px 0 2px 10px;', text: st.set_no + 'セット目：' + st.note })); });
         if (withNotes && g.note) out.appendChild(el('div', { class: 'k-sub k-exnoteview', style: 'margin:-2px 0 2px 10px;', text: 'メモ：' + g.note }));   // 設計67：数字の無い種目のメモ
       });
@@ -5745,7 +5777,8 @@
       buildExList(); if (exList.indexOf(exSel) < 0) exSel = exList[0];
       if (cur.trAllState === 'loading') exCard.appendChild(el('div', { class: 'k-sub k-trnote', style: 'font-size:12px;', text: '全期間の推移を読み込み中…' }));
       var chips = el('div', { class: 'k-pills', style: 'gap:6px;' });
-      exList.forEach(function (ex) { chips.appendChild(el('button', { type: 'button', class: 'k-pill' + (ex === exSel ? ' on' : ''), text: ex, onclick: function () { exSel = ex; drawEx(); } })); });
+      //   種目名のチップは1行で読める（名前の途中で折らない）。とても長い名前だけ、チップの中で折り返す（省略しない）
+      exList.forEach(function (ex) { chips.appendChild(el('button', { type: 'button', class: 'k-pill k-exchip' + (String(ex).length > 16 ? ' long' : '') + (ex === exSel ? ' on' : ''), text: ex, onclick: function () { exSel = ex; drawEx(); } })); });
       exCard.appendChild(chips);
       var st = exerciseStats(sessions, exSel);
       //   設計62（I94）：推移・自己ベストは全期間の集計（サーバー）から。使えないときだけ読んだ回の中で計算し「直近◯回の中」と書く（全期間と言わない）
@@ -5756,8 +5789,8 @@
       if (useS && cur.trAll.agg.series === 'truncated' && cur.trAll.seriesFrom) exCard.appendChild(el('div', { class: 'k-sub k-trnote', style: 'font-size:12px;', text: '推移は ' + md(cur.trAll.seriesFrom) + ' から' }));
       else if (!useS && pts.length) exCard.appendChild(el('div', { class: 'k-sub k-trnote', style: 'font-size:12px;', text: '推移は直近' + nLoaded + '回の中' }));
       var b = useB ? cur.trAll.bestAll.filter(function (x) { return x && x.exercise === exSel; })[0] : null;
-      if (b) exCard.appendChild(el('div', { class: 'k-sub k-trbest', style: 'font-size:13px;', text: '自己ベスト ' + wLabel(b.w) + ' × ' + b.r + '（' + md(b.d) + '）' }));
-      else if (st) exCard.appendChild(el('div', { class: 'k-sub k-trbest', style: 'font-size:13px;', text: '自己ベスト ' + wLabel(st.best.w) + ' × ' + st.best.r + '（' + md(st.best.d) + '・直近' + nLoaded + '回の中）' }));
+      if (b) exCard.appendChild(el('div', { class: 'k-sub k-trbest', style: 'font-size:13px;', text: '自己ベスト ' + wr(b.w, b.r) + '（' + md(b.d) + '）' }));
+      else if (st) exCard.appendChild(el('div', { class: 'k-sub k-trbest', style: 'font-size:13px;', text: '自己ベスト ' + wr(st.best.w, st.best.r) + '（' + md(st.best.d) + '・直近' + nLoaded + '回の中）' }));
     }
     drawEx();
     //   設計62（関門② 中2）：全期間の集計は一覧を描いた後に別の窓口で読む＝集計が重くて落ちても一覧は残る
@@ -5864,7 +5897,7 @@
         MA.forEach(function (m) {
           if (!m || typeof m.month !== 'string') return;
           var t = ymLabel(m.month) + '：' + Number(m.sessions || 0) + '回' + ((m.top || []).length ? '・主な種目 ' + m.top.join('／') : '')
-            + (m.best ? '・最高 ' + wLabel(m.best.w) + '×' + m.best.r + '（' + m.best.exercise + '）' : '');
+            + (m.best ? '・最高 ' + wr(m.best.w, m.best.r) + '（' + m.best.exercise + '）' : '');
           olderCard.appendChild(el('div', { class: 'k-sub k-trmonth', style: 'font-size:13px;line-height:1.6;', text: t }));
         });
         if (cur.trAll.agg && cur.trAll.agg.months === 'truncated') olderCard.appendChild(el('div', { class: 'k-sub', style: 'font-size:12px;', text: '月ごとの行は新しい36か月だけ' }));
