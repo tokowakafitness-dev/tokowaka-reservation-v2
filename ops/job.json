@@ -1,8 +1,8 @@
 {
   "op": "remaining",
-  "requestId": "job-20261120155130-9264b026",
+  "requestId": "job-20261127103422-604d9855",
   "args": {
-    "date": "2026-11-16",
-    "_rk": "cbcc779a815b1ff5f3e4df62dbe86d6bfc200e024af193d63444d0b16107cb9e"
+    "vacancyMode": "list",
+    "_rk": "a0e85025c511af2f6423c2d51f9eb08c637ac11b7c53f9014aedefdd12e3bf09"
   }
 }
