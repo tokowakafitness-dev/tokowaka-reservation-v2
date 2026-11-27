@@ -127,7 +127,7 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   ok('L2-3 ★計画は3件（ベンチのセット・指導のメモ・ヒアリング）＝お客様へ・次回までに・体の状態・一覧に無い種目・確かめられない数字は入らない', planBtn && /（3件）/.test(planBtn.textContent), planBtn && planBtn.textContent);
   planBtn.click(); await settle();
   const box = R(w).querySelector('.k-impplanbox');
-  ok('L2-4 ★計画の一覧に根拠（文字起こしの抜き出し）と行き先が出る', box && box.textContent.includes('ベンチプレス：「20キロで10回」／「次30キロで5回」') && box.textContent.includes('「ベンチプレス」に 20kg×10・30kg×5 を足す') && box.textContent.includes('ヒアリング：睡眠は5時間くらい'), box && box.textContent);
+  ok('L2-4 ★計画の一覧に根拠（文字起こしの抜き出し）と行き先が出る', box && box.textContent.includes('ベンチプレス：「20キロで10回」／「次30キロで5回」') && box.textContent.includes('「ベンチプレス」に 20kg × 10・30kg × 5 を足す') && box.textContent.includes('ヒアリング：睡眠は5時間くらい'), box && box.textContent);
   btn(R(w), 'この内容で決める').click(); await settle();
   //   体の状態：捨てるだけ
   const cc = cardBy(w, /AI：体の状態/);
@@ -140,7 +140,7 @@ const aiSends = (sent) => sent.filter((x) => x.body.action === 'k_aiDraft');
   btn(nc, '種目にする').click(); await settle();
   pill(R(w), '腕').click(); await settle();
   const rc = cardBy(w, /スカルクラッシュ改：「/);
-  ok('L2-7 名前を種目にした後は「スカルクラッシュ改」に足すボタン', rc && btnsIn(rc).some((t) => t.indexOf('「スカルクラッシュ改」に 10kg×12 を足す') === 0), rc && JSON.stringify(btnsIn(rc)));
+  ok('L2-7 名前を種目にした後は「スカルクラッシュ改」に足すボタン', rc && btnsIn(rc).some((t) => t.indexOf('「スカルクラッシュ改」に 10kg × 12 を足す') === 0), rc && JSON.stringify(btnsIn(rc)));
   btn(rc, '「スカルクラッシュ改」に').click(); await settle();
   //   選び直し：名前を選び直すとセットの決定も外れる
   btn(cardBy(w, /聞こえた言葉：スカルフラッシュ/), '選び直す').click(); await settle();
