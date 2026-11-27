@@ -252,8 +252,18 @@ async function openPicker(w) { await openRecord(w); btn(R(w), '＋ 種目を足�
   ok('G9 ★0件：「どう始めますか？」と3つ（前回の記録から／メモ・音声から／手動で入れる）を縦に・44px 以上', !!sb && sb.textContent.includes('どう始めますか？') && JSON.stringify(b3.map((b) => b.textContent)) === '["前回の記録から","メモ・音声から","手動で入れる"]' && b3.every((b) => parseInt(b.style.minHeight, 10) >= 44), JSON.stringify(b3.map((b) => b.textContent)));
   ok('G9 0件のときは下の「追加で取り込む」「前回から写す」を出さない・「＋ 種目を足す」も隠す', !R(w).querySelector('.k-more button') && !shown(w, btn(R(w), '＋ 種目を足す')));
   btn(sb, '手動で入れる').click(); await settle();
-  ok('G9 ★「手動で入れる」で種目の欄が開き、検索欄にフォーカス', shown(w, R(w).querySelector('.k-picker')) && w.document.activeElement === Q(w) && shown(w, btn(R(w), '＋ 種目を足す')));
-  btn(R(w), '＋ 種目を足す').click(); await settle();
+  ok('G9 ★「手動で入れる」で種目の欄が開き、検索欄にフォーカス', shown(w, R(w).querySelector('.k-picker')) && w.document.activeElement === Q(w));
+  //   2026-11-27 オーナー（本番 2026-11-26i）：手動を押しても他の入力方式が残っていた → 選んだら他の始め方は消す・閉じる手段は1つ
+  {
+    const st = R(w).querySelector('.k-start');
+    const vis = [...R(w).querySelectorAll('button')].filter((b) => shown(w, b)).map((b) => b.textContent);
+    const back = btn(st, '← 始め方に戻る');
+    ok('G9 ★手動を押すと「どう始めますか？」と3つが消え、［← 始め方に戻る］1つだけ（44px 以上）', !st.textContent.includes('どう始めますか？') && !st.querySelector('button.k-startbtn') && st.querySelectorAll('button').length === 1 && !!back && shown(w, back) && parseInt(back.style.minHeight, 10) >= 44, st.textContent);
+    ok('G9 ★開いている間は「＋ 種目を足す」も出さない（閉じる手段は1つ）', !vis.includes('＋ 種目を足す') && !vis.includes('前回の記録から') && !vis.includes('メモ・音声から') && !vis.includes('手動で入れる'), JSON.stringify(vis));
+    back.click(); await settle();
+    const st2 = R(w).querySelector('.k-start');
+    ok('G9 ★［← 始め方に戻る］で種目の欄と下の帯が閉じ、3つの始め方に戻る', !shown(w, R(w).querySelector('.k-picker')) && [...R(w).querySelectorAll('.k-pickbar')].every((b) => !shown(w, b)) && st2.textContent.includes('どう始めますか？') && st2.querySelectorAll('button.k-startbtn').length === 3 && !btn(st2, '← 始め方に戻る') && !shown(w, btn(R(w), '＋ 種目を足す')));
+  }
   btn(R(w).querySelector('.k-start'), '前回の記録から').click(); await settle();
   ok('G9 ★「前回の記録から」で過去の記録から写す画面へ', R(w).querySelector('.k-entrytitle').textContent === '過去の記録から写す');
 }
@@ -264,6 +274,17 @@ async function openPicker(w) { await openRecord(w); btn(R(w), '＋ 種目を足�
   ok('G9 過去の記録が無ければ「前回の記録から」は押せない（理由つき）', !!pb && pb.disabled === true && pb.textContent.includes('過去の記録がありません'));
   R(w).querySelector('.k-start button.k-impgo').click(); await settle();
   ok('G9 ★「メモ・音声から」で取り込みの画面へ', R(w).querySelector('.k-entrytitle').textContent === 'メモから取り込む');
+}
+// ---- G9b 0件 → 手動で入れる → 種目を足す：今どおり1件以上の表示に移る（始め方・戻るは消える）----
+{
+  const { w } = boot({ sessions: HIST_R });
+  await openRecord(w);
+  btn(R(w).querySelector('.k-start'), '手動で入れる').click(); await settle();
+  await typeQ(w, 'ベンチ');
+  rows(w)[0].click(); await settle();
+  btn(R(w), '選んだ 1 種目を足す').click(); await settle();
+  const st = R(w).querySelector('.k-start');
+  ok('G9b ★種目を足すと1件以上の表示（「どう始めますか？」も［← 始め方に戻る］も無く、「＋ 種目を足す」が出る・欄は閉じる）', names(w).length === 1 && !st.textContent.includes('どう始めますか？') && !btn(st, '← 始め方に戻る') && shown(w, btn(R(w), '＋ 種目を足す')) && !shown(w, R(w).querySelector('.k-picker')), JSON.stringify(names(w)) + ' ' + st.textContent);
 }
 // ---- G10 種目が1件以上（2026-11-25 オーナー）：下は「＋ 種目を足す」だけ・上に［音声でセッションログを残す］1つ・休憩タイマーの行は出さない ----
 {
