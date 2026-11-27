@@ -184,7 +184,7 @@ ok('⑦入口でロックを取ってから一覧を作る',
   /function lbNudgeDaily[\s\S]{0,2000}?lock\.tryLock\(LB_NUDGE_LOCK_WAIT_MS\)[\s\S]{0,900}?var _plan = lbNudgePlanAll\(ms\);/.test(SRC),
   'plan を作ってからロックを取る順序に戻っている');
 ok('⑦★その一覧をそのまま送信へ渡す（作り直さない）',
-  /return _lbNudgeSend\(_plan, ms, true\);/.test(SRC),
+  /var _sres = _lbNudgeSend\(_plan, ms, true\);[\s\S]{0,800}?return _sres;/.test(SRC),   // 設計37 改訂5：戻り値を受けて完了の印を書いてから返す（一覧は作り直さない）
   '送信側で作り直すと、ロックの中で決めた一覧と変わりうる');
 ok('⑦送信側はロック済みを受け取る', /function _lbNudgeSend\(plan, nowMs, alreadyLocked\)/.test(SRC));
 ok('⑦単独で呼ばれたときは自分で取る', /if \(!alreadyLocked\) \{\s*\n\s*try \{ _lock = LockService\.getScriptLock\(\)/.test(SRC));

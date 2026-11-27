@@ -1217,6 +1217,11 @@ function handleLineWebhook(e) {
         try { _maHandleMessage(ev); }
         catch (mealErr) { Logger.log('meal-ai 隔離: ' + mealErr.message); }
       }
+      //   ★空き枠のお知らせの「今後受け取らない」（設計37 改訂5 §5-10）。vac=off／vac=test の完全一致だけを先に取る。それ以外は今どおり meal-ai
+      else if (ev.type === 'postback' && _lbVacIsPostbackSafe(ev)) {
+        try { _lbVacPostback(ev); }
+        catch (vacErr) { Logger.log('空き枠のお知らせ（postback）で例外: ' + String((vacErr && vacErr.name) || 'Error')); }
+      }
       else if (ev.type === 'postback') {
         try { _maHandlePostback(ev); }
         catch (mealErr2) { Logger.log('meal-ai 隔離(postback): ' + mealErr2.message); }
@@ -1228,6 +1233,11 @@ function handleLineWebhook(e) {
     Logger.log('webhook エラー: ' + err.message);
     return _lbJson({ success:false, code:'SERVER_ERROR' });
   }
+}
+
+// postback が空き枠のお知らせのものか（Nudge.js が未配置でも meal-ai を巻き込まない）
+function _lbVacIsPostbackSafe(ev) {
+  try { return (typeof _lbVacIsPostback === 'function') && _lbVacIsPostback(ev) === true; } catch (e) { return false; }
 }
 
 // friend追加者を記録（未登録なら pending 行を用意。既存行があれば何もしない）
@@ -2417,7 +2427,7 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-25d 設計57 関門② 再審2：数え始めるのは点検の経過3分未満だけ・かかった秒数を詳細に残す／2026-11-25c 設計57 関門② 再審：公開シートを読まず、枠の計算 buildAvailableSlots を翌月だけで呼んで数える（書き直しとの競合・正常な0枠の取り違えを無くす）／2026-11-25b 設計57 関門②：公開シートの書き直し中（meta の前後・0行）と顧客向けトレーナーのカレンダーが読めないときは unknown／2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-26a 設計37 改訂5：空き枠のお知らせの見張り vacancy_stale・webhook の vac= postback・_lbPushOnce に messages／2026-11-25d 設計57 関門② 再審2：数え始めるのは点検の経過3分未満だけ・かかった秒数を詳細に残す／2026-11-25c 設計57 関門② 再審：公開シートを読まず、枠の計算 buildAvailableSlots を翌月だけで呼んで数える（書き直しとの競合・正常な0枠の取り違えを無くす）／2026-11-25b 設計57 関門②：公開シートの書き直し中（meta の前後・0行）と顧客向けトレーナーのカレンダーが読めないときは unknown／2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2689,6 +2699,14 @@ function dailyHealthCheck(dryRunArg) {
     add('cancel_notify_slow', '通知', 'info', Number(cxm.CXL_NOTIFY_SLOW || 0), '直近1日、キャンセルの通知が時間の予算を超えた回数（担当・会員の通知は送り直しの列へ）');
   } catch (e) { add('cancel_notes_check_fail', '予約', 'warn', 1, 'キャンセル理由の記録の点検に失敗: ' + String((e && e.name) || 'Error')); }
   _done('キャンセル理由');
+
+  _step('空き枠のお知らせ');
+  // ---- 空き枠のお知らせ（設計37 改訂5 §5-13）。mode が off なら見ない ----
+  try {
+    var vh = (typeof _lbVacHealth === 'function') ? _lbVacHealth(Date.now()) : null;
+    if (vh) add('vacancy_stale', '通知', 'warn', vh.bad, vh.text);
+  } catch (e) { add('vacancy_stale', '通知', 'warn', 1, '空き枠のお知らせの点検に失敗: ' + String((e && e.name) || 'Error')); }
+  _done('空き枠のお知らせ');
 
   _step('LINE通数');
   // ---- LINE通数 ----
@@ -3379,6 +3397,7 @@ var LB_TRIAGE = {
   notify_queue_write_fail: ['B', '通知'], nudge_lock_miss: ['B', 'うながしの取りこぼし'], nudge_open_miss: ['B', '翌月の解放'],
   consec_display_miss: ['B', '通知'], register_fail: ['B', '通知'],
   cancel_notes_save_fail: ['B', 'キャンセル理由'], cancel_notes_purge_late: ['B', 'キャンセル理由'],
+  vacancy_stale: ['B', '空き枠のお知らせ'],
   both_fail: ['B', '世代の追いつき'], both_fail_broken: ['B', '世代の追いつき'], both_fail_overflow: ['B', '世代の追いつき'],
   d1_read_none: ['B', '世代の追いつき'], dualwrite_too_large: ['B', '世代の追いつき'], dup_pack_prefix: ['B', '世代の追いつき'],
   edge_push_off: ['B', '押し出しの元栓'], gen_behind_capacity: ['B', '世代の追いつき'],
@@ -6342,6 +6361,7 @@ function _lbPushBody(res) {
 //     code は**最後の試行**の値（429→401 なら 401。最初の値を返すと、待っても通らないものを送り直してしまう）
 //     uncertain=true … 通信例外・応答コードが読めない＝届いたかどうか分からない
 //   opts.noInlineRetry … 429 の短い粘り（最大約10秒）を省く。tick の時間を読めるようにするため
+//   opts.messages … 送るメッセージの配列（Flex 等・設計37 改訂5）。無ければ今どおり text 1通
 function _lbPushOnce(to, text, opts) {
   opts = opts || {};
   var token = _lbProp('LINE_MESSAGING_TOKEN');
@@ -6358,7 +6378,7 @@ function _lbPushOnce(to, text, opts) {
       method: 'post',
       contentType: 'application/json',
       headers: { Authorization: 'Bearer ' + token },
-      payload: JSON.stringify({ to: to, messages: [{ type: 'text', text: text }] }),
+      payload: JSON.stringify({ to: to, messages: (opts.messages && opts.messages.length) ? opts.messages : [{ type: 'text', text: text }] }),
       muteHttpExceptions: true
     });
   }
