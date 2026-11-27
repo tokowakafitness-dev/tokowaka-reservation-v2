@@ -147,7 +147,7 @@ KARTE_AI_EFFORT = "medium"
 #     鍵はオーナーの Mac の secrets/ にだけある（作り方＝会社リポジトリの 90_ops/maintenance-squad/make-key.sh）
 #   入れ替え：新しいハッシュを _NEXT に入れる PR → 部隊が新しい鍵で読めたら _NEXT を本番の欄へ移し古い方を消す（180日目安）
 #   緊急の失効：両方の欄を空にする（閉じる側に倒れる）か SQUAD_READ = "off"
-SQUAD_READ_KEY_SHA256 = ""
+SQUAD_READ_KEY_SHA256 = "50bf21408681c3c652084145bb3ee0db098556a3ede58ce1051f25a080d079e1"
 SQUAD_READ_KEY_SHA256_NEXT = ""
 #   SQUAD_REPORT = "on" … 部隊の報告（列挙と件数だけ）を受け、GAS が心拍の応答で受け取ってオーナーへ LINE（失敗ならメール）。
 #   ★厳密に "on" のときだけ開く（未設定・打ち間違いは 503）。部隊の鍵で squad_report に書けるようになる＝CEO の守りの判断の後に開く
