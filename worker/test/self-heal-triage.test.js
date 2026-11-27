@@ -46,14 +46,14 @@ for (const ln of lines) {
   }
 }
 const mdKeys = Object.keys(fromMd).sort(), codeKeys = Object.keys(TRI).sort();
-ok('I-H10-1 表から読めた key は 95（76 ＋ P1 で足した 5 ＋ 設計54 の 9 ＋ 設計57 の 4 ＋ 設計37 改訂5 の 1）', mdKeys.length === 95, `${mdKeys.length}: ${mdKeys.join(',')}`);
+ok('I-H10-1 表から読めた key は 97（76 ＋ P1 で足した 5 ＋ 設計54 の 9 ＋ 設計57 の 4 ＋ 設計37 改訂5 の 1 ＋ 保全部隊の 2）', mdKeys.length === 97, `${mdKeys.length}: ${mdKeys.join(',')}`);
 ok('I-H10-2 表の中で key が重複していない', dupMd.length === 0, dupMd.join(','));
 ok('I-H10-3 ★表と LB_TRIAGE の key の集合が一致', JSON.stringify(mdKeys) === JSON.stringify(codeKeys),
    `表だけ: ${mdKeys.filter((k) => !TRI[k]).join(',')} ／ コードだけ: ${codeKeys.filter((k) => !fromMd[k]).join(',')}`);
 const clsDiff = mdKeys.filter((k) => TRI[k] && TRI[k][0] !== fromMd[k]);
 ok('I-H10-4 ★区分も一致', clsDiff.length === 0, clsDiff.map((k) => `${k}: 表=${fromMd[k]} コード=${TRI[k][0]}`).join(', '));
 ok('I-H10-5 A は2つだけ（trigger_missing・cancel_notes_unready）', JSON.stringify(codeKeys.filter((k) => TRI[k][0] === 'A')) === '["cancel_notes_unready","trigger_missing"]');
-ok('I-H10-6 表の数え（95）と一致', /＝ \*\*95\*\*/.test(MD));
+ok('I-H10-6 表の数え（97）と一致', /＝ \*\*97\*\*/.test(MD));
 const unk = c._lbTriage('some_new_key');
 ok('I-H10-7 ★表に無い key は B（段は空＝add した時の段で閉じる）', unk.cls === 'B' && unk.known === false && unk.stage === '');
 ok('I-H10-8 修理してよい key（LB_HEAL_KEYS）は A の2つと同じ', JSON.stringify(c.LB_HEAL_KEYS.slice().sort()) === '["cancel_notes_unready","trigger_missing"]');

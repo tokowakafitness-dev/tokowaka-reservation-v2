@@ -268,6 +268,12 @@ export async function quotaStatus(request, env) {
       only: u.searchParams.get('only') || '', skip: u.searchParams.get('skip') || '',
     }));
   }
+  //   ★保全部隊が最後に読んだ時刻（squad_quiet・会社の決定0208）。日次点検が1日1回読む。時刻と真偽だけ
+  if (u.searchParams.get('squad') === '1') {
+    const { squadQuietStatus } = await import('./squad.js');
+    try { return json(await squadQuietStatus(env, Date.now())); }
+    catch (_) { return json({ ok: false, reason: 'DB_UNAVAILABLE' }, 503); }
+  }
   //   ★カルテの AI 振り分け（設計39）の前日の記録。日次点検（GAS dailyHealthCheck）が1日1回読む。数だけ・名前なし
   if (u.searchParams.get('karteai') === '1') {
     const { buildKarteAiHealth } = await import('../lib/karte-ai-health.js');

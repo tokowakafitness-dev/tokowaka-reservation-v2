@@ -202,7 +202,7 @@ export function makeCtx(w) {
     _lbQuotaFetch: hook('_lbQuotaFetch', () => w.data.quota),
     LB_SYNC_STATUS_SHEET: 'sync_status', LB_REMINDER_STATUS_SHEET: 'reminder_status', LB_ALLOC_SHEET: 'alloc',
     _lbParseResvDate: (v) => (v === 'RECENT' ? new Date(w.now - 3600000) : new Date(v)),
-    _edgeQuotaStatus: hook('_edgeQuotaStatus', () => ({ syncVersion: { table: 'ok', stale: 0 }, remainRead: null, preflight: { mode: 'off' } })),
+    _edgeQuotaStatus: hook('_edgeQuotaStatus', (q) => (q === '?squad=1' ? (w.data.squad || { ok: true, squad: { read_on: false, last_read_at: null, quiet: false } }) : { syncVersion: { table: 'ok', stale: 0 }, remainRead: null, preflight: { mode: 'off' } })),
     lbWriteCoversDailyCheck: () => [],
     lbDwDailyCheck: hook('lbDwDailyCheck', () => w.data.dw || []),
     lbCalSlotsDailyCheck: hook('lbCalSlotsDailyCheck', () => []), lbEdgeDeferDailyCheck: () => [], lbNotifyDeferDailyMaint: hook('lbNotifyDeferDailyMaint', () => {}), lbNotifyDeferDailyCheck: () => [],

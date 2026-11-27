@@ -1844,6 +1844,7 @@ function _pushToEdgeSlotsImpl(builtAt, builtSlots, readStartAt) {
 }
 
 function pushToEdgeLight() {
+  var t0 = Date.now();
   // ★それぞれ別の try で囲む（2026-10-08・Codex関門②）。
   //   以前は押し出しのあとに二重書きを呼んでいた。**押し出しが落ちると
   //   二重書きの心拍まで届かない。**「15分ごとに必ず再送する」が嘘になる。
@@ -1858,6 +1859,8 @@ function pushToEdgeLight() {
   // 二重書きの心拍：速い道（_lbCalSyncAfterWrite）が働かなかったぶんを15分ごとに拾う。
   //   新しいトリガーを作らないためにここへ相乗りする（上限20本・設計第4節）。
   try { lbDualWriteDrain(); } catch (e) { Logger.log('[dw] 心拍で例外: ' + (e && e.message)); }
+  //   ★保全部隊への心拍（会社の決定0208）。1時間に1回まで・開始から3分を超えた回は見送る（写しの鮮度が本業）。最後に・別の try で
+  try { lbSquadBeat(t0); } catch (e) { Logger.log('[squad] 心拍で例外'); }
 }
 
 // 見回り（1分ごと）が消えていたら作り直す。
@@ -3520,6 +3523,156 @@ function _edgeQuotaStatus(query) {
   var code = res.getResponseCode();
   if (code !== 200) throw new Error('quota/status が失敗（HTTP ' + code + '）: ' + res.getContentText().slice(0, 200));
   return JSON.parse(res.getContentText());
+}
+
+// ---------- 保全部隊へ要約と心拍を送る・部隊の報告をオーナーへ届ける（会社の決定0208・2026-11-27） ----------
+//   ★トリガーを増やさない（I-SQ6）：要約は dailyHealthCheck の最後（完走の印の後）と lbSelfHeal の最後、
+//     心拍は pushToEdgeLight の最後（1時間に1回まで・間引きは CacheService＝Script Property を増やさない）
+//   ★認証は既存の EDGE_SECRET（X-Ingest-Secret）。新しい鍵を GAS に入れない
+//   ★失敗は理由ごとに CacheService で数え、次の要約に載せる（最大6時間で消える＝止まったかは Worker の受け取り時刻が正）
+var LB_SQUAD = {
+  FAIL_KEYS: ['ok', 'http_4xx', 'http_5xx', 'exception', 'skipped_time', 'skipped_late'],
+  CACHE_BEAT: 'lb_squad_beat', CACHE_FAIL: 'lb_squad_fail',
+  BEAT_GAP_S: 3300,          // 55分（15分ごとの送り出しで約1時間に1回）
+  FAIL_TTL_S: 21600,         // CacheService の上限（6時間）
+  LATE_MS: 3 * 60000,        // 写しの送り出しがこれより長くかかった回は心拍を見送る（写しの鮮度が本業）
+  CHECK_LEFT_MS: 330000,     // 日次点検の開始からこれを過ぎていたら要約を送らない（6分の上限に30秒の余白）
+  HEAL_LEFT_MS: 330000       // lbNudgeDaily の開始から同じ
+};
+function _lbSquadCache() { try { return CacheService.getScriptCache(); } catch (e) { return null; } }
+function _lbSquadFailRead() {
+  var c = _lbSquadCache(), o = {};
+  try { o = JSON.parse((c && c.get(LB_SQUAD.CACHE_FAIL)) || '{}') || {}; } catch (e) { o = {}; }
+  return o;
+}
+function _lbSquadCount(why) {
+  if (LB_SQUAD.FAIL_KEYS.indexOf(why) < 0) return;
+  try {
+    var c = _lbSquadCache(); if (!c) return;
+    var o = _lbSquadFailRead();
+    o[why] = Math.min(1e6, (Number(o[why]) || 0) + 1);
+    c.put(LB_SQUAD.CACHE_FAIL, JSON.stringify(o), LB_SQUAD.FAIL_TTL_S);
+  } catch (e) {}
+}
+function _lbSquadPost(path, payload) {
+  var url = _lbProp('EDGE_URL'), secret = _lbProp('EDGE_SECRET');
+  if (!url || !secret) return null;
+  return UrlFetchApp.fetch(String(url).replace(/\/+$/, '') + path, {
+    method: 'post', contentType: 'application/json', headers: { 'X-Ingest-Secret': secret },
+    payload: JSON.stringify(payload), muteHttpExceptions: true
+  });
+}
+//   kind: 'digest' | 'beat'。返り値は固定のコード（ok / no_config / http_4xx / http_5xx / exception）
+function lbSquadSend(kind) {
+  if (!_lbProp('EDGE_URL') || !_lbProp('EDGE_SECRET')) return 'no_config';
+  var code = 'exception';
+  try {
+    var snap = Date.now(), payload;
+    if (kind === 'digest') {
+      payload = lbHealStatusObject(_lbHealStatusRead(), snap, _lbSquadFailRead());
+    } else {
+      var p = PropertiesService.getScriptProperties();
+      var ms = function (k) { var v = p.getProperty(k), n = Number(v); return (v && isFinite(n) && n >= 1e12 && n < 1e14) ? Math.floor(n) : null; };
+      payload = { schema: 1, kind: 'beat', gas_build: String(LB_HEALTH_BUILD).slice(0, 11), snap_at: snap,
+                  health_last: ms('LB_HEALTH_LAST'), health_done: ms(LB_HEAL.DONE_PROP), heal_last: ms(LB_HEAL.HEAL_LAST_PROP), heal_done: ms(LB_HEAL.HEAL_DONE_PROP) };
+    }
+    var res = _lbSquadPost('/squad/digest', payload);
+    if (!res) return 'no_config';
+    var hc = res.getResponseCode();
+    if (hc === 200) {
+      code = 'ok';
+      if (kind === 'digest') { try { var c = _lbSquadCache(); if (c) c.remove(LB_SQUAD.CACHE_FAIL); } catch (eC) {} }   // 載せて届いた数は消す
+      if (kind === 'beat') {
+        var body = null; try { body = JSON.parse(res.getContentText()); } catch (eJ) { body = null; }
+        if (body && body.report) { try { _lbSquadDeliver(body.report); } catch (eD) { Logger.log('部隊の報告を届けられませんでした: ' + _lbErrType(eD)); } }
+      }
+    } else code = (hc >= 500) ? 'http_5xx' : 'http_4xx';
+  } catch (e) { code = 'exception'; }
+  if (code !== 'ok') _lbSquadCount(code);
+  else if (kind === 'beat') _lbSquadCount('ok');
+  return code;
+}
+//   pushToEdgeLight の最後から（15分ごと）。startMs＝pushToEdgeLight の開始
+function lbSquadBeat(startMs) {
+  if (!_lbProp('EDGE_URL') || !_lbProp('EDGE_SECRET')) return 'no_config';
+  if (typeof startMs === 'number' && Date.now() - startMs > LB_SQUAD.LATE_MS) { _lbSquadCount('skipped_late'); return 'skipped_late'; }
+  var c = _lbSquadCache();
+  try { if (c && c.get(LB_SQUAD.CACHE_BEAT)) return 'throttled'; } catch (e) {}
+  var code = lbSquadSend('beat');
+  if (code === 'ok') { try { if (c) c.put(LB_SQUAD.CACHE_BEAT, '1', LB_SQUAD.BEAT_GAP_S); } catch (e2) {} }
+  return code;
+}
+
+//   部隊の報告（④）をオーナーへ。★届くのは固定の文だけ（列挙の値を文に置き換える・key は英字の識別子・件数）。
+//     自由文・会員番号は報告の形に無い（Worker の許可リストで組み直した後）。ここでももう一度列挙で確かめる
+var LB_SQUAD_ACK = ['line_ok', 'mail_ok', 'failed'];
+var LB_SQUAD_MSG = {
+  verdict: { fixed: '直したものがあります', owner_needed: 'オーナーの判断が要るものがあります', cannot_judge: '判定できないものがあります', all_ok: '異常はありません' },
+  judge: { fixed: '直った', not_fixed: '直っていない', cannot_judge: '判定できない', 'new': '新しく出た' },
+  ask: {
+    none: '', gas_deploy: 'GAS の反映が要ります（手順は CEO が用意します）。', merge_pr: 'PR のマージが要ります（中身は CEO が確かめてからお願いします）。',
+    check_mac: 'Mac が起きているか・電源を確かめてください。', rotate_key: '部隊の鍵の入れ替えが要ります（手順は CEO が用意します）。',
+    check_system: '予約システムの定期処理が止まっている恐れがあります。CEO に「保全部隊の報告を見て」と伝えてください。'
+  },
+  key: { squad_gas_quiet: '予約システムからの心拍・要約が届いていない', squad_read_fail: '部隊が状態を読めない', squad_not_completed: '点検・修理が完走していない' }
+};
+function _lbSquadReportText(rep) {
+  if (!rep || typeof rep !== 'object') return null;
+  var M = LB_SQUAD_MSG;
+  if (!M.verdict.hasOwnProperty(rep.verdict) || !M.ask.hasOwnProperty(rep.ask) || (rep.urgency !== 'now' && rep.urgency !== 'daily')) return null;
+  var id = Number(rep.run_id);
+  if (!(isFinite(id) && id >= 1e12 && id < 1e14)) return null;
+  var items = Object.prototype.toString.call(rep.items) === '[object Array]' ? rep.items : [];
+  var L = [(rep.urgency === 'now' ? '【至急】' : '') + '【保全部隊】予約システムの点検：' + M.verdict[rep.verdict]];
+  for (var i = 0; i < items.length && i < 20; i++) {
+    var x = items[i] || {}, k = String(x.k || ''), c = Number(x.c);
+    if (!/^[a-z][a-z0-9_]{0,60}$/.test(k) || !M.judge.hasOwnProperty(x.j) || !(isFinite(c) && c >= 0 && c <= 1e6)) return null;
+    L.push('・' + (M.key.hasOwnProperty(k) ? M.key[k] + '（' + k + '）' : k) + '：' + M.judge[x.j] + '（' + Math.floor(c) + '件）');
+  }
+  if (M.ask[rep.ask]) L.push(M.ask[rep.ask]);
+  L.push('（報告 ' + Utilities.formatDate(new Date(id), SETTINGS.TIMEZONE, 'MM/dd HH:mm') + '・版 ' + String(LB_HEALTH_BUILD).slice(0, 11) + '）');
+  return { id: Math.floor(id), text: L.join('\n') };
+}
+function _lbSquadAck(id, code) {
+  try {
+    var res = _lbSquadPost('/squad/report/ack', { id: id, code: code });
+    var hc = res ? res.getResponseCode() : 0;
+    if (hc !== 200) _lbSquadCount(hc >= 500 ? 'http_5xx' : (hc ? 'http_4xx' : 'exception'));   // 200＝記録した・同じ番号で既に記録済み／409＝別の報告に上書きされた等（数える）
+  } catch (eA) { _lbSquadCount('exception'); }
+}
+function _lbSquadDeliver(rep) {
+  var t = _lbSquadReportText(rep);
+  if (!t) return 'bad_report';
+  //   ★同じ報告を二度 LINE で送らない（Worker は ack が無いと2時間後に渡し直す＝関門② 中1）。台帳の通知（I-H15）と同じ型：
+  //     送る前に番号を 'sending' で覚える → 届いたら結果で上書き。渡し直されたとき
+  //       結果が覚えてある … 送らずに覚えた結果で ack（二重にしない）
+  //       'sending' のまま … 送っている最中に落ちた＝LINE は送り直さずメールで送る（取りこぼさない・二重に届くならメール側）
+  //       何も覚えていない（CacheService が使えない・6時間を過ぎた）… もう一度送る（★取りこぼしより二重に倒す）
+  var c = _lbSquadCache(), sentKey = 'lb_squad_sent_' + t.id;
+  var prev = null; try { prev = c ? c.get(sentKey) : null; } catch (eC) { prev = null; }
+  if (prev && LB_SQUAD_ACK.indexOf(prev) >= 0) { _lbSquadAck(t.id, prev); return 'dup'; }
+  var code = 'failed', any = false;
+  if (prev === 'sending') {
+    code = _lbHealMail('【保全部隊】予約システムの点検', t.text) ? 'mail_ok' : 'failed';
+    try { if (c) c.put(sentKey, code, LB_SQUAD.FAIL_TTL_S); } catch (eC4) {}
+    _lbSquadAck(t.id, code);
+    return code;
+  }
+  try { if (c) c.put(sentKey, 'sending', LB_SQUAD.FAIL_TTL_S); } catch (eC2) {}
+  //   ★_lbPush を使わない（失敗を _lbNqOnFail に積まない・I-H19 と同じ）。宛先は trainer_master の owner かつ active（I-H14 と同じ）
+  var rc = _lbHealOwnerIds();
+  if (rc.ok && rc.ids.length) {
+    for (var k = 0; k < rc.ids.length; k++) {
+      var res = null;
+      try { res = _lbPushOnce(rc.ids[k], t.text, { purpose: 'owner_squad', noInlineRetry: true }); } catch (eP) { res = null; }
+      if (res && res.ok) any = true;
+    }
+  }
+  if (any) code = 'line_ok';
+  else code = _lbHealMail('【保全部隊】予約システムの点検', t.text) ? 'mail_ok' : 'failed';
+  try { if (c) c.put(sentKey, code, LB_SQUAD.FAIL_TTL_S); } catch (eC3) {}
+  _lbSquadAck(t.id, code);
+  return code;
 }
 
 // D1の枠と引当から出した残数が、計算と一致するかを突き合わせる（2026-10-07）。

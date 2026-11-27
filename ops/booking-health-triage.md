@@ -67,7 +67,7 @@ datahealth_fail・orphan_fail・metrics_fail・notify_retry_read_fail・consec_r
 ## 記録だけ（info・案件にしない）（8）
 cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・member_nocontract（●）・resv_future・transfer_seen
 
-## P1 で足した key（5）＋設計54 S1a で足した key（8）＋設計57 で足した key（3）
+## P1 で足した key（5）＋設計54 S1a で足した key（8）＋設計57 で足した key（3）＋保全部隊で足した key（2）
 | key | 区分 | 何を見るか |
 |---|---|---|
 | health_skipped | B | 点検・修理が重なって見送られた（借りる印・design-self-heal-P1 §2-1）。オーナーへのメールにも載る |
@@ -86,13 +86,17 @@ cal_manual・cancel_notify_slow・consec_counts・d1_read_served・gen_behind・
 | next_month_slots_none | B | 設計57：25日以降、日次点検の中で枠の計算（buildAvailableSlots・書き込みなし）を翌月だけで呼び、顧客向け（非表示でない）トレーナーの空き枠のある日が0日。出勤のある日数（トレーナーの記号ごと）を並べる。facts は no_shift（出勤も0日＝入れ忘れの見込み）／not_covered（出勤はあるのに枠が0＝予定名か予約・ブロックで埋まっている）。手当ては出勤の入力の確認（トレーナーへの連絡）＝顧客の枠に直結するので B |
 | next_month_slots_unknown | B | 設計57：顧客向けトレーナーのカレンダーが1本でも読めない（読んだ記録が無いも同じ）・日次点検の時間が足りない＝判定できない（0日とは言わない）。facts は cal_unreadable／no_time |
 | next_month_open | 記録 | 設計57：25日以降、翌月の顧客向けの枠のある日数（件数＝日数）と出勤のある日数。案件にしない |
+| squad_quiet | C | 保全部隊（会社の決定0208）：部隊（Mac の定時点検）が26時間以上 `/squad/status` を読んでいない（Mac が眠っている・電源・launchd の停止）。日次点検が `/quota/status?squad=1` で1日1回見る＝検知は線を越えてから最大約24時間遅れる。鍵の欄が空・SQUAD_READ=off（read_on=false）と、一度も読まれていない（設置前）は数えない。顧客に直接の害は無い＝C（オーナーが Mac を起こす） |
+| squad_check_fail | AB | 保全部隊：上の点検そのものが失敗した（Worker が読めない・応答の形が違う＝古い Worker）。facts は exception だけ。段は checked に付けない＝squad_quiet を閉じない |
 
-## 数え（90）
+## 数え（97）
 A 2 ＋ B へ移した 13 ＋ A→B 14 ＋ B 25 ＋ B（名前）8 ＋ C 6 ＋ 記録 8 ＝ **76**（抜き出した74 key ＋ `_ppKey` の2種）。
 ＋ P1 で足した 5（2026-11-24 に heal_save_fail・selfheal_watch_fail を足した）＝ 81。
 ＋ 設計54 S1a で足した 9（表の8・A→B の ws_check_fail）＝ 90（2026-11-24・ws_erase_stuck は関門② 再審3回目）。
 ＋ 設計57 で足した 4（表の3・A→B の next_month_check_fail）＝ 94（2026-11-25）。
-＋ 設計37 改訂5 で足した 1（vacancy_stale）＝ **95**（2026-11-26）。
+＋ 設計37 改訂5 で足した 1（vacancy_stale）＝ 95（2026-11-26）。
+＋ 保全部隊で足した 2（squad_quiet・squad_check_fail）＝ **97**（2026-11-27）。
+部隊だけが出す key（GAS は出さない＝この表の数えに入れない）：`squad_gas_quiet`（心拍・要約が届かない）・`squad_read_fail`（部隊が読めない）・`squad_not_completed`（未完走が続く）。Mac の台本が作り、報告（④）でオーナーへ届く。
 子の点検（calslots・karte_ai・contract_input）が出す細かい項目は未分類＝P1 で足す。
 
 ## 未確認
