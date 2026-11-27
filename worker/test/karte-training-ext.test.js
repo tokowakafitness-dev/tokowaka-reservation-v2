@@ -280,12 +280,14 @@ let p1sid;
     { exercise: 'ベンチプレス', sets: [{ weight: 30, reps: 10, assist: 2 }] },
     { exercise: 'プランク', sets: [], doneOnly: true },
   ];
+  //   設計67：数字の無い種目のメモ付き（メモの見張りの破壊だけに使う。ほかの破壊はメモの行の見張りが先に当たって trShape を通らないため ITEMS のまま）
+  const ITEMS_N = ITEMS.map((it) => it.doneOnly ? Object.assign({}, it, { note: '架空の体幹のメモ' }) : it);
   const fired = new Set();
   //   見張りの文が来たら、条件を1つずつ同じ状態で評価して、どれが当たったかを控える（T16c）
   const probe = (q, args) => {
     if (!/INSERT INTO karte_guard \(state\) SELECT 1 FROM p/.test(q)) return;
     for (const [key, cond] of TR_SHAPE_CONDS) {
-      const v = d.prepare(`WITH p AS (SELECT ? AS sid, ? AS n_sets, ? AS n_drops, ? AS n_ex) SELECT (${cond}) AS v FROM p`).get(...args).v;
+      const v = d.prepare(`WITH p AS (SELECT ? AS sid, ? AS n_sets, ? AS n_drops, ? AS n_ex, ? AS n_notes) SELECT (${cond}) AS v FROM p`).get(...args).v;
       if (v) fired.add(key);
     }
   };
@@ -322,6 +324,19 @@ let p1sid;
     env._hook = null;
     ok(`T16 ★trShape：${label} → BAD_STATE（409）で batch 全体が戻る`, r.status === 409 && r.code === 'BAD_STATE' && same(counts(), before), JSON.stringify([r, counts(), before]));
   }
+  //   設計67：メモ付きの要求で、メモの見張りを壊す
+  for (const [label, hook] of [
+    ['★種目のメモを数字のある種目（ord 1）にも1行余分に付ける（その行の見張りは自分の行しか見ない＝trShape の数・付き先でだけ捕まる）', (q, a) => { probe(q, a); if (/^INSERT INTO karte_tr_ex_notes/.test(q)) return [[q, a], [`INSERT INTO karte_tr_ex_notes (session_id, ord, note) VALUES (?, 1, '余分なメモ')`, [a[1]]]]; return null; }],
+    ['種目のメモの行を落とす（その行の見張りで戻る）', (q, a) => { probe(q, a); return /^INSERT INTO karte_tr_ex_notes/.test(q) ? [] : null; }],
+    ['種目のメモの付き先を別の ord（数字のある種目）にする（done_only = 1 でないので入らない→見張りで戻る）', (q, a) => { probe(q, a); return /^INSERT INTO karte_tr_ex_notes/.test(q) ? [[q, [a[0], a[1], 1]]] : null; }],
+  ]) {
+    clearRate();
+    const before = counts();
+    env._hook = hook;
+    const r = await add('U_t1', 'C4', dayOffset(-1), ITEMS_N);
+    env._hook = null;
+    ok(`T16 ★trShape（設計67）：${label} → BAD_STATE（409）で batch 全体が戻る`, r.status === 409 && r.code === 'BAD_STATE' && same(counts(), before), JSON.stringify([r, counts(), before]));
+  }
   ok('T16 ★差し替えの破壊の後も、別の回（古い回・先に保存した回）の行が1つも変わっていない', snapshot('OLDS1') === snapOld && snapshot(prior.sessionId) === snapPrior);
   //   壊さなければ通る（見張りが常に止める飾りでない証拠）
   clearRate();
@@ -339,13 +354,13 @@ let p1sid;
       d.prepare(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps) VALUES (?, 'x', ?, 1, 1)`).run(sid, ((i - 1) % 10) + 1);
       d.prepare(`INSERT INTO karte_tr_set_ext (set_id, session_id, ord) SELECT MAX(set_id), ?, 1 FROM karte_tr_sets WHERE session_id = ?`).run(sid, sid);
     }
-    probe(`INSERT INTO karte_guard (state) SELECT 1 FROM p`, [sid, 61, 0, 1]);
+    probe(`INSERT INTO karte_guard (state) SELECT 1 FROM p`, [sid, 61, 0, 1, 0]);
     d.exec('ROLLBACK');
   }
   const ALL = TR_SHAPE_CONDS.map((x) => x[0]);
   const never = ALL.filter((k) => !fired.has(k) && k !== 'ord_max');
   ok('T16c ★見張りのどの条件も、壊した状態のどれかで実際に当たる（当たらない条件＝飾りが無い。ord_max は CHECK で作れない）', never.length === 0, '当たらなかった条件: ' + never.join(','));
-  ok('T16c 条件の一覧（設計38 §3-3 の7条件＋数の照合）が欠けていない', same(ALL, ['n_sets', 'n_drops', 'n_ex', 'ext_count', 'set_without_ext', 'ext_without_parent', 'ext_other_session',
+  ok('T16c 条件の一覧（設計38 §3-3 の7条件＋数の照合）が欠けていない', same(ALL, ['n_sets', 'n_drops', 'n_ex', 'n_notes', 'note_without_done_only', 'ext_count', 'set_without_ext', 'ext_without_parent', 'ext_other_session',
      'ext_exercise', 'ord_seq', 'set_no_seq', 'done_with_sets', 'sets_missing', 'drop_seq', 'total', 'ord_max']), ALL.join(','));
   ok('T16d 見張りは batch の最後（karte_requests の直前）・NULL 比較に = を使わない', /G\.trShape\(sid, \{[^}]*\}\),\n\s*\],\n\s*result:/.test(KSRC)
      && TR_SHAPE_CONDS.every(([, c]) => !/session_id\s*=\s*p\.sid|\.ord\s*=\s*e\.ord|\.set_id\s*=\s*/.test(c)));

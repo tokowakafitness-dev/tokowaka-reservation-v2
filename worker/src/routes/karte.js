@@ -255,9 +255,9 @@ const G = {
   // ★トレーニングの1回の形（設計38 §3-3・I65b）。Worker が組んだ行の自己矛盾を batch の最後に確かめる二重の守り
   //   どれか1つでも当たれば BAD_STATE で batch 全体が戻る。NULL を比べる箇所は IS／IS NOT／COALESCE（= は NULL で素通りする）
   //   expect：Worker が数えた行数（本セット・ドロップ・種目）。ドロップは session を持たないので、別の回へ付いたものは数で捕まえる
-  trShape: (sid, expect) => S(`WITH p AS (SELECT ? AS sid, ? AS n_sets, ? AS n_drops, ? AS n_ex)
+  trShape: (sid, expect) => S(`WITH p AS (SELECT ? AS sid, ? AS n_sets, ? AS n_drops, ? AS n_ex, ? AS n_notes)
     INSERT INTO karte_guard (state) SELECT 1 FROM p WHERE ${TR_SHAPE_CONDS.map((x) => `(${x[1]})`).join('\n       OR ')}`,
-    sid, expect.sets, expect.drops, expect.exercises),
+    sid, expect.sets, expect.drops, expect.exercises, expect.notes || 0),
 };
 //   trShape の条件（設計38 §3-3 の番号）。[名前, 条件]。1行1条件＝1つずつ外して検査が落ちることを確かめられる形にしておく
 //   ★条件は重なっている（同じ壊れ方を2つ以上で捕まえる）。どの条件も実際に当たることは検査（karte-training-ext T16c）で確かめる
@@ -266,6 +266,10 @@ export const TR_SHAPE_CONDS = [
   ['n_sets', `(SELECT COUNT(*) FROM karte_tr_sets t WHERE t.session_id IS p.sid) IS NOT p.n_sets`],
   ['n_drops', `(SELECT COUNT(*) FROM karte_tr_drops dr JOIN karte_tr_sets t ON t.set_id IS dr.set_id WHERE t.session_id IS p.sid) IS NOT p.n_drops`],
   ['n_ex', `(SELECT COUNT(*) FROM karte_tr_exercises x WHERE x.session_id IS p.sid) IS NOT p.n_ex`],
+  //   設計67：数字の無い種目のメモの数・付き先（done_only = 1 の種目の並びの行にだけ）
+  ['n_notes', `(SELECT COUNT(*) FROM karte_tr_ex_notes n WHERE n.session_id IS p.sid) IS NOT p.n_notes`],
+  ['note_without_done_only', `EXISTS (SELECT 1 FROM karte_tr_ex_notes n WHERE n.session_id IS p.sid
+             AND NOT EXISTS (SELECT 1 FROM karte_tr_exercises x WHERE x.session_id IS n.session_id AND x.ord IS n.ord AND x.done_only IS 1))`],
   // 1 本セットの行数と付加の行数が違う
   ['ext_count', `(SELECT COUNT(*) FROM karte_tr_sets t WHERE t.session_id IS p.sid) IS NOT (SELECT COUNT(*) FROM karte_tr_set_ext e WHERE e.session_id IS p.sid)`],
   // 2 付加の指す先：付加の無い本セット
@@ -750,7 +754,7 @@ async function saveHistory(c) {
 }
 
 //   トレーニングの要求の鍵（設計38 §3-3）。★知らない鍵は 400（SET_KEY）。古い画面が送る鍵（exercise・sets／weight・reps・note）は全部ここにある
-const TR_ITEM_KEYS = ['exercise', 'sets', 'doneOnly'];
+const TR_ITEM_KEYS = ['exercise', 'sets', 'doneOnly', 'note'];   // note＝数字の無い種目のメモ（設計67・doneOnly のときだけ）
 const TR_SET_KEYS = ['weight', 'reps', 'note', 'assist', 'forced', 'drops'];
 const TR_DROP_KEYS = ['weight', 'reps', 'assist', 'forced'];   // drop に note・drops は持たない
 const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
@@ -759,7 +763,8 @@ function onlyKeys(o, keys) {
 }
 /** 新しい鍵（doneOnly・assist・forced・drops）を1つでも使っているか。★鍵があれば値に関わらず「使っている」（ドロップの中の鍵は drops がある時点で使っている） */
 export function trainingExtUsed(items) {
-  return (Array.isArray(items) ? items : []).some((it) => has(it, 'doneOnly')
+  //   設計67：種目の note は「前後の空白を落として中身があるとき」だけ新しい鍵として数える（空文字・空白だけは鍵が無いのと同じ＝関門① 中2）
+  return (Array.isArray(items) ? items : []).some((it) => has(it, 'doneOnly') || (it && typeof it.note === 'string' && it.note.trim() !== '')
     || (Array.isArray(it && it.sets) && it.sets.some((st) => has(st, 'assist') || has(st, 'forced') || has(st, 'drops'))));
 }
 /** 新しい鍵を使う要求の重さ：0.1 刻みでなければ丸めずに 400（設計38 §3-3。古い形の要求は今までどおり numOrNull で丸める） */
@@ -813,6 +818,16 @@ export function normalizeTraining(rawItems) {
       doneOnly = 1;
     } else if (!ss.length) throw new RangeError('SETS');
     if (ss.length > L.SETS_PER_EXERCISE) throw new RangeError('SETS');
+    //   設計67：数字の無い種目のメモ。文字列だけ・前後の空白を落とす・空なら無し（鍵が無いのと同じ）・200字まで・doneOnly の種目だけ（数字のある種目はセットのメモ）
+    let exNote = null;
+    if (has(it, 'note')) {
+      if (typeof it.note !== 'string') throw new RangeError('EX_NOTE');
+      const t = it.note.trim();
+      if (t) {
+        if (t.length > 200 || doneOnly !== 1) throw new RangeError('EX_NOTE');
+        exNote = t;
+      }
+    }
     const sets = ss.map((st, i) => {
       if (isObj(st)) onlyKeys(st, TR_SET_KEYS);
       const w = weightOf(st && st.weight);
@@ -833,7 +848,7 @@ export function normalizeTraining(rawItems) {
       total += 1 + drops.length;
       return { set_no: i + 1, weight_kg: w, reps: r, note: text(st.note, 200), assist_reps: assist, forced, drops };
     });
-    out.push({ exercise: ex, done_only: doneOnly, sets });
+    out.push({ exercise: ex, done_only: doneOnly, note: exNote, sets });
   }
   return { extUsed, items: out, total };
 }
@@ -842,6 +857,7 @@ function trainingHashItems(items) {
   return items.map((it) => {
     const o = { exercise: it.exercise };
     if (it.done_only) o.doneOnly = true;
+    if (it.note) o.note = it.note;   // 設計67：値があるときだけ（無い要求のハッシュは今までと同じ）
     o.sets = it.sets.map((s) => {
       const so = { weight_kg: s.weight_kg, reps: s.reps, note: s.note };
       if (s.assist_reps != null) so.assist = s.assist_reps;
@@ -866,13 +882,21 @@ function trainingHashItems(items) {
  *   見えなければ MAX は NULL＝付加・ドロップの NOT NULL で batch 全体が失敗する（黙って誤った親を指さない・設計38 §3-1・§11-1）
  */
 export function trainingRows(sid, tr) {
-  let nSets = 0, nDrops = 0;
+  let nSets = 0, nDrops = 0, nNotes = 0;
   for (const it of tr.items) for (const s of it.sets) { nSets++; nDrops += s.drops.length; }
   const parent = `FROM karte_tr_sets WHERE session_id = ?`;
   const rows = [];
   tr.items.forEach((it, i) => {
     const ord = i + 1;
     rows.push(S(`INSERT INTO karte_tr_exercises (session_id, ord, exercise, done_only) VALUES (?, ?, ?, ?)`, sid, ord, it.exercise, it.done_only));
+    //   設計67：数字の無い種目のメモ。その種目が done_only = 1 のときだけ入る文＋入らなければ全体を戻す見張り（黙って落とさない）。数と付き先は trShape でも見る
+    if (it.note) {
+      nNotes++;
+      rows.push(S(`INSERT INTO karte_tr_ex_notes (session_id, ord, note)
+                   SELECT session_id, ord, ? FROM karte_tr_exercises WHERE session_id = ? AND ord = ? AND done_only = 1`, it.note, sid, ord));
+      rows.push(S(`INSERT INTO karte_guard (state) SELECT 1 WHERE NOT EXISTS (
+                     SELECT 1 FROM karte_tr_ex_notes WHERE session_id = ? AND ord = ?)`, sid, ord));
+    }
     for (const x of it.sets) {
       rows.push(S(`INSERT INTO karte_tr_sets (session_id, exercise, set_no, weight_kg, reps, note)
                    VALUES (?, ?, ?, ?, ?, ?)`, sid, it.exercise, x.set_no, x.weight_kg, x.reps, x.note));
@@ -884,7 +908,7 @@ export function trainingRows(sid, tr) {
       }
     }
   });
-  return { rows, nSets, nDrops };
+  return { rows, nSets, nDrops, nNotes };
 }
 
 async function addTraining(c) {
@@ -911,7 +935,7 @@ async function addTraining(c) {
   const oldOk = !tr.extUsed && new Set(names).size === names.length;
   const oldSets = [];
   for (const it of tr.items) for (const s of it.sets) oldSets.push({ exercise: it.exercise, set_no: s.set_no, weight_kg: s.weight_kg, reps: s.reps, note: s.note });
-  const { rows, nSets, nDrops } = trainingRows(sid, tr);
+  const { rows, nSets, nDrops, nNotes } = trainingRows(sid, tr);
   return runWrite(c, {
     action: 'k_addTraining', section: 'training', customerId: cid,
     payload: { v: 2, cid, date, items: trainingHashItems(tr.items), member },
@@ -931,7 +955,7 @@ async function addTraining(c) {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`, mid, cid, sid, date, member.message, member.todo_json, member.tags_json, tid, now, now),
           G.mnoteMatch(mid),
         ] : []),
-        G.trShape(sid, { sets: nSets, drops: nDrops, exercises: tr.items.length }),
+        G.trShape(sid, { sets: nSets, drops: nDrops, exercises: tr.items.length, notes: nNotes }),
       ],
       result: member ? { sessionId: sid, rev: 1, mnoteId: mid, mnoteRev: 1 } : { sessionId: sid, rev: 1 },
     }),
@@ -1022,7 +1046,7 @@ async function importDay(c) {
           S(`INSERT INTO karte_tr_sessions (session_id, customer_id, session_date, author_trainer_id, rev, created_at)
              VALUES (?, ?, ?, ?, 1, ?)`, sid, cid, date, tid, now),
           ...t.rows,
-          G.trShape(sid, { sets: t.nSets, drops: t.nDrops, exercises: tr.items.length }),
+          G.trShape(sid, { sets: t.nSets, drops: t.nDrops, exercises: tr.items.length, notes: t.nNotes }),
         ] : []),
         ...(note ? [
           //   設計64：同時に2つ届いても同じ本文を2件にしない（上の読みと同じ条件を書く文そのものにも置く・関門② 中2）。
@@ -1075,7 +1099,7 @@ async function deleteHealthNote(c) {
  */
 export function editTrainingStmts(a) {
   const { old, rev, sid, cid, tid, now, date, tr, who } = a;
-  const { rows, nSets, nDrops } = trainingRows(sid, tr);
+  const { rows, nSets, nDrops, nNotes } = trainingRows(sid, tr);
   const stmts = [
     // 1〜4 見張り：生きている・作者本人かオーナー・rev・顧客が実在
     G.rowLive('karte_tr_sessions', 'session_id', old),
@@ -1111,7 +1135,7 @@ export function editTrainingStmts(a) {
                            WHERE s.session_id = m.session_id AND s.customer_id = m.customer_id
                              AND s.session_date = m.session_date AND s.deleted_at IS NULL)`, old, sid),
     // 13 形の見張り（k_addTraining と同じ）
-    G.trShape(sid, { sets: nSets, drops: nDrops, exercises: tr.items.length }),
+    G.trShape(sid, { sets: nSets, drops: nDrops, exercises: tr.items.length, notes: nNotes }),
   ];
   return { stmts, nSets, nDrops };
 }
@@ -1791,7 +1815,7 @@ async function loadSessions(env, sessions) {
   //   ★3つの表（種目の並び・付加・ドロップ）は生きた session の id を通してだけ読む（設計38 I70）
   const ids = sessions.map((x) => x.session_id);
   const ph = ids.map(() => '?').join(',');
-  const [st, xs, ds] = await Promise.all([
+  const [st, xs, ds, ns] = await Promise.all([
     //   並び：新しい回（付加あり）は ord, set_no。古い回は ord が NULL＝今までどおり exercise, set_no
     env.DB.prepare(
       `SELECT t.set_id, t.session_id, t.exercise, t.set_no, t.weight_kg, t.reps, t.note, e.ord, e.assist_reps, e.forced
@@ -1806,10 +1830,19 @@ async function loadSessions(env, sessions) {
          FROM karte_tr_drops d JOIN karte_tr_sets t ON t.set_id = d.set_id
         WHERE t.session_id IN (${ph}) ORDER BY d.set_id, d.drop_seq`
     ).bind(...ids).all(),
+    //   設計67：数字の無い種目のメモ（生きた session の id を通してだけ・会員のカルテは読まない＝I-M3）
+    env.DB.prepare(`SELECT session_id, ord, note FROM karte_tr_ex_notes WHERE session_id IN (${ph})`).bind(...ids).all(),
   ]);
   //   新しい形の回か古い回かは「種目の並びの行があるか」だけで決める（設計38 §3-5）
   const exBy = {};
-  for (const x of (xs.results || [])) (exBy[x.session_id] = exBy[x.session_id] || []).push({ ord: x.ord, exercise: x.exercise, doneOnly: x.done_only === 1 });
+  const noteBy = {};
+  for (const n of (ns.results || [])) noteBy[n.session_id + '\u0000' + n.ord] = n.note;
+  for (const x of (xs.results || [])) {
+    const e = { ord: x.ord, exercise: x.exercise, doneOnly: x.done_only === 1 };
+    const nt = noteBy[x.session_id + '\u0000' + x.ord];
+    if (nt != null && e.doneOnly) e.note = nt;   // 設計67：値があるときだけ鍵を付ける（数字の無い種目だけ）
+    (exBy[x.session_id] = exBy[x.session_id] || []).push(e);
+  }
   const dropBy = {};
   for (const d of (ds.results || [])) {
     (dropBy[d.set_id] = dropBy[d.set_id] || []).push({ weight_kg: d.weight_kg, reps: d.reps, assist_reps: d.assist_reps, forced: d.forced === 1 });
@@ -1994,7 +2027,7 @@ async function training(c) {
     if (f.bad) return err(f.status === 409 ? 'BOUNDARY_MOVED' : 'BAD_REQUEST', f.status || 400, f.bad);
     const aiConsent = await aiConsentFor(c.env, c.who, cid);   // 設計44：画面の補助（関門は k_aiDraft の中）
     const trainingEdit = trainingEditOn(c.env, c.who);   // 設計58：［編集］を出すか（真偽値だけ）
-    const head = { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit };   // 設計39・設計58
+    const head = { karteSchema: karteSchemaFor(c.env, c.who), aiDraft: aiDraftReady(c.env, c.who), aiConsent, trainingEdit, exNote: trainingExtOn(c.env, c.who) };   // 設計67：exNote＝数字の無い種目のメモを受ける（受付の版 33 と同じ判定源＝トレーナーごと・関門① 重大1）   // 設計39・設計58
     if (f.form === 'one') {
       //   ★1件の読み直しは extra と trace だけ（20回・集計は返さない＝［編集］のたびに重い集計を走らせない）
       const t = await traceSession(c.env, cid, f.sid);
