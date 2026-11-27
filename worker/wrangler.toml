@@ -29,7 +29,7 @@ LB_D1_REMAIN_ALL = "1"
 #   未設定（既定）… /writeshadow は記録せずに受け取っただけ返す（顧客には何も変わらない）
 #   "on"          … 判定して write_shadow_log に記録する。★入れるのは作業依頼 remaining {wsPrecheck} の結果を確かめ、
 #                   booking_metrics の保護（setupMetricsProtection）を置いてから（単独の PR・関門③は不要＝顧客に出ない）
-# WRITE_SHADOW = "on"
+WRITE_SHADOW = "on"
 
 # ---- ★読み取りの肩代わりを全部止めるための一行（2026-10-03）-----------------
 #   EDGE_READS = "off"  … 画面が呼ぶ窓口（c_ で始まるもの）をすべてGASへ戻す。
