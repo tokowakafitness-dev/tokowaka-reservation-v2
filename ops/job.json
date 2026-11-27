@@ -1,8 +1,8 @@
 {
   "op": "remaining",
-  "requestId": "job-20261127103422-604d9855",
+  "requestId": "job-20261127134307-f7f7ae7a",
   "args": {
-    "vacancyMode": "list",
-    "_rk": "a0e85025c511af2f6423c2d51f9eb08c637ac11b7c53f9014aedefdd12e3bf09"
+    "healStatus": true,
+    "_rk": "2b7774219ebc55d9d7ae6e84aa536e38c6573c0ea51f0b9c3d97a7bf6a57f294"
   }
 }
