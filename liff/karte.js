@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  var KARTE_BUILD = '2026-11-27a 0件で「手動で入れる」を押したら他の始め方を消す（種目の欄を開いている間は［← 始め方に戻る］1つ・閉じると3つに戻る）／2026-11-26i 数字の無い種目（実施のみ）のメモをその種目に付ける（Worker の karte_tr_ex_notes・exNote が真のときだけ・記録の画面の ✎・AI の下書き・読み取る・直す画面・日別・取り込みの決め方の文言は「「X」のメモにする」・設計67）／2026-11-26h AI の下書きを社内で重ねない（種目のメモ→その種目の1セット目のメモ・「nセット目：」→そのセットのメモ・入らない分は今どおり社内メモ・今日の流れから種目名と数字だけの行を外す・設計66）／2026-11-26g 説明の文を削る（挙動の説明・案内の帯は出さない・毎回は要らない注意は項目の横の「?」に畳む・取り込みの直後は「n種目を入れました」の短い通知・AI のボタンの直下に「外部のAI（Anthropic）へ送ります」の1行・健康の1行はカードの一覧の上に1回・設計65）／2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
+  var KARTE_BUILD = '2026-11-27b 過去分の取り込みの決めることを名前ごとに（1回決めると取り込む全部の日に効く・一覧に無い名前もセットが無くても種目にできる・前の名前の続きの行はその決め方に従う・16+16×10 は前を種目にしたら［セットにする］・前置き付きの名前は一覧の名前を候補に・【確認が必要な点】は日にもまとめにも入れず一覧の上に出す・設計62 改訂9）／2026-11-27a 0件で「手動で入れる」を押したら他の始め方を消す（種目の欄を開いている間は［← 始め方に戻る］1つ・閉じると3つに戻る）／2026-11-26i 数字の無い種目（実施のみ）のメモをその種目に付ける（Worker の karte_tr_ex_notes・exNote が真のときだけ・記録の画面の ✎・AI の下書き・読み取る・直す画面・日別・取り込みの決め方の文言は「「X」のメモにする」・設計67）／2026-11-26h AI の下書きを社内で重ねない（種目のメモ→その種目の1セット目のメモ・「nセット目：」→そのセットのメモ・入らない分は今どおり社内メモ・今日の流れから種目名と数字だけの行を外す・設計66）／2026-11-26g 説明の文を削る（挙動の説明・案内の帯は出さない・毎回は要らない注意は項目の横の「?」に畳む・取り込みの直後は「n種目を入れました」の短い通知・AI のボタンの直下に「外部のAI（Anthropic）へ送ります」の1行・健康の1行はカードの一覧の上に1回・設計65）／2026-11-26f 社内メモの上限を2,000→4,000字（画面と Worker を1つの値に・取り込みの1日分が本文16KB を超えるなら押す前に理由・設計63）・同じ文を2回書かない（社内メモ・お客様の欄に同じ行を重ねない・取り込みで同じ日の同じ社内メモを重ねない・設計64）／2026-11-26e AI の確認画面で押しても進まない（社内メモの2,000字超えを押す前に帯へ・押せない理由はボタンの上・入れられなかった理由は押したボタンのすぐ上・後ろに足すのカードを見える所へ・直したら理由を消す・読み取る経路も理由を帯へ）／2026-11-26d 取り込みの行き先を言う（「いまの記録（1種目）は消さずに後ろに足す・いまある種目には書き足さない」・入れた後に社内メモへ入れた行数・確認画面の文章の欄は「その日の社内メモに入れる文章」）／2026-11-26c 過去分の取り込み（共有プロンプトの出力を丸ごと貼る→日ごとに確かめて1日ずつ入れる・続きから）・注意することに取り込んだ体の注意（設計62 段3・改訂8）／2026-11-26b 指導の履歴に過去のまとめ（期間のブロック・まとめ待ちの月）・3か月より前の記録の上に月ごとの1行（設計62 段2）／2026-11-26a 記録と指導の履歴は直近3か月を1日ずつ・それより前は畳んで20回ずつ・推移と自己ベストは全期間（同点は早い日）・［編集］は押すたびに読み直す・過去の日付の前回はその日より前を読み足す（設計62 段1）／2026-11-25i お客様へは見出しの改行を残す（設計61 改訂2）／2026-11-25h 種目名は1行目に全幅（1字ずつ縦に折れない）・実施したを小さく／直す画面は変更なしでも保存で閉じる（送らない）／休憩タイマーを一旦出さない・1件以上は種目を足すだけ＋上に音声でセッションログを残す／保存した記録を直す（日別の記録の［編集］・設計58）・種目の行はつまみ左・全部✓右・小さく／同じ日まとめで写すときは同名でも結合しない・取り込みの日付は記録の画面の上の1行で知らせる・取り込みで記録の日付を変えるのは下書きが完全に空のときだけ・種目の候補は検索欄の直下に縦1列・開いた種目の見出しで閉じる・日付の案内・同じ日を1枚に・始め方の3つ・追加の取り込み（設計56）';
   var DRAFT_KEY = 'karte_draft_v1';
   //   この画面が必要とする Worker の版。古い Worker には新しい項目を送らない（黙って捨てられるため）
   var NEED_SCHEMA = 32;   // 32＝お客様に見える欄（設計35 C2・Codex 関門②：新しい画面×古い Worker で欄が session から切り離された）
@@ -2094,8 +2094,10 @@
           append(cur.pend, ln, otext, r.chunks);
           //   ★下見（parsed.sets）に入らない部分＝括弧書きのセット・読めない残りは別の決定待ちに出す。
           //     名前の決定待ちで「種目にする」を選ぶと下見のセットだけが入る＝ここで分けないと黙って消える（I64）
-          r.chunks.forEach(function (c) { if (c.paren != null) pend({ kind: 'line', lines: [ln], text: memoSlice(nm, c.from, c.to) }); });
-          if (r.tailAt >= 0) { var tt = memoSlice(nm, r.tailAt); if (tt) pend({ kind: 'line', lines: [ln], text: tt }); }
+          //   follow＝この行が続いている決定待ち（pending の添字）。過去分の取り込みは、その決定待ちの決め方に従わせる（設計62 改訂9）
+          var fw = res.pending.indexOf(cur.pend);
+          r.chunks.forEach(function (c) { if (c.paren != null) pend({ kind: 'line', lines: [ln], text: memoSlice(nm, c.from, c.to), follow: fw }); });
+          if (r.tailAt >= 0) { var tt = memoSlice(nm, r.tailAt); if (tt) pend({ kind: 'line', lines: [ln], text: tt, follow: fw }); }
         } else {
           var n0 = res.items[cur.item].sets.length;
           addChunks(cur.item, r.chunks, ln, nm);
@@ -2165,7 +2167,7 @@
         if (cur && cur.sealed) { pend({ kind: 'line', lines: [ln], text: otext }); continue; }   // 設計40 sealed
         if (/^\s*\d/.test(s) && cur) {
           //   ★決定待ちのかたまりに混ぜない：混ぜると「種目にする」を選んだときに黙って消える（I64・関門② 画面担当の指摘）
-          if (cur.pend) pend({ kind: 'line', lines: [ln], text: otext });
+          if (cur.pend) pend({ kind: 'line', lines: [ln], text: otext, follow: res.pending.indexOf(cur.pend) });
           else {
             meta[cur.item].pend = true;
             var lp6 = pend({ kind: 'line', lines: [ln], text: otext, item: cur.item });
@@ -3966,6 +3968,8 @@
   var IMP_DIGEST = /^\s*【これまでのまとめ(?:（(\d{4})年(\d{1,2})月〜(\d{4})年(\d{1,2})月）)?[^】]*】\s*$/;
   var IMP_MEMO_HEADS = ['その日の内容', '指導したこと', 'お客様の様子・話したこと'];
   var IMP_PII_WARN = /⚠\s*名前などが残っていました/;
+  //   共有のプロンプトの最後の塊（AI が直さなかった所）。日にもまとめにも入れない・一覧の上にそのまま見せる（設計62 改訂9）
+  var IMP_CHECK = /^\s*【確認が必要な点】\s*(.*)$/;
   var impPageShowOn = false, impWipe = null;   // impWipe：いま開いている取り込みの画面のメモリと DOM を全部消す（bfcache で戻ったとき・関門② 段3 中）
   /** 'YYYY/M/D' の行 → 'YYYY-MM-DD'（実在・今日以前）。年が無い・実在しない・未来は null と理由 */
   function impDateOf(line, todayYmd) {
@@ -3978,13 +3982,16 @@
   }
   /**
    * 貼った文を塊に切る（設計62 §6-3・I98）：=====の行と、年/月/日の日付の行の両方で切る。
-   *   返す値：{ pre: [行], blocks: [{ kind:'day'|'digest', lines:[行] }] }。最初の区切りより前は前置き（黙って捨てない）
+   *   返す値：{ pre: [行], blocks: [{ kind:'day'|'digest'|'check', lines:[行] }] }。最初の区切りより前は前置き（黙って捨てない）
    */
   function impSplit(text) {
     var lines = String(text == null ? '' : text).split(/\r\n|\r|\n/);
     var pre = [], blocks = [], cur = null, seenSep = false;
     lines.forEach(function (ln) {
       if (IMP_SEP.test(ln)) { cur = null; seenSep = true; return; }
+      var ck = IMP_CHECK.exec(ln);
+      if (ck) { cur = { kind: 'check', lines: [] }; if (ck[1].trim()) cur.lines.push(ck[1].trim()); blocks.push(cur); return; }
+      if (cur && cur.kind === 'check' && !IMP_DATE.test(ln)) { cur.lines.push(ln); return; }
       if (IMP_DATE.test(ln) || (cur === null && seenSep && ln.trim() !== '')) {
         if (IMP_DIGEST.test(ln)) { cur = { kind: 'digest', lines: [ln] }; blocks.push(cur); return; }
         if (cur && cur.kind === 'digest' && !IMP_DATE.test(ln)) { cur.lines.push(ln); return; }
@@ -4024,7 +4031,7 @@
     var autoKnown = EXERCISES.concat(Object.keys(exMaster));
     var sugg = [];
     (sessions || []).forEach(function (x) { (x.sets || []).forEach(function (st) { if (sugg.indexOf(st.exercise) < 0) sugg.push(st.exercise); }); });
-    var S = { days: [], digests: [], pre: [], piiWarn: false, shown: IMP_LIM.page, open: {}, reading: false, sending: false, stop: '', reauth: false,
+    var S = { days: [], digests: [], pre: [], checks: [], dec: {}, piiWarn: false, shown: IMP_LIM.page, open: {}, reading: false, sending: false, stop: '', reauth: false,
               all: 'loading', dates: null, consent: 'loading', healthImport: false, gen: 0, done: 0 };
     var wrap = el('div', { class: 'k-pimp', style: 'display:flex;flex-direction:column;gap:10px;' });
     box.appendChild(wrap);
@@ -4058,9 +4065,9 @@
       window.addEventListener('pageshow', function (e) { if (e && e.persisted && typeof impWipe === 'function') impWipe(); });
     }
     //   ★全部消す＝貼った文・日の配列・決めた結果・送る帯（見えないまま送れる状態を残さない）
-    function wipe() { S.gen++; S.sending = false; S.days = []; S.digests = []; S.pre = []; S.open = {}; S.progress = ''; S.sendErr = ''; S.reauth = false; S.wasRead = false; ta.value = ''; list.innerHTML = ''; info.innerHTML = ''; bar.innerHTML = ''; }
+    function wipe() { S.gen++; S.sending = false; S.days = []; S.digests = []; S.pre = []; S.checks = []; S.dec = {}; S.open = {}; S.progress = ''; S.sendErr = ''; S.reauth = false; S.wasRead = false; ta.value = ''; list.innerHTML = ''; info.innerHTML = ''; bar.innerHTML = ''; }
     impWipe = function () { if (ta.isConnected) { wipe(); draw(); } else impWipe = null; };
-    ta.oninput = function () { if (S.sending) return; S.gen++; S.sending = false; S.wasRead = false; S.days = []; S.digests = []; S.pre = []; S.stop = ''; draw(); };
+    ta.oninput = function () { if (S.sending) return; S.gen++; S.sending = false; S.wasRead = false; S.days = []; S.digests = []; S.pre = []; S.checks = []; S.dec = {}; S.stop = ''; draw(); };
 
     // ---- 1日の塊を読む
     function dayFrom(b, i) {
@@ -4068,16 +4075,65 @@
       var dd = impDateOf(first, todayYmd);
       var sec = impSections(rest);
       var D = { k: 'd' + i, raw: String(first).trim(), date: dd.date, dateErr: dd.err, train: sec.train.join('\n'), memo: impMemoLines(sec.memo), health: sec.health.join('\n'),
-                res: null, dec: [], pos: [], include: null, healthInc: null, st: 'todo', why: '', replayed: false, tooLong: b.lines.length > IMP_LIM.lines };
+                res: null, units: [], pos: {}, include: null, healthInc: null, st: 'todo', why: '', replayed: false, tooLong: b.lines.length > IMP_LIM.lines };
       parseDay(D);
       return D;
     }
+    function dateLine(D) { var p = D.date.split('-'); return (+p[0]) + '/' + (+p[1]) + '/' + (+p[2]); }
     function parseDay(D) {
-      D.res = null; D.dec = []; D.pos = [];
+      D.res = null; D.units = []; D.pos = {};
       if (!D.date || D.tooLong) return;   // ★年の無い・読めない日付の塊は parseMemo に渡さない（年を推測させない・G5）
-      var p = D.date.split('-'), dl = (+p[0]) + '/' + (+p[1]) + '/' + (+p[2]);
-      D.res = parseMemo(dl + '\n' + D.train, todayYmd, autoKnown, sugg);
-      D.dec = D.res.pending.map(function () { return null; });
+      D.res = parseMemo(dateLine(D) + '\n' + D.train, todayYmd, autoKnown, sugg);
+      D.units = D.res.pending.map(function (p, j) { return unitOf(D.res, p, j); });
+    }
+    //   ---- 設計62 改訂9：決めることは名前ごと（取り込む全部の日に効く）
+    //     unit＝決定待ち1件を「名前（種目にできる）／セットに読める行（R2〜R10）／それ以外の行」に分けたもの。
+    //     follow＝前の決定待ち（種目名の行）の続きの行。その名前の決め方に従う（孤立して1行ずつ決めさせない）
+    function unitOf(R2, p, j) {
+      var u = { j: j, p: p, text: String(p.text || ''), type: 'line', name: '', sets: [], note: '', follow: null, inParent: false, ruleSets: null, item: null };
+      if (p.kind === 'name') { u.type = 'name'; u.name = pendName(p); u.sets = (p.parsed && p.parsed.sets) || []; }
+      else if (p.kind === 'rule') { u.type = 'rule'; u.ruleSets = (p.parsed && p.parsed.sets) || []; u.item = p.item; }
+      else if (typeof p.follow === 'number' && R2.pending[p.follow]) {
+        u.follow = p.follow; u.inParent = (R2.pending[p.follow].lines || []).indexOf(p.lines[0]) >= 0;
+        var nn = memoNorm(u.text).s.trim(), cc = memoRuleCore(nn);
+        if (cc && cc.end === nn.length) u.ruleSets = cc.sets;   // 例：16+16×10（設計41 R8）。前の名前を種目にしたら［セットにする］を選べる
+      }
+      if ((p.kind === 'line' && u.follow == null) || (u.type === 'name' && !u.sets.length && !p.pii)) {
+        //   名前＋空白＋数字の文（プランク 30秒）＝名前（数字の無い種目にして、残りをその種目のメモに）
+        //   ★行のどこかに健康の言葉があれば分けない（種目のメモ・社内メモへ健康の言葉を入れない・I55・I71・関門② 改訂9 重大）
+        var t = MEMO_HEALTH.test(u.text) ? '' : memoName(u.text);
+        for (var sp = t.indexOf(' '); sp > 0; sp = t.indexOf(' ', sp + 1)) {
+          var nm = t.slice(0, sp).trim(), rest = t.slice(sp + 1).trim();
+          if (nm && !/\d/.test(nm) && nm.length <= EX_NAME_MAX && /\d/.test(rest) && memoSetish(memoNorm(rest).s)) { u.type = 'name'; u.name = nm; u.note = rest; break; }
+        }
+      }
+      u.key = u.type === 'name' ? 'n:' + u.name : u.type === 'rule' ? 'r:' + sameKey(u.text) : 'l:' + p.kind + ':' + sameKey(u.text);
+      return u;
+    }
+    function isEx(d) { return d === 'ex' || (typeof d === 'string' && d.indexOf('c:') === 0); }
+    function exOfDec(u, d) { return d === 'ex' ? u.name : String(d).slice(2); }
+    /** その日の決定待ち1件が、いま何で決まるか：{ key }＝名前ごとの決め方を見る／{ auto }＝前の行の決め方に従う（wait＝前が未決・skip＝前の文に含まれる・memo・move） */
+    function actOf(D, u) {
+      if (u.follow == null) return { key: u.key };
+      var pu = D.units[u.follow], pd = pu ? decOf(D, pu) : null, health = MEMO_HEALTH.test(u.text);
+      if (!pd) return { auto: 'wait' };
+      if (isEx(pd)) {
+        if (u.ruleSets) return { key: 'r:' + sameKey(u.text), rule: true };
+        if (health) return { key: 'l:line:' + sameKey(u.text) };
+        return { auto: 'memo', prefix: exOfDec(pu, pd) };   // 例：60×？＝入れないセット。数字は捨てず社内メモの【読めなかった行】へ（「名前：60×？」）
+      }
+      if (pd === 'memo' || pd === 'move' || pd === 'drop') {
+        if (u.inParent) return { auto: 'skip' };          // 前の行の文に含まれている（二重に書かない・選んだとおり入れない）
+        //   ★前を入れなくても、この行は黙って捨てない／★前を体の注意へ移しても、別の行（数字など）を体の注意へ自動で送らない（関門② 改訂9 中）
+        if (pd !== 'memo' || health) return { key: 'l:line:' + sameKey(u.text) };
+        return { auto: 'memo' };
+      }
+      return { key: 'l:line:' + sameKey(u.text) };
+    }
+    function decOf(D, u) { var a = actOf(D, u); return a.key ? (S.dec[a.key] || null) : (a.auto === 'wait' ? null : a.auto); }
+    function posOf(D, u) {
+      if (D.pos[u.j] == null) D.pos[u.j] = parseMemo((dateLine(D) + '\n' + D.train).split(/\r\n|\r|\n/).slice(0, u.p.lines[0] - 1).join('\n'), todayYmd, autoKnown, sugg).items.length;
+      return D.pos[u.j];
     }
     function digestFrom(b, i) {
       var m = IMP_DIGEST.exec(b.lines[0]) || [];
@@ -4094,13 +4150,14 @@
     function memoYm(y, mo) { var n = Number(mo); return n >= 1 && n <= 12 ? y + '-' + (n < 10 ? '0' : '') + n : null; }
     function read() {
       var text = String(ta.value || '');
-      S.stop = ''; S.days = []; S.digests = []; S.pre = []; S.open = {}; S.shown = IMP_LIM.page; S.wasRead = true; S.progress = ''; S.sendErr = '';
+      S.stop = ''; S.days = []; S.digests = []; S.pre = []; S.checks = []; S.dec = {}; S.open = {}; S.shown = IMP_LIM.page; S.wasRead = true; S.progress = ''; S.sendErr = '';
       if (!text.trim()) { draw(); return; }
       if (text.length > IMP_LIM.chars) { S.stop = '長すぎます（10万字まで・いま' + text.length + '字）。分けて貼ってください。'; draw(); return; }
       var sp = impSplit(text);
       var dayBlocks = sp.blocks.filter(function (b) { return b.kind === 'day'; });
       if (dayBlocks.length > IMP_LIM.days) { S.stop = '日数が多すぎます（400日まで・いま' + dayBlocks.length + '日）。分けて貼ってください。'; draw(); return; }
       S.pre = sp.pre; S.piiWarn = IMP_PII_WARN.test(text);
+      sp.blocks.forEach(function (b) { if (b.kind === 'check') b.lines.forEach(function (t) { t = String(t).trim(); if (t && t !== 'なし') S.checks.push(t); }); });
       S.digests = sp.blocks.filter(function (b) { return b.kind === 'digest'; }).map(digestFrom);
       //   ★10日ずつ読み、間で画面に処理を返す（400日でも固まらない）
       var gen = ++S.gen, i = 0;
@@ -4126,23 +4183,65 @@
     }
     function healthIncluded(D) { return healthOn() && D.healthInc !== false; }
     function pendName(p) { return memoName(p && p.parsed ? p.parsed.exercise : ''); }
-    //   ★健康の言葉を含む行は種目にしない（種目名・会員の自己ベストへ健康の言葉を入れない・I55・I71・関門② 段3 重大）
-    function canEx(p) { var n = pendName(p); return p.kind === 'name' && !!n && n.length <= EX_NAME_MAX && !MEMO_HEALTH.test(String(p.text)) && !!(p.parsed && p.parsed.sets && p.parsed.sets.length); }
+    //   ★健康の言葉を含む名前は種目にしない（種目名・会員の自己ベストへ健康の言葉を入れない・I55・I71・関門② 段3 重大）
+    //   ★名前らしい印（敬称・回目・初回・体験）の名前・記号で始まる行は種目にしない（設計52 関門① 4）。セットが無くても種目にできる＝数字の無い種目（設計67）
+    function canEx(u) {
+      var n = u.name;
+      return u.type === 'name' && !!n && n.length <= EX_NAME_MAX && !MEMO_HEALTH.test(n) && !u.p.pii && /^[ぁ-ゖァ-ヺー一-鿿々A-Za-z]/.test(n.normalize('NFKC'))
+        && (!MEMO_PII_WEAK.test(n) || autoKnown.indexOf(n) >= 0);
+    }
+    //   ★候補の名前にも健康の言葉・名前らしい印を許さない（最近の記録・共有の一覧に紛れた名前を種目名へ送らない・関門② 改訂9 第2周 中）
+    function candOk(n) { return !!n && n.length <= EX_NAME_MAX && !MEMO_HEALTH.test(n) && !MEMO_PII_WEAK.test(n); }
+    //   ★お客様の名前らしい行（parseMemo の pii）は、名前の部分を〇〇にした文だけを社内メモへ（設計40 G9 と同じ・関門② 改訂9 第3周 中）
+    function memoText(u) { return u.p && u.p.pii ? String(u.p.masked || '〇〇') : u.text; }
+    function exKnown(n) { return EXERCISES.indexOf(n) >= 0 || Object.prototype.hasOwnProperty.call(exMaster, n); }
+    /** 一覧の名前の候補（最大2件・選ぶまで入れない＝設計52 のもしかしてと同じ）：読み取りの候補 → もしかして → 名前の中に一覧の名前を含む（前置き付き：ワンレッグ〜・片手〜） */
+    function impCands(u) {
+      var out = [];
+      function add(n) { n = exName(n); if (n && n !== u.name && candOk(n) && out.indexOf(n) < 0) out.push(n); }
+      (u.p.candidates || []).forEach(function (c) { if (c && c.name) add(c.name); });
+      if (!out.length) exSuggest(u.name, Object.keys(exMaster)).forEach(function (c) { add(c.name); });
+      if (!out.length) {
+        var f = exFold(u.name), pool = [], hits = [];
+        EXERCISES.concat(Object.keys(exMaster)).forEach(function (x) { pool.push([x, x]); });
+        Object.keys(EX_ALIAS).forEach(function (a) { pool.push([a, EX_ALIAS[a]]); });
+        Object.keys(EX_HINTS).forEach(function (h) { EX_HINTS[h].forEach(function (c) { pool.push([h, c]); }); });
+        pool.forEach(function (pe) { var g = exFold(pe[0]); if (g.length >= 3 && g !== f && f.indexOf(g) >= 0) hits.push({ g: g, name: pe[1] }); });
+        //   いちばん長く当たった語だけ（ルーマニアンデッドリフトの中のデッドリフトは数えない）
+        hits = hits.filter(function (h) { return !hits.some(function (o) { return o.g.length > h.g.length && o.g.indexOf(h.g) >= 0; }); });
+        var names = [];
+        hits.forEach(function (h) { if (names.indexOf(h.name) < 0) names.push(h.name); });
+        if (names.length <= 2) names.forEach(add);
+      }
+      return out.slice(0, 2);
+    }
     function setOut(st) { var o = impSet(st); o.done = true; if (st.note) o.note = st.note; return o; }
     function build(D) {
       var out = { items: [], note: null, health: null, why: '' };
       if (!D.date) { out.why = '日付を直す'; return out; }
       if (D.tooLong) { out.why = '長すぎます（1日200行まで）'; return out; }
       var R2 = D.res, items = R2.items.map(function (it) { return { exercise: it.exercise, doneOnly: it.doneOnly === true, sets: (it.sets || []).map(setOut) }; });
+      var orig = items.slice(), made = {}, added = 0;
       var unread = [], moved = [];
-      for (var j = 0; j < R2.pending.length; j++) {
-        var p = R2.pending[j], d = D.dec[j];
+      for (var j = 0; j < D.units.length; j++) {
+        var u = D.units[j], a = actOf(D, u);
+        if (a.auto === 'wait' || a.auto === 'skip') continue;   // wait：前の名前が未決＝その名前の決めることで止まる
+        if (a.auto === 'memo') { unread.push(a.prefix ? a.prefix + '：' + u.text : u.text); continue; }
+        if (a.auto === 'move') { moved.push(u.text); continue; }
+        var d = S.dec[a.key];
         if (!d) { out.why = '決めることがあります'; return out; }
-        if (d === 'ex' || d.indexOf('c:') === 0) {
-          var nm = d === 'ex' ? pendName(p) : String((p.candidates[Number(d.slice(2))] || {}).name || '');
-          items.splice(Math.min(D.pos[j] == null ? items.length : D.pos[j], items.length), 0, { exercise: exName(nm), doneOnly: false, sets: p.parsed.sets.map(setOut) });
-        } else if (d === 'memo') unread.push(String(p.text));
-        else if (d === 'move') moved.push(String(p.text));
+        if (isEx(d) && (!canEx(u) || (d !== 'ex' && !candOk(exOfDec(u, d))))) { out.why = '決めることがあります'; return out; }   // 送る前にも名前を確かめる（二重）   // 種目にできない行に種目の決めが当たった（送らない）
+        if (isEx(d)) {
+          var it = { exercise: exName(exOfDec(u, d)), doneOnly: !u.sets.length, sets: u.sets.map(setOut) };
+          if (u.note) { if (exNoteOk()) it.note = impNorm(u.note); else unread.push(u.text); }   // 設計67：数字の無い種目のメモ（Worker が受けないときは社内メモへ＝捨てない）
+          //   読んだ位置に入れる。前に差し込んだ数だけずらす（同じ日に2つ以上種目にしても順が崩れない）
+          items.splice(Math.min(posOf(D, u) + added, items.length), 0, it); added++; made[u.j] = it;
+        } else if (d === 'set') {
+          var tg = a.rule && u.follow != null ? made[u.follow] : orig[u.item];
+          if (!tg) { out.why = '決めることがあります'; return out; }
+          tg.sets = tg.sets.concat(u.ruleSets.map(setOut)); tg.doneOnly = false;
+        } else if (d === 'memo') unread.push(memoText(u));
+        else if (d === 'move') moved.push(u.text);
       }
       var ml = [];
       for (var k = 0; k < D.memo.length; k++) {
@@ -4210,11 +4309,21 @@
       info.innerHTML = ''; list.innerHTML = ''; bar.innerHTML = '';
       if (S.stop) info.appendChild(msg(S.stop, true));
       if (S.reading) { info.appendChild(msg('読んでいます…（' + S.days.length + '日）')); return; }
-      if (!S.days.length && !S.digests.length) { if (S.wasRead && String(ta.value || '').trim() && !S.stop) info.appendChild(msg('日付の行（年/月/日）が見つかりませんでした。共有のプロンプトの出力をそのまま貼ってください。', true)); return; }
+      if (S.checks.length) info.appendChild(el('div', { class: 'k-card k-pimp-check', style: 'display:flex;flex-direction:column;gap:2px;font-size:13px;white-space:pre-wrap;' },
+        [el('div', { style: 'font-weight:700;', text: '確認が必要な点 ' + S.checks.length + '件' })].concat(S.checks.map(function (t) { return el('div', { text: t }); }))));
+      if (!S.days.length && !S.digests.length) { if (S.wasRead && !S.checks.length && String(ta.value || '').trim() && !S.stop) info.appendChild(msg('日付の行（年/月/日）が見つかりませんでした。共有のプロンプトの出力をそのまま貼ってください。', true)); return; }
       if (S.piiWarn) info.appendChild(el('div', { class: 'k-msg bad k-pimp-pii', role: 'alert', text: '名前などが残っていたと AI が書いています。貼る前の置き換えを確かめてください。' }));
       if (S.pre.length) info.appendChild(el('div', { class: 'k-sub k-pimp-pre', style: 'white-space:pre-wrap;font-size:12px;', text: '区切りより前の文（入れません）：\n' + S.pre.join('\n') }));
       var bt = bandText();
       info.appendChild(el('div', { class: 'k-card k-pimp-band', style: 'display:flex;flex-direction:column;gap:2px;font-size:13px;' }, bt.parts.map(function (t) { return el('div', { text: t }); })));
+      S.gmap = {};
+      var gs = groups();
+      if (gs.length) {
+        var left = gs.filter(function (g) { return !S.dec[g.key]; }).length;
+        var gb = el('div', { class: 'k-pimp-groups', style: 'display:flex;flex-direction:column;gap:6px;' }, [el('div', { class: 'k-pimp-gcount', style: 'font-weight:700;font-size:14px;', text: '決めること 残り' + left + '件' })]);
+        gs.forEach(function (g) { gb.appendChild(groupCard(g, null)); });
+        list.appendChild(gb);
+      }
       S.days.slice(0, S.shown).forEach(function (D) { list.appendChild(dayRow(D)); });
       if (S.days.length > S.shown) list.appendChild(el('button', { type: 'button', class: 'k-btn out k-pimp-more', style: 'min-height:44px;', text: '続きを表示（あと' + (S.days.length - S.shown) + '日）', onclick: function () { S.shown += IMP_LIM.page; draw(); } }));
       S.digests.forEach(function (G) { list.appendChild(digestRow(G)); });
@@ -4245,6 +4354,44 @@
       if (S.open[D.k]) c.appendChild(dayDetail(D, b));
       return c;
     }
+    //   名前ごとの決めること：入れる日（済んでいない・入れない日を除く）にある決定待ちを、決め方の鍵でまとめる（新しい日が上の順）
+    function gOf(m, a, u) { return m[a.key] || (m[a.key] = { key: a.key, u: u, rule: !!a.rule || u.type === 'rule', n: 0, seen: {}, health: false, exOk: canEx(u) }); }
+    function groups() {
+      var order = [];
+      S.days.forEach(function (D) {
+        if (!D.res || D.st === 'done' || !included(D)) return;
+        D.units.forEach(function (u) {
+          var a = actOf(D, u); if (!a.key) return;
+          var fresh = !S.gmap[a.key], g = gOf(S.gmap, a, u);
+          if (fresh) order.push(g);
+          if (!g.seen[D.k]) { g.seen[D.k] = 1; g.n++; }
+          if (MEMO_HEALTH.test(u.text)) g.health = true;
+          if (!canEx(u)) g.exOk = false;   // ★同じ鍵の1つでも種目にできなければ出さない（代表の1件だけで決めない・関門② 改訂9 重大）
+        });
+      });
+      return order;
+    }
+    /** 決めることのカード（上の一覧＝inDay null・日の中身＝その日の決定待ち u）。ボタンは名前ごとの決め方を書き換える */
+    function groupCard(g, inDay) {
+      var u = inDay || g.u, d = S.dec[g.key] || null, nameG = g.key.indexOf('n:') === 0;
+      var pc = el('div', { class: 'k-caution ' + (inDay ? 'k-pimp-pend' : 'k-pimp-group'), 'data-key': g.key, style: 'display:flex;flex-direction:column;gap:6px;' });
+      var head = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;' }, [el('span', { style: 'white-space:pre-wrap;font-size:14px;' + (nameG && !inDay ? 'font-weight:700;' : ''), text: nameG && !inDay ? u.name : u.text })]);
+      if (!inDay && g.n > 1) head.appendChild(badge(g.n + '日'));
+      pc.appendChild(head);
+      var set = function (v) { return function () { S.dec[g.key] = S.dec[g.key] === v ? null : v; draw(); }; };
+      var bs = [];
+      if (g.rule) bs.push(sbtn('セットにする（' + impLine(u.ruleSets) + '）', 'k-pimp-set', set('set'), d === 'set'));
+      if (nameG && g.exOk && canEx(u)) {
+        bs.push(sbtn('「' + u.name + '」を種目にする', 'k-pimp-ex', set('ex'), d === 'ex'));
+        impCands(u).forEach(function (cn) { bs.push(sbtn('「' + cn + '」にする', 'k-pimp-cand', set('c:' + cn), d === 'c:' + cn)); });
+      }
+      if (!g.health && !MEMO_HEALTH.test(u.text)) bs.push(sbtn(u.p && u.p.pii ? '「' + memoText(u) + '」をメモに残す' : 'メモに残す', 'k-pimp-memo', set('memo'), d === 'memo'));
+      else if (healthOn()) bs.push(sbtn('体の注意へ移す', 'k-pimp-move', set('move'), d === 'move'));
+      bs.push(sbtn('入れない', 'k-pimp-drop', set('drop'), d === 'drop'));
+      pc.appendChild(btnRow(bs));
+      if (isEx(d) && !exKnown(exOfDec(u, d))) pc.appendChild(el('div', { class: 'k-sub k-pimp-part', text: '部位：' + label(PART_KEYS, guessPart(exOfDec(u, d))) + '（推定）' }));
+      return pc;
+    }
     function btnRow(kids) { return el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;' }, kids); }
     function sbtn(text, cls, fn, on) { return el('button', { type: 'button', class: 'k-btn small ' + (on ? '' : 'out ') + cls, 'aria-pressed': on ? 'true' : 'false', style: 'min-height:44px;margin:0;', text: text, onclick: fn }); }
     function dayDetail(D, b) {
@@ -4259,22 +4406,8 @@
         })]));
       }
       b.items.forEach(function (it) { x.appendChild(el('div', { style: 'font-size:14px;', text: it.exercise + '　' + (it.sets.length ? it.sets.map(function (st) { return setOneLine({ weight_kg: st.weight, reps: st.reps, assist_reps: st.assist, forced: st.forced, drops: (st.drops || []).map(function (q) { return { weight_kg: q.weight, reps: q.reps, assist_reps: q.assist, forced: q.forced }; }) }); }).join('・') : '実施のみ') })); });
-      (D.res ? D.res.pending : []).forEach(function (p, j) {
-        var d = D.dec[j];
-        var pc = el('div', { class: 'k-caution k-pimp-pend', style: 'display:flex;flex-direction:column;gap:6px;' });
-        pc.appendChild(el('div', { style: 'white-space:pre-wrap;font-size:14px;', text: '読めなかった行：' + p.text }));
-        var bs = [];
-        var pick = function (v) { return function () { D.dec[j] = D.dec[j] === v ? null : v; if (v === 'ex' || String(v).indexOf('c:') === 0) D.pos[j] = parseMemo(String(D.res && D.date ? (+D.date.slice(0, 4)) + '/' + (+D.date.slice(5, 7)) + '/' + (+D.date.slice(8, 10)) + '\n' + D.train : '').split(/\r\n|\r|\n/).slice(0, p.lines[0] - 1).join('\n'), todayYmd, autoKnown, sugg).items.length; draw(); }; };
-        if (canEx(p)) {
-          bs.push(sbtn('「' + pendName(p) + '」を種目にする', 'k-pimp-ex', pick('ex'), d === 'ex'));
-          (p.candidates || []).forEach(function (cd, ci) { if (cd && cd.name && !MEMO_HEALTH.test(String(cd.name))) bs.push(sbtn('「' + cd.name + '」にする', 'k-pimp-cand', pick('c:' + ci), d === 'c:' + ci)); });
-        }
-        if (!MEMO_HEALTH.test(String(p.text))) bs.push(sbtn('メモに残す', 'k-pimp-memo', pick('memo'), d === 'memo'));
-        else if (healthOn()) bs.push(sbtn('体の注意へ移す', 'k-pimp-move', pick('move'), d === 'move'));
-        bs.push(sbtn('入れない', 'k-pimp-drop', pick('drop'), d === 'drop'));
-        pc.appendChild(btnRow(bs));
-        x.appendChild(pc);
-      });
+      //   この日の決めること（押すと、同じ名前・同じ行の全部の日に効く）
+      D.units.forEach(function (u) { var a = actOf(D, u); if (a.key) x.appendChild(groupCard(S.gmap[a.key] || gOf({}, a, u), u)); });
       D.memo.forEach(function (m) { x.appendChild(lineBox(m, true)); });
       if (D.health.trim()) {
         x.appendChild(el('div', { class: 'k-caution k-pimp-health', style: 'white-space:pre-wrap;font-size:14px;', text: '体の注意：' + D.health + '\n' + (healthIncluded(D) ? '→「注意すること」の日付つきの記録に入れます' : healthOn() ? '→ 入れません' : S.consent === 'none' ? '→ 同意が無いため入れません' : S.consent === 'agreed' ? '→ いまは止めているため入れません' : '→ 同意を確かめられないため入れません') }));
