@@ -2674,7 +2674,7 @@ function triggerListText() {
   var hs = String(_lbProp('LB_HEALTH_STEP') || '');
   //   ★先頭の [check_id] が最後の開始（LB_HEALTH_LAST）と違えば、前の点検の記録（今回は最初の段より前に落ちた）＝最新として見せない（2026-11-28・関門②）
   var hsM = /^\[(\d+)\] /.exec(hs);
-  var hsOld = !!(hs && hl && (!hsM || Number(hsM[1]) !== hl));
+  var hsOld = !!(hs && (!hl || !hsM || Number(hsM[1]) !== hl));   // 開始の記録が無いときも「この点検の記録」とは言わない
   out.push('点検がどこまで進んだか: ' + (hs ? (hsOld ? '★最後に始めた点検の段の記録はありません（最初の段より前に落ちたか、記録の書き込みに失敗）。前の点検の記録: ' : '') + hs
                                          : '★記録なし（まだ本番モードで走っていない）'));
   if (hs) {

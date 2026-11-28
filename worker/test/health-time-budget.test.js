@@ -191,6 +191,8 @@ console.log('=== T8 作業依頼 triggers は前の点検の段の記録を最�
   ok('T8-2 ★前の点検の記録なら「最後に始めた点検の段の記録はありません」と前置きする', /最後に始めた点検の段の記録はありません/.test(b), b.slice(-400));
   const c = tl({ LB_HEALTH_LAST: String(last), LB_HEALTH_STEP: '記録@1000ms / 開始=0' });
   ok('T8-3 [check_id] の無い古い形の記録も最新として見せない', /最後に始めた点検の段の記録はありません/.test(c));
+  const d = tl({ LB_HEALTH_STEP: '[' + last + '] 記録@1000ms / 開始=0' });
+  ok('T8-4 開始の記録（LAST）が無いときも、この点検の記録とは言わない', /最後に始めた点検の段の記録はありません/.test(d));
 }
 
 t.end('日次点検の時間の上限');
