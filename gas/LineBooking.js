@@ -2427,7 +2427,7 @@ function lbNextMonthOpenCheck(nowMs, hcElapsedMs, readFn) {
 //   「本当に変わらない」のかを見分けられないと切り分けられない。
 //   実際に 2026-10-08、反映が止まっているのに前日と同じ出力で気づけなかった。
 //   **直したらここを上げる。**
-var LB_HEALTH_BUILD = '2026-11-27a 保全部隊：要約（点検と修理の完走の後）・心拍（pushToEdgeLight・1時間に1回）を Worker へ・部隊の報告を固定の文で LINE（失敗はメール）・見張り squad_quiet／squad_check_fail・lbHealStatusObject（状態の読み取りを1か所に）／2026-11-26a 設計37 改訂5：空き枠のお知らせの見張り vacancy_stale・webhook の vac= postback・_lbPushOnce に messages／2026-11-25d 設計57 関門② 再審2：数え始めるのは点検の経過3分未満だけ・かかった秒数を詳細に残す／2026-11-25c 設計57 関門② 再審：公開シートを読まず、枠の計算 buildAvailableSlots を翌月だけで呼んで数える（書き直しとの競合・正常な0枠の取り違えを無くす）／2026-11-25b 設計57 関門②：公開シートの書き直し中（meta の前後・0行）と顧客向けトレーナーのカレンダーが読めないときは unknown／2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
+var LB_HEALTH_BUILD = '2026-11-28a 時間の上限：開始から4分で次の段に入らず打ち切り（health_partial・記録とメールだけ・DONE と要約は書かない）・段ごとの経過を全部 LB_HEALTH_STEP に・印を取るロックが混んでいれば6回試す（借りる印は35分のまま）・Nudge の判定は同じ実行の段の記録だけ（[check_id]）／2026-11-27a 保全部隊：要約（点検と修理の完走の後）・心拍（pushToEdgeLight・1時間に1回）を Worker へ・部隊の報告を固定の文で LINE（失敗はメール）・見張り squad_quiet／squad_check_fail・lbHealStatusObject（状態の読み取りを1か所に）／2026-11-26a 設計37 改訂5：空き枠のお知らせの見張り vacancy_stale・webhook の vac= postback・_lbPushOnce に messages／2026-11-25d 設計57 関門② 再審2：数え始めるのは点検の経過3分未満だけ・かかった秒数を詳細に残す／2026-11-25c 設計57 関門② 再審：公開シートを読まず、枠の計算 buildAvailableSlots を翌月だけで呼んで数える（書き直しとの競合・正常な0枠の取り違えを無くす）／2026-11-25b 設計57 関門②：公開シートの書き直し中（meta の前後・0行）と顧客向けトレーナーのカレンダーが読めないときは unknown／2026-11-25a 設計57：25日以降に翌月の空き枠のある日を数える（next_month_slots_none／判定できなければ next_month_slots_unknown・出勤のある日数も出す）／2026-11-24c 設計54 S1a：書き込みの比較（ws_*）・booking_metrics の保護の見張りと解除（metrics_*）／2026-11-24b 自己修理 P1：保存の失敗は SaveNote の印の確認でも SKIP に数える・壊れた未来の DONE で失敗を解除しない・見張りの段の失敗を selfheal_watch_fail で出す／空の incidents タブは印を確かめて見出しを書いて使う（header_repaired）・保存できなかった理由を LB_HEALTH_SAVE_LAST に残し翌日の点検が heal_save_fail で悪化メールに載せる・作業依頼 remaining {healStatus}／自己修理 P1：副作用の直前は延長できたときだけ通す（busy は3回試す・段の進行だけ残り5分で続ける）・完走後の通知の見送りは deferred_lease で数えない／印を失ったら以降の副作用をしない（ok/busy/lost）・修理の予算（うながしの残り）・作った後の上限超え／点検と修理は同時に1本だけ（借りる印）・氏名を外した要約と案件台帳・完走の印 LB_HEALTH_DONE・lbSelfHeal（lbNudgeDaily の最後に相乗り・練習が既定・トリガーを足すだけ18本以下／cancel_notes の見出し）・宛先は owner かつ active';
 var LB_HEALTH_SHEET = 'health_status';
 var LB_HEALTH_COLS = ['点検時刻', '区分', '重大度', '件数', '内容'];
 
@@ -2447,11 +2447,13 @@ function dailyHealthCheck(dryRunArg) {
   //   ★`=== true` にする。手で dry-run したいときだけ true を渡す。
   //     それ以外（undefined・イベントオブジェクト）は**本番の実行**として扱う。
   var dryRun = (dryRunArg === true);
+  //   ★時間の上限の数え始め＝関数の入口（印を取るまでの待ちも数える・2026-11-28）
+  var _hcStart = Date.now();
   //   ★自己修理 P1（§2-1・I-H20・I-H28）：点検と修理は同時に1本だけ。手で回す dry-run も同じ印を取る
   //     （dry-run も refreshPaceBoard でシートを書く＝読み取り専用ではない）。取れなければ何もしない。
   //     ScriptLock は印を取る・延ばす・放す瞬間だけ持つ（予約・振替と同じロック＝長く持つと顧客が待つ）
   var _hcEntry = dryRun ? 'check_dry' : 'check';
-  var _hcLease = _lbLeaseAcquire(_hcEntry);
+  var _hcLease = _lbLeaseAcquire(_hcEntry, LB_HEAL.ACQ_TRIES);   // ★混んでいれば数回試す（2026-11-28・11/27 は1回で見送り）
   if (!_hcLease.ok) {
     _lbHealthSkipNote(_hcEntry, _hcLease.why);
     Logger.log('dailyHealthCheck: 見送り（' + _hcLease.why + '）。点検か修理が走っています');
@@ -2480,8 +2482,11 @@ function dailyHealthCheck(dryRunArg) {
   //     段ごとに「名前と経過時間」を Script Properties に残せば、
   //     落ちても**最後に記録された段が落ちた場所**になる。
   //   ★書き込みは数ミリ秒。段が20個あっても点検は重くならない。
-  var _hcT0 = Date.now();
+  var _hcT0 = _hcStart;
   var _hcSteps = [];
+  //   ★打ち切り（2026-11-28）：開始から LB_HEAL.CHECK_SOFT_MS を過ぎたら次の段に入らない（_step が lbHcTimeUp を投げ、段の塊の外で受ける）。
+  //     記録・悪化のメールはする。★要約・台帳・完走の印（DONE）は書かない＝DONE の意味（最後まで来た）は変えない
+  var _hcCut = null;
   //   ★自己修理 P1（§4-2・I-H23）：checked＝**例外なく終わった段**の名前。_step（段の始め）とは共用しない。
   //     段の終わりに _done(名前) で足す。段の中で例外が起きた（*_fail を出した・黙って握りつぶした）段は _bad() で印を付け、足さない
   var _hcChecked = [], _hcBad = {}, _hcCur = '';
@@ -2493,20 +2498,27 @@ function dailyHealthCheck(dryRunArg) {
   function _hcStepNeed() { if (!_lbLeaseStep(_hcG)) { var eS = new Error('lease'); eS.lbLeaseLost = true; throw eS; } }   // 段の進行（読み取り）
   function _bad() { _hcBad[_hcCur] = true; }
   function _done(name) { if (name === _hcCur && !_hcBad[name] && _hcChecked.indexOf(name) < 0) _hcChecked.push(name); }
+  function _stepWrite(text) {
+    if (dryRun) return;
+    //   ★先頭に [check_id]（＝LB_HEALTH_LAST と同じ数）。Nudge が「いま見ている点検の記録か」を確かめる（関門② 再審・古い「打ち切り@」で落ちたのを取り違えない）
+    try { PropertiesService.getScriptProperties().setProperty('LB_HEALTH_STEP', ('[' + _hcCheckId + '] ' + String(text)).slice(0, 2000)); } catch (e) {}
+  }
   function _step(name) {
     var ms = Date.now() - _hcT0;
+    if (name !== '記録' && ms >= LB_HEAL.CHECK_SOFT_MS) {
+      var eT = new Error('time'); eT.lbHcTimeUp = true; eT.lbHcAt = name; eT.lbHcMs = ms; throw eT;
+    }
     _hcSteps.push(name + '=' + ms);
     _hcCur = name;
-    //   ★印を段ごとに 35 分延ばす（§2-1）。印を失った → ここで投げて点検を終える（以降の段・記録・メール・要約をしない）
+    //   ★印を段ごとに LEASE_MS（35分）延ばす（§2-1）。印を失った → ここで投げて点検を終える（以降の段・記録・メール・要約をしない）
     //     段の進行は読み取りだけなので、busy でも期限の残りが5分以上なら続ける（副作用の直前は _hcNeed で延長できたときだけ）
     _hcStepNeed();
-    if (dryRun) return;
-    try {
-      PropertiesService.getScriptProperties().setProperty('LB_HEALTH_STEP',
-        name + '@' + ms + 'ms / ' + _hcSteps.slice(-6).join(' '));
-    } catch (e) {}
+    //   ★全部の段を残す（2026-11-28：直近6段だけでは、重い段が6段より前だと見えなかった）。段は25前後・1段20字前後＝2,000字に収まる
+    //   打ち切った後の段（記録）も先頭の「打ち切り@」を消さない（Nudge のメールと作業依頼が打ち切りと落ちたのを見分ける）
+    _stepWrite((_hcCut ? '打ち切り@' + _hcCut.at + '@' + _hcCut.ms + 'ms→' : '') + name + '@' + ms + 'ms / ' + _hcSteps.join(' '));
   }
   _step('開始');
+  try {   // ★段の塊（打ち切りを受ける）。字下げは変えていない
 
   //   ★自己修理 P1（§4-1）：6番目の safe = { facts: [...], ids: [...] }。要約は safe だけから作り、detail は読まない
   //     点検そのものが失敗した key（LB_FACT_EXCEPTION_KEYS）はその段に印を付ける＝その段の key 不在を 0 とみなさない
@@ -3273,6 +3285,19 @@ function dailyHealthCheck(dryRunArg) {
     add('squad_check_fail', '保全部隊', 'warn', 1, '保全部隊の見張りの点検そのものが失敗しました: ' + _lbErrType(e));
   }
 
+  } catch (eCut) {
+    if (!(eCut && eCut.lbHcTimeUp)) throw eCut;   // 印を失った・ほかの例外は今どおり外へ
+    _hcCut = { at: String(eCut.lbHcAt || ''), ms: Number(eCut.lbHcMs) || 0 };
+    _hcSteps.push(_hcCut.at + '=cut');
+    _stepWrite('打ち切り@' + _hcCut.at + '@' + _hcCut.ms + 'ms / ' + _hcSteps.join(' '));
+    //   段の名前と秒数だけ（固定の文字と数）。完走ではない＝要約・DONE は書かない（自己修理は動かない）。
+    //   ★この key は要約に載らない（打ち切った回は _lbHealthSave を呼ばない）＝LB_TRIAGE・振り分け表・部隊の SQ_KEYS には足さない
+    add('health_partial', '定期処理', 'warn', 1,
+        '日次点検が時間の上限（6分）に近づいたため「' + _hcCut.at + '」から先の段を見ずに打ち切りました（開始から'
+        + Math.round(_hcCut.ms / 1000) + '秒）。完走の印は書いていません。重い段は Script Properties の LB_HEALTH_STEP（段=経過ミリ秒）で分かります',
+        { facts: [] });
+  }
+
   _step('記録');
   // ---- 記録（推移が見えるよう追記）----
   if (!dryRun) _hcNeed();   // ★書く直前に印を確かめる（I-H21）
@@ -3292,7 +3317,10 @@ function dailyHealthCheck(dryRunArg) {
   // ---- 悪化したときだけ知らせる（同じ問題を毎日送らない）----
   var prev = {}; try { prev = JSON.parse(_lbProp('LB_HEALTH_PREV') || '{}'); } catch (e) { prev = {}; }
   var worsened = issues.filter(function (x) { return x.severity !== 'info' && x.count > Number(prev[x.key] || 0); });
-  var cur = {}; issues.forEach(function (x) { cur[x.key] = x.count; });
+  var cur = {};
+  //   ★打ち切った回は、見ていない段の key を消さない（前回の数を引き継ぐ）。消すと、次に完走した点検が同じ数を「悪化」として送り直す
+  if (_hcCut) for (var pk in prev) if (prev.hasOwnProperty(pk)) cur[pk] = prev[pk];
+  issues.forEach(function (x) { cur[x.key] = x.count; });
   if (!dryRun) _hcNeed();
   if (!dryRun) { try { PropertiesService.getScriptProperties().setProperty('LB_HEALTH_PREV', JSON.stringify(cur)); } catch (e) {} }
 
@@ -3323,7 +3351,8 @@ function dailyHealthCheck(dryRunArg) {
   // ---- 自己修理 P1：氏名を外した要約・案件台帳・完走の印・オーナーへの通知（★最後に1回で・§4-2）----
   //   dry-run では書かない。印を失った（期限切れ・奪われた）実行は書かない（I-H21・I-H27）
   var _hcSaved = null;
-  if (!dryRun) {
+  if (!dryRun && _hcCut) { try { _lbSquadCount('skipped_time'); } catch (eSc) {} }   // ★打ち切った回は要約・DONE・部隊への要約を書かない
+  if (!dryRun && !_hcCut) {
     _hcNeed();
     try { _hcSaved = _lbHealthSave(issues, _hcCheckId, _hcChecked, _hcG, _hcSkipPrev); }
     catch (eHs) { _hcSaved = { saved: false, why: 'exception' }; Logger.log('要約の保存に失敗: ' + _lbErrType(eHs)); }
@@ -3337,7 +3366,8 @@ function dailyHealthCheck(dryRunArg) {
     } catch (eSq) {}
   }
   return { stamp: stamp, issues: issues, worsened: worsened.length, notified: (!dryRun && worsened.length > 0),
-           checkId: _hcCheckId, checked: _hcChecked.slice(), saved: _hcSaved };
+           checkId: _hcCheckId, checked: _hcChecked.slice(), saved: _hcSaved,
+           partial: _hcCut ? _hcCut.at : '', steps: _hcSteps.slice() };
   } catch (eLease) {
     if (!(eLease && eLease.lbLeaseLost)) throw eLease;
     //   ★印を失った点検は、ここで何もせずに終える（他人の印は放さない＝_lbLeaseRelease が owner を見る）
@@ -3379,7 +3409,14 @@ var LB_HEAL = {
   WOULD_WAKE_PROP: 'LB_SQUAD_WOULD_WAKE',
   DONE_FUTURE_MS: 5 * 60000,              // これより先の DONE は壊れている（保存の失敗を解除しない・関門②）
   SAVE_LAST_PROP: 'LB_HEALTH_SAVE_LAST',   // 最後の保存の結果 {saved, why, check_id, header_repaired, repairs}（2026-11-24・I-H32/I-H33）
-  LEASE_MS: 35 * 60000,                   // ★どの実行上限（30分）よりも長い。段ごと・副作用ごとに延ばす
+  LEASE_MS: 35 * 60000,                   // ★どの実行上限（30分）よりも長い。段ごと・副作用ごとに延ばす。
+                                          //   2026-11-28 に10分へ短くする案は関門②で差し戻し：実行の上限が未確認（10/10 に手で回した点検が557秒）で、
+                                          //   延長の直後の外部送信（_lbPushOnce の UrlFetch・GmailApp）が10分以内に終わる保証がコードに無い。
+                                          //   代わりに点検を開始4分で打ち切る（CHECK_SOFT_MS）＝時間切れで印が残る回そのものを減らす
+  CHECK_SOFT_MS: 240000,                  // ★日次点検：関数の開始からこれを過ぎたら次の段に入らず、記録とメールだけして終える（打ち切り・DONE は書かない）。
+                                          //   残りの約2分で最後の段・記録・メール。2026-11-26 07:52 を最後に完走しなくなった（11/28 は時間切れの見立て）
+  ACQ_TRIES: 6,                           // ★日次点検：印を取るときの ScriptLock が混んでいたら試す回数（11/27 は1回の 300ms で lock_busy・1日分の点検が消えた）
+  ACQ_GAP_MS: 2000,                       //   その間の待ち（ロックの外で sleep）
   LEASE_FUTURE_MAX_MS: 2 * 3600000,       // これより先の期限は壊れた印
   LOCK_MS: 300,                           // ScriptLock は印を取る・延ばす・放す瞬間だけ
   BUSY_MARGIN_MS: 5 * 60000,              // 点検の段の進行（読み取り）だけ：ロックが取れず延ばせなくても、手元の期限の残りがこれ以上なら続ける
@@ -3559,8 +3596,11 @@ function _lbLeaseParse(raw, now) {
   return { state: (o.until > now) ? 'held' : 'expired', lease: o };
 }
 //   取る。返り値 { ok, owner } か { ok:false, why: held|lock_busy|lease_broken }
-function _lbLeaseAcquire(entry) {
+//   tries（日次点検だけ渡す）：ScriptLock が混んでいれば ACQ_GAP_MS 待って tries 回まで試す（held・壊れた印は試し直さない）
+function _lbLeaseAcquire(entry, tries) {
+  var n = (typeof tries === 'number' && tries > 1) ? Math.min(10, Math.floor(tries)) : 1;
   var lock = _lbLeaseLock();
+  for (var t = 1; !lock && t < n; t++) { try { Utilities.sleep(LB_HEAL.ACQ_GAP_MS); } catch (eS) {} lock = _lbLeaseLock(); }
   if (!lock) return { ok: false, why: 'lock_busy' };
   try {
     var p = PropertiesService.getScriptProperties(), now = Date.now();
@@ -3576,7 +3616,7 @@ function _lbLeaseAcquire(entry) {
   } finally { _lbLeaseUnlock(lock); }
 }
 //   印に触る（確かめて延ばす）。返り値（★「ロックが取れない」と「印を失った」を分ける）：
-//     'ok'      … 自分の印で期限内 → 35分延ばした
+//     'ok'      … 自分の印で期限内 → LEASE_MS（35分）延ばした
 //     'busy'    … ScriptLock が取れない（予約・振替などが持っている）＝印の状態は分からない・延ばしていない
 //     'lost'    … 印が無い・他人の印・壊れた
 //     'expired' … 自分の印だが期限を過ぎた（owner が一致しても副作用をしない・I-H27）
@@ -3600,7 +3640,7 @@ function _lbLeaseTouch(owner, entry) {
 function _lbLeaseGuard(lease, entry) {
   return { owner: lease.owner, entry: String(entry || ''), until: Number(lease.until) || 0, dead: false, why: '' };
 }
-//   ★副作用の直前に呼ぶ：**延長できたときだけ**真（関門②3回目・CEO 裁定）。真の後は35分、誰も印を取れない＝その間の書き込み・送信は自分の印の下。
+//   ★副作用の直前に呼ぶ：**延長できたときだけ**真（関門②3回目・CEO 裁定）。真の後は LEASE_MS（35分）、誰も印を取れない＝その間の書き込み・送信は自分の印の下。
 //     busy（ScriptLock が取れない）なら SURE_TRIES 回まで試す（tryLock は1回 300ms 待つ）。それでも延長できなければ偽。
 //     偽になったら以降はずっと偽（dead）。理由は g.why（lock_busy・expired・lost）。
 //     noSkip＝完走した点検の後の通知の見送り（「見送り」ではないので LB_HEALTH_SKIP に数えない）
@@ -3753,7 +3793,7 @@ function _lbHealthSave(issues, checkId, checked, g, skipPrev) {
   if (!(done > checkId)) p.setProperty(LB_HEAL.DONE_PROP, String(checkId));
   //   ★DONE を書いた＝この点検は完走として確定した。ここから後で印を確かめ直さない（関門②2回目・CEO 裁定）。
   //     確かめ直して busy/expired になると _lbLeaseOk が SKIP を数え、「DONE は完走・SKIP は見送り・戻り値は saved:false」が
-  //     同時に成り立って矛盾する。★DONE の直前の確認は延長つきで通っている（_lbLeaseOk は延長できたときだけ真）＝そこから35分は
+  //     同時に成り立って矛盾する。★DONE の直前の確認は延長つきで通っている（_lbLeaseOk は延長できたときだけ真）＝そこから LEASE_MS（35分）は
   //     誰も印を取れない。下の SKIP の引き算・起こすはずだった回数は、その35分の中の数ミリ秒の自分の書き込みなので確認しない（関門②3回目）。
   //     通知（_lbHealNotify）は送るたびに確かめるが、延長できなくても SKIP に数えない（deferred_lease）
   _lbHealthSkipConsume(skipPrev && skipPrev.count);
