@@ -1,8 +1,7 @@
 {
-  "op": "remaining",
-  "requestId": "job-20261127221232-f3e89dec",
+  "op": "audit",
+  "requestId": "job-20261128171306-e9543577",
   "args": {
-    "calCheck": "2026-09-25",
-    "_rk": "4ca22dbc2ae2d597323fcb730b95be0d10fe3f8496c0daef89a037d0c0b2b24b"
+    "_rk": "c09592e6e4e7ff5bb29cb2bc9b4989008df353cf715fea481c4fd3a3770830f8"
   }
 }
