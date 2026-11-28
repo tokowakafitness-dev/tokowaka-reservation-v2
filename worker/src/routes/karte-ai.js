@@ -91,6 +91,11 @@ export function isKanaName(v) {
   const s = nfkc(v).trim();
   return s.length >= 1 && s.length <= 40 && /^[ぁ-ゖァ-ヺー・ 　]+$/.test(s) && /[ぁ-ゖァ-ヺ]/.test(s);
 }
+//   会員の読み（customers.kana・設計71）を伏せる対象にしてよいか：isKanaName に加え、かなが2字以上。
+//     ★伏せる処理は読み全体を単語の境目なしに置き換える＝1字の読み（「あ」）だと文字起こしの「あ」が全部〔会員〕になる（関門① 高）
+export function isMaskableKana(v) {
+  return isKanaName(v) && (nfkc(v).match(/[ぁ-ゖァ-ヺ]/g) || []).length >= 2;
+}
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** people: [{ name, tag }]。返り値は文字列を受け取って伏せた文字列を返す関数 */
 export function makeMasker(people) {
@@ -373,7 +378,7 @@ async function inner(c, st) {
   //   ④ 氏名を伏せる
   const people = [];
   const cu = await env.DB.prepare('SELECT name, kana FROM customers WHERE customer_id = ?').bind(cid).first();
-  if (cu) { people.push({ name: cu.name, tag: '〔会員〕' }); if (cu.kana) people.push({ name: cu.kana, tag: '〔会員〕' }); }
+  if (cu) { people.push({ name: cu.name, tag: '〔会員〕' }); if (isMaskableKana(cu.kana)) people.push({ name: cu.kana, tag: '〔会員〕' }); }
   //   ★読み（kana）は GAS の名簿（見出し kana の列）から押し出される（設計39 の続き・migration 0031）。
   //     NULL・空文字のトレーナーは伏せられない＝今と同じ（画面の案内のとおり残り得る）。登録の数は日次点検に出る
   //     ★読めなければ例外＝全体が AI_ERROR（送らない側へ倒れる）

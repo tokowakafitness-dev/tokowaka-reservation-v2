@@ -5552,12 +5552,13 @@ function _lbIsOwnerRole(tr) { return !!(tr && (tr.role === 'owner' || tr.role ==
 function _lbAllVerifiedCustomers() {
   var msh = _lbSheet(LINE_BOOKING.MAP_SHEET), out = [], seen = {};
   if (!msh || msh.getLastRow() < 2) return out;
-  var mv = msh.getRange(2, 1, msh.getLastRow() - 1, MAP_COL.NOTE).getValues();
+  var all = msh.getRange(1, 1, msh.getLastRow(), Math.max(MAP_COL.NOTE, msh.getLastColumn())).getValues();
+  var kc = _lbCustKanaCol(all[0]), mv = all.slice(1);   // kana＝設計71（_lbTrainerCustomers と同じ）
   for (var i = 0; i < mv.length; i++) {
     if (String(mv[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
     var cid = String(mv[i][MAP_COL.CUSTOMER_ID - 1] || ''); if (!cid || seen[cid]) continue;
     seen[cid] = true;
-    out.push({ customerId: cid, name: String(mv[i][MAP_COL.NAME - 1] || '') });
+    out.push({ customerId: cid, name: String(mv[i][MAP_COL.NAME - 1] || ''), kana: kc >= 0 ? _edgeTrainerKana(mv[i][kc]) : '' });
   }
   return out;
 }
@@ -9566,18 +9567,31 @@ function getTrainerReservations(lineUserId) {
   return { success: true, trainerName: tr.name, reservations: list, customers: customers };
 }
 
+// 会員の読みの列（設計71・2026-11-28）。トレーナー画面の顧客の検索で、ひらがな・カタカナでも当てるため（照合にだけ使う・画面に出さない）
+//   ★列の位置を決め打ちしない：A〜Q は MAP_COL で決まっている。1行目の見出しが「kana」（前後の空白・大文字小文字を無視）の
+//     R 以降の列だけを読む。見つからなければ -1＝全員の kana は空文字（今と同じ＝名前だけで探す）
+function _lbCustKanaCol(header) {
+  var h = header || [];
+  for (var i = MAP_COL.LANG; i < h.length; i++) {
+    if (String(h[i] == null ? '' : h[i]).trim().toLowerCase() === 'kana') return i;
+  }
+  return -1;
+}
+
 // 担当トレーナーの顧客（予約の有無に関係なく）＝customer_line_mapのverified×trainer_id一致。代行/管理の顧客選択に使う。
+//   ★kana（設計71）：見出し kana の列の値を _edgeTrainerKana（PushToEdge.js・押し出しと同じ規則）に通したもの。無ければ空文字
 function _lbTrainerCustomers(trainerId) {
   var msh = _lbSheet(LINE_BOOKING.MAP_SHEET), out = [], seen = {};
   if (!msh || msh.getLastRow() < 2) return out;
-  var mv = msh.getRange(2, 1, msh.getLastRow() - 1, MAP_COL.NOTE).getValues();
+  var all = msh.getRange(1, 1, msh.getLastRow(), Math.max(MAP_COL.NOTE, msh.getLastColumn())).getValues();
+  var kc = _lbCustKanaCol(all[0]), mv = all.slice(1);
   for (var i = 0; i < mv.length; i++) {
     if (String(mv[i][MAP_COL.AUTH_STATE - 1]) !== 'verified') continue;
     var _tid = String(mv[i][MAP_COL.TRAINER_ID - 1] || '');
     if (_tid !== String(trainerId) && _tid !== '') continue;   // 担当が自分 or 担当なし（空）＝担当なしは全トレーナーの一覧に表示
     var cid = String(mv[i][MAP_COL.CUSTOMER_ID - 1] || ''); if (!cid || seen[cid]) continue;
     seen[cid] = true;
-    out.push({ customerId: cid, name: String(mv[i][MAP_COL.NAME - 1] || '') });
+    out.push({ customerId: cid, name: String(mv[i][MAP_COL.NAME - 1] || ''), kana: kc >= 0 ? _edgeTrainerKana(mv[i][kc]) : '' });
   }
   return out;
 }

@@ -180,6 +180,16 @@ async function aiCall(text) {
   const r7 = await aiCall(SPOKEN);
   ok('K3-7 ★かな以外の読み（10）は使わない：20キロで10回は確かめたセットのまま', r7.status === 200 && calls[calls.length - 1].raw.includes('10回') && r7.draft.exercises[0].sets.length === 1, r7.raw.slice(0, 200));
   db.exec(`UPDATE trainers SET kana = 'おとかわ じろう' WHERE trainer_id = 'T1'`);
+  //   ★会員の読み（設計71）：入れば伏せる・1字の読みは伏せる対象にしない（文字起こしの同じ字を全部消さない・関門① 高）
+  const SP2 = 'こうのいちろうさん、ありがとうございます。ベンチプレス20キロで10回。';
+  await aiCall(SP2);
+  const s8 = calls[calls.length - 1].raw;
+  ok('K3-8 ★会員の読み（コウノ イチロウ）はひらがなで話されても伏せる', !s8.includes('こうのいちろう') && s8.includes('〔会員〕'), s8.slice(0, 300));
+  db.exec(`UPDATE customers SET kana = 'あ' WHERE customer_id = 'C1'`);
+  const r9 = await aiCall(SP2);
+  const s9 = calls[calls.length - 1].raw;
+  ok('K3-9 ★1字の読み（あ）は伏せる対象にしない：「ありがとう」が残る・数字の照合も今どおり', r9.status === 200 && s9.includes('ありがとう') && r9.draft.exercises[0].sets.length === 1, s9.slice(0, 300));
+  db.exec(`UPDATE customers SET kana = 'コウノ イチロウ' WHERE customer_id = 'C1'`);
 }
 
 // ================= M 本番の反映の順序（schema.sql → migrations を1回ずつ・エラーを握りつぶさない）=================
