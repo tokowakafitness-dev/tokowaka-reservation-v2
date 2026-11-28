@@ -49,6 +49,7 @@ try {
   writeFileSync(join(repo, 'worker/test/run-all.sh'), '#!/usr/bin/env bash\necho RUNALL_RAN\nexit 0\n');
   chmodSync(join(repo, 'worker/test/pre-push'), 0o755);
   writeFileSync(join(repo, 'README.md'), 'clean\n');
+  writeFileSync(join(repo, 'ops/job.json'), '{"job":"none"}\n');
   G(['add', '-A']); G(['commit', '-q', '-m', 'init']);
   G(['remote', 'add', 'origin', remote]);
   G(['push', '-q', '--no-verify', 'origin', 'main']);
@@ -132,6 +133,51 @@ try {
   r = hook(pushLine());
   ok('8-1 ダミー・架空の名前・カレンダーのドメインは止めない', r.status === 0, r.stdout + r.stderr);
   resetToRemote();
+
+  // 10. 作業依頼（ops/job.json）だけの push はテストを省く。検査は省かない（2026-11-28 オーナー決定）
+  const SKIP = '作業依頼だけなのでテストを省きました';
+  const SCAN = '個人情報・鍵の形が無いか見ます';
+  commit('ops/job.json', '{"job":"remaining"}\n');
+  r = hook(pushLine());
+  ok('10-1 job.json だけ：通る・run-all を呼ばない・省いた1行を出す・検査は走る',
+    r.status === 0 && !r.stdout.includes('RUNALL_RAN') && r.stdout.includes(SKIP) && r.stdout.includes(SCAN), r.stdout + r.stderr);
+  commit('a.txt', '別のファイル\n');
+  r = hook(pushLine());
+  ok('10-2 job.json に他のファイルが混ざる：run-all を呼ぶ', r.status === 0 && r.stdout.includes('RUNALL_RAN') && !r.stdout.includes(SKIP), r.stdout);
+  resetToRemote();
+  commit('a.txt', '別のファイルだけ\n');
+  r = hook(pushLine());
+  ok('10-3 job.json 以外だけ：run-all を呼ぶ', r.stdout.includes('RUNALL_RAN'), r.stdout);
+  resetToRemote();
+  commit('ops/job.json', `{"note":"${FAKE.phone}"}\n`);
+  r = hook(pushLine());
+  ok('10-4 job.json だけでも個人情報があれば止まる（検査は省かない）', r.status === 1 && !r.stdout.includes(SKIP), r.stdout + r.stderr);
+  resetToRemote();
+  // 新しいブランチ（0000…）は origin/main との差で数える
+  G(['checkout', '-q', '-b', 'claude/job']);
+  commit('ops/job.json', '{"job":"health"}\n');
+  r = hook(`refs/heads/claude/job ${G(['rev-parse', 'HEAD'])} refs/heads/claude/job ${zero}\n`);
+  ok('10-5 新しいブランチで job.json だけ：run-all を呼ばない', r.status === 0 && !r.stdout.includes('RUNALL_RAN') && r.stdout.includes(SKIP), r.stdout + r.stderr);
+  // 判定できない：origin/main が無いと差を数えられない → 走らせる
+  const om = G(['rev-parse', 'origin/main']);
+  G(['update-ref', '-d', 'refs/remotes/origin/main']);
+  r = hook(`refs/heads/claude/job ${G(['rev-parse', 'HEAD'])} refs/heads/claude/job ${zero}\n`);
+  ok('10-6 判定できない（origin/main が無い）：run-all を呼ぶ', r.stdout.includes('RUNALL_RAN') && !r.stdout.includes(SKIP), r.stdout + r.stderr);
+  // 判定できない ref と job.json だけの ref が並んでも、判定できない側で走らせる
+  G(['checkout', '-q', 'main']); commit('ops/job.json', '{"job":"remaining2"}\n');
+  r = hook(`refs/heads/claude/job ${G(['rev-parse', 'claude/job'])} refs/heads/claude/job ${zero}\nrefs/heads/main ${G(['rev-parse', 'HEAD'])} refs/heads/main ${om}\n`);
+  ok('10-6b 判定できない ref が1つでもあれば run-all を呼ぶ', r.stdout.includes('RUNALL_RAN') && !r.stdout.includes(SKIP), r.stdout + r.stderr);
+  G(['update-ref', 'refs/remotes/origin/main', om]); resetToRemote(); G(['checkout', '-q', 'claude/job']);
+  // 複数の ref を一度に送り、1つでも他のファイルを含めば走らせる
+  const jobSha = G(['rev-parse', 'HEAD']);
+  G(['checkout', '-q', 'main']);
+  commit('a.txt', 'main 側の別の変更\n');
+  r = hook(`refs/heads/claude/job ${jobSha} refs/heads/claude/job ${zero}\n` + pushLine());
+  ok('10-7 複数の ref のうち1つに他のファイル：run-all を呼ぶ', r.stdout.includes('RUNALL_RAN') && !r.stdout.includes(SKIP), r.stdout);
+  resetToRemote(); G(['branch', '-q', '-D', 'claude/job']);
+  // 判定できない：入力が空（見る ref が無い）→ 走らせる
+  r = hook('');
+  ok('10-8 判定できない（入力が空）：run-all を呼ぶ', r.stdout.includes('RUNALL_RAN') && !r.stdout.includes(SKIP), r.stdout + r.stderr);
 } finally {
   rmSync(base, { recursive: true, force: true });
 }

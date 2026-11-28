@@ -106,9 +106,12 @@
 ```
 bash ops/cloud-setup.sh           最初に1回（jsdom・sqlite3・pre-push）
 node ops/prepush-scan.mjs --range origin/main..HEAD   push 前の個人情報・鍵の検査を手で
-bash worker/test/run-all.sh       全部（約1分・落ちたら終了コード1）
+bash worker/test/run-all.sh       全部（並列で約1分半・落ちたら終了コード1）
 bash worker/test/run-all.sh quota 名前に quota を含むものだけ
+RUN_ALL_JOBS=1 bash worker/test/run-all.sh  1本ずつ（直列）に戻す
 ```
+- run-all は既定で CPU の数だけ同時に走らせ、テストごとに TMPDIR を分ける。リポジトリの中を書き換えるテストは run-all.sh の SERIAL に足す（他の後に1本ずつ走る）
+- pre-push は、push する変更が `ops/job.json` だけならテストを省く（個人情報・鍵の検査は必ず走る。判定できなければ走らせる）
 - テストを足したら `worker/test/<名前>.test.js`（または `.test.sh`）に置けば一括実行に入る
 - 新しく足した依存を、テストの外（Mac だけにある場所）に置かない。jsdom は `worker/test/deps/` の lockfile で固定している
 - `ops/MODEL.md` の不変条件を足したら、§3 に「守っている検査」を必ず書く（`worker/test/model-doc.test.js` が空欄を落とす）
