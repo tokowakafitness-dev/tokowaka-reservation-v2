@@ -893,7 +893,9 @@ function _lbNudgeWatchHealthCrash(nowMs, last) {
   if (lastAlert && (nowMs - lastAlert) < 20 * 3600000) return true;
   //   ★段ごとの経過（LB_HEALTH_STEP・段の名前と経過ミリ秒だけ）を本文に載せる（2026-11-28）。
   //     「打ち切り@」で始まれば、点検が時間の上限の前に自分で止めた（落ちたのではない）
-  var stepTxt = String(_lbProp('LB_HEALTH_STEP') || '').slice(0, 1500);
+  //     ★先頭の [check_id] が LAST と同じときだけ使う（違えば前の点検の記録＝今回は段の記録を書く前に落ちた。打ち切りとは言わない・関門② 再審）
+  var stepRaw = String(_lbProp('LB_HEALTH_STEP') || ''), stepM = /^\[(\d+)\] /.exec(stepRaw);
+  var stepTxt = (stepM && Number(stepM[1]) === last) ? stepRaw.slice(stepM[0].length).slice(0, 1500) : '';
   var cut = /^打ち切り@/.test(stepTxt);
   var msg = '日次点検（dailyHealthCheck）が' + (cut ? '時間の上限に近づいて途中で打ち切られています' : '途中で落ちています') + '（最後に始めたのは '
     + Utilities.formatDate(new Date(last), SETTINGS.TIMEZONE, 'M/d HH:mm') + '・最後に完走したのは '
@@ -904,7 +906,7 @@ function _lbNudgeWatchHealthCrash(nowMs, last) {
     GmailApp.sendEmail(to, cut ? '【要対処】日次点検が時間の上限で打ち切られています' : '【要対処】日次点検が途中で落ちています',
       msg + '\n\n点検は始めた時刻と最後まで来た時刻を別に残しています。始めたのに最後まで来ていません。\n'
       + '確かめること：GAS の実行ログで dailyHealthCheck のエラーと、作業依頼 remaining {triggers} の「点検がどこまで進んだか」（最後に入った段が落ちた場所）。'
-      + (stepTxt ? '\n\n段ごとの経過（段=開始からのミリ秒）：\n' + stepTxt : ''));
+      + (stepTxt ? '\n\n段ごとの経過（段=開始からのミリ秒）：\n' + stepTxt : '\n\nこの点検の段の記録はありません（最初の段より前に落ちたか、記録の書き込みに失敗）。'));
     PropertiesService.getScriptProperties().setProperty(notifiedKey, String(nowMs));
   }
   return true;

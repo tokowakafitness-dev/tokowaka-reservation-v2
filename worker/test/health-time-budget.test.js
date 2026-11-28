@@ -3,13 +3,13 @@
 //   背景：11/26 07:52 を最後に dailyHealthCheck が完走していない。11/28 は始まったが最後まで来ず（見立て＝実行時間の上限で打ち切られた）、
 //         打ち切られた実行の借りる印（LB_HEALTH_LEASE・35分）が残って作業依頼の点検が held で見送られた。11/27 は印を取る
 //         ScriptLock の1回の 300ms で lock_busy になり、その日の点検が消えた。
-//   不変条件：I-H36（T1〜T3・T6・T7）・I-H20（T4・T5：印の期限10分・印を取るロックの試し直し）
+//   不変条件：I-H36（T1〜T3・T6・T7）・I-H20（T4・T5：印を取るロックの試し直し・印の期限35分は変えない）
 //   入口から通す：本物の dailyHealthCheck（_self-heal-harness.js の vm）。時計は w.now（身代わりの段で進める）
 //   T1 普段は完走し、段ごとの経過を全部 LB_HEALTH_STEP に残す
 //   T2 ★開始から4分を過ぎたら次の段に入らない：記録とメールはする・要約・台帳・DONE は書かない・印を放す
 //   T3 打ち切った回は、見ていない段の key の前回の数を消さない（次に完走したとき同じ数を「悪化」として送り直さない）
 //   T4 印を取る ScriptLock が混んでいれば数回試す（全部だめなら今どおり lock_busy）
-//   T5 印は10分＝時間切れで残った印は10分で切れ、次の点検・作業依頼が取れる
+//   T5 時間切れで残った印は35分で切れる（10分に短くする案は関門②で差し戻し＝外部送信に時間の保証が無い）
 //   T6 試し実行（作業依頼 health）は段ごとの経過を返す・LB_HEALTH_STEP は書かない
 //   T7 Nudge の「途中で」のメールに段ごとの経過が載り、打ち切りと落ちたのを見分ける
 //   ★値はすべて架空
@@ -28,7 +28,7 @@ console.log('=== T1 普段は完走し、段ごとの経過を全部残す ===')
   ok('T1-1 完走（要約・DONE を書く・打ち切りなし）', r.saved && r.saved.saved === true && !!w.props.LB_HEALTH_DONE && r.partial === '', JSON.stringify({ s: r.saved, p: r.partial }));
   const st = String(w.props.LB_HEALTH_STEP || '');
   ok('T1-2 ★LB_HEALTH_STEP に最初の段から最後の段まで全部ある（直近6段ではない）',
-     /開始=\d+/.test(st) && /会員データ=\d+/.test(st) && /保全部隊の見張り=\d+/.test(st) && /^記録@/.test(st), st);
+     /開始=\d+/.test(st) && /会員データ=\d+/.test(st) && /保全部隊の見張り=\d+/.test(st) && /^\[\d+\] 記録@/.test(st), st);
   ok('T1-3 打ち切りの印は無い', !/打ち切り/.test(st) && !r.issues.some((x) => x.key === 'health_partial'));
   ok('T1-4 返り値に段の一覧', Array.isArray(r.steps) && r.steps.length >= 20, JSON.stringify(r.steps));
 }
@@ -48,7 +48,7 @@ console.log('=== T2 開始から4分を過ぎたら次の段に入らない ==='
   const hs = JSON.stringify((w.sheets.health_status || { data: [] }).data);
   ok('T2-5 ★記録（health_status）に打ち切りと、打ち切りより前の段で見つけた問題が載る', /「通知」から先の段を見ずに打ち切りました/.test(hs) && /振替で取られた予約が累計3件/.test(hs), hs.slice(0, 400));
   ok('T2-6 ★悪化のメールが出る（打ち切りを含む）', w.mails.some((m) => /システム点検で/.test(m.subject) && /打ち切りました/.test(m.body)), JSON.stringify(w.mails.map((m) => m.subject)));
-  ok('T2-7 LB_HEALTH_STEP は「打ち切り@通知」で始まり、各段の経過が残る', /^打ち切り@通知@\d+ms→記録@/.test(w.props.LB_HEALTH_STEP || '') && /カレンダー=\d+/.test(w.props.LB_HEALTH_STEP), w.props.LB_HEALTH_STEP);
+  ok('T2-7 LB_HEALTH_STEP は「打ち切り@通知」で始まり、各段の経過が残る', new RegExp('^\\[' + t0 + '\\] 打ち切り@通知@\\d+ms→記録@').test(w.props.LB_HEALTH_STEP || '') && /カレンダー=\d+/.test(w.props.LB_HEALTH_STEP), w.props.LB_HEALTH_STEP);
   ok('T2-8 ★印を放した（後続の点検・作業依頼が held にならない）', lease(w) === null);
   ok('T2-9 見送りとして数えない（打ち切りは見送りではない）', !w.props.LB_HEALTH_SKIP, w.props.LB_HEALTH_SKIP);
   const det = (r.issues.find((x) => x.key === 'health_partial') || {}).detail || '';
@@ -105,7 +105,7 @@ console.log('=== T4 印を取る ScriptLock が混んでいれば数回試す ==
   ok('T4-4 修理の印は1回だけ試す（今どおり）', (w3.lockN || 0) - n0 === 1, String((w3.lockN || 0) - n0));
 }
 
-console.log('=== T5 時間切れで残った印は10分で切れる ===');
+console.log('=== T5 時間切れで残った印は35分で切れる ===');
 {
   //   打ち切られた実行（finally が走らない）を再現：本物の点検の段の途中の印を写し取り、走り終えた後に戻す（＝放されなかった印）
   const w = makeWorld();
@@ -115,12 +115,12 @@ console.log('=== T5 時間切れで残った印は10分で切れる ===');
   delete w.hooks.debugOrphanEvents;
   w.props.LB_HEALTH_LEASE = snap;
   ok('T5-0 段の途中で印を持っていた（写し取れた）', !!snap && JSON.parse(snap).entry === 'check_dry', String(snap));
-  w.now = tSnap + 9 * MIN;
+  w.now = tSnap + 34 * MIN;
   const r1 = run(w, 'dailyHealthCheck', true);
-  ok('T5-1 9分後はまだ held（生きているかもしれない）', r1.skipped === 'held');
-  w.now = tSnap + 11 * MIN;
+  ok('T5-1 34分後はまだ held（生きているかもしれない）', r1.skipped === 'held');
+  w.now = tSnap + 36 * MIN;
   const r2 = run(w, 'dailyHealthCheck', true);
-  ok('T5-2 ★11分後は取れる（35分待たない）', !r2.skipped && Array.isArray(r2.issues), JSON.stringify(r2.skipped));
+  ok('T5-2 36分後は取れる', !r2.skipped && Array.isArray(r2.issues), JSON.stringify(r2.skipped));
 }
 
 console.log('=== T6 試し実行は段ごとの経過を返す・LB_HEALTH_STEP は書かない ===');
@@ -154,12 +154,16 @@ console.log('=== T7 Nudge のメールに段ごとの経過が載る ===');
   }
   const now = Date.UTC(2026, 10, 28, 1);
   const base = { LB_HEALTH_LAST: String(now - 3 * H), LB_HEALTH_DONE: String(now - 51 * H) };
-  const a = nudge(Object.assign({ LB_HEALTH_STEP: '打ち切り@通知@300000ms→記録@300001ms / 開始=0 カレンダー=1000 通知=cut 記録=300001' }, base), now);
+  const a = nudge(Object.assign({ LB_HEALTH_STEP: '[' + base.LB_HEALTH_LAST + '] 打ち切り@通知@300000ms→記録@300001ms / 開始=0 カレンダー=1000 通知=cut 記録=300001' }, base), now);
   ok('T7-1 ★打ち切りなら「打ち切られています」・段ごとの経過が本文に載る', a.mails.length === 1 && /打ち切られています/.test(a.mails[0].b) && /時間の上限で打ち切られています/.test(a.mails[0].s) && /カレンダー=1000/.test(a.mails[0].b), JSON.stringify(a.mails));
-  const b = nudge(Object.assign({ LB_HEALTH_STEP: '世代の追いつき@200000ms / 開始=0 世代の追いつき=200000' }, base), now);
+  const b = nudge(Object.assign({ LB_HEALTH_STEP: '[' + base.LB_HEALTH_LAST + '] 世代の追いつき@200000ms / 開始=0 世代の追いつき=200000' }, base), now);
   ok('T7-2 落ちたなら今どおり「途中で落ちています」・最後に入った段が載る', b.mails.length === 1 && /途中で落ちています/.test(b.mails[0].b) && /途中で落ちています/.test(b.mails[0].s) && /世代の追いつき=200000/.test(b.mails[0].b), JSON.stringify(b.mails));
   const c = nudge(base, now);
-  ok('T7-3 記録が無くても今どおり送る', c.mails.length === 1 && !/段ごとの経過/.test(c.mails[0].b));
+  ok('T7-3 記録が無くても今どおり送る', c.mails.length === 1 && !/段ごとの経過/.test(c.mails[0].b) && /段の記録はありません/.test(c.mails[0].b));
+  //   ★前の点検の「打ち切り@」が残っていて、今回は段の記録を書く前に落ちた → 打ち切りと言わない（関門② 再審）
+  const d = nudge(Object.assign({ LB_HEALTH_STEP: '[' + String(now - 27 * H) + '] 打ち切り@通知@300000ms→記録@300001ms / 開始=0 通知=cut' }, base), now);
+  ok('T7-4 ★記録の [check_id] が LAST と違えば使わない（件名・本文とも「途中で落ちています」）',
+     d.mails.length === 1 && /途中で落ちています/.test(d.mails[0].s) && !/打ち切/.test(d.mails[0].s + d.mails[0].b.split('\n\n')[0]) && !/通知=cut/.test(d.mails[0].b), JSON.stringify(d.mails));
 }
 
 t.end('日次点検の時間の上限');

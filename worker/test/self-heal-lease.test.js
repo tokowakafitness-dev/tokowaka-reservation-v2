@@ -1,6 +1,6 @@
 // 自己修理 P1：同時に1本だけ（借りる印）と見張り（2026-11-23）
 //   実行: node worker/test/self-heal-lease.test.js
-//   I-H20 点検・修理は同時に1本だけ。印は10分（2026-11-28 に35分から）・段ごとに延長。ScriptLock は印を取る・放す瞬間だけ
+//   I-H20 点検・修理は同時に1本だけ。印は35分・段ごとに延長。ScriptLock は印を取る・放す瞬間だけ
 //   I-H21 副作用の直前に印の owner を確かめ、違えば止まる
 //   I-H22 壊れた印は期限切れとみなさず見送り、lease_broken を記録（lbNudgeDaily がメール）
 //   I-H26 印の owner は実行ごとに一意（check_id と別）
@@ -21,7 +21,7 @@ console.log('=== I-H20 同時に1本だけ・段ごとに延長 ===');
   const w = makeWorld({ props: { SELF_HEAL_MODE: 'on' } });
   removeTrigger(w, 'dailySync');
   const seen = [];
-  //   点検の段の途中で、1分ずつ時計を進めながら別の実行を起こす（2026-11-28：印は10分・点検は開始4分で打ち切る＝4段で合計4分未満に収める）
+  //   点検の段の途中で、1分ずつ時計を進めながら別の実行を起こす（2026-11-28：点検は開始4分で打ち切る＝4段で合計4分未満に収める）
   for (const fn of ['debugDataHealth', 'debugOrphanEvents', 'getBookingMetrics', '_lbQuotaFetch']) {
     w.hooks[fn] = () => {
       w.now += 55000;
@@ -35,14 +35,14 @@ console.log('=== I-H20 同時に1本だけ・段ごとに延長 ===');
   ok('I-H20-3 点検そのものは最後まで来て保存した', r.saved && r.saved.saved === true, JSON.stringify(r.saved));
   ok('I-H20-4 終わったら印は消える', lease(w) === null);
   ok('I-H20-5 見送りを数えた（8回）', JSON.parse(w.props.LB_HEALTH_SKIP).count === 8, w.props.LB_HEALTH_SKIP);
-  //   印の期限は 10 分（2026-11-28 に35分から短くした）・段ごとに延びる
+  //   印の期限は 35 分・段ごとに延びる
   const w2 = makeWorld();
   let L = null, L2 = null, t2 = 0;
   w2.hooks.debugDataHealth = () => { L = lease(w2); w2.now += 3 * MIN; };
   w2.hooks.debugOrphanEvents = () => { L2 = lease(w2); t2 = w2.now; };
   run(w2, 'dailyHealthCheck');
-  ok('I-H20-6 印の期限は「いま＋10分」', L && L.until === (t2 - 3 * MIN) + 10 * MIN && L.entry === 'check', JSON.stringify(L));
-  ok('I-H20-6b 次の段で「その時点＋10分」へ延びている（生きている実行は延ばし続ける）', L2 && L2.until === t2 + 10 * MIN, JSON.stringify(L2));
+  ok('I-H20-6 印の期限は「いま＋35分」', L && L.until === (t2 - 3 * MIN) + 35 * MIN && L.entry === 'check', JSON.stringify(L));
+  ok('I-H20-6b 次の段で「その時点＋35分」へ延びている', L2 && L2.until === t2 + 35 * MIN, JSON.stringify(L2));
   //   ScriptLock が取れなければ見送り（lock_busy）・何も書かない
   const w3 = makeWorld(); w3.lockBusy = true;
   const r3 = run(w3, 'dailyHealthCheck');
@@ -83,7 +83,7 @@ console.log('=== I-H21 副作用の直前に owner を確かめる ===');
   ok('I-H21-10 ★印を失った段の次の段から先を走らせない（契約の入力・二重書きの点検を呼ばない）', r6.leaseLost === true && !w6.calls.lbContractInputCheck && !w6.calls.lbDwDailyCheck, JSON.stringify(w6.calls));
   //   ★「記録」の段に入った直後に奪われた → health_status の追記の直前の確認で止まる
   const w7 = makeWorld();
-  w7.hooks.setProperty = (k, v) => { if (k === 'LB_HEALTH_STEP' && /^記録@/.test(String(v)) && w7.depth === 1) w7.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w7.now + 30 * MIN, entry: 'heal' }); };
+  w7.hooks.setProperty = (k, v) => { if (k === 'LB_HEALTH_STEP' && /^\[\d+\] 記録@/.test(String(v)) && w7.depth === 1) w7.props.LB_HEALTH_LEASE = JSON.stringify({ owner: 'other', until: w7.now + 30 * MIN, entry: 'heal' }); };
   run(w7, 'dailyHealthCheck');
   ok('I-H21-11 ★health_status の追記の直前に確かめる', !w7.sheets.health_status && !w7.props.LB_HEALTH_PREV);
   //   ★LB_HEALTH_PREV を書いた直後に奪われた（悪化あり）→ 悪化メールの直前の確認で止まる
@@ -236,7 +236,7 @@ console.log('=== I-H27 期限切れの印を持つ実行は副作用をしない
   let Lc = null;
   w3.hooks.create = () => { Lc = lease(w3); };
   run(w3, 'lbSelfHeal');
-  ok('I-H27-4 作る直前に印を「いま＋10分」へ延ばしている', Lc && Lc.until === w3.now + 10 * MIN && Lc.entry === 'heal', JSON.stringify(Lc));
+  ok('I-H27-4 作る直前に印を「いま＋35分」へ延ばしている', Lc && Lc.until === w3.now + 35 * MIN && Lc.entry === 'heal', JSON.stringify(Lc));
 }
 
 console.log('=== I-H30 ロックが取れない（busy）と印を失った（lost）を分ける ===');
@@ -252,11 +252,11 @@ console.log('=== I-H30 ロックが取れない（busy）と印を失った（lo
   //   busy が続き、手元の期限の残りが5分を切った → 副作用をせずに終える
   const w2 = makeWorld({ data: { quota: { ok: true, limited: true, left: 0, pct: 100 } } });
   w2.hooks.debugDataHealth = () => { w2.lockBusy = true; };
-  w2.hooks.lbContractInputCheck = () => { w2.now += 6 * MIN; };   // 延ばせないまま6分（印は10分＝残り4分・2026-11-28）
+  w2.hooks.lbContractInputCheck = () => { w2.now += 31 * MIN; };   // 延ばせないまま31分（残り4分。次の段は開始4分の打ち切り→記録の段で印を確かめて終える）
   const r2 = run(w2, 'dailyHealthCheck');
   ok('I-H30-4 ★busy が続いて期限が近づいたら副作用をしない（health_status・要約・DONE・メールなし）', r2.leaseLost === true && r2.skipped === 'lock_busy' && !w2.sheets.health_status && !w2.props.LB_HEALTH_STATUS && !w2.props.LB_HEALTH_DONE && w2.mails.length === 0, JSON.stringify(r2));
   ok('I-H30-5 busy で終えた回は why=lock_busy で数える', JSON.parse(w2.props.LB_HEALTH_SKIP || '{}').why === 'lock_busy', w2.props.LB_HEALTH_SKIP);
-  //   busy が続いても期限まで余裕があるうちは続ける（印は10分＝残り5分以上の間は続く。開始4分の打ち切りより前に収める・2026-11-28）
+  //   busy が続いても期限まで余裕があるうちは続ける（残り5分以上の間は続く。開始4分の打ち切りより前に収める・2026-11-28）
   const w3 = makeWorld();
   w3.hooks.lbKarteAiDailyCheck = () => { w3.lockBusy = true; };   // 通知の後ろ回しの引き渡し（副作用）より後の段から busy
   w3.hooks.lbContractInputCheck = () => { w3.now += 3 * MIN; };
@@ -275,10 +275,10 @@ console.log('=== I-H30 ロックが取れない（busy）と印を失った（lo
   const r3b = run(w3b, 'dailyHealthCheck');
   ok('I-H30-6b busy で段を進めた後、副作用の直前に延長できれば書く（完走）', r3b.saved && r3b.saved.saved === true && !!w3b.sheets.health_status, JSON.stringify(r3b.saved || r3b));
   //   ★busy で続けた後、5分を切った状態で副作用の直前に来て、1回目は busy・2回目で空いた → 延長できたので書く（3回まで試す）
-  //     2026-11-28：印10分で残り5分を切る＝開始から4分を過ぎている＝次の段で打ち切り。記録（health_status）は書き、要約・DONE は書かない
+  //     2026-11-28：残り5分を切る＝開始から4分を過ぎている＝次の段で打ち切り。記録（health_status）は書き、要約・DONE は書かない
   const w3c = makeWorld();
   w3c.hooks.lbKarteAiDailyCheck = () => { w3c.lockBusy = true; };   // 通知の後ろ回しの引き渡し（副作用）より後の段から busy
-  w3c.hooks.lbContractInputCheck = () => { w3c.now += 6 * MIN; w3c.lockBusy = false; const n0 = w3c.lockN; w3c.lockBusyFn = (n) => n === n0 + 1; };
+  w3c.hooks.lbContractInputCheck = () => { w3c.now += 31 * MIN; w3c.lockBusy = false; const n0 = w3c.lockN; w3c.lockBusyFn = (n) => n === n0 + 1; };
   const r3c = run(w3c, 'dailyHealthCheck');
   ok('I-H30-6c 副作用の直前は tryLock を3回まで試す（1回 busy でも延長できれば書く・打ち切りの回は記録だけ）',
      r3c.partial === '書き込みの比較' && !!w3c.sheets.health_status && !w3c.props.LB_HEALTH_DONE && !r3c.leaseLost, JSON.stringify(r3c));
