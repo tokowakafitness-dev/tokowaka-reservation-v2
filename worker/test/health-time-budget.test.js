@@ -3,7 +3,7 @@
 //   背景：11/26 07:52 を最後に dailyHealthCheck が完走していない。11/28 は始まったが最後まで来ず（見立て＝実行時間の上限で打ち切られた）、
 //         打ち切られた実行の借りる印（LB_HEALTH_LEASE・35分）が残って作業依頼の点検が held で見送られた。11/27 は印を取る
 //         ScriptLock の1回の 300ms で lock_busy になり、その日の点検が消えた。
-//   不変条件：I-H36（T1〜T3・T6・T7）・I-H20（T4・T5：印を取るロックの試し直し・印の期限35分は変えない）
+//   不変条件：I-H36（T1〜T3・T6〜T8）・I-H20（T4・T5：印を取るロックの試し直し・印の期限35分は変えない）
 //   入口から通す：本物の dailyHealthCheck（_self-heal-harness.js の vm）。時計は w.now（身代わりの段で進める）
 //   T1 普段は完走し、段ごとの経過を全部 LB_HEALTH_STEP に残す
 //   T2 ★開始から4分を過ぎたら次の段に入らない：記録とメールはする・要約・台帳・DONE は書かない・印を放す
@@ -12,9 +12,12 @@
 //   T5 時間切れで残った印は35分で切れる（10分に短くする案は関門②で差し戻し＝外部送信に時間の保証が無い）
 //   T6 試し実行（作業依頼 health）は段ごとの経過を返す・LB_HEALTH_STEP は書かない
 //   T7 Nudge の「途中で」のメールに段ごとの経過が載り、打ち切りと落ちたのを見分ける
+//   T8 作業依頼 triggers の「点検がどこまで進んだか」は、前の点検の記録を最新として見せない
 //   ★値はすべて架空
 import vm from 'node:vm';
-import { makeWorld, run, status, incRows, lease, tally, NUDGE } from './_self-heal-harness.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { makeWorld, run, status, incRows, lease, tally, NUDGE, ROOT } from './_self-heal-harness.js';
 import { pluckFnFrom as pluckFn } from './_gas-lock-src.js';
 
 const t = tally();
@@ -164,6 +167,30 @@ console.log('=== T7 Nudge のメールに段ごとの経過が載る ===');
   const d = nudge(Object.assign({ LB_HEALTH_STEP: '[' + String(now - 27 * H) + '] 打ち切り@通知@300000ms→記録@300001ms / 開始=0 通知=cut' }, base), now);
   ok('T7-4 ★記録の [check_id] が LAST と違えば使わない（件名・本文とも「途中で落ちています」）',
      d.mails.length === 1 && /途中で落ちています/.test(d.mails[0].s) && !/打ち切/.test(d.mails[0].s + d.mails[0].b.split('\n\n')[0]) && !/通知=cut/.test(d.mails[0].b), JSON.stringify(d.mails));
+}
+
+console.log('=== T8 作業依頼 triggers は前の点検の段の記録を最新として見せない ===');
+{
+  const EA = readFileSync(join(process.env.GAS_DIR || join(ROOT, 'gas'), 'EdgeAudit.js'), 'utf8');
+  function tl(props) {
+    const ctx = {
+      String, Number, Math, JSON, Date, isFinite, Object,
+      SETTINGS: { TIMEZONE: 'Asia/Tokyo' }, Logger: { log: () => {} },
+      Utilities: { formatDate: (d) => new Date(d).toISOString() },
+      _lbProp: (k) => (k in props ? props[k] : null),
+      ScriptApp: { getProjectTriggers: () => [] }, LB_AUDIT_BUILD: 'test',
+    };
+    vm.createContext(ctx);
+    vm.runInContext(pluckFn(EA, 'triggerListText'), ctx);
+    return ctx.triggerListText();
+  }
+  const last = Date.UTC(2026, 10, 28, -1, 52);
+  const a = tl({ LB_HEALTH_LAST: String(last), LB_HEALTH_STEP: '[' + last + '] 打ち切り@通知@240000ms→記録@240001ms / 開始=0 通知=cut' });
+  ok('T8-1 同じ点検の記録ならそのまま出す', /点検がどこまで進んだか: \[\d+\] 打ち切り@通知/.test(a) && !/段の記録はありません/.test(a), a.slice(-400));
+  const b = tl({ LB_HEALTH_LAST: String(last), LB_HEALTH_STEP: '[' + (last - 86400000) + '] 打ち切り@通知@240000ms / 開始=0 通知=cut' });
+  ok('T8-2 ★前の点検の記録なら「最後に始めた点検の段の記録はありません」と前置きする', /最後に始めた点検の段の記録はありません/.test(b), b.slice(-400));
+  const c = tl({ LB_HEALTH_LAST: String(last), LB_HEALTH_STEP: '記録@1000ms / 開始=0' });
+  ok('T8-3 [check_id] の無い古い形の記録も最新として見せない', /最後に始めた点検の段の記録はありません/.test(c));
 }
 
 t.end('日次点検の時間の上限');
