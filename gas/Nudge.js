@@ -901,7 +901,7 @@ function _lbNudgeWatchHealthCrash(nowMs, last) {
   Logger.log('[health] ' + msg);
   var to = _lbAlertEmail();
   if (to) {
-    GmailApp.sendEmail(to, '【要対処】日次点検が途中で落ちています',
+    GmailApp.sendEmail(to, cut ? '【要対処】日次点検が時間の上限で打ち切られています' : '【要対処】日次点検が途中で落ちています',
       msg + '\n\n点検は始めた時刻と最後まで来た時刻を別に残しています。始めたのに最後まで来ていません。\n'
       + '確かめること：GAS の実行ログで dailyHealthCheck のエラーと、作業依頼 remaining {triggers} の「点検がどこまで進んだか」（最後に入った段が落ちた場所）。'
       + (stepTxt ? '\n\n段ごとの経過（段=開始からのミリ秒）：\n' + stepTxt : ''));

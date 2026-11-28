@@ -155,9 +155,9 @@ console.log('=== T7 Nudge のメールに段ごとの経過が載る ===');
   const now = Date.UTC(2026, 10, 28, 1);
   const base = { LB_HEALTH_LAST: String(now - 3 * H), LB_HEALTH_DONE: String(now - 51 * H) };
   const a = nudge(Object.assign({ LB_HEALTH_STEP: '打ち切り@通知@300000ms→記録@300001ms / 開始=0 カレンダー=1000 通知=cut 記録=300001' }, base), now);
-  ok('T7-1 ★打ち切りなら「打ち切られています」・段ごとの経過が本文に載る', a.mails.length === 1 && /打ち切られています/.test(a.mails[0].b) && /カレンダー=1000/.test(a.mails[0].b), JSON.stringify(a.mails));
+  ok('T7-1 ★打ち切りなら「打ち切られています」・段ごとの経過が本文に載る', a.mails.length === 1 && /打ち切られています/.test(a.mails[0].b) && /時間の上限で打ち切られています/.test(a.mails[0].s) && /カレンダー=1000/.test(a.mails[0].b), JSON.stringify(a.mails));
   const b = nudge(Object.assign({ LB_HEALTH_STEP: '世代の追いつき@200000ms / 開始=0 世代の追いつき=200000' }, base), now);
-  ok('T7-2 落ちたなら今どおり「途中で落ちています」・最後に入った段が載る', b.mails.length === 1 && /途中で落ちています/.test(b.mails[0].b) && /世代の追いつき=200000/.test(b.mails[0].b), JSON.stringify(b.mails));
+  ok('T7-2 落ちたなら今どおり「途中で落ちています」・最後に入った段が載る', b.mails.length === 1 && /途中で落ちています/.test(b.mails[0].b) && /途中で落ちています/.test(b.mails[0].s) && /世代の追いつき=200000/.test(b.mails[0].b), JSON.stringify(b.mails));
   const c = nudge(base, now);
   ok('T7-3 記録が無くても今どおり送る', c.mails.length === 1 && !/段ごとの経過/.test(c.mails[0].b));
 }
