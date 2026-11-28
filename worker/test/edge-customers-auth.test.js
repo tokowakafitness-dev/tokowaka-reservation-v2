@@ -66,7 +66,8 @@ function env(rows, { noSheet = false } = {}) {
   vm.createContext(ctx);
   vm.runInContext(pluckVar(PE, 'LB_EDGE_BUILD'), ctx);
   for (const n of ['_edgeIdOrNull', '_edgeVerifiedLineByRow', '_edgeCustomers', '_edgeCustomersForPush',
-                   '_edgeAuthAudit', '_edgeAuthAuditText']) vm.runInContext(pluckFn(PE, n), ctx);
+                   '_edgeAuthAudit', '_edgeAuthAuditText', '_edgeTrainerKana']) vm.runInContext(pluckFn(PE, n), ctx);
+  vm.runInContext(pluckFn(LB, '_lbCustKanaCol'), ctx);   // 設計71：_edgeCustomers が会員の読みの列を探す（GAS では同じ大域にある）
   return ctx;
 }
 

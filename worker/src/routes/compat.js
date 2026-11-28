@@ -174,9 +174,9 @@ export async function compatTrainerReservations({ env, who, body, ctx }) {
   // 担当の顧客＋担当が決まっていない顧客（オーナーは全員）
   const scope = customerScopeSql(who);
   const custSql = owner
-    ? `SELECT customer_id, name, default_trainer_id FROM customers
+    ? `SELECT customer_id, name, kana, default_trainer_id FROM customers
         WHERE contract_status IS NULL OR contract_status <> '退会' ORDER BY name`
-    : `SELECT customer_id, name, default_trainer_id FROM customers
+    : `SELECT customer_id, name, kana, default_trainer_id FROM customers
         WHERE ${scope.where} AND (contract_status IS NULL OR contract_status <> '退会')
         ORDER BY name`;
   const resvSql = owner
@@ -230,7 +230,8 @@ export async function compatTrainerReservations({ env, who, body, ctx }) {
   //     顧客の写しが古いときは載せない（鍵ごと無い＝画面は「分からない」＝担当の印を出さない）。誤った人を担当と見せない
   const custFresh = !(await listTooOld(env, 'customers'));
   const customers = (custs.results || []).map((c) => {
-    const o = { customerId: String(c.customer_id), name: String(c.name || '') };
+    //   ★kana（設計71）：会員の読み。画面は検索の照合にだけ使う（表示しない）。GAS の getTrainerReservations と同じく必ず文字列（無ければ空文字）
+    const o = { customerId: String(c.customer_id), name: String(c.name || ''), kana: String(c.kana || '') };
     if (custFresh) o.defaultTrainerId = String(c.default_trainer_id || '');
     return o;
   });

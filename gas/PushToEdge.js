@@ -26,7 +26,7 @@ var EDGE = {
 //   これが無いと「反映したつもりで入っていない」ことに気づけない。
 //   実際に 2026-10-08、新しいファイルが許可一覧に無くて反映が止まっていたのに、
 //   出力が前日と同じで区別がつかなかった。**反映のたびにここを上げる。**
-var LB_EDGE_BUILD = '2026-11-21b カルテのAIの日次点検に、記録まで届かなかった回・形式と考える量の打ち間違い・v2 なのに成功がすべて v1・v2 の失敗が続いた を足す（設計49）';
+var LB_EDGE_BUILD = '2026-11-28a 会員の読み（名簿の見出し kana の列）を押し出す（設計71）／2026-11-21b カルテのAIの日次点検に、記録まで届かなかった回・形式と考える量の打ち間違い・v2 なのに成功がすべて v1・v2 の失敗が続いた を足す（設計49）';
 
 function _edgeProp(k) { return PropertiesService.getScriptProperties().getProperty(k) || ''; }
 
@@ -174,6 +174,7 @@ function _edgeTrainerKanaCol(header) {
   }
   return -1;
 }
+//   ★会員の読み（設計71・_edgeCustomers と getTrainerReservations の customers）も同じ規則でこの関数を通す。
 //   ★かな（ひらがな・カタカナ・長音・中黒）と空白だけ・1〜40字だけ送る。それ以外は空文字＝伏せない（今と同じ）。
 //     伏せる処理は単語の境目なしに全文を置き換えるので、数字・英字・メモが入ると文字起こしの数字（照合の根拠）まで消える（関門② 高2）
 function _edgeTrainerKana(v) {
@@ -238,6 +239,8 @@ function _edgeCustomers() {
   //   ★同じ LINE ID の verified 行が2つあるときは、GAS の getCustomerByLine と同じく
   //     シートで先の行だけに付ける（D1 の UNIQUE(line_user_id) を破って押し出し全体が落ちないように）。
   var lineFor = _edgeVerifiedLineByRow(v);
+  //   ★読み（設計71）：名簿の見出し kana の列（R 以降）だけ。値の規則はトレーナーの読みと同じ（_edgeTrainerKana）。列が無い・かな以外＝空文字
+  var kc = _lbCustKanaCol(sh.getRange(1, 1, 1, v.length ? v[0].length : 1).getValues()[0]);
   for (var i = 0; i < v.length; i++) {
     var cid = String(v[i][MAP_COL.CUSTOMER_ID - 1] || '');
     if (!cid) continue;
@@ -246,7 +249,7 @@ function _edgeCustomers() {
     out.push({
       customer_id: cid,
       name: String(v[i][MAP_COL.NAME - 1] || ''),
-      kana: '',
+      kana: kc >= 0 ? _edgeTrainerKana(v[i][kc]) : '',
       phone: String(v[i][MAP_COL.PHONE - 1] || ''),
       email: '',
       birthday: '',

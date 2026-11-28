@@ -421,7 +421,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
   //   端末が古いHTMLを掴んでいるのか、仕掛けが効いていないのかを切り分けるために出す。
   //   ?perf を付けたときだけ画面下に出る。普段の画面には現れない。
   //   ★中身を変えたら必ずここも更新する。更新を忘れると切り分けができなくなる。
-  var LIFF_BUILD = '2026-11-20b カルテに文字起こしのファイルの添付（karte.js 2026-11-20a・設計48）＋混み合いでロックを取れなかったとき（BUSY）は「混み合っています」と出す（設計47）＋設計44 同意の規則（健康情報の撤回・紙の同意の人にも聞く）＋カルテの次回の予約は写しが追いつくまで「確認中」（karte.js 2026-11-19a・設計45）';
+  var LIFF_BUILD = '2026-11-28a 顧客名簿の検索をひらがな・カタカナ・半角カナ・空白の有無でも当てる（名簿の読み kana を照合にだけ使う・設計71）＋2026-11-20b カルテに文字起こしのファイルの添付（karte.js 2026-11-20a・設計48）＋混み合いでロックを取れなかったとき（BUSY）は「混み合っています」と出す（設計47）＋設計44 同意の規則（健康情報の撤回・紙の同意の人にも聞く）＋カルテの次回の予約は写しが追いつくまで「確認中」（karte.js 2026-11-19a・設計45）';
   var LIFF_ID = '2010827953-QgBQFzh9';
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxqrBd-M6rYTk-9LvKn6dcs7Sjma0CbDcYwSjt4iDuMZ00IdFTOZ0BEWIroD4erVm_WjQ/exec';
 
@@ -1906,6 +1906,13 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
     hd.appendChild(tx);
     box.insertBefore(hd, box.firstChild);
   }
+  // 顧客名簿の検索の照合（設計71・2026-11-28）。NFKC（半角カナ→全角・全角英数→半角）→小文字→空白・中黒を詰める→ひらがなをカタカナへ
+  //   ★読み（kana）は照合にだけ使う。画面に出さない。読みが無ければ名前だけで探す（今と同じ・表記ゆれだけ畳む）
+  function _custSearchKey(s){
+    var t = String(s == null ? '' : s);
+    try { t = t.normalize('NFKC'); } catch (e) {}
+    return t.toLowerCase().replace(/[\s\u3000・]/g, '').replace(/[\u3041-\u3096\u309d\u309e]/g, function(ch){ return String.fromCharCode(ch.charCodeAt(0) + 0x60); });
+  }
   function renderCustomerList(){
     document.body.classList.add('staff');   // 一覧に戻るたびに付け直す（会員の画面に入って外れた後でも）
     var sc0 = document.getElementById('s-tadmin'); if (sc0) { sc0.classList.remove('sub'); sc0.classList.remove('entry'); }
@@ -1933,7 +1940,7 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       kb.onclick = function(){ KarteUI.openBoard(); };
       box.appendChild(kb);
     }
-    custs.forEach(function(c){ if (c.customerId && !seen[c.customerId]) { seen[c.customerId]=true; list.push({ customerId:c.customerId, name:c.name, count: cntById[c.customerId]||0 }); } });
+    custs.forEach(function(c){ if (c.customerId && !seen[c.customerId]) { seen[c.customerId]=true; list.push({ customerId:c.customerId, name:c.name, kana:c.kana, count: cntById[c.customerId]||0 }); } });
     resv.forEach(function(r){ if (r.customerId && !seen[r.customerId]) { seen[r.customerId]=true; list.push({ customerId:r.customerId, name:r.customerName, count: cntById[r.customerId]||0 }); } });
     sect('担当のお客様');
     if (!list.length) {
@@ -1947,9 +1954,9 @@ body.staff #ahWhen,body.staff #bkWhen{background:#edf2fb;border-radius:10px;padd
       var _cards = [];
       list.forEach(function(c){
         var d = row(custList, String(c.name || ''), c.count ? c.count + '件' : '予約なし', c.count ? '' : 'warn', function(){ renderCustomerDetail(c.customerId, c.name); }, true);
-        _cards.push({ name: String(c.name || '').toLowerCase(), el: d });
+        _cards.push({ name: _custSearchKey(c.name), kana: _custSearchKey(c.kana), el: d });
       });
-      _search.oninput = function(){ var q = this.value.trim().toLowerCase(); _cards.forEach(function(x){ x.el.style.display = (!q || x.name.indexOf(q) >= 0) ? '' : 'none'; }); };
+      _search.oninput = function(){ var q = _custSearchKey(this.value); _cards.forEach(function(x){ x.el.style.display = (!q || x.name.indexOf(q) >= 0 || (x.kana && x.kana.indexOf(q) >= 0)) ? '' : 'none'; }); };
     }
     sect('枠を作る');
     var mk = document.createElement('div'); mk.className = 'sgrid2'; box.appendChild(mk);
