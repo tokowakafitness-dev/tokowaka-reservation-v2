@@ -47,7 +47,7 @@
 // ============================================================
 
 // この版の印。中身を変えたら必ず書き換える。
-var LB_NUDGE_BUILD = '2026-11-26a 設計37 改訂5：1日1通の読み取りに nudge_vacancy を数える（優先順位は変えない）・声かけが終わった印 LB_NUDGE_DAILY_DONE・空き枠のお知らせの区画／2026-11-23c うながしの最後に自己修理（lbSelfHeal）を相乗り（開始時刻を渡して予算を決める）・日次点検の見張りに「途中で落ちた」（LAST > DONE かつ2時間超・DONE 未設定の間は出さない）と壊れた印のメールを足す（自己修理 P1）';
+var LB_NUDGE_BUILD = '2026-11-28a 日次点検の「途中で」のメールに段ごとの経過（LB_HEALTH_STEP）を載せ、打ち切りと落ちたのを見分ける／2026-11-26a 設計37 改訂5：1日1通の読み取りに nudge_vacancy を数える（優先順位は変えない）・声かけが終わった印 LB_NUDGE_DAILY_DONE・空き枠のお知らせの区画／2026-11-23c うながしの最後に自己修理（lbSelfHeal）を相乗り（開始時刻を渡して予算を決める）・日次点検の見張りに「途中で落ちた」（LAST > DONE かつ2時間超・DONE 未設定の間は出さない）と壊れた印のメールを足す（自己修理 P1）';
 
 // ロックを待つ時間。0 にすると、他の処理と重なっただけで送信が丸ごと飛ぶ（2026-10-07 実際に起きた）。
 //   他の処理は 5〜15秒待っている。それより長めに取る（送信は1日1回で、急がないため）。
@@ -891,7 +891,11 @@ function _lbNudgeWatchHealthCrash(nowMs, last) {
   var notifiedKey = 'LB_HEALTH_ALERT_AT';
   var lastAlert = Number(_lbProp(notifiedKey) || 0);
   if (lastAlert && (nowMs - lastAlert) < 20 * 3600000) return true;
-  var msg = '日次点検（dailyHealthCheck）が途中で落ちています（最後に始めたのは '
+  //   ★段ごとの経過（LB_HEALTH_STEP・段の名前と経過ミリ秒だけ）を本文に載せる（2026-11-28）。
+  //     「打ち切り@」で始まれば、点検が時間の上限の前に自分で止めた（落ちたのではない）
+  var stepTxt = String(_lbProp('LB_HEALTH_STEP') || '').slice(0, 1500);
+  var cut = /^打ち切り@/.test(stepTxt);
+  var msg = '日次点検（dailyHealthCheck）が' + (cut ? '時間の上限に近づいて途中で打ち切られています' : '途中で落ちています') + '（最後に始めたのは '
     + Utilities.formatDate(new Date(last), SETTINGS.TIMEZONE, 'M/d HH:mm') + '・最後に完走したのは '
     + Utilities.formatDate(new Date(done), SETTINGS.TIMEZONE, 'M/d HH:mm') + '）。';
   Logger.log('[health] ' + msg);
@@ -899,7 +903,8 @@ function _lbNudgeWatchHealthCrash(nowMs, last) {
   if (to) {
     GmailApp.sendEmail(to, '【要対処】日次点検が途中で落ちています',
       msg + '\n\n点検は始めた時刻と最後まで来た時刻を別に残しています。始めたのに最後まで来ていません。\n'
-      + '確かめること：GAS の実行ログで dailyHealthCheck のエラーと、作業依頼 audit の「点検がどこまで進んだか」（最後に入った段が落ちた場所）。');
+      + '確かめること：GAS の実行ログで dailyHealthCheck のエラーと、作業依頼 remaining {triggers} の「点検がどこまで進んだか」（最後に入った段が落ちた場所）。'
+      + (stepTxt ? '\n\n段ごとの経過（段=開始からのミリ秒）：\n' + stepTxt : ''));
     PropertiesService.getScriptProperties().setProperty(notifiedKey, String(nowMs));
   }
   return true;

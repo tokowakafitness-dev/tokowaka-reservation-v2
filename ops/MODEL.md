@@ -302,7 +302,7 @@ trg_alloc_return_pack       同
 | I-H17 | **cancel_notes の回復は `_lbCnHealth().ready` でだけ判定**。データ行があって見出しが違えば setupCancelNotesSheet は触らない（mismatch）→ escalated・閉じない | `self-heal-repair.test.js` I-H17 |
 | I-H18 | **`LB_HEAL_SCHEDULE` は既存の setup*（setupLineTriggers・setupNudgeTrigger・setupEdgeTrigger・setupEdgeJobTrigger）と同じ組み立て**（身代わりの ScriptApp で setup* を実際に動かして突き合わせる） | `self-heal-repair.test.js` I-H18 |
 | I-H19 | **オーナーへの通知は `_lbPushOnce` を直接使い、失敗を `_lbNqOnFail` に積まない**（`_lbPush` は未知の用途を alert として積む＝警告の未達が警告を呼ぶループになる） | `self-heal-notify.test.js` I-H19 |
-| I-H20 | **点検（dry-run を含む）と修理は同時に1本だけ（借りる印 LB_HEALTH_LEASE）。印の期限は35分・段ごとに延長。ScriptLock は印を取る・延ばす・放す瞬間だけ（tryLock 300ms）** | `self-heal-lease.test.js` I-H20 |
+| I-H20 | **点検（dry-run を含む）と修理は同時に1本だけ（借りる印 LB_HEALTH_LEASE）。印の期限は10分（2026-11-28 に35分から：時間切れで打ち切られた実行の印が35分残り、作業依頼の点検が held で見送られた）・段ごとに延長＝生きている実行は延ばし続ける。ScriptLock は印を取る・延ばす・放す瞬間だけ（tryLock 300ms）。★日次点検だけは印を取るとき ScriptLock が混んでいれば2秒おきに6回まで試す（`LB_HEAL.ACQ_TRIES`・11/27 は1回で lock_busy になりその日の点検が消えた）。修理は今どおり1回** | `self-heal-lease.test.js` I-H20・`health-time-budget.test.js` T4・T5 |
 | I-H21 | **副作用（トリガーを足す・シートを作る・LINE・メール・attempts・sending・台帳・要約・SINCE・DONE・見送りの数、点検の health_status 追記・LB_HEALTH_PREV・悪化メール・lbNotifyDeferDailyMaint）の直前に印を確かめ、失っていれば止まる。点検は印を失った時点で以降の副作用をせずに終える（他人の印は放さない）**。dry-run も同じ | `self-heal-lease.test.js` I-H21 |
 | I-H22 | **壊れた印（JSON 不正・owner/until が無い・数でない・2時間以上未来）は期限切れとみなさず見送り、lease_broken を記録**（lbNudgeDaily が固定の文でメール） | `self-heal-lease.test.js` I-H22 |
 | I-H23 | **checked は段の処理が例外なく終わった後（_done）にだけ付く**。*_fail を出した段・例外を黙って握りつぶした段・読めなかった段は付かない | `self-heal-check.test.js` I-H23 |
@@ -318,6 +318,7 @@ trg_alloc_return_pack       同
 | I-H33 | **点検の保存（`_lbHealthSave`）の結果を LB_HEALTH_SAVE_LAST に残し（newer と印を失った回は書かない。★DONE を書いていない回は印の確認を noSkip にしない＝延長できなければ LB_HEALTH_SKIP に数え翌日 health_skipped が鳴る）、次の点検が「saved=false で、DONE が信じられない（未設定・数でない・0以下・いま＋5分より先＝broken・要約の check_id ≠ DONE・completed でない）か DONE < その check_id」なら `heal_save_fail`（B・理由は列挙 `LB_SAVE_WHY`＋other／壊れた記録は broken）を出す**＝従来の悪化メールに「自己修理の台帳に保存できませんでした（理由: …）」が載る。悪化したときだけ知らせる既存の規則に従う（続いても1回）。★知らせるのは失敗した翌日の点検 | `self-heal-ledger.test.js` I-H33 |
 | I-H34 | **作業依頼 `remaining {healStatus}`（`heal_status` も可・新しい op を足さない）は読むだけで、列挙・数・日時だけを返す**：LB_HEALTH_STATUS の要約（会員番号は件数だけ）・LB_HEALTH_DONE・LB_SELFHEAL_DONE・保存の結果・見送り・台帳の行（key・cls・stage・status・attempts・would_attempts・last_action・日時）。列挙に無い値は `?`。印の owner・氏名・自由文は返さない | `self-heal-ledger.test.js` I-H34 |
 | I-H35 | **点検の段「自己修理の見張り」そのものが例外で落ちたら、固定の key `selfheal_watch_fail`（B・warn・facts は exception だけ）を add する**。例外の文は出さない（I-H1）。段は checked に付けない（今どおり＝その段の key を閉じない）。印を失った例外（lbLeaseLost）は add せず外へ投げる（I-H21） | `self-heal-ledger.test.js` I-H35 |
+| I-H36 | **日次点検は関数の入口から `LB_HEAL.CHECK_SOFT_MS`（4分）を過ぎたら次の段に入らない（打ち切り・2026-11-28）**。打ち切った回は `health_partial`（warn・段の名前と秒数だけ）を足し、記録（health_status）と悪化のメールだけする。**要約・SINCE・台帳・DONE・部隊への要約は書かない**＝DONE の意味（最後まで来た）は変えない・自己修理は動かない・翌日 Nudge の「途中で」が鳴る（本文に LB_HEALTH_STEP・先頭「打ち切り@」で落ちたのと見分ける）。打ち切った回の LB_HEALTH_PREV は前回の数を引き継ぐ（見ていない段の key を消さない）。LB_HEALTH_STEP は**全部の段**の「段=開始からの経過ミリ秒」（直近6段ではない）。試し実行は STEP を書かず、返り値 `steps`・`partial` を作業依頼 `health` が出す。`health_partial` は要約に載らない＝LB_TRIAGE・振り分け表・部隊の SQ_KEYS には足さない | `health-time-budget.test.js` T1〜T3・T6・T7 |
 
 | I-SQ1 | **保全部隊の口（/squad/*）が受け・保存し・返すのは許可リスト（`worker/src/lib/squad-schema.js`）で組み直した欄だけ。氏名・会員番号（末尾4桁も）・電話・LINE ID・予約ID・自由文を出さない。台帳の時刻は時間単位に切り下げる**。未知の key は `?`（unknown_keys に数える）・許されない facts は捨てる（facts_rejected）・重複キー・末尾のデータ・型の違う必須欄・65,536 バイト超・圧縮は丸ごと拒否して前の行を残す。Mac の台本の再構築器も同じ定義（写し）で strict に組み直す | `squad-read.test.js` I-SQ1・`gas-squad.test.js` G1-4/G1-5（会社の台本側は 90_ops/maintenance-squad/test/test-squad.sh） |
 | I-SQ2 | **部隊の鍵（X-Squad-Read-Key）では予約・残数・顧客の窓口に書けない（全部 401/403）。GAS の合言葉（X-Ingest-Secret）では /squad/status を読めない**。部隊の鍵で書けるのは squad_reads の加算と、★SQUAD_REPORT="on" のときの squad_report（列挙と件数だけ・1日6件）だけ | `squad-read.test.js` I-SQ2・I-SQ9 |
@@ -575,7 +576,7 @@ transferCredits   振替権（ホームの「振替 N回」＋予約画面の①
 | 空き枠のお知らせ（設計37 改訂5） | 1回45秒・枠3つ・1枠3名 | `warmupCache` の末尾（送り直しの後）に相乗り。開始3分30秒超なら見送り | 次の10分へ回る（sent_partial・wait） |
 | GASのバージョン | 200・削除不可（上限は「本数」＝`clasp versions` の件数。GASエディタの「番号」ではない） | 2026-10-06 の確認で 109本（以前ここにあった「188」は番号を本数と読み違えた値）。いまの本数は**未確認**（唯一の出所は GitHub Actions「GASを反映する」のログ）。床だけは分かる：反映ワークフローは残り5本以下で止まる＝直前の反映が成功していれば残り6本以上 | プロジェクト作り直し＝**LIFFのURLが変わる** |
 | 保全部隊の口（設計68） | 本文 65,536 バイト（受ける・返す・inbox）・項目100・台帳60・読み取り1日200回・報告1日6件 | 最大構造で 約59KB（`squad-read.test.js` I-SQ1-14）。D1 の書き込みは1日 約30行＋読み取りの加算（鍵が合ったときだけ） | 超えたら 413／429（切り詰めない） |
-| GASの実行時間 | 6分 | 押し出しは打ち切り方式 | 途中から再開する作りが必須 |
+| GASの実行時間 | 6分（★ただし 2026-10-10 に手で回した点検が557秒走った記録がある＝この環境の上限は未確認。決定0201） | 押し出しは打ち切り方式。★日次点検も開始4分で次の段に入らない（I-H36・2026-11-28） | 途中から再開する作りが必須 |
 | D1の書き込み | 1日10万行 | 差分同期で抑えている | 書き込みが止まる |
 | D1の読み取り | 1日500万行 | 余裕 | — |
 | トレーニングの1回（`k_addTraining`・設計38。`k_editTraining`（設計58）は固定の文が9つ多い） | 種目20（数字の無い種目を含む）・本セット10/ord・ドロップ3/セット・合計60（ドロップを数える）・本文16KB | 1回の保存の文の数は最大でおよそ150（本セットごとに付加の文が1つ増える・以前はおよそ63）。D1 の公式の上限（2026-11-07 確認）：**batch() は文の数に関わらず1回の呼び出しで1クエリと数える**（呼び出しあたり Paid 1000／Free 50）。文ごとの上限＝引数100・文の長さ100KB。**30秒は batch 全体にかかる** | 30秒を超えれば保存全体が失敗（全部か無か）。関門③で最大に近い記録を1件保存して時間を確かめる |
