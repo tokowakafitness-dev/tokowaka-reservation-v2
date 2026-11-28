@@ -24,15 +24,45 @@ ROOT="$(git rev-parse --show-toplevel)"
 #   push で外に出るのは履歴。push するコミット1つずつの「足した行」と説明文を見る。
 #   git が標準入力に渡す「<local ref> <local sha> <remote ref> <remote sha>」をそのまま渡す。
 #   ★テストより先に走らせる（速い・テストが落ちても個人情報の有無は分かる）
+# git が渡す標準入力は1回しか読めない。検査（1.）と作業依頼の判定（2.）の両方で使うので先に取っておく
+PUSH_INPUT="$(cat)"
+
 echo "▶ push するコミットに個人情報・鍵の形が無いか見ます（ops/prepush-scan.mjs）"
-if ! node "$ROOT/ops/prepush-scan.mjs"; then
+if ! printf '%s\n' "$PUSH_INPUT" | node "$ROOT/ops/prepush-scan.mjs"; then
   echo
   echo "⛔ 個人情報・鍵の形があるため push を止めました（上の一覧。値は表示していません）。"
   echo "   ★この検査は --no-verify で飛ばさない。公開リポジトリでは branch の push がそのまま公開になる。"
   exit 1
 fi
 
-# ---- 2. 全部のテスト --------------------------------------------------------
+# ---- 2. 作業依頼（ops/job.json）だけの push はテストを省く（2026-11-28 オーナー決定）----
+#   作業依頼の push は1行の JSON を変えるだけなのに、毎回テスト一式を待っていた。
+#   ★省くのは push する範囲の変更ファイルが「ちょうど ops/job.json だけ」のときだけ。
+#     新しいブランチ（リモート側が 0000…）は origin/main との差で数える。
+#   ★判定できない（git が失敗した・ファイルが1つも無い・他のファイルが1つでも混ざる）ときは全部走らせる
+#     （倒れる向き＝走らせる側）。個人情報・鍵の検査（1.）は省かない。
+only_job_json() {
+  local localRef localSha remoteRef remoteSha names any=0
+  while read -r localRef localSha remoteRef remoteSha; do
+    [ -n "${remoteSha:-}" ] || continue
+    if [[ "$localSha" =~ ^0+$ ]]; then continue; fi          # 削除の push：中身は無い
+    if [[ "$remoteSha" =~ ^0+$ ]]; then
+      names="$(git -C "$ROOT" diff --name-only "origin/main...$localSha" 2>/dev/null)" || return 1
+    else
+      names="$(git -C "$ROOT" diff --name-only "$remoteSha" "$localSha" 2>/dev/null)" || return 1
+    fi
+    [ -n "$names" ] || return 1
+    [ "$names" = "ops/job.json" ] || return 1
+    any=1
+  done <<< "$PUSH_INPUT"
+  [ "$any" -eq 1 ]
+}
+if only_job_json; then
+  echo "▶ 作業依頼だけなのでテストを省きました（個人情報・鍵の検査は済み）"
+  exit 0
+fi
+
+# ---- 3. 全部のテスト --------------------------------------------------------
 echo "▶ push の前にテストを走らせます（worker/test/run-all.sh）"
 if bash "$ROOT/worker/test/run-all.sh"; then
   exit 0
